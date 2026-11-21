@@ -132,22 +132,22 @@ void sv4_reduce_xor_to(sv4_t* dst, const sv4_t* a);
 void sv4_reduce_xnor_to(sv4_t* dst, const sv4_t* a);
 void sv4_clog2_to(sv4_t* dst, const sv4_t* v);
 void sv4_countones_to(sv4_t* dst, const sv4_t* v);
-void sv4_onehot_to(sv4_t* dst, const sv4_t* v, int allow_zero);
+void sv4_onehot_to(sv4_t* dst, const sv4_t* v, int32_t allow_zero);
 void sv4_repeat_count_to(sv4_t* dst, const sv4_t* v);
 void sv4_repeat_to(sv4_t* dst, const sv4_t* pattern, uint64_t n);
-void sv4_stream_to(sv4_t* dst, const sv4_t* v, uint32_t slice, int right_to_left);
+void sv4_stream_to(sv4_t* dst, const sv4_t* v, uint32_t slice, int32_t right_to_left);
 
 /* Selections. */
 void sv4_part_select_to(sv4_t* dst, const sv4_t* v, int64_t left, int64_t right);
 void sv4_bit_select_to(sv4_t* dst, const sv4_t* v, uint64_t index);
 void sv4_idx_part_select_to(sv4_t* dst, const sv4_t* v, uint64_t base,
-                            uint32_t width, int neg);
+                            uint32_t width, int32_t neg);
 void sv4_idx_part_select_value_to(sv4_t* dst, const sv4_t* v, const sv4_t* base,
-                                  uint32_t width, int neg);
+                                  uint32_t width, int32_t neg);
 void sv4_select_plan_read_to(sv4_t* dst, const sv4_t* source,
                              const sv4_select_plan_t* plan);
 void sv4_select_plan_slice_to(sv4_t* dst, const sv4_t* source,
-                              const sv4_select_plan_t* plan, int reverse);
+                              const sv4_select_plan_t* plan, int32_t reverse);
 
 /* Binary operations. */
 void sv4_add_to(sv4_t* dst, const sv4_t* a, const sv4_t* b);
@@ -190,7 +190,7 @@ void sv4_array_conditional_merge_to(sv4_t* dst, const sv4_t* a, const sv4_t* b,
                                     const sv4_t* element_default);
 void sv4_enum_navigate_to(sv4_t* dst, const sv4_t* current, const sv4_t* step,
                           const sv4_t* values, uint32_t count,
-                          const sv4_t* default_value, int direction);
+                          const sv4_t* default_value, int32_t direction);
 
 /* Reference read through a canonical descriptor (value/references.c). */
 void llg_ref_read_to(sv4_t* dst, const llg_ref_t* ref);

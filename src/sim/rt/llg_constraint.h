@@ -350,7 +350,7 @@ enum {
 
 typedef struct {
     uint32_t engines;
-    int reason;
+    int32_t reason;
     uint32_t item;           /* leaf, var, call or node named by `reason` */
     const char* budget;      /* tunable that ran out, for LLG_CR_RESOURCE */
 } llg_cr_report_t;
@@ -358,7 +358,7 @@ typedef struct {
 /* Generated function-call thunk (18.5.11). `args[i]` holds the words of
  * argument i; the callee writes the result words and returns an
  * LLG_CR_INPUT_* state. */
-typedef int (*llg_cr_call_fn)(void* context, uint32_t call,
+typedef int32_t (*llg_cr_call_fn)(void* context, uint32_t call,
                               const uint64_t* const* args, uint64_t* result);
 
 typedef struct llg_cr_session llg_cr_session_t;
@@ -380,10 +380,10 @@ void llg_cr_session_release_all(void);
 
 /* Inputs for one solve; every variable, block and leaf must be set. */
 void llg_cr_set_var(llg_cr_session_t* s, uint32_t var, const uint64_t* words,
-                    int active, int input_state);
-void llg_cr_set_block(llg_cr_session_t* s, uint32_t block, int enabled);
+                    int32_t active, int32_t input_state);
+void llg_cr_set_block(llg_cr_session_t* s, uint32_t block, int32_t enabled);
 void llg_cr_set_leaf(llg_cr_session_t* s, uint32_t leaf, const uint64_t* words,
-                     int input_state);
+                     int32_t input_state);
 /* Cycle state of a randc variable (LLG_CR_CYCLIC_WORDS(width) words; NULL
  * starts a new cycle). After LLG_CR_OK, llg_cr_cyclic returns the updated
  * state to store back. */
@@ -403,14 +403,14 @@ llg_cr_status_t llg_cr_step(llg_cr_session_t* s, const llg_cr_rng_t* rng,
 uint32_t llg_cr_xcall_count(const llg_cr_session_t* s);
 uint32_t llg_cr_xcall_site(const llg_cr_session_t* s, uint32_t x);
 uint32_t llg_cr_xcall_inst(const llg_cr_session_t* s, uint32_t x);
-int llg_cr_xcall_ready(const llg_cr_session_t* s, uint32_t x);
+int32_t llg_cr_xcall_ready(const llg_cr_session_t* s, uint32_t x);
 const uint64_t* llg_cr_xcall_arg(const llg_cr_session_t* s, uint32_t x, uint32_t arg);
 void llg_cr_xcall_set_result(llg_cr_session_t* s, uint32_t x, const uint64_t* words,
-                             int input_state);
-int llg_cr_call_ready(const llg_cr_session_t* s, uint32_t call);
+                             int32_t input_state);
+int32_t llg_cr_call_ready(const llg_cr_session_t* s, uint32_t call);
 const uint64_t* llg_cr_call_arg(const llg_cr_session_t* s, uint32_t call, uint32_t arg);
 void llg_cr_set_call_result(llg_cr_session_t* s, uint32_t call, const uint64_t* words,
-                            int input_state);
+                            int32_t input_state);
 
 /* Whole solve with a thunk for the calls (runtime probes). */
 llg_cr_status_t llg_cr_solve(llg_cr_session_t* s, const llg_cr_rng_t* rng,
@@ -441,18 +441,18 @@ uint32_t llg_cr_next_inst(llg_cr_session_t* s);
  * over the links, each object once: the pre_randomize order, S30-D7), or
  * LLG_CR_NONE past the last; post_randomize runs in the same order. */
 uint32_t llg_cr_visit(const llg_cr_session_t* s, uint32_t k);
-int llg_cr_inst_pre(llg_cr_session_t* s, uint32_t inst);
+int32_t llg_cr_inst_pre(llg_cr_session_t* s, uint32_t inst);
 uint32_t llg_cr_inst_count(const llg_cr_session_t* s);
 void* llg_cr_inst_handle(const llg_cr_session_t* s, uint32_t inst);
 uint32_t llg_cr_inst_unit(const llg_cr_session_t* s, uint32_t inst);
-int llg_cr_inst_random(const llg_cr_session_t* s, uint32_t inst);
+int32_t llg_cr_inst_random(const llg_cr_session_t* s, uint32_t inst);
 /* Link element `index` (0 for a scalar slot) of handle slot `slot` of
  * instance `inst` to `child` (NULL: a null handle) of class unit `unit`;
  * `random` says whether the child's variables and constraints take part
  * (the slot is `rand` and enabled). Returns the child's instance, or
  * LLG_CR_NONE for NULL. A handle array's element count is set first. */
 uint32_t llg_cr_link(llg_cr_session_t* s, uint32_t inst, uint32_t slot, uint32_t index,
-                     void* child, uint32_t unit, int random);
+                     void* child, uint32_t unit, int32_t random);
 /* The unit of an object of class `class_id` in a problem whose links take
  * the unit from the child's class: entry `class_id` of the problem's
  * `count`-entry class-to-unit table. A class the table does not map is an
@@ -463,27 +463,27 @@ void llg_cr_set_slot_size(llg_cr_session_t* s, uint32_t inst, uint32_t slot, uin
  * instances no random link reaches any more leave llg_cr_visit (18.4). */
 void llg_cr_trim_slot(llg_cr_session_t* s, uint32_t inst, uint32_t slot, uint32_t count);
 void llg_cr_iset_var(llg_cr_session_t* s, uint32_t inst, uint32_t var, const uint64_t* words,
-                     int active, int input_state);
-void llg_cr_iset_block(llg_cr_session_t* s, uint32_t inst, uint32_t block, int enabled);
+                     int32_t active, int32_t input_state);
+void llg_cr_iset_block(llg_cr_session_t* s, uint32_t inst, uint32_t block, int32_t enabled);
 void llg_cr_iset_leaf(llg_cr_session_t* s, uint32_t inst, uint32_t leaf,
-                      const uint64_t* words, int input_state);
+                      const uint64_t* words, int32_t input_state);
 void llg_cr_iset_cyclic(llg_cr_session_t* s, uint32_t inst, uint32_t var,
                         const uint64_t* words);
 /* Array `array` of instance `inst`: its current size and whether its
  * elements (and, for dynamic arrays and queues, its size) are random; then
  * each current element. */
 void llg_cr_set_array(llg_cr_session_t* s, uint32_t inst, uint32_t array, uint32_t size,
-                      int active);
+                      int32_t active);
 void llg_cr_set_elem(llg_cr_session_t* s, uint32_t inst, uint32_t array, uint32_t index,
-                     const uint64_t* words, int input_state);
+                     const uint64_t* words, int32_t input_state);
 /* The key of element `index` of an associative array, in the key's width;
  * elements are fed in ascending key order. */
 void llg_cr_set_key(llg_cr_session_t* s, uint32_t inst, uint32_t array, uint32_t index,
                     const uint64_t* words);
 const uint64_t* llg_cr_ivalue(const llg_cr_session_t* s, uint32_t inst, uint32_t var);
 /* Whether variable `var` (array `array`) of `inst` took part as random. */
-int llg_cr_iactive(const llg_cr_session_t* s, uint32_t inst, uint32_t var);
-int llg_cr_array_active(const llg_cr_session_t* s, uint32_t inst, uint32_t array);
+int32_t llg_cr_iactive(const llg_cr_session_t* s, uint32_t inst, uint32_t var);
+int32_t llg_cr_array_active(const llg_cr_session_t* s, uint32_t inst, uint32_t array);
 const uint64_t* llg_cr_icyclic(const llg_cr_session_t* s, uint32_t inst, uint32_t var);
 uint32_t llg_cr_array_size(const llg_cr_session_t* s, uint32_t inst, uint32_t array);
 const uint64_t* llg_cr_elem_value(const llg_cr_session_t* s, uint32_t inst, uint32_t array,
@@ -499,10 +499,10 @@ typedef struct {
     uint64_t expand_nodes;   /* LLG_RAND_EXPAND_NODES: expanded nodes */
     uint64_t cyclic_walk;    /* LLG_RAND_CYCLIC_WALK: permutation positions one
                               * draw of a wide randc variable may test */
-    int stats;               /* LLG_RAND_STATS */
-    int overflow_memo;       /* LLG_RAND_OVERFLOW_MEMO: 0 rebuilds every
+    int32_t stats;               /* LLG_RAND_STATS */
+    int32_t overflow_memo;       /* LLG_RAND_OVERFLOW_MEMO: 0 rebuilds every
                               * overflowing exact model (never changes values) */
-    int search_cache;        /* LLG_RAND_SEARCH_CACHE: 0 re-encodes every
+    int32_t search_cache;        /* LLG_RAND_SEARCH_CACHE: 0 re-encodes every
                               * search (never changes values) */
 } llg_cr_tunables_t;
 

@@ -211,3 +211,52 @@ fn fopen_text_and_binary_modes_keep_host_newline_semantics() {
     })
     .expect("file mode simulation");
 }
+
+/// `$fseek` and `$ftell` keep 64-bit positions on every host (IEEE 1800-2009
+/// §21.3.5): relative seeks reach positions beyond 2 GiB, which `$ftell`
+/// reads back exactly although C `long` is 32-bit on Windows, and seeking
+/// does not extend the 4-byte file.
+#[test]
+fn file_positions_beyond_two_gib_read_back_exactly() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    sim_harness::with_frontend_temp_cwd("file-large-positions", |dir| {
+        let source = dir.join("large_positions.sv");
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/sim/file_io/large_positions.sv");
+        fs::copy(&fixture, &source).map_err(|error| error.to_string())?;
+        let compiled = compile::compile_checked(&compile::CompileOpts {
+            files: vec![source.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        })
+        .map_err(|error| error.to_string())?;
+        let db = Db::from_slang(&compiled.snapshot).map_err(|error| error.to_string())?;
+        let expected =
+            "current=0 tell=4000000000\nback=0 tell=2\nend=0 tell=4000000004\nbefore_start=-1\n";
+        for (name, options) in [
+            ("optimized", OptConfig::default()),
+            ("unoptimized", OptConfig::none()),
+        ] {
+            let output_dir = dir.join(name);
+            let model = sim::codegen::generate_from_db_with_opts(&db, &options)
+                .map_err(|error| error.to_string())?;
+            let executable =
+                sim::build::build_model_cmake(&output_dir, &[("model.c", model.model_c.as_str())])
+                    .map_err(|error| error.to_string())?;
+            let output =
+                sim_harness::with_cwd(&output_dir, || sim_harness::run_executable(&executable))?;
+            assert_eq!(output, expected, "{name} stdout");
+            assert_eq!(
+                fs::read(output_dir.join("large_positions.bin"))
+                    .map_err(|error| error.to_string())?,
+                b"abcd",
+                "{name} file"
+            );
+        }
+        Ok(())
+    })
+    .expect("large file position simulation");
+}

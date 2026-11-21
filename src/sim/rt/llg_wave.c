@@ -137,14 +137,14 @@ typedef struct {
     uint64_t last_time;
     uint64_t bytes_written;
     uint64_t byte_limit;
-    int have_time;
-    int header_written;
+    int32_t have_time;
+    int32_t header_written;
     // The declarations are written whole: $dumplimit stops value dumping,
     // not the header (S47-D8).
-    int in_header;
-    int active;
-    int snapshot_open;
-    int limit_reached;
+    int32_t in_header;
+    int32_t active;
+    int32_t snapshot_open;
+    int32_t limit_reached;
 #ifndef LLG_WAVE_DELTAS
     // The end-of-step records of the current flush, in arrival order (`arg`
     // holds the position) until they are sorted and written.
@@ -177,12 +177,12 @@ typedef struct {
     llg_cond_t ack_changed;
     llg_thread_t worker;
     llg_thread_id_t producer;
-    int initialized;
-    int worker_started;
+    int32_t initialized;
+    int32_t worker_started;
     dump_state_t dump_state;
     // A $dumpoff executed while the start is pending: the dump starts in the
     // off state (S47-D5).
-    int pending_off;
+    int32_t pending_off;
     // The dump state this time step started in: the file records value
     // changes in the step when it is DUMP_ON. Controls change `dump_state`
     // at once and the file at the end of the step. An enum compared with
@@ -193,11 +193,11 @@ typedef struct {
     // pending start of the dump, or a $dumpon, $dumpoff or $dumpall. One
     // flag keeps the end-of-step check of a step without either as cheap as
     // the single pending-start test it replaces.
-    int slot_work;
+    int32_t slot_work;
     // A $dumpall ran while the dump state was on in this time step.
-    int pending_all;
+    int32_t pending_all;
     // Whether EV_FILE was queued; later $dumpfile calls are ignored.
-    int file_sent;
+    int32_t file_sent;
     uint64_t dump_start_time;
     // Last $dumpfile name before the dump starts (S47-D7), or NULL for the
     // default `dump.vcd`.
@@ -213,11 +213,11 @@ typedef struct {
     llg_atomic_int_t deferred_report;
     char deferred_text[2048];
     // One-time warnings for ignored controls.
-    int warned_dumpvars;
-    int warned_dumpfile;
+    int32_t warned_dumpvars;
+    int32_t warned_dumpfile;
     // Set by llg_wave_start: the driver chose the file and selection, so the
     // design's $dumpfile/$dumpvars calls are ignored.
-    int driver_selection;
+    int32_t driver_selection;
     // Run-time placement read at init, before the writer thread starts; this
     // unit stays independent of the scheduler runtime.
     char* out_dir;        // LLG_SIM_OUT_DIR, or NULL
@@ -235,14 +235,14 @@ static char* wave_strdup(const char* s) {
 
 // The message text of a report; llg_msg renders and writes it in one call.
 static void wave_format(char* line, size_t size, const char* fmt, va_list ap) {
-    int written = vsnprintf(line, size, fmt, ap);
+    int32_t written = vsnprintf(line, size, fmt, ap);
     if (written < 0) line[0] = 0;
 }
 
 // Only the simulation thread prints; the writer thread leaves its report for
 // llg_wave_slot_end or llg_wave_close. Before llg_wave_model_init no writer
 // exists and the caller is the simulation thread.
-static int on_simulation_thread(void) {
+static int32_t on_simulation_thread(void) {
     return !g_wave.initialized || llg_thread_equal(g_wave.producer, llg_thread_self());
 }
 
@@ -273,7 +273,7 @@ static void wave_error(const char* fmt, ...) {
 // Ignored controls warn once per kind and leave the dump running. Times are
 // written like VCD timestamps, in design precision ticks. Warnings come only
 // from the simulation thread.
-static void wave_warning(int* once, const char* fmt, ...) {
+static void wave_warning(int32_t* once, const char* fmt, ...) {
     if (*once) return;
     *once = 1;
     char line[2048];
@@ -284,7 +284,7 @@ static void wave_warning(int* once, const char* fmt, ...) {
     llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "waveform: %s", line);
 }
 
-static int require_producer(const char* operation) {
+static int32_t require_producer(const char* operation) {
     if (!g_wave.initialized) {
         llg_msg(LLG_MSG_WAVEFORM, NULL, "%s called before llg_wave_model_init", operation);
         return 0;
@@ -304,7 +304,7 @@ static uint32_t hash_ptr(const void* ptr) {
     return (uint32_t)x;
 }
 
-static int freeze_registrations(void) {
+static int32_t freeze_registrations(void) {
     uint32_t cap = 8u;
     while (cap < g_wave.reg_count * 2u) cap <<= 1u;
     g_wave.map = (map_entry_t*)calloc(cap, sizeof(map_entry_t));
@@ -436,9 +436,9 @@ static const char* path_extension(const char* path) {
     return dot;
 }
 
-static int extension_is(const char* ext, const char* wanted) {
+static int32_t extension_is(const char* ext, const char* wanted) {
     while (*ext && *wanted) {
-        if (tolower((unsigned char)*ext++) != tolower((unsigned char)*wanted++))
+        if (tolower((uint8_t)*ext++) != tolower((uint8_t)*wanted++))
             return 0;
     }
     return *ext == 0 && *wanted == 0;
@@ -469,8 +469,8 @@ static char* serialize_identifier(const char* src, size_t len) {
         out = 3u;
     }
     for (size_t i = 0; i < len; i++) {
-        unsigned char c = (unsigned char)src[i];
-        int ascii_alnum = (c >= 'a' && c <= 'z') ||
+        uint8_t c = (uint8_t)src[i];
+        int32_t ascii_alnum = (c >= 'a' && c <= 'z') ||
                           (c >= 'A' && c <= 'Z') ||
                           (c >= '0' && c <= '9');
         if (ascii_alnum || c == '_') {
@@ -513,7 +513,7 @@ static void precision_string(uint64_t fs, char out[32]) {
     (void)snprintf(out, 32u, "%llufs", (unsigned long long)fs);
 }
 
-static int writer_raw(writer_t* w, const char* bytes, size_t len) {
+static int32_t writer_raw(writer_t* w, const char* bytes, size_t len) {
     if (fwrite(bytes, 1u, len, w->file) != len) {
         wave_error("write failed for `%s`: %s", w->path, strerror(errno));
         return 0;
@@ -533,7 +533,7 @@ static void writer_limit_reached(writer_t* w) {
     (void)writer_raw(w, comment, sizeof(comment) - 1u);
 }
 
-static int writer_fits(writer_t* w, size_t len) {
+static int32_t writer_fits(writer_t* w, size_t len) {
     if (!w->byte_limit || w->in_header) return 1;
     if (w->bytes_written <= w->byte_limit &&
         len <= w->byte_limit - w->bytes_written)
@@ -542,7 +542,7 @@ static int writer_fits(writer_t* w, size_t len) {
     return 0;
 }
 
-static int writer_bytes(writer_t* w, const char* bytes, size_t len) {
+static int32_t writer_bytes(writer_t* w, const char* bytes, size_t len) {
     if (!w->file || w->limit_reached) return 0;
     if (!writer_fits(w, len)) return 0;
     return writer_raw(w, bytes, len);
@@ -552,7 +552,7 @@ static int writer_bytes(writer_t* w, const char* bytes, size_t len) {
  * buffer: the whole record is checked against the byte limit first, so a
  * limit never leaves a truncated value change, then the pieces go straight
  * to the stream. */
-static int writer_value_record(writer_t* w, const char* prefix, size_t prefix_len,
+static int32_t writer_value_record(writer_t* w, const char* prefix, size_t prefix_len,
                                const char* bits, size_t bits_len,
                                const char* id) {
     size_t id_len = strlen(id);
@@ -565,11 +565,11 @@ static int writer_value_record(writer_t* w, const char* prefix, size_t prefix_le
            writer_raw(w, id, id_len) && writer_raw(w, "\n", 1u);
 }
 
-static int writer_printf(writer_t* w, const char* fmt, ...) {
+static int32_t writer_printf(writer_t* w, const char* fmt, ...) {
     char buf[4096];
     va_list ap;
     va_start(ap, fmt);
-    int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+    int32_t n = vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
     if (n < 0 || (size_t)n >= sizeof(buf)) {
         wave_error("internal VCD record exceeded its fixed buffer");
@@ -600,7 +600,7 @@ static uint32_t separator_count(const char* name) {
     return count;
 }
 
-static int valid_hierarchy_name(const char* name) {
+static int32_t valid_hierarchy_name(const char* name) {
     if (!name || !*name || name[0] == LLG_WAVE_HIER_SEP) return 0;
     size_t length = strlen(name);
     if (name[length - 1u] == LLG_WAVE_HIER_SEP) return 0;
@@ -612,7 +612,7 @@ static int valid_hierarchy_name(const char* name) {
     return 1;
 }
 
-static int registration_matches(const registration_t* reg, const char* selection,
+static int32_t registration_matches(const registration_t* reg, const char* selection,
                                 uint32_t depth) {
     if (!reg || !valid_hierarchy_name(reg->name) ||
         !valid_hierarchy_name(selection))
@@ -705,10 +705,10 @@ static uint32_t common_scope_count(const char* a, const char* b) {
     return common;
 }
 
-static int registration_name_compare(const void* lhs, const void* rhs) {
+static int32_t registration_name_compare(const void* lhs, const void* rhs) {
     uint32_t a = *(const uint32_t*)lhs;
     uint32_t b = *(const uint32_t*)rhs;
-    int order = strcmp(g_wave.regs[a].name, g_wave.regs[b].name);
+    int32_t order = strcmp(g_wave.regs[a].name, g_wave.regs[b].name);
     if (order) return order;
     return a < b ? -1 : a > b;
 }
@@ -810,8 +810,8 @@ static void vcd_var(writer_t* w, uint32_t reg_index) {
     switch ((var_kind_t)reg->var_kind) {
         case VAR_REAL: writer_printf(w, "$var real 64 %s ", id); break;
         case VAR_EVENT: writer_printf(w, "$var event 1 %s ", id); break;
-        case VAR_REG: writer_printf(w, "$var reg %u %s ", reg->width, id); break;
-        case VAR_WIRE: writer_printf(w, "$var wire %u %s ", reg->width, id); break;
+        case VAR_REG: writer_printf(w, "$var reg %" PRIu32 " %s ", reg->width, id); break;
+        case VAR_WIRE: writer_printf(w, "$var wire %" PRIu32 " %s ", reg->width, id); break;
     }
     writer_bytes(w, serialized, strlen(serialized));
     writer_bytes(w, " $end\n", 6u);
@@ -909,7 +909,7 @@ static void writer_close_file(writer_t* w) {
     w->format = FORMAT_NONE;
 }
 
-static int writer_open_resolved(writer_t* w, const char* path);
+static int32_t writer_open_resolved(writer_t* w, const char* path);
 
 // LLG_SIM_WAVE_FILE replaces the requested name; a relative result is placed
 // under LLG_SIM_OUT_DIR (created by runtime initialization).
@@ -927,7 +927,7 @@ static char* wave_output_path(const char* requested) {
     return joined;
 }
 
-static int writer_open(writer_t* w, const char* requested) {
+static int32_t writer_open(writer_t* w, const char* requested) {
     if (w->format != FORMAT_NONE) {
         wave_error("$dumpfile cannot change `%s` to `%s` after writing started",
                    w->path, requested);
@@ -938,14 +938,14 @@ static int writer_open(writer_t* w, const char* requested) {
         wave_error("out of memory while opening `%s`", requested);
         return 0;
     }
-    int ok = writer_open_resolved(w, path);
+    int32_t ok = writer_open_resolved(w, path);
     free(path);
     return ok;
 }
 
 // `.fst` (any case) selects FST; every other name is a VCD file, like the
 // LRM's own `dump1.dump` and `verilog.dump` examples (S47-D7).
-static int writer_open_resolved(writer_t* w, const char* path) {
+static int32_t writer_open_resolved(writer_t* w, const char* path) {
     w->format = extension_is(path_extension(path), ".fst") ? FORMAT_FST : FORMAT_VCD;
     w->path = wave_strdup(path);
     if (!w->path) {
@@ -971,7 +971,7 @@ static int writer_open_resolved(writer_t* w, const char* path) {
     return !llg_atomic_int_load(&g_wave.error);
 }
 
-static int writer_write_header(writer_t* w) {
+static int32_t writer_write_header(writer_t* w) {
     if (w->header_written) return 1;
     w->in_header = 1;
     if (w->format == FORMAT_VCD) vcd_header(w);
@@ -981,7 +981,7 @@ static int writer_write_header(writer_t* w) {
     return !llg_atomic_int_load(&g_wave.error);
 }
 
-static int ensure_writer_open(writer_t* w) {
+static int32_t ensure_writer_open(writer_t* w) {
     return w->format != FORMAT_NONE || writer_open(w, "dump.vcd");
 }
 
@@ -1078,7 +1078,7 @@ static void vcd_off_values(writer_t* w) {
 #ifndef LLG_WAVE_DELTAS
 // Whether two snapshots of one registration hold the same bit states. The
 // neutral word reads are inline in every value backend.
-static int same_states(sv4_t a, sv4_t b) {
+static int32_t same_states(sv4_t a, sv4_t b) {
     size_t words = llg_sv4_words(a);
     for (size_t word = 0; word < words; word++) {
         if (llg_sv4_word(a, word, LLG_SV4_BITS) != llg_sv4_word(b, word, LLG_SV4_BITS) ||
@@ -1092,7 +1092,7 @@ static int same_states(sv4_t a, sv4_t b) {
 // Whether an end-of-step record repeats the last value written for its
 // identifier code (S47-D14). Checkpoint records are always written; an event
 // has no value, so each of its records is a change.
-static int writer_repeats(const writer_t* w, const wave_event_t* e) {
+static int32_t writer_repeats(const writer_t* w, const wave_event_t* e) {
     if (e->snapshot || !w->written) return 0;
     const written_value_t* last = &w->written[e->first_reg];
     if (!last->known) return 0;
@@ -1229,12 +1229,12 @@ static void process_event(writer_t* w, wave_event_t* e) {
 }
 
 #ifndef LLG_WAVE_DELTAS
-static int batch_before(const wave_event_t* a, const wave_event_t* b) {
+static int32_t batch_before(const wave_event_t* a, const wave_event_t* b) {
     if (a->first_reg != b->first_reg) return a->first_reg < b->first_reg;
     return a->arg < b->arg;
 }
 
-static int batch_compare(const void* lhs, const void* rhs) {
+static int32_t batch_compare(const void* lhs, const void* rhs) {
     const wave_event_t* a = (const wave_event_t*)lhs;
     const wave_event_t* b = (const wave_event_t*)rhs;
     return batch_before(a, b) ? -1 : batch_before(b, a) ? 1 : 0;
@@ -1340,7 +1340,7 @@ static LLG_THREAD_RETURN writer_thread(void* unused) {
     return LLG_THREAD_RESULT;
 }
 
-static int start_worker(void) {
+static int32_t start_worker(void) {
     if (g_wave.worker_started) return 1;
     if (llg_atomic_int_load(&g_wave.error)) return 0;
     if (!freeze_registrations()) return 0;
@@ -1367,7 +1367,7 @@ static void enqueue_simple(event_kind_t kind, uint64_t now, uint64_t arg) {
 
 // Capture an independent snapshot before publishing it to the writer thread.
 // The destination event is newly initialized and owns no previous snapshot.
-static int capture_sv4(wave_event_t* event, const sv4_t* value) {
+static int32_t capture_sv4(wave_event_t* event, const sv4_t* value) {
     if (llg_sv4_width(*value) >= LLG_SUPPORTED_WIDTH_LIMIT) {
         wave_error("packed source width reaches supported limit");
         return 0;
@@ -1377,7 +1377,7 @@ static int capture_sv4(wave_event_t* event, const sv4_t* value) {
 }
 
 // The change record of one registration's current value.
-static int fill_change(wave_event_t* event, const registration_t* reg) {
+static int32_t fill_change(wave_event_t* event, const registration_t* reg) {
     switch ((var_kind_t)reg->var_kind) {
         case VAR_REAL:
             event->kind = EV_CHANGE_REAL;
@@ -1484,7 +1484,7 @@ static void start_dump(uint64_t now) {
 // state it ends in, with the final values. A dump switched off and on again
 // within the step (or the reverse) writes no checkpoint for it.
 static void apply_controls(uint64_t now) {
-    int on = g_wave.dump_state == DUMP_ON;
+    int32_t on = g_wave.dump_state == DUMP_ON;
     if (g_wave.step_state == DUMP_ON) {
         flush_dirty(now);
         if (!on) enqueue_simple(EV_OFF, now, 0);
@@ -1518,7 +1518,7 @@ static void free_state(void) {
     memset(&g_wave, 0, sizeof(g_wave));
 }
 
-int llg_wave_model_init(uint64_t precision_fs) {
+int32_t llg_wave_model_init(uint64_t precision_fs) {
     if (g_wave.initialized) {
         llg_msg(LLG_MSG_WAVEFORM, NULL, "model initialized twice without close");
         return -1;
@@ -1546,9 +1546,9 @@ int llg_wave_model_init(uint64_t precision_fs) {
     return 0;
 }
 
-static int register_value(const char* name, const char* scopes, void* ptr,
+static int32_t register_value(const char* name, const char* scopes, void* ptr,
                           uint32_t width, var_kind_t var_kind) {
-    int is_real = var_kind == VAR_REAL;
+    int32_t is_real = var_kind == VAR_REAL;
     if (!require_producer("registration")) return -1;
     if (g_wave.worker_started) {
         wave_error("signal `%s` registered after waveform writer startup",
@@ -1596,24 +1596,24 @@ static int register_value(const char* name, const char* scopes, void* ptr,
     return 0;
 }
 
-int llg_wave_register_sv4(const char* name, sv4_t* value, uint32_t width) {
+int32_t llg_wave_register_sv4(const char* name, sv4_t* value, uint32_t width) {
     return register_value(name, NULL, value, width, VAR_WIRE);
 }
 
-int llg_wave_register_real(const char* name, double* value) {
+int32_t llg_wave_register_real(const char* name, double* value) {
     return register_value(name, NULL, value, 64u, VAR_REAL);
 }
 
-int llg_wave_register_scoped_sv4(const char* name, const char* scopes, sv4_t* value,
+int32_t llg_wave_register_scoped_sv4(const char* name, const char* scopes, sv4_t* value,
                                  uint32_t width) {
     return register_value(name, scopes, value, width, VAR_REG);
 }
 
-int llg_wave_register_scoped_real(const char* name, const char* scopes, double* value) {
+int32_t llg_wave_register_scoped_real(const char* name, const char* scopes, double* value) {
     return register_value(name, scopes, value, 64u, VAR_REAL);
 }
 
-int llg_wave_register_event(const char* name, const char* scopes,
+int32_t llg_wave_register_event(const char* name, const char* scopes,
                             llg_event_object_t* event) {
     return register_value(name, scopes, event, 1u, VAR_EVENT);
 }
@@ -1678,7 +1678,7 @@ void llg_wave_dumpvars_select(uint64_t now, uint32_t depth,
     }
 }
 
-int llg_wave_start(const char* path, uint32_t depth, const char* const* names,
+int32_t llg_wave_start(const char* path, uint32_t depth, const char* const* names,
                    uint32_t name_count) {
     if (!require_producer("waveform start")) return -1;
     if (!path || g_wave.driver_selection) {
@@ -1793,7 +1793,7 @@ void llg_wave_changed_real(const double* ptr) { mark_changed(ptr); }
 
 void llg_wave_changed_event(const llg_event_object_t* ptr) { mark_changed(ptr); }
 
-int llg_wave_close(uint64_t now) {
+int32_t llg_wave_close(uint64_t now) {
     if (!g_wave.initialized) return 0;
     if (!require_producer("waveform close")) return -1;
     // Final procedures belong to the last time step: its pending start or
@@ -1804,7 +1804,7 @@ int llg_wave_close(uint64_t now) {
         join_worker();
     }
     print_deferred_report();
-    int result = llg_atomic_int_load(&g_wave.error) ? -1 : 0;
+    int32_t result = llg_atomic_int_load(&g_wave.error) ? -1 : 0;
     free_state();
     return result;
 }

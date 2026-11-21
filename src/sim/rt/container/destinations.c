@@ -2,19 +2,19 @@
 void llg_dyn_value_get_nested_to(sv4_t* dst, const llg_dyn_value_array_t* array, const sv4_t* indices, size_t count) {
     sv4_replace(dst, llg_dyn_value_get_nested(array, indices, count));
 }
-void llg_fixed_stream_source_to(sv4_t* dst, const sv4_t* values, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int selector_kind, const sv4_t* first, const sv4_t* second) {
+void llg_fixed_stream_source_to(sv4_t* dst, const sv4_t* values, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int32_t selector_kind, const sv4_t* first, const sv4_t* second) {
     sv4_replace(dst, llg_fixed_stream_source(values, declaration_left, declaration_right, element_width, *fallback, selector_kind, *first, *second));
 }
-void llg_stream_unpack_source_to(sv4_t* dst, const sv4_t* value, uint64_t bits, uint32_t slice, int right_to_left) {
+void llg_stream_unpack_source_to(sv4_t* dst, const sv4_t* value, uint64_t bits, uint32_t slice, int32_t right_to_left) {
     sv4_replace(dst, llg_stream_unpack_source(*value, bits, slice, right_to_left));
 }
-void llg_fixed_image_stream_source_to(sv4_t* dst, const sv4_t* image, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int selector_kind, const sv4_t* first, const sv4_t* second) {
+void llg_fixed_image_stream_source_to(sv4_t* dst, const sv4_t* image, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int32_t selector_kind, const sv4_t* first, const sv4_t* second) {
     sv4_replace(dst, llg_fixed_image_stream_source(*image, declaration_left, declaration_right, element_width, *fallback, selector_kind, *first, *second));
 }
-void llg_stream_to_fixed_to(sv4_t* dst, const sv4_t* value, uint32_t width, int is_signed) {
+void llg_stream_to_fixed_to(sv4_t* dst, const sv4_t* value, uint32_t width, int32_t is_signed) {
     sv4_replace(dst, llg_stream_to_fixed(*value, width, is_signed));
 }
-void llg_stream_cast_fixed_to(sv4_t* dst, const sv4_t* value, uint32_t width, int is_signed) {
+void llg_stream_cast_fixed_to(sv4_t* dst, const sv4_t* value, uint32_t width, int32_t is_signed) {
     sv4_replace(dst, llg_stream_cast_fixed(*value, width, is_signed));
 }
 void llg_queue_value_get_to(sv4_t* dst, const llg_queue_value_array_t* queue, const sv4_t* index) {
@@ -23,19 +23,19 @@ void llg_queue_value_get_to(sv4_t* dst, const llg_queue_value_array_t* queue, co
 void llg_queue_value_get_nested_to(sv4_t* dst, const llg_queue_value_array_t* queue, const sv4_t* indices, size_t count) {
     sv4_replace(dst, llg_queue_value_get_nested(queue, indices, count));
 }
-void llg_dyn_stream_to(sv4_t* dst, const llg_dyn_array_t* array, uint32_t slice, int right_to_left, int selector_kind, const sv4_t* first, const sv4_t* second) {
+void llg_dyn_stream_to(sv4_t* dst, const llg_dyn_array_t* array, uint32_t slice, int32_t right_to_left, int32_t selector_kind, const sv4_t* first, const sv4_t* second) {
     sv4_replace(dst, llg_dyn_stream(array, slice, right_to_left, selector_kind, *first, *second));
 }
 void llg_dyn_get_to(sv4_t* dst, const llg_dyn_array_t* array, const sv4_t* index) {
     sv4_replace(dst, llg_dyn_get(array, *index));
 }
-void llg_dyn_reduce_to(sv4_t* dst, const llg_dyn_array_t* array, int operation) {
+void llg_dyn_reduce_to(sv4_t* dst, const llg_dyn_array_t* array, int32_t operation) {
     sv4_replace(dst, llg_dyn_reduce(array, operation));
 }
-void llg_dyn_reduce_with_to(sv4_t* dst, const llg_dyn_array_t* array, int operation, uint32_t result_width, int8_t result_signed, int result_two_state, llg_container_eval_fn eval, void* context) {
+void llg_dyn_reduce_with_to(sv4_t* dst, const llg_dyn_array_t* array, int32_t operation, uint32_t result_width, int8_t result_signed, int32_t result_two_state, llg_container_eval_fn eval, void* context) {
     sv4_replace(dst, llg_dyn_reduce_with(array, operation, result_width, result_signed, result_two_state, eval, context));
 }
-void llg_queue_stream_to(sv4_t* dst, const llg_queue_t* queue, uint32_t slice, int right_to_left, int selector_kind, const sv4_t* first, const sv4_t* second) {
+void llg_queue_stream_to(sv4_t* dst, const llg_queue_t* queue, uint32_t slice, int32_t right_to_left, int32_t selector_kind, const sv4_t* first, const sv4_t* second) {
     sv4_replace(dst, llg_queue_stream(queue, slice, right_to_left, selector_kind, *first, *second));
 }
 void llg_queue_get_to(sv4_t* dst, const llg_queue_t* queue, const sv4_t* index) {
@@ -53,10 +53,10 @@ void llg_queue_front_to(sv4_t* dst, const llg_queue_t* queue) {
 void llg_queue_back_to(sv4_t* dst, const llg_queue_t* queue) {
     sv4_replace(dst, llg_queue_back(queue));
 }
-void llg_queue_reduce_to(sv4_t* dst, const llg_queue_t* queue, int operation) {
+void llg_queue_reduce_to(sv4_t* dst, const llg_queue_t* queue, int32_t operation) {
     sv4_replace(dst, llg_queue_reduce(queue, operation));
 }
-void llg_queue_reduce_with_to(sv4_t* dst, const llg_queue_t* queue, int operation, uint32_t result_width, int8_t result_signed, int result_two_state, llg_container_eval_fn eval, void* context) {
+void llg_queue_reduce_with_to(sv4_t* dst, const llg_queue_t* queue, int32_t operation, uint32_t result_width, int8_t result_signed, int32_t result_two_state, llg_container_eval_fn eval, void* context) {
     sv4_replace(dst, llg_queue_reduce_with(queue, operation, result_width, result_signed, result_two_state, eval, context));
 }
 void llg_queue_cell_read_to(sv4_t* dst, const void* cell) {
@@ -74,10 +74,10 @@ void llg_assoc_value_get_nested_integral_to(sv4_t* dst, const llg_assoc_value_t*
 void llg_assoc_value_at_to(sv4_t* dst, const llg_assoc_t* array, size_t index) {
     sv4_replace(dst, llg_assoc_value_at(array, index));
 }
-void llg_assoc_reduce_to(sv4_t* dst, const llg_assoc_t* array, int operation) {
+void llg_assoc_reduce_to(sv4_t* dst, const llg_assoc_t* array, int32_t operation) {
     sv4_replace(dst, llg_assoc_reduce(array, operation));
 }
-void llg_assoc_reduce_with_to(sv4_t* dst, const llg_assoc_t* array, int operation, uint32_t result_width, int8_t result_signed, int result_two_state, llg_container_eval_fn eval, void* context) {
+void llg_assoc_reduce_with_to(sv4_t* dst, const llg_assoc_t* array, int32_t operation, uint32_t result_width, int8_t result_signed, int32_t result_two_state, llg_container_eval_fn eval, void* context) {
     sv4_replace(dst, llg_assoc_reduce_with(array, operation, result_width, result_signed, result_two_state, eval, context));
 }
 void llg_assoc_get_integral_to(sv4_t* dst, const llg_assoc_t* array, const sv4_t* key) {

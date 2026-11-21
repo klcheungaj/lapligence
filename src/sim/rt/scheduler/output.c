@@ -1,15 +1,15 @@
 
 // ── $display / $write ─────────────────────────────────────────────────────────
 
-static void llg_vprint(const char* fmt, va_list ap, int newline) {
+static void llg_vprint(const char* fmt, va_list ap, int32_t newline) {
     const char* p = fmt;
     while (*p) {
         char c = *p++;
         if (c == '%') {
             const char* spec_start = p - 1;
-            int has_width;
-            int width;
-            int zero;
+            int32_t has_width;
+            int32_t width;
+            int32_t zero;
             p = llg_parse_legacy_spec(p, &has_width, &width, &zero);
             c = *p;
             if (c) ++p;
@@ -78,27 +78,27 @@ void llg_write(const char* fmt, ...) {
     va_end(ap);
 }
 
-void llg_display_typed(const char* fmt, llg_fmt_arg_t* args, int n,
+void llg_display_typed(const char* fmt, llg_fmt_arg_t* args, int32_t n,
                        const char* scope) {
     change_check();
     llg_print_typed(fmt, args, n, scope, 1);
     llg_fmt_args_destroy(args, n);
 }
 
-void llg_write_typed(const char* fmt, llg_fmt_arg_t* args, int n,
+void llg_write_typed(const char* fmt, llg_fmt_arg_t* args, int32_t n,
                      const char* scope) {
     change_check();
     llg_print_typed(fmt, args, n, scope, 0);
     llg_fmt_args_destroy(args, n);
 }
 
-static int llg_system_allowed(void) {
+static int32_t llg_system_allowed(void) {
     const char* value = getenv("LLG_ALLOW_SYSTEM");
     return value && (!strcmp(value, "1") || !strcmp(value, "true") ||
                      !strcmp(value, "yes") || !strcmp(value, "on"));
 }
 
-sv4_t llg_system(llg_string_t command, int has_command) {
+sv4_t llg_system(llg_string_t command, int32_t has_command) {
     if (has_command != 0 && has_command != 1) {
         llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid internal `$system` argument marker");
         llg_last_failure = 1;
@@ -134,7 +134,7 @@ sv4_t llg_system(llg_string_t command, int has_command) {
 
     // IEEE 1800-2009 §20.18 specifies the NULL argument for the omitted form.
     // Keep it distinct from the explicit empty C command string.
-    int status;
+    int32_t status;
     if (!has_command) {
         llg_string_destroy(&command);
         status = system(NULL);

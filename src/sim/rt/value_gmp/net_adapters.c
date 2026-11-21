@@ -4,7 +4,7 @@ static uint64_t extract(const uint64_t* plane, uint32_t width, uint32_t offset) 
     if (!plane || offset >= width)
         return 0;
     size_t word = offset / 64u;
-    unsigned shift = offset % 64u;
+    uint32_t shift = offset % 64u;
     uint64_t result = plane[word] >> shift;
     if (shift && word + 1u < ((size_t)width + 63u) / 64u)
         result |= plane[word + 1u] << (64u - shift);
@@ -20,9 +20,9 @@ static void store_word(g4_t* out, size_t i, uint64_t a, uint64_t b) {
         plane[i] = b;
 }
 static g4_t resolve(const g4_t* const* drivers, const uint8_t* strength0,
-                     const uint8_t* strength1, const int* indices, int count,
-                     uint32_t offset, uint32_t width, int8_t sign, int mode) {
-    int strengths = strength0 && strength1;
+                     const uint8_t* strength1, const int32_t* indices, int32_t count,
+                     uint32_t offset, uint32_t width, int8_t sign, int32_t mode) {
+    int32_t strengths = strength0 && strength1;
     /* Most resolved nets are known: start with the A plane only and promote B
      * once, at the first word that carries X/Z, instead of allocating both
      * planes and shrinking the canonical result afterwards. */
@@ -38,15 +38,15 @@ static g4_t resolve(const g4_t* const* drivers, const uint8_t* strength0,
             continue;
         }
         if (strengths && mode >= LLG_GMP_RESOLVE_TRI0 && mode <= LLG_GMP_RESOLVE_SUPPLY1) {
-            unsigned level = mode <= LLG_GMP_RESOLVE_TRI1 ? LLG_GMP_STRENGTH_PULL
+            uint32_t level = mode <= LLG_GMP_RESOLVE_TRI1 ? LLG_GMP_STRENGTH_PULL
                                                           : LLG_GMP_STRENGTH_SUPPLY;
             if (mode == LLG_GMP_RESOLVE_TRI0 || mode == LLG_GMP_RESOLVE_SUPPLY0)
                 known0[level] = possible0[level] = mask;
             else
                 known1[level] = possible1[level] = mask;
         }
-        for (int selected = 0; selected < count; ++selected) {
-            int d = indices ? indices[selected] : selected;
+        for (int32_t selected = 0; selected < count; ++selected) {
+            int32_t d = indices ? indices[selected] : selected;
             if (d < 0)
                 llg_gmp_sv4_fail("invalid net driver index");
             const g4_t* v = drivers[d];
@@ -62,7 +62,7 @@ static g4_t resolve(const g4_t* const* drivers, const uint8_t* strength0,
                 any1 |= k1;
                 anyx |= x;
             } else {
-                unsigned s0 = strength0[d], s1 = strength1[d];
+                uint32_t s0 = strength0[d], s1 = strength1[d];
                 if (s0 > LLG_GMP_STRENGTH_SUPPLY || s1 > LLG_GMP_STRENGTH_SUPPLY)
                     llg_gmp_sv4_fail("invalid net drive strength");
                 if (s0) {
@@ -98,7 +98,7 @@ static g4_t resolve(const g4_t* const* drivers, const uint8_t* strength0,
             ones = 0;
             /* Opposite endpoints at greater strength prevent a known result.
              * Only the wired mode's dominant value may also win an equal tie. */
-            for (unsigned s = LLG_GMP_STRENGTH_SUPPLY; s; --s) {
+            for (uint32_t s = LLG_GMP_STRENGTH_SUPPLY; s; --s) {
                 zeros |= known0[s] & ~stronger1 &
                          (mode == LLG_GMP_RESOLVE_WAND ? UINT64_MAX : ~possible1[s]);
                 ones |= known1[s] & ~stronger0 &
@@ -115,19 +115,19 @@ static g4_t resolve(const g4_t* const* drivers, const uint8_t* strength0,
     return out;
 }
 
-g4_t llg_gmp_sv4_resolve(const g4_t* const* drivers, int count, uint32_t width,
-                          int8_t sign, int mode) {
+g4_t llg_gmp_sv4_resolve(const g4_t* const* drivers, int32_t count, uint32_t width,
+                          int8_t sign, int32_t mode) {
     return resolve(drivers, NULL, NULL, NULL, count, 0, width, sign, mode);
 }
 g4_t llg_gmp_sv4_resolve_strengths(const g4_t* const* drivers, const uint8_t* strength0,
-                                    const uint8_t* strength1, int count, uint32_t width,
-                                    int8_t sign, int mode) {
+                                    const uint8_t* strength1, int32_t count, uint32_t width,
+                                    int8_t sign, int32_t mode) {
     return resolve(drivers, strength0, strength1, NULL, count, 0, width, sign, mode);
 }
 g4_t llg_gmp_sv4_resolve_strengths_range(const g4_t* const* drivers, const uint8_t* strength0,
-                                          const uint8_t* strength1, const int* indices, int count,
+                                          const uint8_t* strength1, const int32_t* indices, int32_t count,
                                           uint32_t source_width, uint32_t offset, uint32_t width,
-                                          int8_t sign, int mode) {
+                                          int8_t sign, int32_t mode) {
     g4_width_check(source_width);
     g4_width_check(width);
     if ((!indices && count) || count < 0 || offset > source_width || width > source_width - offset)
@@ -135,7 +135,7 @@ g4_t llg_gmp_sv4_resolve_strengths_range(const g4_t* const* drivers, const uint8
     return resolve(drivers, strength0, strength1, indices, count, offset, width, sign, mode);
 }
 g4_t llg_gmp_sv4_enum_navigate(g4_t current, g4_t step, const g4_t* values, uint32_t count,
-                                g4_t default_value, int direction) {
+                                g4_t default_value, int32_t direction) {
     if (!values || !count)
         return llg_gmp_sv4_clone(&default_value);
     uint32_t found = count;
@@ -159,7 +159,7 @@ g4_t llg_gmp_sv4_udp_eval(const uint8_t* rows, size_t row_count, size_t input_co
         const uint8_t* fields = rows + row * stride;
         size_t input = 0;
         for (; input < input_count; ++input) {
-            unsigned state = llg_gmp_sv4_state(*inputs[input], 0);
+            uint32_t state = llg_gmp_sv4_state(*inputs[input], 0);
             if (state == 3)
                 state = 2;
             if (!(fields[input] & (1u << state)))

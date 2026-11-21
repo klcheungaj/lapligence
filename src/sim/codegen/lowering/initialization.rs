@@ -215,8 +215,8 @@ impl<'a> Codegen<'a> {
             });
         }
         self.verify_static_effect_sites()?;
-        // Value and statement initializers share one schedule: each runs
-        // after the static declarations it reads (SV §§6.21, 10.5).
+        // Value and statement initializers share one schedule, ordered by
+        // scope and position (SV §§6.8, 6.21, 10.5; decision S22-D8).
         // String declaration values are assignments in the same schedule.
         let mut string_values = Vec::new();
         for (object, declaration) in &self.object_initializers {

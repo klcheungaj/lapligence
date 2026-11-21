@@ -8,15 +8,15 @@
 
 /* ── slots ──────────────────────────────────────────────────────────────── */
 
-static int rts_slot(const llg_vpi_slot_t* slot) {
+static int32_t rts_slot(const llg_vpi_slot_t* slot) {
     return slot->kind == SLOT_TIMEQ || slot->kind == SLOT_UDPDEFN || slot->kind == SLOT_UDPIO ||
            slot->kind == SLOT_TABLEENTRY || slot->kind == SLOT_UDPINIT || slot->kind == SLOT_THREAD ||
            slot->kind == SLOT_FRAME || slot->kind == SLOT_AUTO;
 }
 
-static int rts_auto_type(const llg_vpi_slot_t* slot);
+static int32_t rts_auto_type(const llg_vpi_slot_t* slot);
 
-static int rts_type(const llg_vpi_slot_t* slot) {
+static int32_t rts_type(const llg_vpi_slot_t* slot) {
     switch (slot->kind) {
         case SLOT_TIMEQ: return vpiTimeQueue;
         case SLOT_UDPDEFN: return vpiUdpDefn;
@@ -31,7 +31,7 @@ static int rts_type(const llg_vpi_slot_t* slot) {
     }
 }
 
-static int rts_identity(const llg_vpi_slot_t* slot, uint64_t identity[4]) {
+static int32_t rts_identity(const llg_vpi_slot_t* slot, uint64_t identity[4]) {
     if (!rts_slot(slot)) return 0;
     identity[0] = 2u + slot->kind;
     identity[1] = (uint64_t)(uint32_t)slot->aux;
@@ -57,7 +57,7 @@ static vpiHandle rts_make(llg_vpi_slot_kind_t kind, uint32_t aux, int64_t left) 
 
 /* A list iterator over `count` handles, or NULL with an error when the
  * list could not be built. */
-static vpiHandle rts_list(int type, uintptr_t* items, uint32_t count, int failed) {
+static vpiHandle rts_list(int32_t type, uintptr_t* items, uint32_t count, int32_t failed) {
     if (failed) {
         free(items);
         vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
@@ -70,7 +70,7 @@ typedef struct {
     uintptr_t* items;
     uint32_t count;
     uint32_t capacity;
-    int failed;
+    int32_t failed;
 } rts_handles_t;
 
 static void rts_push(rts_handles_t* list, vpiHandle handle) {
@@ -171,10 +171,10 @@ static void rts_entry_value(const llg_vpi_slot_t* slot, p_vpi_value output) {
     memset(g_vpi.value_vector, 0, words * sizeof(*g_vpi.value_vector));
     for (uint32_t i = 0; i < count; ++i) {
         s_vpi_vecval* word = &g_vpi.value_vector[i / 4u];
-        PLI_UINT32 pair = ((PLI_UINT32)(unsigned char)symbols[i][0] << 8) |
-                          (PLI_UINT32)(unsigned char)symbols[i][1];
+        PLI_UINT32 pair = ((PLI_UINT32)(uint8_t)symbols[i][0] << 8) |
+                          (PLI_UINT32)(uint8_t)symbols[i][1];
         PLI_UINT32* half = (i % 4u) < 2u ? &word->aval : &word->bval;
-        unsigned shift = (i % 2u) == 0 ? 16u : 0u;
+        uint32_t shift = (i % 2u) == 0 ? 16u : 0u;
         *half |= pair << shift;
     }
     output->value.vector = g_vpi.value_vector;
@@ -183,9 +183,9 @@ static void rts_entry_value(const llg_vpi_slot_t* slot, p_vpi_value output) {
 /* ── time queue (37.76) ─────────────────────────────────────────────────── */
 
 /* The absolute time a pending time callback runs at. */
-static int rts_cb_time(const llg_vpi_cb_t* cb, uint64_t* time) {
+static int32_t rts_cb_time(const llg_vpi_cb_t* cb, uint64_t* time) {
     if (cb->kind != CB_TIME || cb->removed) return 0;
-    int ok;
+    int32_t ok;
     uint64_t ticks = ticks_from_time(&cb->time, cb->scope, &ok);
     if (!ok || ticks > UINT64_MAX - cb->registered_at) return 0;
     *time = cb->registered_at + ticks;
@@ -194,7 +194,7 @@ static int rts_cb_time(const llg_vpi_cb_t* cb, uint64_t* time) {
 
 static vpiHandle rts_time_queues(void) {
     size_t count = 0;
-    int current = 0;
+    int32_t current = 0;
     uint64_t* times = llg_rt_pending_times(&count, &current);
     if (!times && count) return NULL;
     rts_handles_t list = {0};
@@ -212,7 +212,7 @@ static vpiHandle rts_time_queues(void) {
 /* The objects callbacks are placed on: prim terms, expressions, time
  * queues and statements (scopes included), the callback_owner class of
  * the catalog. */
-static int rts_callback_owner(int object_type) {
+static int32_t rts_callback_owner(int32_t object_type) {
     switch (object_type) {
         case vpiAssignStmt: case vpiAssignment: case vpiBegin: case vpiBitSelect:
         case vpiBitVar: case vpiBreak: case vpiByteVar: case vpiCase: case vpiChandleVar:
@@ -242,12 +242,12 @@ static int rts_callback_owner(int object_type) {
 }
 
 /* Whether two handles name the same object, without raising errors. */
-static int rts_same_object(vpiHandle a, vpiHandle b) {
+static int32_t rts_same_object(vpiHandle a, vpiHandle b) {
     uint32_t ai = LLG_VPI_NONE, bi = LLG_VPI_NONE;
     llg_vpi_slot_t* first = decode_handle(a, &ai);
     llg_vpi_slot_t* second = decode_handle(b, &bi);
     if (!first || !second) return 0;
-    int dynamic = dyn_compare(first, ai, second, bi);
+    int32_t dynamic = dyn_compare(first, ai, second, bi);
     if (dynamic >= 0) return dynamic;
     uint64_t x[4], y[4];
     handle_identity(first, ai, x);
@@ -260,10 +260,10 @@ static int rts_same_object(vpiHandle a, vpiHandle b) {
  * callbacks belong to their time queue. */
 static vpiHandle rts_callbacks(vpiHandle reference, const llg_vpi_slot_t* slot) {
     rts_handles_t list = {0};
-    int queue = slot && slot->kind == SLOT_TIMEQ;
+    int32_t queue = slot && slot->kind == SLOT_TIMEQ;
     for (llg_vpi_cb_t* cb = g_vpi.cbs; cb; cb = cb->next) {
         if (cb->removed) continue;
-        int listed;
+        int32_t listed;
         if (!reference) {
             listed = cb->kind != CB_TIME && !cb->data.obj;
         } else if (queue) {
@@ -281,7 +281,7 @@ static vpiHandle rts_callbacks(vpiHandle reference, const llg_vpi_slot_t* slot) 
 /* ── vpiUse (37.54) ─────────────────────────────────────────────────────── */
 
 /* The parent of every code row, built on the first vpiUse query. */
-static int rts_code_parents(void) {
+static int32_t rts_code_parents(void) {
     if (g_vpi.code_parents) return 1;
     (void)code_nodes();
     if (!g_vpi.code || !g_vpi.code->node_count) return 0;
@@ -346,8 +346,8 @@ static vpiHandle rts_uses(const llg_vpi_slot_t* slot) {
     llg_vpi_link_items_t items;
     memset(&items, 0, sizeof(items));
     llg_vpi_span_t query;
-    int one_bit = 0;
-    int spanned = slot->kind != SLOT_CODE && slot_span(slot, &query, &one_bit);
+    int32_t one_bit = 0;
+    int32_t spanned = slot->kind != SLOT_CODE && slot_span(slot, &query, &one_bit);
     if (links_ready()) {
         for (size_t i = links_of(row); i < g_vpi.link_count && g_vpi.links[i].row == row; ++i) {
             const llg_vpi_link_t* link = &g_vpi.links[i];
@@ -387,7 +387,7 @@ static vpiHandle rts_uses(const llg_vpi_slot_t* slot) {
 }
 
 /* The simple expressions of 37.54. */
-static int rts_simple_expr(int object_type) {
+static int32_t rts_simple_expr(int32_t object_type) {
     switch (object_type) {
         case vpiBitSelect: case vpiBitVar: case vpiByteVar: case vpiChandleVar:
         case vpiClassVar: case vpiEnumNet: case vpiEnumVar: case vpiIntVar:
@@ -412,7 +412,7 @@ static int rts_simple_expr(int object_type) {
  * so a handle to an ended thread or frame fails with an error and nothing
  * points into scheduler or model memory (ADV-019-A02). */
 
-int llg_vpi_frames_on;
+int32_t llg_vpi_frames_on;
 uint32_t llg_vpi_next_origin;
 
 #define RTS_ROW_UNRESOLVED (LLG_VPI_NONE - 1u)
@@ -447,15 +447,15 @@ static struct {
     uint32_t start_thread_cbs; /* live cbStartOfThread records */
     uint32_t start_frame_cbs;  /* live cbStartOfFrame records */
     uint32_t end_frame_cbs;    /* live cbEndOfFrame records */
-    int hooked;
+    int32_t hooked;
     /* The thread whose cbEndOfThread callbacks run: its handles stay
      * valid until they return. */
-    int dying;
-    int dying_slot;
+    int32_t dying;
+    int32_t dying_slot;
     uint64_t dying_identity;
 } rts;
 
-static void rts_thread_event(int slot, uint64_t identity, int event);
+static void rts_thread_event(int32_t slot, uint64_t identity, int32_t event);
 
 static void rts_enable(void) {
     if (!g_vpi.objects || rts.hooked) return;
@@ -464,7 +464,7 @@ static void rts_enable(void) {
     llg_rt_set_thread_hook(rts_thread_event);
 }
 
-static rts_stack_t* rts_stack(int slot, uint64_t identity, int create) {
+static rts_stack_t* rts_stack(int32_t slot, uint64_t identity, int32_t create) {
     if (slot < -1) return NULL;
     uint32_t index = (uint32_t)(slot + 1);
     if (index >= rts.stack_count) {
@@ -487,14 +487,14 @@ static rts_stack_t* rts_stack(int slot, uint64_t identity, int create) {
     return stack;
 }
 
-static int rts_thread_valid(int slot, uint64_t identity) {
+static int32_t rts_thread_valid(int32_t slot, uint64_t identity) {
     if (rts.dying && slot == rts.dying_slot && identity == rts.dying_identity) return 1;
     return llg_rt_thread_live(slot, identity) == 2;
 }
 
 /* The frame named by (slot, identity, serial) and its depth, or NULL once
  * that frame ended. */
-static rts_frame_t* rts_frame_find(int slot, uint64_t identity, uint64_t serial,
+static rts_frame_t* rts_frame_find(int32_t slot, uint64_t identity, uint64_t serial,
                                    uint32_t* depth) {
     if (slot >= 0 && !(rts.dying && slot == rts.dying_slot && identity == rts.dying_identity) &&
         !llg_rt_thread_live(slot, identity))
@@ -554,21 +554,21 @@ static const llg_vpi_auto_t* rts_auto(const llg_vpi_slot_t* slot, rts_frame_t** 
     return &rts_auto_table(frame)[slot->right];
 }
 
-static int rts_is_part(const llg_vpi_slot_t* slot);
+static int32_t rts_is_part(const llg_vpi_slot_t* slot);
 typedef struct rts_part rts_part_t;
-static int rts_part_type(const llg_vpi_slot_t* slot);
+static int32_t rts_part_type(const llg_vpi_slot_t* slot);
 
-static int rts_auto_type(const llg_vpi_slot_t* slot) {
+static int32_t rts_auto_type(const llg_vpi_slot_t* slot) {
     const llg_vpi_auto_t* entry = rts_auto(slot, NULL);
     if (entry && rts_is_part(slot)) return rts_part_type(slot);
     return entry ? entry->type : vpiUndefined;
 }
 
-static vpiHandle rts_thread_handle(int slot, uint64_t identity) {
+static vpiHandle rts_thread_handle(int32_t slot, uint64_t identity) {
     return rts_make(SLOT_THREAD, (uint32_t)slot, (int64_t)identity);
 }
 
-static vpiHandle rts_frame_handle(int slot, uint64_t identity, uint64_t serial) {
+static vpiHandle rts_frame_handle(int32_t slot, uint64_t identity, uint64_t serial) {
     vpiHandle handle = rts_make(SLOT_FRAME, (uint32_t)slot, (int64_t)identity);
     llg_vpi_slot_t* frame = handle ? decode_handle(handle, NULL) : NULL;
     if (frame) frame->element = serial;
@@ -576,15 +576,15 @@ static vpiHandle rts_frame_handle(int slot, uint64_t identity, uint64_t serial) 
 }
 
 /* The innermost frame of (slot, identity), or NULL. */
-static vpiHandle rts_top_frame(int slot, uint64_t identity) {
+static vpiHandle rts_top_frame(int32_t slot, uint64_t identity) {
     rts_stack_t* stack = rts_stack(slot, identity, 0);
     if (!stack || !stack->depth) return NULL;
     return rts_frame_handle(slot, identity, stack->frames[stack->depth - 1].serial);
 }
 
 /* A thread or frame handle whose object still exists; otherwise an error. */
-static int rts_alive(const llg_vpi_slot_t* slot) {
-    int slot_index = slot->aux;
+static int32_t rts_alive(const llg_vpi_slot_t* slot) {
+    int32_t slot_index = slot->aux;
     uint64_t identity = (uint64_t)slot->left;
     if (slot->kind == SLOT_THREAD) {
         if (rts_thread_valid(slot_index, identity)) return 1;
@@ -605,14 +605,14 @@ static int rts_alive(const llg_vpi_slot_t* slot) {
     return 1;
 }
 
-static int rts_runtime_slot(const llg_vpi_slot_t* slot) {
+static int32_t rts_runtime_slot(const llg_vpi_slot_t* slot) {
     return slot->kind == SLOT_THREAD || slot->kind == SLOT_FRAME || slot->kind == SLOT_AUTO;
 }
 
 /* The automatic variables of a frame (37.39 detail 1), in table order. */
 static vpiHandle rts_automatics(const llg_vpi_slot_t* frame_slot) {
     /* Copied first: making handles may move the slot table. */
-    int thread_slot = frame_slot->aux;
+    int32_t thread_slot = frame_slot->aux;
     int64_t identity = frame_slot->left;
     uint64_t serial = frame_slot->element;
     rts_frame_t* frame = rts_frame_find(thread_slot, (uint64_t)identity, serial, NULL);
@@ -647,7 +647,7 @@ static vpiHandle rts_automatics(const llg_vpi_slot_t* frame_slot) {
  * array member, `span` (element offset + 1, row-major) names one of its
  * elements. Parts are read and written through the variable's storage;
  * nothing is kept per part. */
-static int rts_is_part(const llg_vpi_slot_t* slot) { return slot->count || slot->lsb || slot->span; }
+static int32_t rts_is_part(const llg_vpi_slot_t* slot) { return slot->count || slot->lsb || slot->span; }
 
 struct rts_part {
     const llg_vpi_auto_t* entry;
@@ -660,7 +660,7 @@ struct rts_part {
     uint64_t member_element;            /* element of an array member, or LLG_VPI_NO_ELEMENT */
     uint32_t bit;                       /* image bits of a packed part */
     uint32_t width;
-    int type;
+    int32_t type;
 };
 
 /* The element count of an unpacked array typespec, 0 without ranges. */
@@ -676,7 +676,7 @@ static LLG_OUTLYING uint64_t rts_typespec_elements(const llg_vpi_typespec_t* typ
 }
 
 /* The variable type of a packed element typespec (37.17). */
-static LLG_OUTLYING int rts_typespec_var_type(const llg_vpi_typespec_t* typespec) {
+static LLG_OUTLYING int32_t rts_typespec_var_type(const llg_vpi_typespec_t* typespec) {
     switch (typespec ? typespec->type : 0) {
         case vpiIntTypespec: return vpiIntVar;
         case vpiByteTypespec: return vpiByteVar;
@@ -705,7 +705,7 @@ static const llg_vpi_typespec_t* rts_leaf_typespec(const llg_vpi_typespec_t* typ
 
 /* Whether automatic `entry` is a fixed-size array whose elements llg
  * serves (37.17 detail 4): one packed image, real cells or keyed cells. */
-static int rts_auto_fixed(const llg_vpi_auto_t* entry) {
+static int32_t rts_auto_fixed(const llg_vpi_auto_t* entry) {
     return entry->type == vpiArrayVar && entry->array_type == vpiStaticArray &&
            (entry->flags & RTS_AUTO_CELLS) && !(entry->flags & LLG_VPI_AUTO_NO_VALUE);
 }
@@ -743,7 +743,7 @@ static uint32_t rts_part_members(const rts_part_t* part, uint32_t* first) {
 }
 
 /* Resolve a part handle (or the variable itself) while its frame lives. */
-static int rts_part(const llg_vpi_slot_t* slot, rts_part_t* part) {
+static int32_t rts_part(const llg_vpi_slot_t* slot, rts_part_t* part) {
     memset(part, 0, sizeof(*part));
     part->element = LLG_VPI_NO_ELEMENT;
     part->member_element = LLG_VPI_NO_ELEMENT;
@@ -814,11 +814,11 @@ static int rts_part(const llg_vpi_slot_t* slot, rts_part_t* part) {
 
 /* Whether a part's typespec is an unpacked structure or union: no value of
  * its own (37.17 detail 11, 37.24 detail 1). */
-static int rts_part_unpacked_aggregate(const rts_part_t* part) {
+static int32_t rts_part_unpacked_aggregate(const rts_part_t* part) {
     return is_aggregate_typespec(part->typespec) && !(part->typespec->flags & LLG_VPI_TS_PACKED);
 }
 
-static int rts_part_type(const llg_vpi_slot_t* slot) {
+static int32_t rts_part_type(const llg_vpi_slot_t* slot) {
     rts_part_t part;
     return rts_part(slot, &part) ? part.type : vpiUndefined;
 }
@@ -827,7 +827,7 @@ static int rts_part_type(const llg_vpi_slot_t* slot) {
 static LLG_OUTLYING vpiHandle rts_part_make_at(const llg_vpi_slot_t* base, uint32_t count, uint32_t member,
                                   uint32_t span) {
     /* Copied first: making the handle may move the slot table. */
-    int thread_slot = base->aux;
+    int32_t thread_slot = base->aux;
     int64_t identity = base->left;
     uint64_t serial = base->element;
     int64_t index = base->right;
@@ -849,7 +849,7 @@ static vpiHandle rts_part_make(const llg_vpi_slot_t* base, uint32_t count, uint3
 }
 
 /* Whether a part is an unpacked array member (not one of its elements). */
-static LLG_OUTLYING int rts_part_array_member(const rts_part_t* part) {
+static LLG_OUTLYING int32_t rts_part_array_member(const rts_part_t* part) {
     return part->node && part->node->type == vpiRegArray &&
            part->member_element == LLG_VPI_NO_ELEMENT;
 }
@@ -867,7 +867,7 @@ static LLG_OUTLYING vpiHandle rts_member_element(const llg_vpi_slot_t* slot, con
 
 /* The row-major offset of the declared `indices` in array typespec
  * `typespec`, or 0 with an error. */
-static LLG_OUTLYING int rts_typespec_offset(const llg_vpi_typespec_t* typespec, const int64_t* indices,
+static LLG_OUTLYING int32_t rts_typespec_offset(const llg_vpi_typespec_t* typespec, const int64_t* indices,
                                uint32_t count, uint64_t* offset) {
     if (!typespec || typespec->type != vpiArrayTypespec || count != typespec->range_count) {
         vpi_error("LLG_VPI_INDEX", "wrong number of indices for the array");
@@ -925,7 +925,7 @@ static llg_vpi_shape_t rts_part_packed_shape(const rts_part_t* part) {
 
 /* The whole packed image a part lies in (an owned copy): the variable's
  * image, or the element's cell of an array kept in keyed cells. */
-static int rts_part_image(const rts_part_t* part, sv4_t* image) {
+static int32_t rts_part_image(const rts_part_t* part, sv4_t* image) {
     if (!part->storage) {
         vpi_error("LLG_VPI_VALUE", "this automatic variable is not declared yet in its frame");
         return 0;
@@ -962,7 +962,7 @@ static int rts_part_image(const rts_part_t* part, sv4_t* image) {
 }
 
 /* Whether a part has a value llg reads, else an error. */
-static int rts_part_has_value(const rts_part_t* part) {
+static int32_t rts_part_has_value(const rts_part_t* part) {
     if (rts_part_unpacked_aggregate(part)) {
         vpi_error("LLG_VPI_VALUE",
                   "an unpacked structure or union has no value; access its members (37.17 detail 11)");
@@ -1052,7 +1052,7 @@ static uint32_t rts_element_indices(const llg_vpi_auto_t* entry, uint64_t offset
 }
 
 /* The element offset of the declared indices, or 0 with an error. */
-static int rts_element_offset(const llg_vpi_auto_t* entry, const int64_t* indices, uint32_t count,
+static int32_t rts_element_offset(const llg_vpi_auto_t* entry, const int64_t* indices, uint32_t count,
                               uint64_t* offset) {
     const llg_vpi_typespec_t* typespec = typespec_ref(entry->typespec);
     if (!typespec || !typespec->range_count) {
@@ -1120,12 +1120,12 @@ static vpiHandle rts_auto_by_multi_index(const llg_vpi_slot_t* slot, const int64
 }
 
 /* `[i]...` of an element of an array member, appended to `out`. */
-static LLG_OUTLYING int rts_member_index_path(const rts_part_t* part, char* out, size_t size, size_t* used) {
+static LLG_OUTLYING int32_t rts_member_index_path(const rts_part_t* part, char* out, size_t size, size_t* used) {
     int64_t indices[16];
     uint32_t dims = rts_typespec_indices(typespec_at(part->node->typespec), part->member_element,
                                          indices, 16u);
     for (uint32_t d = 0; d < dims; ++d) {
-        int written = snprintf(out + *used, size - *used, "[%lld]", (long long)indices[d]);
+        int32_t written = snprintf(out + *used, size - *used, "[%lld]", (long long)indices[d]);
         if (written < 0 || (size_t)written >= size - *used) return 0;
         *used += (size_t)written;
     }
@@ -1133,9 +1133,9 @@ static LLG_OUTLYING int rts_member_index_path(const rts_part_t* part, char* out,
 }
 
 /* `name[i]...` of an element, `.member` of a member, appended to `out`. */
-static int rts_part_path(const llg_vpi_slot_t* slot, const rts_part_t* part, char* out, size_t size,
+static int32_t rts_part_path(const llg_vpi_slot_t* slot, const rts_part_t* part, char* out, size_t size,
                          size_t* used) {
-    int written;
+    int32_t written;
     if (part->element != LLG_VPI_NO_ELEMENT) {
         int64_t indices[16];
         uint32_t dims = rts_element_indices(part->entry, part->element, indices, 16u);
@@ -1163,12 +1163,12 @@ static int rts_part_path(const llg_vpi_slot_t* slot, const rts_part_t* part, cha
     return 1;
 }
 
-static const char* rts_part_str(int property, const llg_vpi_slot_t* slot) {
+static const char* rts_part_str(int32_t property, const llg_vpi_slot_t* slot) {
     rts_part_t part;
     if (!rts_part(slot, &part)) return NULL;
     char* out = g_vpi.str_buffer;
     size_t size = sizeof(g_vpi.str_buffer), used = 0;
-    int written;
+    int32_t written;
     if (property == vpiName && part.node && part.member_element != LLG_VPI_NO_ELEMENT) {
         written = snprintf(out, size, "%s", part.node->name);
         used = written < 0 ? size : (size_t)written;
@@ -1204,12 +1204,12 @@ static const char* rts_part_str(int property, const llg_vpi_slot_t* slot) {
     return out;
 }
 
-static PLI_INT64 rts_part_get(int property, const llg_vpi_slot_t* slot) {
+static PLI_INT64 rts_part_get(int32_t property, const llg_vpi_slot_t* slot) {
     rts_part_t part;
     if (!rts_part(slot, &part)) return vpiUndefined;
-    int element = !part.node || part.member_element != LLG_VPI_NO_ELEMENT;
-    int packed = !rts_part_unpacked_aggregate(&part) && part.width && !rts_part_array_member(&part);
-    int real = (part.entry->flags & LLG_VPI_AUTO_REALS) != 0;
+    int32_t element = !part.node || part.member_element != LLG_VPI_NO_ELEMENT;
+    int32_t packed = !rts_part_unpacked_aggregate(&part) && part.width && !rts_part_array_member(&part);
+    int32_t real = (part.entry->flags & LLG_VPI_AUTO_REALS) != 0;
     switch (property) {
         /* 37.3.7: a part of an automatic variable is non-static too. */
         case vpiAutomatic: return 1;
@@ -1246,7 +1246,7 @@ static PLI_INT64 rts_part_get(int property, const llg_vpi_slot_t* slot) {
     return unsupported_property();
 }
 
-static vpiHandle rts_part_handle(int type, const llg_vpi_slot_t* slot) {
+static vpiHandle rts_part_handle(int32_t type, const llg_vpi_slot_t* slot) {
     rts_part_t part;
     if (!rts_part(slot, &part)) return NULL;
     switch (type) {
@@ -1318,7 +1318,7 @@ static vpiHandle rts_auto_ranges(const llg_vpi_auto_t* entry, rts_frame_t* frame
 
 /* vpiReg / vpiVarSelect of a fixed-size array automatic: its elements, in
  * row-major order (37.17 details 4 and 7). */
-static vpiHandle rts_fixed_elements(int type, const llg_vpi_slot_t* slot, const rts_part_t* part) {
+static vpiHandle rts_fixed_elements(int32_t type, const llg_vpi_slot_t* slot, const rts_part_t* part) {
     const llg_vpi_shape_t* element = part->entry->shape ? dyn_shape(part->entry->shape - 1u) : NULL;
     if (type != vpiVarSelect && !(type == vpiReg && element) &&
         !(element && type == element->type)) {
@@ -1339,13 +1339,13 @@ static vpiHandle rts_fixed_elements(int type, const llg_vpi_slot_t* slot, const 
 
 /* The live frame with `serial` on any thread, with its thread (VPI queries
  * only: a scan of the frame stacks). */
-static rts_frame_t* rts_frame_by_serial(uint64_t serial, int* thread_slot, uint64_t* identity) {
+static rts_frame_t* rts_frame_by_serial(uint64_t serial, int32_t* thread_slot, uint64_t* identity) {
     for (uint32_t i = 0; i < rts.stack_count; ++i) {
         rts_stack_t* stack = &rts.stacks[i];
         if (!stack->depth) continue;
-        rts_frame_t* frame = rts_frame_find((int)i - 1, stack->identity, serial, NULL);
+        rts_frame_t* frame = rts_frame_find((int32_t)i - 1, stack->identity, serial, NULL);
         if (frame) {
-            if (thread_slot) *thread_slot = (int)i - 1;
+            if (thread_slot) *thread_slot = (int32_t)i - 1;
             if (identity) *identity = stack->identity;
             return frame;
         }
@@ -1357,7 +1357,7 @@ static rts_frame_t* rts_frame_by_serial(uint64_t serial, int* thread_slot, uint6
  * dynamic-layer place (its elements or members, decisions A19-D82,
  * A19-D88); 0 once the frame has ended or when the variable keeps
  * neither. */
-static LLG_OUTLYING int rts_auto_value_place(uint64_t serial, uint32_t index, dyn_place_t* place) {
+static LLG_OUTLYING int32_t rts_auto_value_place(uint64_t serial, uint32_t index, dyn_place_t* place) {
     rts_frame_t* frame = rts_frame_by_serial(serial, NULL, NULL);
     if (!frame || index >= rts_auto_count(frame)) return 0;
     const llg_vpi_auto_t* entry = &rts_auto_table(frame)[index];
@@ -1385,12 +1385,12 @@ static LLG_OUTLYING int rts_auto_value_place(uint64_t serial, uint32_t index, dy
 }
 
 /* rts_auto_value_place of a container automatic only. */
-static int rts_auto_container(uint64_t serial, uint32_t index, dyn_place_t* place) {
+static int32_t rts_auto_container(uint64_t serial, uint32_t index, dyn_place_t* place) {
     return rts_auto_value_place(serial, index, place) &&
            place->shape->shape == LLG_VPI_SHAPE_CONTAINER;
 }
 
-static int rts_auto_location(uint64_t serial, uint32_t index, uint32_t* line, const char** file) {
+static int32_t rts_auto_location(uint64_t serial, uint32_t index, uint32_t* line, const char** file) {
     rts_frame_t* frame = rts_frame_by_serial(serial, NULL, NULL);
     if (!frame || index >= rts_auto_count(frame)) return 0;
     const llg_vpi_model_object_t* subprogram = row_object(rts_frame_row(frame));
@@ -1412,7 +1412,7 @@ static const char* rts_auto_frame_name(uint64_t serial) {
 
 /* The automatic-variable handle of entry `index` of frame `serial`. */
 static vpiHandle rts_auto_handle_by_serial(uint64_t serial, uint32_t index) {
-    int thread_slot = 0;
+    int32_t thread_slot = 0;
     uint64_t identity = 0;
     if (!rts_frame_by_serial(serial, &thread_slot, &identity)) {
         vpi_error("LLG_VPI_HANDLE", "the frame of this element has ended");
@@ -1428,7 +1428,7 @@ static vpiHandle rts_auto_handle_by_serial(uint64_t serial, uint32_t index) {
 }
 
 /* The container place of an automatic-variable handle, else an error. */
-static int rts_auto_elements(const llg_vpi_slot_t* slot, dyn_place_t* place) {
+static int32_t rts_auto_elements(const llg_vpi_slot_t* slot, dyn_place_t* place) {
     memset(place, 0, sizeof(*place));
     if (slot->right >= 0 && rts_auto_container(slot->element, (uint32_t)slot->right, place))
         return 1;
@@ -1447,7 +1447,7 @@ static int rts_auto_elements(const llg_vpi_slot_t* slot, dyn_place_t* place) {
 
 /* vpi_iterate(vpiReg / vpiVarSelect ...) of a dynamic array, queue or
  * associative array automatic: its elements (37.17 detail 4). */
-static LLG_OUTLYING vpiHandle rts_auto_iterate(int type, const llg_vpi_slot_t* slot) {
+static LLG_OUTLYING vpiHandle rts_auto_iterate(int32_t type, const llg_vpi_slot_t* slot) {
     rts_part_t part;
     dyn_place_t record;
     if (type == vpiMember && !rts_is_part(slot) && slot->right >= 0 &&
@@ -1598,7 +1598,7 @@ static void rts_auto_value(llg_vpi_slot_t* slot, p_vpi_value output) {
 }
 
 /* 37.39 details 2-3: an automatic variable takes only a vpiNoDelay value. */
-static void rts_auto_put(llg_vpi_slot_t* slot, const s_vpi_value* input, int mode) {
+static void rts_auto_put(llg_vpi_slot_t* slot, const s_vpi_value* input, int32_t mode) {
     if (!rts_alive(slot)) return;
     if (mode != vpiNoDelay) {
         vpi_error("LLG_VPI_FLAGS",
@@ -1626,7 +1626,7 @@ static void rts_auto_put(llg_vpi_slot_t* slot, const s_vpi_value* input, int mod
     dyn_write(place.shape, place.storage, NULL, input);
 }
 
-static PLI_INT64 rts_auto_get(int property, const llg_vpi_slot_t* slot) {
+static PLI_INT64 rts_auto_get(int32_t property, const llg_vpi_slot_t* slot) {
     if (rts_is_part(slot)) return rts_part_get(property, slot);
     dyn_place_t place;
     const llg_vpi_auto_t* entry = rts_auto_place(slot, &place);
@@ -1668,7 +1668,7 @@ static PLI_INT64 rts_auto_get(int property, const llg_vpi_slot_t* slot) {
                     vpi_error("LLG_VPI_VALUE", "this automatic variable is not declared yet in its frame");
                     return vpiUndefined;
                 }
-                int ok;
+                int32_t ok;
                 PLI_INT64 size = dyn_size(&place, &ok);
                 if (ok) return size;
                 break;
@@ -1703,7 +1703,7 @@ static PLI_INT64 rts_auto_get(int property, const llg_vpi_slot_t* slot) {
 /* vpi_handle from an automatic variable: its subprogram (vpiScope), its
  * typespec and, for a class variable, the object it holds. 37.39 gives an
  * automatic no parent object (NULL, as for other simulators). */
-static vpiHandle rts_auto_handle(int type, const llg_vpi_slot_t* slot) {
+static vpiHandle rts_auto_handle(int32_t type, const llg_vpi_slot_t* slot) {
     if (rts_is_part(slot)) return rts_part_handle(type, slot);
     rts_frame_t* frame = NULL;
     const llg_vpi_auto_t* entry = rts_auto(slot, &frame);
@@ -1742,14 +1742,14 @@ static vpiHandle rts_auto_handle(int type, const llg_vpi_slot_t* slot) {
  * after the `.`. */
 static rts_frame_t* rts_frame_for_name(const char* name, const char** rest) {
     uint64_t current_identity = 0;
-    int current = llg_rt_current_thread(&current_identity);
+    int32_t current = llg_rt_current_thread(&current_identity);
     rts_frame_t* best = NULL;
-    for (int pass = 0; pass < 2 && !best; ++pass) {
+    for (int32_t pass = 0; pass < 2 && !best; ++pass) {
         for (uint32_t i = 0; i < rts.stack_count; ++i) {
             rts_stack_t* stack = &rts.stacks[i];
-            int thread_slot = (int)i - 1;
+            int32_t thread_slot = (int32_t)i - 1;
             if (!stack->depth) continue;
-            int mine = thread_slot == current && stack->identity == current_identity;
+            int32_t mine = thread_slot == current && stack->identity == current_identity;
             if (pass == 0 ? !mine : mine) continue;
             if (thread_slot >= 0 && !rts_thread_valid(thread_slot, stack->identity)) continue;
             for (uint32_t d = stack->depth; d-- > 0;) {
@@ -1795,7 +1795,7 @@ static LLG_OUTLYING uint32_t rts_auto_block_by_name(const rts_frame_t* frame, co
  * subprogram runs that has bound them, the block locals the scope declares
  * (decision A19-D88): those of the innermost such frame of the running
  * thread, else of the most recently entered one. */
-static LLG_OUTLYING vpiHandle rts_block_scope_iterate(int type, uint32_t row) {
+static LLG_OUTLYING vpiHandle rts_block_scope_iterate(int32_t type, uint32_t row) {
     const char* rest = NULL;
     rts_frame_t* frame = llg_vpi_frames_on && rts.stack_count
                              ? rts_frame_for_name(g_vpi.objects[row].full_name, &rest)
@@ -1827,7 +1827,7 @@ static LLG_OUTLYING vpiHandle rts_block_scope_iterate(int type, uint32_t row) {
  * member name in a structure); NULL without an error when it has none. */
 static vpiHandle rts_auto_by_scoped_name(const llg_vpi_slot_t* scope, const char* name) {
     if (!rts_alive(scope)) return NULL;
-    int handled = 0;
+    int32_t handled = 0;
     const char* base = rts_get_str(vpiFullName, (llg_vpi_slot_t*)scope, &handled);
     if (!base) return NULL;
     size_t length = strlen(base) + 1u + strlen(name) + 1u;
@@ -1941,7 +1941,7 @@ static vpiHandle rts_auto_by_name(const char* name) {
 
 /* ── frame and thread callbacks ── */
 
-static int rts_cb_reason(int reason) {
+static int32_t rts_cb_reason(int32_t reason) {
     return reason == cbStartOfFrame || reason == cbEndOfFrame || reason == cbStartOfThread ||
            reason == cbEndOfThread || reason == cbEnterThread;
 }
@@ -1949,8 +1949,8 @@ static int rts_cb_reason(int reason) {
 /* 38.36.1: cbStartOfFrame is placed on a task or function (the frame does
  * not exist yet), cbEndOfFrame on a frame, cbEndOfThread and cbEnterThread
  * on a thread; cbStartOfThread takes no object. */
-static int rts_bind_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
-    int reason = data->reason;
+static int32_t rts_bind_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
+    int32_t reason = data->reason;
     cb->thread_slot = -1;
     if (reason == cbStartOfThread) {
         if (data->obj) {
@@ -1978,7 +1978,7 @@ static int rts_bind_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
         cb->target.element = LLG_VPI_NO_ELEMENT;
         return 1;
     }
-    int wanted = reason == cbEndOfFrame ? SLOT_FRAME : SLOT_THREAD;
+    int32_t wanted = reason == cbEndOfFrame ? SLOT_FRAME : SLOT_THREAD;
     if (slot->kind != wanted) {
         vpi_error("LLG_VPI_CALLBACK", reason == cbEndOfFrame ? "cbEndOfFrame needs a frame handle"
                                                              : "this thread callback needs a thread handle");
@@ -2009,7 +2009,7 @@ static void rts_cb_removed(const llg_vpi_cb_t* cb) {
         case cbStartOfFrame: --rts.start_frame_cbs; break;
         case cbEndOfFrame: --rts.end_frame_cbs; break;
         case cbEnterThread: {
-            int watched = 0;
+            int32_t watched = 0;
             for (const llg_vpi_cb_t* other = g_vpi.cbs; other && !watched; other = other->next)
                 watched = !other->removed && other->kind == CB_RUNTIME &&
                           other->data.reason == cbEnterThread &&
@@ -2023,14 +2023,14 @@ static void rts_cb_removed(const llg_vpi_cb_t* cb) {
 }
 
 typedef struct {
-    int reason;
-    int slot;
+    int32_t reason;
+    int32_t slot;
     uint64_t identity;
     uint64_t serial;
     uint32_t row;
 } rts_cb_match_t;
 
-static int rts_matches(const llg_vpi_cb_t* cb, const void* context) {
+static int32_t rts_matches(const llg_vpi_cb_t* cb, const void* context) {
     const rts_cb_match_t* match = (const rts_cb_match_t*)context;
     if (cb->kind != CB_RUNTIME || cb->data.reason != match->reason) return 0;
     switch (match->reason) {
@@ -2045,7 +2045,7 @@ static int rts_matches(const llg_vpi_cb_t* cb, const void* context) {
 
 /* Every live record on the thread (or, with `serial`, only on that frame)
  * is released with it (37.2.2 item 2). */
-static int rts_on_ended(const llg_vpi_cb_t* cb, const void* context) {
+static int32_t rts_on_ended(const llg_vpi_cb_t* cb, const void* context) {
     const rts_cb_match_t* match = (const rts_cb_match_t*)context;
     return cb->kind == CB_RUNTIME && cb->data.reason != cbStartOfThread &&
            cb->data.reason != cbStartOfFrame && cb->thread_slot == match->slot &&
@@ -2083,7 +2083,7 @@ static void rts_release(const rts_cb_match_t* match) {
 
 /* The innermost frame of (slot, identity) ends: cbEndOfFrame runs while
  * its handles are still valid, then the frame and its records go. */
-static void rts_pop_frame(int slot, uint64_t identity) {
+static void rts_pop_frame(int32_t slot, uint64_t identity) {
     rts_stack_t* stack = rts_stack(slot, identity, 0);
     if (!stack || !stack->depth) return;
     uint64_t serial = stack->frames[stack->depth - 1].serial;
@@ -2098,7 +2098,7 @@ static void rts_pop_frame(int slot, uint64_t identity) {
 }
 
 /* Grow a frame stack to `capacity` records, keeping RTS_FRAME_ALIGN. */
-static int rts_grow(rts_stack_t* stack, uint32_t capacity) {
+static int32_t rts_grow(rts_stack_t* stack, uint32_t capacity) {
     if ((uint64_t)capacity * sizeof(rts_frame_t) > (uint64_t)(SIZE_MAX - RTS_FRAME_ALIGN)) return 0;
     void* block = malloc((size_t)capacity * sizeof(rts_frame_t) + RTS_FRAME_ALIGN);
     if (!block) return 0;
@@ -2116,7 +2116,7 @@ static uint64_t rts_enter(const char* full_name, void** slots) {
     uint32_t origin = llg_vpi_next_origin;
     llg_vpi_next_origin = 0u;
     uint64_t identity;
-    int slot = llg_rt_current_thread(&identity);
+    int32_t slot = llg_rt_current_thread(&identity);
     rts_stack_t* stack = rts_stack(slot, identity, 1);
     if (!stack) return 0;
     if (stack->depth == stack->capacity && !rts_grow(stack, stack->capacity ? stack->capacity * 2u : 8u))
@@ -2152,7 +2152,7 @@ uint64_t llg_vpi_frame_enter_autos(const char* full_name, const llg_vpi_auto_t* 
 
 void llg_vpi_frame_exit(uint64_t serial) {
     uint64_t identity;
-    int slot = llg_rt_current_thread(&identity);
+    int32_t slot = llg_rt_current_thread(&identity);
     for (;;) {
         rts_stack_t* stack = rts_stack(slot, identity, 0);
         if (!stack || !stack->depth || stack->frames[stack->depth - 1].serial < serial) return;
@@ -2160,7 +2160,7 @@ void llg_vpi_frame_exit(uint64_t serial) {
     }
 }
 
-static void rts_thread_event(int slot, uint64_t identity, int event) {
+static void rts_thread_event(int32_t slot, uint64_t identity, int32_t event) {
     if (event == LLG_RT_THREAD_START) {
         if (rts.start_thread_cbs) {
             rts_cb_match_t match = {cbStartOfThread, slot, identity, 0, 0};
@@ -2175,7 +2175,7 @@ static void rts_thread_event(int slot, uint64_t identity, int event) {
     }
     /* 38.36.1: the frames of an ending thread have ended before
      * cbEndOfThread runs. */
-    int was_dying = rts.dying, old_slot = rts.dying_slot;
+    int32_t was_dying = rts.dying, old_slot = rts.dying_slot;
     uint64_t old_identity = rts.dying_identity;
     rts.dying = 1;
     rts.dying_slot = slot;
@@ -2197,7 +2197,7 @@ static void rts_thread_event(int slot, uint64_t identity, int event) {
 
 /* ── frame and thread queries ── */
 
-static PLI_INT64 rts_runtime_get(int property, llg_vpi_slot_t* slot) {
+static PLI_INT64 rts_runtime_get(int32_t property, llg_vpi_slot_t* slot) {
     if (slot->kind == SLOT_THREAD) {
         if (property == vpiActive) return 1;
     } else {
@@ -2214,7 +2214,7 @@ static PLI_INT64 rts_runtime_get(int property, llg_vpi_slot_t* slot) {
     return unsupported_property();
 }
 
-static const char* rts_runtime_get_str(int property, llg_vpi_slot_t* slot) {
+static const char* rts_runtime_get_str(int32_t property, llg_vpi_slot_t* slot) {
     if (slot->kind == SLOT_FRAME) {
         rts_frame_t* frame = rts_frame_find(slot->aux, (uint64_t)slot->left, slot->element, NULL);
         if (property == vpiFullName) return frame->name;
@@ -2227,13 +2227,13 @@ static const char* rts_runtime_get_str(int property, llg_vpi_slot_t* slot) {
     return NULL;
 }
 
-static vpiHandle rts_runtime_handle(int type, llg_vpi_slot_t* slot) {
+static vpiHandle rts_runtime_handle(int32_t type, llg_vpi_slot_t* slot) {
     if (slot->kind == SLOT_AUTO) return rts_auto_handle(type, slot);
-    int thread_slot = slot->aux;
+    int32_t thread_slot = slot->aux;
     uint64_t identity = (uint64_t)slot->left;
     if (slot->kind == SLOT_THREAD) {
         if (type == vpiParent) {
-            int parent_slot;
+            int32_t parent_slot;
             uint64_t parent_identity;
             if (!llg_rt_thread_parent(thread_slot, identity, &parent_slot, &parent_identity))
                 return NULL;
@@ -2267,7 +2267,7 @@ static vpiHandle rts_runtime_handle(int type, llg_vpi_slot_t* slot) {
                 return statement == LLG_VPI_NONE ? NULL : code_handle(statement);
             }
             uint64_t current;
-            int current_slot = llg_rt_current_thread(&current);
+            int32_t current_slot = llg_rt_current_thread(&current);
             if (!g_vpi.active_call || current_slot != thread_slot || current != identity)
                 return NULL;
             /* A handle of its own: releasing it leaves the call's
@@ -2290,8 +2290,8 @@ static vpiHandle rts_runtime_handle(int type, llg_vpi_slot_t* slot) {
     return NULL;
 }
 
-static vpiHandle rts_thread_list(int parent_slot, uint64_t parent_identity) {
-    int* slots;
+static vpiHandle rts_thread_list(int32_t parent_slot, uint64_t parent_identity) {
+    int32_t* slots;
     uint64_t* identities;
     size_t count = llg_rt_threads(parent_slot, parent_identity, &slots, &identities);
     rts_handles_t list = {0};
@@ -2303,7 +2303,7 @@ static vpiHandle rts_thread_list(int parent_slot, uint64_t parent_identity) {
 
 /* 37.25 detail 1: the threads waiting on a named event. */
 static vpiHandle rts_event_waiters(const llg_event_t* event) {
-    int* slots;
+    int32_t* slots;
     uint64_t* identities;
     size_t count = llg_rt_event_waiters(event, &slots, &identities);
     rts_handles_t list = {0};
@@ -2332,7 +2332,7 @@ static uint32_t* rts_code_owners;
  * repeat controls and concurrent assertions. A function call, though in
  * the tf call class, is an expression and has no process (decision
  * A19-D62). */
-static int rts_atomic_statement(int type) {
+static int32_t rts_atomic_statement(int32_t type) {
     switch (type) {
         case vpiBegin: case vpiFork: case vpiNamedBegin: case vpiNamedFork:
         case vpiRepeatControl: case vpiAssert: case vpiAssume: case vpiCover:
@@ -2342,14 +2342,14 @@ static int rts_atomic_statement(int type) {
     }
 }
 
-static int rts_process_owners(void) {
+static int32_t rts_process_owners(void) {
     if (rts_code_owners) return 1;
     if (!rts_code_parents()) return 0;
     uint32_t* owners = (uint32_t*)calloc(g_vpi.code->node_count, sizeof(*owners));
     if (!owners) return 0;
     for (size_t row = 0; row < g_vpi.object_count; ++row) {
         const llg_vpi_model_object_t* object = &g_vpi.objects[row];
-        int process = object->type == vpiInitial || object->type == vpiAlways ||
+        int32_t process = object->type == vpiInitial || object->type == vpiAlways ||
                       object->type == vpiFinal;
         if (!process || !object->code || object->code > g_vpi.code->node_count) continue;
         /* A body may be a link to a shared root. */
@@ -2364,7 +2364,7 @@ static int rts_process_owners(void) {
  * always or final construct whose body contains it; NULL without an error
  * for a statement of a task or function, which no process owns. `handled`
  * stays 0 for other objects. */
-static vpiHandle rts_statement_process(const llg_vpi_slot_t* slot, int* handled) {
+static vpiHandle rts_statement_process(const llg_vpi_slot_t* slot, int32_t* handled) {
     uint32_t row = LLG_VPI_NONE;
     if (slot->kind == SLOT_CODE) {
         row = code_visible((uint32_t)slot->aux);
@@ -2394,7 +2394,7 @@ static vpiHandle rts_statement_process(const llg_vpi_slot_t* slot, int* handled)
 
 /* ── dispatch ───────────────────────────────────────────────────────────── */
 
-static PLI_INT64 rts_get(int property, llg_vpi_slot_t* slot, int* handled) {
+static PLI_INT64 rts_get(int32_t property, llg_vpi_slot_t* slot, int32_t* handled) {
     *handled = 1;
     if (rts_runtime_slot(slot)) {
         if (!rts_alive(slot)) return vpiUndefined;
@@ -2461,7 +2461,7 @@ static PLI_INT64 rts_get(int property, llg_vpi_slot_t* slot, int* handled) {
     return unsupported_property();
 }
 
-static const char* rts_get_str(int property, llg_vpi_slot_t* slot, int* handled) {
+static const char* rts_get_str(int32_t property, llg_vpi_slot_t* slot, int32_t* handled) {
     *handled = 1;
     if (rts_runtime_slot(slot)) {
         if (!rts_alive(slot)) return NULL;
@@ -2536,7 +2536,7 @@ static void rts_get_value(llg_vpi_slot_t* slot, p_vpi_value output) {
 
 /* vpi_handle for the runtime structures; *handled is 0 for a query the
  * other layers answer. */
-static vpiHandle rts_handle(int type, vpiHandle reference, int* handled) {
+static vpiHandle rts_handle(int32_t type, vpiHandle reference, int32_t* handled) {
     *handled = 0;
     if (!reference) {
         if (type != vpiFrame) return NULL;
@@ -2544,7 +2544,7 @@ static vpiHandle rts_handle(int type, vpiHandle reference, int* handled) {
         *handled = 1;
         if (!vpi_ready()) return NULL;
         uint64_t identity;
-        int slot = llg_rt_current_thread(&identity);
+        int32_t slot = llg_rt_current_thread(&identity);
         return rts_top_frame(slot, identity);
     }
     llg_vpi_slot_t* slot = decode_handle(reference, NULL);
@@ -2612,13 +2612,13 @@ static vpiHandle rts_handle(int type, vpiHandle reference, int* handled) {
     return NULL;
 }
 
-static vpiHandle rts_iterate(int type, vpiHandle reference, int* handled) {
+static vpiHandle rts_iterate(int32_t type, vpiHandle reference, int32_t* handled) {
     *handled = 1;
     if (!reference) {
         if (type == vpiUserSystf) {
             /* 37.38 detail 6: every registration, in registration order. */
             rts_handles_t list = {0};
-            for (int i = 0; i < g_vpi.registration_count; ++i)
+            for (int32_t i = 0; i < g_vpi.registration_count; ++i)
                 rts_push(&list, encode_handle(g_vpi.registrations[i]->slot));
             return rts_list(vpiUserSystf, list.items, list.count, list.failed);
         }
@@ -2655,7 +2655,7 @@ static vpiHandle rts_iterate(int type, vpiHandle reference, int* handled) {
     }
     if (type == vpiWaitingProcesses && slot->kind == SLOT_BUILTINOBJ) {
         /* 37.29 detail 3: the threads waiting on a mailbox or semaphore. */
-        int* slots;
+        int32_t* slots;
         uint64_t* identities;
         size_t count = llg_rt_resource_waiters(slot->pointer, &slots, &identities);
         rts_handles_t list = {0};
@@ -2680,7 +2680,7 @@ static vpiHandle rts_iterate(int type, vpiHandle reference, int* handled) {
         return dyn_element_event(slot, &event, "vpiWaitingProcesses") ? rts_event_waiters(&event)
                                                                       : NULL;
     }
-    int object_type = handle_type(slot);
+    int32_t object_type = handle_type(slot);
     if (type == vpiCallback && rts_callback_owner(object_type)) return rts_callbacks(reference, slot);
     if (type == vpiUse && rts_simple_expr(object_type)) return rts_uses(slot);
     if (slot->kind == SLOT_UDPDEFN) {

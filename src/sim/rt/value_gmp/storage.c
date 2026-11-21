@@ -17,7 +17,7 @@ uint64_t* llg_gmp_sv4_alloc(size_t words) {
         llg_gmp_sv4_fail("allocation failed");
     return p;
 }
-g4_t llg_gmp_sv4_new(uint32_t width, int8_t sign, int with_b) {
+g4_t llg_gmp_sv4_new(uint32_t width, int8_t sign, int32_t with_b) {
     g4_width_check(width);
     g4_t v = LLG_GMP_SV4_EMPTY;
     v.width = width;
@@ -112,7 +112,7 @@ g4_t llg_gmp_sv4_from_limbs_wide(const uint64_t* bits, const uint64_t* x, const 
                                  uint32_t width, int8_t sign) {
     g4_width_check(width);
     size_t n = ((size_t)width + 63u) / 64u;
-    int unknown = 0;
+    int32_t unknown = 0;
     for (size_t i = 0; i < n; ++i) {
         uint64_t mask = i + 1 == n ? g4_topmask(width) : UINT64_MAX;
         if (((x ? x[i] : 0) | (z ? z[i] : 0)) & mask) {
@@ -132,7 +132,7 @@ g4_t llg_gmp_sv4_from_limbs_wide(const uint64_t* bits, const uint64_t* x, const 
     return out;
 }
 void llg_gmp_sv4_extend_plane(uint64_t* out, uint32_t width, const uint64_t* input, uint32_t source,
-                              int sign) {
+                              int32_t sign) {
     size_t n = ((size_t)width + 63u) / 64u, m = ((size_t)source + 63u) / 64u;
     uint64_t fill =
         sign && source && input && ((input[m - 1] >> ((source - 1) % 64)) & 1) ? UINT64_MAX : 0;
@@ -148,13 +148,13 @@ void llg_gmp_sv4_extend_plane(uint64_t* out, uint32_t width, const uint64_t* inp
     if (n)
         out[n - 1] &= g4_topmask(width);
 }
-void llg_gmp_sv4_extend_value(g4_t* out, g4_t input, int sign) {
+void llg_gmp_sv4_extend_value(g4_t* out, g4_t input, int32_t sign) {
     llg_gmp_sv4_extend_plane(g4_mut_a(out), out->width, g4_a(&input), input.width, sign);
     uint64_t* b = g4_mut_b(out);
     if (b)
         llg_gmp_sv4_extend_plane(b, out->width, g4_b(&input), input.width, sign);
 }
-g4_t llg_gmp_sv4_convert_wide(g4_t v, uint32_t width, int8_t sign, int extend) {
+g4_t llg_gmp_sv4_convert_wide(g4_t v, uint32_t width, int8_t sign, int32_t extend) {
     g4_t out = llg_gmp_sv4_new(width, sign, llg_gmp_sv4_is_unknown(v));
     llg_gmp_sv4_extend_value(&out, v, extend);
     llg_gmp_sv4_finish(&out);

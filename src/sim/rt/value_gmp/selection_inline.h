@@ -28,7 +28,7 @@ static inline uint64_t g4_reverse_word(uint64_t word) {
            ((word & UINT64_C(0x0000ffff0000ffff)) << 16);
     return (word >> 32) | (word << 32);
 }
-static inline int g4_selection_small_index(g4_t base, int64_t* index) {
+static inline int32_t g4_selection_small_index(g4_t base, int64_t* index) {
     if (base.data.small.b)
         return 0;
     uint64_t word = base.data.small.a;
@@ -74,7 +74,7 @@ static inline void g4_selection_small_write(g4_t* dst, int64_t low, g4_t source,
     dst->data.small.b = (dst->data.small.b & ~mask) | (bits.data.small.b << start);
 }
 static inline g4_t llg_gmp_sv4_bit_select(g4_t value, uint64_t index) {
-    unsigned state = index >= value.width ? 2 : llg_gmp_sv4_state(value, (uint32_t)index);
+    uint32_t state = index >= value.width ? 2 : llg_gmp_sv4_state(value, (uint32_t)index);
     return g4_small(state == 1 || state == 2, state >= 2, 1, 0);
 }
 static inline void llg_gmp_sv4_bit_select_set(g4_t* dst, uint64_t index, g4_t source) {
@@ -114,7 +114,7 @@ static inline void llg_gmp_sv4_part_select_set(g4_t* dst, int64_t left, int64_t 
     g4_selection_small_write(dst, start, bits, 0, count);
 }
 static inline g4_t llg_gmp_sv4_idx_part_select(g4_t source, uint64_t base, uint32_t width,
-                                               int negative) {
+                                               int32_t negative) {
     g4_selection_width(width);
     if (source.width > 64 || width > 64)
         return llg_gmp_sv4_idx_part_select_wide(source, base, width, negative);
@@ -124,7 +124,7 @@ static inline g4_t llg_gmp_sv4_idx_part_select(g4_t source, uint64_t base, uint3
                                      width);
 }
 static inline void llg_gmp_sv4_idx_part_select_set(g4_t* dst, uint64_t base, uint32_t width,
-                                                   int negative, g4_t source) {
+                                                   int32_t negative, g4_t source) {
     g4_selection_width(width);
     if (dst->width > 64 || source.width > 64) {
         llg_gmp_sv4_idx_part_select_set_wide(dst, base, width, negative, source);
@@ -137,7 +137,7 @@ static inline void llg_gmp_sv4_idx_part_select_set(g4_t* dst, uint64_t base, uin
 /* `index` is read only after g4_selection_small_index set it. */
 LLG_MAYBE_UNINIT_BEGIN
 static inline g4_t llg_gmp_sv4_idx_part_select_value(g4_t source, g4_t base, uint32_t width,
-                                                     int negative) {
+                                                     int32_t negative) {
     g4_selection_width(width);
     if (source.width > 64 || base.width > 64 || width > 64)
         return llg_gmp_sv4_idx_part_select_value_wide(source, base, width, negative);
@@ -147,7 +147,7 @@ static inline g4_t llg_gmp_sv4_idx_part_select_value(g4_t source, g4_t base, uin
     return g4_selection_small_window(source, index - (negative ? (int64_t)width - 1 : 0), width);
 }
 static inline void llg_gmp_sv4_idx_part_select_set_value(g4_t* dst, g4_t base, uint32_t width,
-                                                         int negative, g4_t source) {
+                                                         int32_t negative, g4_t source) {
     g4_selection_width(width);
     if (dst->width > 64 || source.width > 64 || base.width > 64) {
         llg_gmp_sv4_idx_part_select_set_value_wide(dst, base, width, negative, source);
@@ -198,7 +198,7 @@ static inline g4_t llg_gmp_sv4_repeat_count(g4_t value) {
  * `width - bit - count` came out of MSVC 19.52 /O2, inlined into some runtime
  * callers, as if it read `width - bit`: every block one slice too high
  * (docs/cross_platform.md, MSVC compiler). */
-static inline g4_t g4_selection_small_stream(g4_t v, uint32_t slice, int reverse) {
+static inline g4_t g4_selection_small_stream(g4_t v, uint32_t slice, int32_t reverse) {
     if (!slice)
         llg_gmp_sv4_fail("zero streaming slice size");
     if (!reverse || slice >= v.width) {
@@ -220,7 +220,7 @@ static inline g4_t g4_selection_small_stream(g4_t v, uint32_t slice, int reverse
     }
     return r;
 }
-static inline g4_t llg_gmp_sv4_stream(g4_t v, uint32_t slice, int reverse) {
+static inline g4_t llg_gmp_sv4_stream(g4_t v, uint32_t slice, int32_t reverse) {
     return v.width <= 64 ? g4_selection_small_stream(v, slice, reverse)
                          : llg_gmp_sv4_stream_wide(v, slice, reverse);
 }
@@ -239,7 +239,7 @@ static inline g4_t llg_gmp_sv4_array_conditional_merge(g4_t a, g4_t b, g4_t def)
     uint64_t mask = g4_mask(stride);
     for (uint32_t offset = 0; offset < a.width; offset += stride) {
         uint64_t aa = (a.data.small.a >> offset) & mask, ba = (b.data.small.a >> offset) & mask;
-        int equal = aa == ba && !(((a.data.small.b | b.data.small.b) >> offset) & mask);
+        int32_t equal = aa == ba && !(((a.data.small.b | b.data.small.b) >> offset) & mask);
         r.data.small.a |= (equal ? aa : def.data.small.a) << offset;
         r.data.small.b |= (equal ? 0 : def.data.small.b) << offset;
     }
@@ -271,7 +271,7 @@ static inline g4_t llg_gmp_sv4_select_plan_read(g4_t source,
     return r;
 }
 static inline g4_t llg_gmp_sv4_select_plan_slice(g4_t source, const llg_gmp_sv4_select_plan_t* plan,
-                                                 int reverse) {
+                                                 int32_t reverse) {
     g4_selection_plan_check(plan);
     if (source.width != plan->width)
         llg_gmp_sv4_fail("packed selection source width mismatch");

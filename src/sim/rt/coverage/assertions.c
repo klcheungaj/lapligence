@@ -46,7 +46,7 @@ static size_t llg_acov_n_items;
 static const llg_acov_instance_t* llg_acov_instances;
 static size_t llg_acov_n_instances;
 // The model has assertion coverage tables (possibly with no item).
-static int llg_acov_present;
+static int32_t llg_acov_present;
 
 static void llg_acov_zero(llg_acov_item_t* item) {
     item->attempts = item->successes = item->vacuous = 0;
@@ -97,7 +97,7 @@ static llg_assertion_watch_fn llg_assertion_watch;
 
 void llg_assertion_watch_hook(llg_assertion_watch_fn hook) { llg_assertion_watch = hook; }
 
-void llg_acov_watch(size_t index, int delta) {
+void llg_acov_watch(size_t index, int32_t delta) {
     if (index >= llg_acov_n_items) return;
     llg_acov_item_t* item = &llg_acov_items[index];
     if (delta > 0) item->watches++;
@@ -154,7 +154,7 @@ static size_t assertion_event_group(const llg_acov_item_t* item) {
     return (size_t)instance;
 }
 
-static int assertion_event_compare(const void* left, const void* right) {
+static int32_t assertion_event_compare(const void* left, const void* right) {
     const llg_acov_event_t* a = (const llg_acov_event_t*)left;
     const llg_acov_event_t* b = (const llg_acov_event_t*)right;
     size_t group_a = assertion_event_group(a->item), group_b = assertion_event_group(b->item);
@@ -178,7 +178,7 @@ static void assertion_events_order(void) {
         queue->items = items;
         queue->head = 0;
     }
-    int ordered = 1;
+    int32_t ordered = 1;
     for (size_t i = 0; i < count; ++i) {
         queue->items[i].seq = (uint32_t)i;
         if (i && assertion_event_compare(&queue->items[i - 1u], &queue->items[i]) > 0)
@@ -187,7 +187,7 @@ static void assertion_events_order(void) {
     if (!ordered) qsort(queue->items, count, sizeof(*queue->items), assertion_event_compare);
 }
 
-static void assertion_event_push(const llg_acov_item_t* item, int event, uint64_t cb_time,
+static void assertion_event_push(const llg_acov_item_t* item, int32_t event, uint64_t cb_time,
                                  uint64_t start) {
     llg_acov_event_queue_t* queue = &g.assertion_events;
     if (queue->count == queue->capacity) {
@@ -208,9 +208,9 @@ static void assertion_event_push(const llg_acov_item_t* item, int event, uint64_
 
 // Set while a reset discards attempts: they count as killed but raise no
 // event, so a reset runs no cbAssertionKill (decision A17-D2).
-static int llg_acov_reset_quiet;
+static int32_t llg_acov_reset_quiet;
 
-static void llg_acov_event(llg_acov_item_t* item, int event, uint64_t start) {
+static void llg_acov_event(llg_acov_item_t* item, int32_t event, uint64_t start) {
     if (!llg_assertion_watch || (event == LLG_ACOV_EVENT_KILLED && llg_acov_reset_quiet)) return;
     uint64_t cb_time = event == LLG_ACOV_EVENT_START ? start : assertion_event_time();
     if (g.assertion_event_depth || g.assertion_events.count)
@@ -219,7 +219,7 @@ static void llg_acov_event(llg_acov_item_t* item, int event, uint64_t start) {
         llg_assertion_watch(item, event, cb_time, start);
 }
 
-static void llg_acov_notify(llg_acov_item_t* item, int event, uint64_t start) {
+static void llg_acov_notify(llg_acov_item_t* item, int32_t event, uint64_t start) {
     if (LLG_CO_UNLIKELY(item != NULL && item->watches != 0)) llg_acov_event(item, event, start);
 }
 
@@ -237,7 +237,7 @@ static void llg_acov_attempt(llg_acov_item_t* item, uint64_t start) {
     llg_acov_notify(item, LLG_ACOV_EVENT_START, start);
 }
 
-static void llg_acov_result(llg_acov_item_t* item, int success, int vacuous, uint64_t start) {
+static void llg_acov_result(llg_acov_item_t* item, int32_t success, int32_t vacuous, uint64_t start) {
     if (!item) return;
     if (!item->stopped) {
         if (success) llg_acov_add(vacuous ? &item->vacuous : &item->successes, 1u);
@@ -252,7 +252,7 @@ static void llg_acov_result(llg_acov_item_t* item, int success, int vacuous, uin
 
 // `count` running attempts ended disabled (disable iff) or killed. The
 // callers raise one event per attempt themselves (llg_acov_notify).
-static void llg_acov_end_attempts(llg_acov_item_t* item, uint64_t count, int killed) {
+static void llg_acov_end_attempts(llg_acov_item_t* item, uint64_t count, int32_t killed) {
     if (!item || item->stopped || !count) return;
     llg_acov_add(killed ? &item->killed : &item->disabled, count);
 }
@@ -264,7 +264,7 @@ static void llg_acov_disabled_attempt(llg_acov_item_t* item, uint64_t start) {
     llg_acov_notify(item, LLG_ACOV_EVENT_DISABLED, start);
 }
 
-void llg_acov_check(llg_acov_item_t* item, int passed) {
+void llg_acov_check(llg_acov_item_t* item, int32_t passed) {
     llg_acov_attempt(item, g.now);
     llg_acov_result(item, passed != 0, 0, g.now);
 }
@@ -299,7 +299,7 @@ static void llg_acov_discard_record(llg_concurrent_assertion_t* assertion) {
     }
 }
 
-static void llg_acov_record_control(llg_concurrent_assertion_t* assertion, int operation,
+static void llg_acov_record_control(llg_concurrent_assertion_t* assertion, int32_t operation,
                                     uint64_t start) {
     switch (operation) {
         case LLG_ACOV_OP_DISABLE: assertion->hot->enabled = 0; break;
@@ -345,7 +345,7 @@ static void llg_acov_record_control(llg_concurrent_assertion_t* assertion, int o
 
 // Immediate and deferred items keep their controls on the item: the
 // generated code of a model with a VPI catalog reads them per check.
-static void llg_acov_item_control(llg_acov_item_t* item, int operation, uint64_t start) {
+static void llg_acov_item_control(llg_acov_item_t* item, int32_t operation, uint64_t start) {
     uint8_t off = g.assertions_ended ? LLG_ACOV_CTL_OFF : 0u;
     switch (operation) {
         case LLG_ACOV_OP_DISABLE: item->control |= LLG_ACOV_CTL_OFF; break;
@@ -375,7 +375,7 @@ static void llg_acov_item_control(llg_acov_item_t* item, int operation, uint64_t
     }
 }
 
-int llg_acov_control(size_t index, int operation, uint64_t start) {
+int32_t llg_acov_control(size_t index, int32_t operation, uint64_t start) {
     if (index >= llg_acov_n_items || operation < LLG_ACOV_OP_DISABLE ||
         operation > LLG_ACOV_OP_NONVACUOUS_ON)
         return 0;
@@ -392,7 +392,7 @@ int llg_acov_control(size_t index, int operation, uint64_t start) {
     return 1;
 }
 
-int llg_acov_attempt_at(size_t index, uint64_t start) {
+int32_t llg_acov_attempt_at(size_t index, uint64_t start) {
     if (index >= llg_acov_n_items) return 0;
     const llg_acov_item_t* item = &llg_acov_items[index];
     if (item->form == LLG_ACOV_IMMEDIATE || item->form == LLG_ACOV_DEFERRED) {
@@ -417,7 +417,7 @@ int llg_acov_attempt_at(size_t index, uint64_t start) {
 
 // ── Database section ────────────────────────────────────────────────────────
 
-static int llg_acov_available(void) { return llg_acov_present && llg_acov_n_items != 0; }
+static int32_t llg_acov_available(void) { return llg_acov_present && llg_acov_n_items != 0; }
 
 // Identity of the item table: per item its kind, form, owning instance path
 // and hierarchical name (the label of an unnamed one is empty), in table
@@ -481,7 +481,7 @@ static const char* llg_acov_merge_section(const llg_cov_db_file_t* db) {
 // ── $coverage_* (40.3.2) ────────────────────────────────────────────────────
 
 // A known integral argument of at most 64 bits.
-static int llg_acov_arg(const sv4_t* value, uint64_t* result) {
+static int32_t llg_acov_arg(const sv4_t* value, uint64_t* result) {
     if (!value || llg_sv4_width(*value) == 0 || llg_sv4_width(*value) > 64 ||
         sv4_is_unknown(*value))
         return 0;
@@ -489,7 +489,7 @@ static int llg_acov_arg(const sv4_t* value, uint64_t* result) {
     return 1;
 }
 
-static int llg_acov_definition_known(const char* definition) {
+static int32_t llg_acov_definition_known(const char* definition) {
     for (size_t i = 0; i < llg_acov_n_instances; ++i)
         if (strcmp(llg_acov_instances[i].definition, definition) == 0) return 1;
     return 0;
@@ -498,7 +498,7 @@ static int llg_acov_definition_known(const char* definition) {
 // Whether instance `instance` (-1: owned by $root) lies in the scope `scope`
 // (an instance index, -1 $root, -2 the module definition `definition`) with
 // MODULE (`hier` 0) or HIER semantics (Table 40-2).
-static int llg_acov_in_scope(int32_t instance, int hier, int32_t scope, const char* definition) {
+static int32_t llg_acov_in_scope(int32_t instance, int32_t hier, int32_t scope, const char* definition) {
     if (scope == -1) return hier || instance < 0;
     for (int32_t at = instance; at >= 0 && (size_t)at < llg_acov_n_instances;
          at = llg_acov_instances[at].parent) {
@@ -521,7 +521,7 @@ typedef struct {
     size_t states;   // their states
     size_t reached;  // of those, states reached
 } llg_fcov_tally_t;
-static llg_fcov_tally_t llg_fcov_scope(int hier, int32_t scope, const char* definition,
+static llg_fcov_tally_t llg_fcov_scope(int32_t hier, int32_t scope, const char* definition,
                                        uint32_t operation);
 static const char* llg_fcov_merge_section(const llg_cov_db_file_t* db);
 
@@ -530,16 +530,16 @@ typedef struct {
     size_t items;    // entities in scope (statements or signal bits)
     size_t covered;  // of those, covered entities
 } llg_ccov_tally_t;
-static llg_ccov_tally_t llg_scov_scope(int hier, int32_t scope, const char* definition,
+static llg_ccov_tally_t llg_scov_scope(int32_t hier, int32_t scope, const char* definition,
                                        uint32_t operation);
-static llg_ccov_tally_t llg_tcov_scope(int hier, int32_t scope, const char* definition,
+static llg_ccov_tally_t llg_tcov_scope(int32_t hier, int32_t scope, const char* definition,
                                        uint32_t operation);
 static const char* llg_scov_merge_section(const llg_cov_db_file_t* db);
 static const char* llg_tcov_merge_section(const llg_cov_db_file_t* db);
 
 // Visit the items in scope; `operation` is START, STOP or RESET, or
 // UINT32_MAX to only tally them.
-static llg_acov_tally_t llg_acov_scope(int hier, int32_t scope, const char* definition,
+static llg_acov_tally_t llg_acov_scope(int32_t hier, int32_t scope, const char* definition,
                                        uint32_t operation) {
     llg_acov_tally_t tally = {0, 0};
     for (size_t i = 0; i < llg_acov_n_items; ++i) {
@@ -562,7 +562,7 @@ static int32_t llg_acov_count(size_t count) {
 static int32_t llg_coverage_merge(uint64_t type, const char* name, const char* what,
                                   const char* site) {
     llg_cov_db_file_t db;
-    int missing;
+    int32_t missing;
     const char* error = llg_cov_db_read(name, &db, &missing);
     int32_t status = LLG_SV_COV_NOCOV;
     if (!error && type == LLG_SV_COV_ASSERTION && llg_acov_present &&
@@ -593,7 +593,7 @@ static int32_t llg_coverage_merge(uint64_t type, const char* name, const char* w
 }
 
 // `what` names the call in run-time errors and `site` frames them.
-static int32_t llg_coverage_dispatch(int function, const uint64_t* v, int32_t scope,
+static int32_t llg_coverage_dispatch(int32_t function, const uint64_t* v, int32_t scope,
                                      const char* text, const char* what, const char* site) {
     uint64_t control = 0, type, scope_def = LLG_SV_COV_MODULE;
     switch (function) {
@@ -632,7 +632,7 @@ static int32_t llg_coverage_dispatch(int function, const uint64_t* v, int32_t sc
     if (scope == -2 ? !llg_acov_definition_known(text)
                     : scope < -1 || (scope >= 0 && (size_t)scope >= llg_acov_n_instances))
         return LLG_SV_COV_ERROR;
-    int hier = scope_def == LLG_SV_COV_HIER;
+    int32_t hier = scope_def == LLG_SV_COV_HIER;
     if (type == LLG_SV_COV_FSM_STATE && llg_acov_present) {
         llg_fcov_tally_t tally = llg_fcov_scope(
             hier, scope, text, function == LLG_COVERAGE_CONTROL ? (uint32_t)control : UINT32_MAX);
@@ -686,14 +686,14 @@ static int32_t llg_coverage_dispatch(int function, const uint64_t* v, int32_t sc
     }
 }
 
-int32_t llg_coverage_call(int function, const sv4_t* args, int n_args, int32_t instance,
-                          llg_string_t text, int has_text, const char* site) {
+int32_t llg_coverage_call(int32_t function, const sv4_t* args, int32_t n_args, int32_t instance,
+                          llg_string_t text, int32_t has_text, const char* site) {
     char* name = has_text ? llg_cov_strdup_bytes(text.data, text.data ? text.len : 0u) : NULL;
     llg_string_destroy(&text);
     uint64_t values[3] = {0, 0, 0};
     int32_t status = LLG_SV_COV_ERROR;
-    int known = n_args >= 1 && n_args <= 3 && args;
-    for (int i = 0; known && i < n_args; ++i) known = llg_acov_arg(&args[i], &values[i]);
+    int32_t known = n_args >= 1 && n_args <= 3 && args;
+    for (int32_t i = 0; known && i < n_args; ++i) known = llg_acov_arg(&args[i], &values[i]);
     if (known && (function == LLG_COVERAGE_MERGE || function == LLG_COVERAGE_SAVE ||
                   instance == -2) && !name)
         known = 0;
@@ -733,30 +733,30 @@ size_t llg_acov_covered_in(int32_t instance) {
     return llg_acov_scope(0, instance, NULL, UINT32_MAX).covered;
 }
 
-int32_t llg_coverage_control_vpi(int control, int type, int32_t instance, int64_t item) {
-    if (control < (int)LLG_SV_COV_START || control > (int)LLG_SV_COV_CHECK) return LLG_SV_COV_ERROR;
+int32_t llg_coverage_control_vpi(int32_t control, int32_t type, int32_t instance, int64_t item) {
+    if (control < (int32_t)LLG_SV_COV_START || control > (int32_t)LLG_SV_COV_CHECK) return LLG_SV_COV_ERROR;
     if (item < 0) {
         uint64_t values[3] = {(uint64_t)control, (uint64_t)type, LLG_SV_COV_MODULE};
         if (instance < 0) return LLG_SV_COV_ERROR;
         return llg_coverage_dispatch(LLG_COVERAGE_CONTROL, values, instance, NULL,
                                      "vpi_control", NULL);
     }
-    if ((size_t)item >= llg_acov_n_items || type < (int)LLG_SV_COV_ASSERTION ||
-        type > (int)LLG_SV_COV_TOGGLE)
+    if ((size_t)item >= llg_acov_n_items || type < (int32_t)LLG_SV_COV_ASSERTION ||
+        type > (int32_t)LLG_SV_COV_TOGGLE)
         return LLG_SV_COV_ERROR;
     // An assertion handle names assertion coverage only.
-    if (type != (int)LLG_SV_COV_ASSERTION)
-        return control == (int)LLG_SV_COV_STOP || control == (int)LLG_SV_COV_RESET
+    if (type != (int32_t)LLG_SV_COV_ASSERTION)
+        return control == (int32_t)LLG_SV_COV_STOP || control == (int32_t)LLG_SV_COV_RESET
                    ? LLG_SV_COV_OK
                    : LLG_SV_COV_NOCOV;
     llg_acov_item_t* target = &llg_acov_items[item];
-    if (control == (int)LLG_SV_COV_START) target->stopped = 0;
-    else if (control == (int)LLG_SV_COV_STOP) target->stopped = 1;
-    else if (control == (int)LLG_SV_COV_RESET) llg_acov_zero(target);
+    if (control == (int32_t)LLG_SV_COV_START) target->stopped = 0;
+    else if (control == (int32_t)LLG_SV_COV_STOP) target->stopped = 1;
+    else if (control == (int32_t)LLG_SV_COV_RESET) llg_acov_zero(target);
     return LLG_SV_COV_OK;
 }
 
-int32_t llg_coverage_file_vpi(int merge, int type, const char* name) {
+int32_t llg_coverage_file_vpi(int32_t merge, int32_t type, const char* name) {
     uint64_t values[1] = {(uint64_t)(int64_t)type};
     if (!name || type < 0) return LLG_SV_COV_ERROR;
     return llg_coverage_dispatch(merge ? LLG_COVERAGE_MERGE : LLG_COVERAGE_SAVE, values, -1, name,

@@ -25,7 +25,7 @@ llg_value_t* llg_queue_value_element(llg_queue_value_array_t* queue,
  * hidden (LLG_INTERNAL): only models call them. */
 static LLG_COLD LLG_OUTLYING void llg_value_cell_invalid(
     const char* operation, const char* kind, sv4_t index, size_t size,
-    int queue_write) {
+    int32_t queue_write) {
     int64_t value = 0;
     if (llg_index_stop_hook) {
         char detail[160];
@@ -48,7 +48,7 @@ static LLG_COLD LLG_OUTLYING void llg_value_cell_invalid(
 }
 
 LLG_INTERNAL LLG_COLD LLG_OUTLYING llg_value_t* llg_dyn_value_cell_miss(
-    const llg_dyn_value_array_t* array, sv4_t index, int write) {
+    const llg_dyn_value_array_t* array, sv4_t index, int32_t write) {
     llg_value_cell_invalid(write ? "dynamic-array element write"
                                  : "dynamic-array element read",
                            "dynamic array", index, array ? array->size : 0, 0);
@@ -56,13 +56,13 @@ LLG_INTERNAL LLG_COLD LLG_OUTLYING llg_value_t* llg_dyn_value_cell_miss(
 }
 
 LLG_INTERNAL LLG_COLD LLG_OUTLYING llg_value_t* llg_queue_value_cell_miss(
-    llg_queue_value_array_t* queue, sv4_t index, int write) {
+    llg_queue_value_array_t* queue, sv4_t index, int32_t write) {
     int64_t value = 0;
     if (write && queue && sv4_to_index_i64(index, &value) && value >= 0 &&
         (uint64_t)value == (uint64_t)queue->size) {
         llg_value_t initial = {0};
         llg_native_value_init(&initial, queue->element);
-        int written = llg_queue_value_set_element(queue, &index, 1, &initial);
+        int32_t written = llg_queue_value_set_element(queue, &index, 1, &initial);
         llg_native_value_destroy(&initial);
         return written ? llg_queue_value_element(queue, &index, 1) : NULL;
     }
@@ -83,15 +83,15 @@ LLG_INTERNAL LLG_COLD LLG_OUTLYING void llg_queue_value_store_miss(
 
 /* Insert a missing outer entry with its Table 6-7 initial value, as a write
  * through a missing key does (SV 7.8). Returns 0 for an invalid key. */
-static int llg_assoc_value_create_entry(llg_assoc_value_t* array,
+static int32_t llg_assoc_value_create_entry(llg_assoc_value_t* array,
                                         sv4_t* integral_key,
                                         const void* string_key,
                                         size_t string_length) {
     llg_value_t initial = {0};
     if (!llg_value_try_default_mode(&initial, array->element, 1))
         llg_container_fatal("container allocation failed");
-    int change = 0;
-    int result = llg_assoc_value_set_source(array, integral_key, string_key,
+    int32_t change = 0;
+    int32_t result = llg_assoc_value_set_source(array, integral_key, string_key,
                                             string_length, &initial, &change);
     llg_value_drop(&initial);
     llg_notify(array->notify, array->contents_dependency,
@@ -101,15 +101,15 @@ static int llg_assoc_value_create_entry(llg_assoc_value_t* array,
 
 llg_value_t* llg_assoc_value_element_integral(llg_assoc_value_t* array,
                                               const sv4_t* indices,
-                                              size_t count, int create) {
+                                              size_t count, int32_t create) {
     if (!array || !indices || count == 0 ||
         array->key_kind != LLG_ASSOC_INTEGRAL)
         return NULL;
     sv4_t normalized = SV4_EMPTY;
     llg_value_t* value = NULL;
-    int valid = llg_assoc_value_normalize_key(array, indices[0], &normalized);
+    int32_t valid = llg_assoc_value_normalize_key(array, indices[0], &normalized);
     if (valid) {
-        int found = 0;
+        int32_t found = 0;
         size_t position =
             llg_assoc_value_integral_position(array, normalized, &found);
         if (!found && create &&
@@ -134,9 +134,9 @@ llg_value_t* llg_assoc_value_element_integral(llg_assoc_value_t* array,
 
 llg_value_t* llg_assoc_value_element_string(llg_assoc_value_t* array,
                                             const void* key, size_t length,
-                                            int create) {
+                                            int32_t create) {
     if (!array || array->key_kind != LLG_ASSOC_STRING) return NULL;
-    int found = 0;
+    int32_t found = 0;
     size_t position =
         llg_assoc_value_string_position(array, key, length, &found);
     if (!found && create &&
@@ -147,13 +147,13 @@ llg_value_t* llg_assoc_value_element_string(llg_assoc_value_t* array,
 }
 
 llg_value_t* llg_nested_seq_write_at(llg_value_t* owner, sv4_t index,
-                                     int* change) {
+                                     int32_t* change) {
     if (!owner || !owner->desc || owner->desc->kind != LLG_VALUE_CONTAINER ||
         owner->desc->element->kind == LLG_VALUE_PACKED)
         return NULL;
     llg_nested_seq_t* seq = owner->value.container;
     size_t size = llg_nested_seq_size(seq);
-    int queue = owner->desc->item_count != LLG_VALUE_CONTAINER_DYNAMIC;
+    int32_t queue = owner->desc->item_count != LLG_VALUE_CONTAINER_DYNAMIC;
     size_t native;
     if (!llg_index(index, size, queue, &native)) return NULL;
     if (native == size) {
@@ -164,8 +164,8 @@ llg_value_t* llg_nested_seq_write_at(llg_value_t* owner, sv4_t index,
                                         seq->array.queue_values.element, 1))
             llg_container_fatal("container allocation failed");
         /* The queue's own write appends; at its bound it warns instead. */
-        int appended = 0;
-        int written = llg_queue_value_set_source(&seq->array.queue_values,
+        int32_t appended = 0;
+        int32_t written = llg_queue_value_set_source(&seq->array.queue_values,
                                                  index, &initial, &appended);
         llg_value_drop(&initial);
         if (!written) return NULL;
@@ -178,8 +178,8 @@ llg_value_t* llg_nested_seq_write_at(llg_value_t* owner, sv4_t index,
 
 /* The inner levels of `llg_*_extend_nested`, below the outer element. Only
  * a queue level takes a position one past its end. */
-static int llg_value_extend_path(llg_value_t* value, const sv4_t* indices,
-                                 size_t count, int* change) {
+static int32_t llg_value_extend_path(llg_value_t* value, const sv4_t* indices,
+                                 size_t count, int32_t* change) {
     for (size_t level = 0; level < count; ++level) {
         if (!value || !value->desc || value->desc->kind != LLG_VALUE_CONTAINER)
             return 0;
@@ -191,7 +191,7 @@ static int llg_value_extend_path(llg_value_t* value, const sv4_t* indices,
         if (level + 1 != count) return 0;
         llg_nested_seq_t* seq = value->value.container;
         size_t size = llg_nested_seq_size(seq);
-        int queue = value->desc->item_count != LLG_VALUE_CONTAINER_DYNAMIC;
+        int32_t queue = value->desc->item_count != LLG_VALUE_CONTAINER_DYNAMIC;
         size_t native;
         if (!llg_index(indices[level], size, queue, &native)) return 0;
         if (native < size) return 1;
@@ -209,28 +209,28 @@ static int llg_value_extend_path(llg_value_t* value, const sv4_t* indices,
     return value != NULL;
 }
 
-int llg_dyn_value_extend_nested(llg_dyn_value_array_t* array,
+int32_t llg_dyn_value_extend_nested(llg_dyn_value_array_t* array,
                                 const sv4_t* indices, size_t count) {
     if (!array || !indices || count < 2) return 0;
-    int change = 0;
-    int result = llg_value_extend_path(llg_dyn_value_at(array, indices[0]),
+    int32_t change = 0;
+    int32_t result = llg_value_extend_path(llg_dyn_value_at(array, indices[0]),
                                        indices + 1, count - 1, &change);
     llg_notify(array->notify, array->contents_dependency,
                array->shape_dependency, change);
     return result;
 }
 
-int llg_queue_value_extend_nested(llg_queue_value_array_t* queue,
+int32_t llg_queue_value_extend_nested(llg_queue_value_array_t* queue,
                                   const sv4_t* indices, size_t count) {
     if (!queue || !indices || count < 2) return 0;
-    int change = 0;
+    int32_t change = 0;
     size_t native;
     if (!llg_index(indices[0], queue->size, 1, &native)) return 0;
     if (native == queue->size) {
         llg_value_t initial = {0};
         if (!llg_value_try_default_mode(&initial, queue->element, 1))
             llg_container_fatal("container allocation failed");
-        int appended =
+        int32_t appended =
             llg_queue_value_set_source(queue, indices[0], &initial, &change);
         llg_value_drop(&initial);
         if (!appended) {
@@ -239,19 +239,19 @@ int llg_queue_value_extend_nested(llg_queue_value_array_t* queue,
             return 0;
         }
     }
-    int result = llg_value_extend_path(&queue->data[native], indices + 1,
+    int32_t result = llg_value_extend_path(&queue->data[native], indices + 1,
                                        count - 1, &change);
     llg_notify(queue->notify, queue->contents_dependency,
                queue->shape_dependency, change);
     return result;
 }
 
-int llg_assoc_value_extend_nested_integral(llg_assoc_value_t* array,
+int32_t llg_assoc_value_extend_nested_integral(llg_assoc_value_t* array,
                                            const sv4_t* indices, size_t count) {
     if (!array || !indices || count < 2) return 0;
     llg_value_t* outer = llg_assoc_value_element_integral(array, indices, 1, 1);
-    int change = 0;
-    int result = llg_value_extend_path(outer, indices + 1, count - 1, &change);
+    int32_t change = 0;
+    int32_t result = llg_value_extend_path(outer, indices + 1, count - 1, &change);
     llg_notify(array->notify, array->contents_dependency,
                array->shape_dependency, change);
     return result;
@@ -299,8 +299,8 @@ void llg_value_element_read(llg_value_t* dst, const llg_value_t* element) {
 
 /* Replace one existing element with a converted copy of `value`, notifying
  * readers. Returns 0 (no write) for an invalid index or missing key. */
-static int llg_value_element_store(llg_value_t* target, const llg_value_t* value,
-                                   int* change) {
+static int32_t llg_value_element_store(llg_value_t* target, const llg_value_t* value,
+                                   int32_t* change) {
     if (!target) return 0;
     if (!value || !llg_value_desc_compatible(target->desc, value->desc))
         llg_container_fatal("element write has an incompatible value type");
@@ -312,25 +312,25 @@ static int llg_value_element_store(llg_value_t* target, const llg_value_t* value
 
 /* A record element written in place: each store reports whether the leaf
  * changed, so the element publishes once and only when some leaf differs. */
-int llg_value_item_set_packed(llg_value_t* item, sv4_t value) {
+int32_t llg_value_item_set_packed(llg_value_t* item, sv4_t value) {
     if (sv4_same(item->value.packed, value)) return 0;
     sv4_copy(&item->value.packed, &value);
     return 1;
 }
 
-int llg_value_item_set_real(llg_value_t* item, double value) {
+int32_t llg_value_item_set_real(llg_value_t* item, double value) {
     if (llg_value_real_same(item->value.real, value)) return 0;
     item->value.real = value;
     return 1;
 }
 
-static int value_item_same_string(const llg_value_t* item, const llg_string_t* value) {
+static int32_t value_item_same_string(const llg_value_t* item, const llg_string_t* value) {
     return item->value.string.len == value->len &&
            (!value->len ||
             memcmp(item->value.string.data, value->data, value->len) == 0);
 }
 
-int llg_value_item_set_string(llg_value_t* item, const llg_string_t* value) {
+int32_t llg_value_item_set_string(llg_value_t* item, const llg_string_t* value) {
     if (value_item_same_string(item, value)) return 0;
     llg_string_t copy = llg_string_clone(value);
     llg_string_destroy(&item->value.string);
@@ -338,7 +338,7 @@ int llg_value_item_set_string(llg_value_t* item, const llg_string_t* value) {
     return 1;
 }
 
-int llg_value_item_take_string(llg_value_t* item, llg_string_t value) {
+int32_t llg_value_item_take_string(llg_value_t* item, llg_string_t value) {
     if (value_item_same_string(item, &value)) {
         llg_string_destroy(&value);
         return 0;
@@ -348,15 +348,15 @@ int llg_value_item_take_string(llg_value_t* item, llg_string_t value) {
     return 1;
 }
 
-int llg_value_item_set_handle(llg_value_t* item, void* value) {
+int32_t llg_value_item_set_handle(llg_value_t* item, void* value) {
     return llg_value_store_handle(item, value);
 }
 
-int llg_dyn_value_set_element(llg_dyn_value_array_t* array,
+int32_t llg_dyn_value_set_element(llg_dyn_value_array_t* array,
                               const sv4_t* indices, size_t count,
                               const llg_value_t* value) {
-    int change = 0;
-    int result = llg_value_element_store(
+    int32_t change = 0;
+    int32_t result = llg_value_element_store(
         llg_dyn_value_nested_target(array, indices, count, &change), value,
         &change);
     llg_notify(array->notify, array->contents_dependency,
@@ -364,14 +364,14 @@ int llg_dyn_value_set_element(llg_dyn_value_array_t* array,
     return result;
 }
 
-int llg_queue_value_set_element(llg_queue_value_array_t* queue,
+int32_t llg_queue_value_set_element(llg_queue_value_array_t* queue,
                                 const sv4_t* indices, size_t count,
                                 const llg_value_t* value) {
     if (count == 1 &&
         (!value || !llg_value_desc_compatible(queue->element, value->desc)))
         llg_container_fatal("queue write has an incompatible value type");
-    int change = 0;
-    int result;
+    int32_t change = 0;
+    int32_t result;
     if (count == 1) {
         /* `q[$+1] = v` appends (SV 7.10.1). */
         result = llg_queue_value_set_source(queue, indices[0], value, &change);
@@ -386,36 +386,36 @@ int llg_queue_value_set_element(llg_queue_value_array_t* queue,
     return result;
 }
 
-void llg_queue_value_push_value(llg_queue_value_array_t* queue, int back,
+void llg_queue_value_push_value(llg_queue_value_array_t* queue, int32_t back,
                                 const llg_value_t* value) {
     if (!value || !llg_value_desc_compatible(queue->element, value->desc))
         llg_container_fatal("queue push has an incompatible value type");
-    int change = 0;
+    int32_t change = 0;
     if (back) llg_queue_value_append(queue, value, &change);
     else llg_queue_value_prepend(queue, value, &change);
     llg_notify(queue->notify, queue->contents_dependency,
                queue->shape_dependency, change);
 }
 
-int llg_queue_value_insert_value(llg_queue_value_array_t* queue, sv4_t index,
+int32_t llg_queue_value_insert_value(llg_queue_value_array_t* queue, sv4_t index,
                                  const llg_value_t* value) {
     if (!value || !llg_value_desc_compatible(queue->element, value->desc))
         llg_container_fatal("queue insert has an incompatible value type");
-    int change = 0;
-    int result = llg_queue_value_insert_source(queue, index, value, &change);
+    int32_t change = 0;
+    int32_t result = llg_queue_value_insert_source(queue, index, value, &change);
     llg_notify(queue->notify, queue->contents_dependency,
                queue->shape_dependency, change);
     return result;
 }
 
-int llg_assoc_value_set_element_integral(llg_assoc_value_t* array,
+int32_t llg_assoc_value_set_element_integral(llg_assoc_value_t* array,
                                          const sv4_t* indices, size_t count,
                                          const llg_value_t* value) {
     if (count == 1 &&
         (!value || !llg_value_desc_compatible(array->element, value->desc)))
         llg_container_fatal("associative write has an incompatible value type");
-    int change = 0;
-    int result;
+    int32_t change = 0;
+    int32_t result;
     if (count == 1) {
         sv4_t normalized = SV4_EMPTY;
         result = llg_assoc_value_normalize_key(array, indices[0], &normalized);
@@ -436,23 +436,23 @@ int llg_assoc_value_set_element_integral(llg_assoc_value_t* array,
     return result;
 }
 
-int llg_assoc_value_set_element_string(llg_assoc_value_t* array,
+int32_t llg_assoc_value_set_element_string(llg_assoc_value_t* array,
                                        const void* key, size_t length,
                                        const llg_value_t* value) {
     if (!value || !llg_value_desc_compatible(array->element, value->desc))
         llg_container_fatal("associative write has an incompatible value type");
-    int change = 0;
-    int result = llg_assoc_value_set_source(array, NULL, key, length, value,
+    int32_t change = 0;
+    int32_t result = llg_assoc_value_set_source(array, NULL, key, length, value,
                                             &change);
     llg_notify(array->notify, array->contents_dependency,
                array->shape_dependency, change);
     return result;
 }
 
-void llg_queue_value_pop_value(llg_queue_value_array_t* queue, int back,
+void llg_queue_value_pop_value(llg_queue_value_array_t* queue, int32_t back,
                                llg_value_t* dst) {
     llg_value_t removed = {0};
-    int taken = llg_queue_value_take(queue, back, &removed);
+    int32_t taken = llg_queue_value_take(queue, back, &removed);
     llg_value_element_read(dst, taken ? &removed : NULL);
     llg_value_drop(&removed);
     if (taken) llg_queue_value_pop_notify(queue);
@@ -482,7 +482,7 @@ static llg_seq_view_t llg_value_item_view(const llg_value_t* item) {
 
 /* Whether a slot is a fixed member array of `count` items, moved cell by cell
  * into its own items. */
-static int llg_value_item_is_fixed(const llg_value_t* item, size_t count) {
+static int32_t llg_value_item_is_fixed(const llg_value_t* item, size_t count) {
     if (!item || !item->desc || item->desc->kind != LLG_VALUE_FIXED_ARRAY)
         return 0;
     if (item->desc->item_count != count)

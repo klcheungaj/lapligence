@@ -20,13 +20,13 @@ typedef struct llg_free_set {
     llg_free_solve_fn solve;
     uint64_t* identities;               // owned copy of the assume identities
     llg_concurrent_assertion_t** assumes; // resolved on the first solve
-    unsigned char* flags;               // per assume: bit 0 event, bit 1 due
+    uint8_t* flags;               // per assume: bit 0 event, bit 1 due
     uint32_t count;
     uint64_t step;                      // g.now + 1 of the last implicit solve
     llg_rng_state_t rng;
 } llg_free_set_t;
 
-static int free_assertion_identity_cmp(const void* left, const void* right) {
+static int32_t free_assertion_identity_cmp(const void* left, const void* right) {
     const llg_concurrent_assertion_t* a = *(llg_concurrent_assertion_t* const*)left;
     const llg_concurrent_assertion_t* b = *(llg_concurrent_assertion_t* const*)right;
     return a->identity < b->identity ? -1 : a->identity > b->identity ? 1 : 0;
@@ -34,7 +34,7 @@ static int free_assertion_identity_cmp(const void* left, const void* right) {
 
 /* Resolve every set's assume identities with one sorted pass over the
  * assertions, so registration stays linear in the design. */
-static int free_sets_resolve(void) {
+static int32_t free_sets_resolve(void) {
     size_t total = 0;
     for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
          assertion = assertion->next)
@@ -51,7 +51,7 @@ static int free_sets_resolve(void) {
             sorted[index++] = assertion;
         qsort(sorted, total, sizeof(*sorted), free_assertion_identity_cmp);
     }
-    int ok = 1;
+    int32_t ok = 1;
     for (llg_free_set_t* set = g.free_sets; set && ok; set = set->next) {
         for (uint32_t k = 0; k < set->count; ++k) {
             size_t low = 0, high = total;
@@ -79,7 +79,7 @@ static int free_sets_resolve(void) {
     return ok;
 }
 
-int llg_checker_free_set(llg_free_solve_fn solve, const uint64_t* assumes,
+int32_t llg_checker_free_set(llg_free_solve_fn solve, const uint64_t* assumes,
                          uint32_t count, const char* label) {
     if (!g.initialized || g.running || g.config_error || !solve ||
         (count && !assumes)) {
@@ -98,7 +98,7 @@ int llg_checker_free_set(llg_free_solve_fn solve, const uint64_t* assumes,
         memcpy(set->identities, assumes, count * sizeof(uint64_t));
         set->assumes = (llg_concurrent_assertion_t**)llg_checked_calloc(
             count, sizeof(*set->assumes), "free variable set");
-        set->flags = (unsigned char*)llg_checked_calloc(count, 1, "free variable set");
+        set->flags = (uint8_t*)llg_checked_calloc(count, 1, "free variable set");
     }
     // The set draws like a static process of its checker instance (18.14.1).
     llg_rng_state_t* parent = g.rng_instance_streams && label
@@ -112,7 +112,7 @@ int llg_checker_free_set(llg_free_solve_fn solve, const uint64_t* assumes,
     return 1;
 }
 
-int llg_checker_assume_flag(uint32_t assume, int due) {
+int32_t llg_checker_assume_flag(uint32_t assume, int32_t due) {
     const llg_free_set_t* set = g.free_solving;
     if (!set || assume >= set->count) return 0;
     return (set->flags[assume] >> (due ? 1 : 0)) & 1;
@@ -122,15 +122,15 @@ int llg_checker_assume_flag(uint32_t assume, int due) {
  * clock event waits and the assume is enabled and not disabled. `due` also
  * needs a pending attempt of a predicate `|=>` assume, whose consequent this
  * event evaluates. */
-static int free_set_events(llg_free_set_t* set) {
-    int any = 0;
+static int32_t free_set_events(llg_free_set_t* set) {
+    int32_t any = 0;
     for (uint32_t k = 0; k < set->count; ++k) {
         llg_concurrent_assertion_t* assume = set->assumes[k];
-        int event = assertion_root_event_pending(assume) && assertion_clock_live(assume->hot) &&
+        int32_t event = assertion_root_event_pending(assume) && assertion_clock_live(assume->hot) &&
                     !(assume->hot->disable && sv4_to_bool(*assume->hot->disable));
-        int due = event && !assume->property && !assume->consequent_sequence &&
+        int32_t due = event && !assume->property && !assume->consequent_sequence &&
                   !assume->overlapped && assume->attempts != NULL;
-        set->flags[k] = (unsigned char)(event | (due << 1));
+        set->flags[k] = (uint8_t)(event | (due << 1));
         any |= event;
     }
     return any;

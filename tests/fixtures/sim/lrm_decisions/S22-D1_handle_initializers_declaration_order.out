@@ -1,0 +1,7 @@
+rd: h=0 h2=0 mb=0 sm=0 s=str s2= s3= q=3 da=2 aa=1 fa=7,9 st=10,11 st2=0 fb=0,0
+K::new(5)
+K::new(0)
+1: tb.st2
+2: tb.fb0
+3: tb.later
+h.v=5 h2.v=0 hv=5 s2=x3 s3=str! st2=1 fb0=2 later=3

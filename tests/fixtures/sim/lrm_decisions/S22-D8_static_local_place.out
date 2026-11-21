@@ -1,0 +1,25 @@
+1 leaf.la
+2 leaf.lf.ls
+3 leaf.lb
+4 tb.f0.s0
+5 tb.a
+  g called s=0
+6 tb.g.s
+7 tb.b
+  f0 called s0=4
+8 tb.t.ts
+9 tb.ib.is
+10 tb.ga.sa
+11 tb.ga.au
+12 tb.two.t1
+13 tb.two.t2
+14 tb.two.inner.t3
+15 tb.kinds.h
+16 tb.kinds.str
+17 tb.kinds.q
+18 tb.kinds.arr0
+19 tb.kinds.arr1
+20 tb.ab.as
+21 tb.d
+z=0 y=4 e=10 hv=15 k=2
+  t called ts=8

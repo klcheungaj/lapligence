@@ -8,7 +8,7 @@
 
 /* Ordinal `slot` of `positions`, or 0 when it is unknown, negative or not
  * below `count` (the receiver changed size while the keys were computed). */
-static int llg_method_position(const llg_queue_t* positions, size_t slot,
+static int32_t llg_method_position(const llg_queue_t* positions, size_t slot,
                                size_t count, size_t* position) {
     return llg_index(positions->data[slot], count, 0, position);
 }
@@ -22,7 +22,7 @@ static void llg_method_check_positions(const llg_queue_t* positions) {
  * selected positions, into a packed queue. */
 static void llg_method_gather_sv4(llg_queue_t* dst, const sv4_t* data,
                                   size_t count, const llg_queue_t* positions,
-                                  int keys) {
+                                  int32_t keys) {
     llg_method_check_positions(positions);
     if (!dst) llg_container_fatal("null array-method result");
     size_t selected = positions->size;
@@ -45,19 +45,19 @@ void llg_method_gather_positions(llg_queue_t* dst, const llg_queue_t* positions,
 }
 
 void llg_dyn_gather(llg_queue_t* dst, const llg_dyn_array_t* src,
-                    const llg_queue_t* positions, int keys) {
+                    const llg_queue_t* positions, int32_t keys) {
     if (!src) llg_container_fatal("null dynamic-array method source");
     llg_method_gather_sv4(dst, src->data, src->size, positions, keys);
 }
 
 void llg_queue_gather(llg_queue_t* dst, const llg_queue_t* src,
-                      const llg_queue_t* positions, int keys) {
+                      const llg_queue_t* positions, int32_t keys) {
     if (!src) llg_container_fatal("null queue method source");
     llg_method_gather_sv4(dst, src->data, src->size, positions, keys);
 }
 
 void llg_assoc_gather(llg_queue_t* dst, const llg_assoc_t* src,
-                      const llg_queue_t* positions, int keys) {
+                      const llg_queue_t* positions, int32_t keys) {
     if (!src || !dst) llg_container_fatal("null associative-array method operand");
     llg_method_check_positions(positions);
     if (keys && src->key_kind != LLG_ASSOC_INTEGRAL)
@@ -77,7 +77,7 @@ void llg_assoc_gather(llg_queue_t* dst, const llg_assoc_t* src,
 }
 
 static void llg_method_gather_string_keys(llg_queue_value_array_t* dst,
-                                          const unsigned char* const* keys,
+                                          const uint8_t* const* keys,
                                           const size_t* lengths, size_t count) {
     llg_string_t* values = llg_alloc_items(count, sizeof(*values));
     for (size_t i = 0; i < count; ++i)
@@ -92,7 +92,7 @@ void llg_assoc_gather_string_keys(llg_queue_value_array_t* dst,
     if (!src || !dst || src->key_kind != LLG_ASSOC_STRING)
         llg_container_fatal("string index result requires a string-keyed array");
     llg_method_check_positions(positions);
-    const unsigned char** keys =
+    const uint8_t** keys =
         llg_alloc_items(positions->size, sizeof(*keys));
     size_t* lengths = llg_alloc_items(positions->size, sizeof(*lengths));
     size_t used = 0;
@@ -190,7 +190,7 @@ void llg_assoc_value_gather_string_keys(llg_queue_value_array_t* dst,
     if (!src || !dst || src->key_kind != LLG_ASSOC_STRING)
         llg_container_fatal("string index result requires a string-keyed array");
     llg_method_check_positions(positions);
-    const unsigned char** keys =
+    const uint8_t** keys =
         llg_alloc_items(positions->size, sizeof(*keys));
     size_t* lengths = llg_alloc_items(positions->size, sizeof(*lengths));
     size_t used = 0;
@@ -232,7 +232,7 @@ static uint64_t llg_method_sv4_hash(sv4_t value) {
 static uint64_t llg_method_bytes_hash(const char* data, size_t length) {
     uint64_t hash = UINT64_C(0xcbf29ce484222325);
     for (size_t i = 0; i < length; ++i) {
-        hash ^= (unsigned char)data[i];
+        hash ^= (uint8_t)data[i];
         hash *= UINT64_C(0x100000001b3);
     }
     return hash;
@@ -242,8 +242,8 @@ static uint64_t llg_method_bytes_hash(const char* data, size_t length) {
  * equality of two positions. Marks the first position of every distinct key
  * in `keep`, so the selection keeps source order, in expected O(n). */
 static void llg_method_mark_distinct(size_t count, const uint64_t* hashes,
-                                     int (*same)(const void*, size_t, size_t),
-                                     const void* keys, unsigned char* keep) {
+                                     int32_t (*same)(const void*, size_t, size_t),
+                                     const void* keys, uint8_t* keep) {
     size_t capacity = 16;
     while (capacity < count * 2) {
         if (capacity > SIZE_MAX / 2)
@@ -270,12 +270,12 @@ static void llg_method_mark_distinct(size_t count, const uint64_t* hashes,
     free(table);
 }
 
-static int llg_method_same_sv4(const void* keys, size_t a, size_t b) {
+static int32_t llg_method_same_sv4(const void* keys, size_t a, size_t b) {
     const sv4_t* values = keys;
     return sv4_same(values[a], values[b]);
 }
 
-static int llg_method_same_string(const void* keys, size_t a, size_t b) {
+static int32_t llg_method_same_string(const void* keys, size_t a, size_t b) {
     const llg_value_t* values = keys;
     const llg_string_t* left = &values[a].value.string;
     const llg_string_t* right = &values[b].value.string;
@@ -285,7 +285,7 @@ static int llg_method_same_string(const void* keys, size_t a, size_t b) {
 
 /* Replace `positions` with the selected ordinals in ascending order. */
 static void llg_method_assign_kept(llg_queue_t* positions,
-                                   const unsigned char* keep, size_t count) {
+                                   const uint8_t* keep, size_t count) {
     sv4_t* values = llg_alloc_items(count, sizeof(*values));
     size_t used = 0;
     for (size_t position = 0; position < count; ++position)
@@ -297,7 +297,7 @@ static void llg_method_assign_kept(llg_queue_t* positions,
 }
 
 /* Packed keys compare with sv4_same, as the packed `unique` method does. */
-static void llg_method_distinct_sv4(unsigned char* keep, const sv4_t* keys,
+static void llg_method_distinct_sv4(uint8_t* keep, const sv4_t* keys,
                                     size_t count) {
     uint64_t* hashes = llg_alloc_items(count, sizeof(*hashes));
     for (size_t i = 0; i < count; ++i) hashes[i] = llg_method_sv4_hash(keys[i]);
@@ -308,7 +308,7 @@ static void llg_method_distinct_sv4(unsigned char* keep, const sv4_t* keys,
 void llg_method_unique_positions(llg_queue_t* positions, const llg_queue_t* keys) {
     if (!positions || !keys) llg_container_fatal("null array-method keys");
     size_t count = keys->size;
-    unsigned char* keep = llg_alloc_items(count, sizeof(*keep));
+    uint8_t* keep = llg_alloc_items(count, sizeof(*keep));
     if (count) memset(keep, 0, count);
     llg_method_distinct_sv4(keep, keys->data, count);
     llg_method_assign_kept(positions, keep, count);
@@ -321,7 +321,7 @@ void llg_method_unique_value_positions(llg_queue_t* positions,
                                        const llg_queue_value_array_t* keys) {
     if (!positions || !keys) llg_container_fatal("null array-method keys");
     size_t count = keys->size;
-    unsigned char* keep = llg_alloc_items(count, sizeof(*keep));
+    uint8_t* keep = llg_alloc_items(count, sizeof(*keep));
     if (count) memset(keep, 0, count);
     if (count && keys->element->kind == LLG_VALUE_STRING) {
         uint64_t* hashes = llg_alloc_items(count, sizeof(*hashes));
@@ -363,15 +363,15 @@ void llg_method_unique_value_positions(llg_queue_t* positions,
 
 /* Ordering by computed keys ------------------------------------------------ */
 
-static int llg_method_string_less(const llg_string_t* a, const llg_string_t* b) {
+static int32_t llg_method_string_less(const llg_string_t* a, const llg_string_t* b) {
     size_t shared = a->len < b->len ? a->len : b->len;
-    int order = shared ? memcmp(a->data, b->data, shared) : 0;
+    int32_t order = shared ? memcmp(a->data, b->data, shared) : 0;
     return order ? order < 0 : a->len < b->len;
 }
 
 /* Stable bottom-up merge sort of order[0, count) by string keys. */
 static void llg_method_string_order(const llg_value_t* keys, size_t count,
-                                    int descending, size_t* order) {
+                                    int32_t descending, size_t* order) {
     size_t* source = order;
     size_t* target = order + count;
     for (size_t i = 0; i < count; ++i) order[i] = i;
@@ -383,7 +383,7 @@ static void llg_method_string_order(const llg_value_t* keys, size_t count,
             while (left < middle && right < high) {
                 const llg_string_t* l = &keys[source[left]].value.string;
                 const llg_string_t* r = &keys[source[right]].value.string;
-                int before = descending ? llg_method_string_less(l, r)
+                int32_t before = descending ? llg_method_string_less(l, r)
                                         : llg_method_string_less(r, l);
                 if (before)
                     target[out++] = source[right++];
@@ -402,9 +402,9 @@ static void llg_method_string_order(const llg_value_t* keys, size_t count,
 
 /* Permutation for `count` elements from packed or value keys; returns
  * whether any element moves, or -1 when the key count no longer matches. */
-static int llg_method_key_order(size_t count, const llg_queue_t* packed_keys,
+static int32_t llg_method_key_order(size_t count, const llg_queue_t* packed_keys,
                                 const llg_queue_value_array_t* value_keys,
-                                int descending, size_t* order) {
+                                int32_t descending, size_t* order) {
     size_t keys = packed_keys ? packed_keys->size : value_keys->size;
     if (keys != count) {
         llg_container_warning(
@@ -417,7 +417,7 @@ static int llg_method_key_order(size_t count, const llg_queue_t* packed_keys,
     if (count && value_keys->element->kind == LLG_VALUE_REAL) {
         double* values = llg_alloc_items(count, sizeof(*values));
         for (size_t i = 0; i < count; ++i) values[i] = value_keys->data[i].value.real;
-        int changed = llg_real_sort_order(values, count, descending, order);
+        int32_t changed = llg_real_sort_order(values, count, descending, order);
         free(values);
         return changed;
     }
@@ -473,26 +473,26 @@ static void llg_method_permute_values(llg_value_t* data, size_t* order,
     }
 }
 
-static int llg_method_sort_sv4_by_keys(sv4_t* data, uint64_t* element_ids,
+static int32_t llg_method_sort_sv4_by_keys(sv4_t* data, uint64_t* element_ids,
                                        size_t count,
                                        const llg_queue_t* packed_keys,
                                        const llg_queue_value_array_t* value_keys,
-                                       int descending) {
+                                       int32_t descending) {
     if (count < 2) return 0;
     size_t* order = llg_alloc_items(count, 2 * sizeof(*order));
-    int changed = llg_method_key_order(count, packed_keys, value_keys,
+    int32_t changed = llg_method_key_order(count, packed_keys, value_keys,
                                        descending, order);
     if (changed > 0) llg_method_permute_sv4(data, element_ids, order, count);
     free(order);
     return changed > 0;
 }
 
-static int llg_method_sort_values_by_keys(
+static int32_t llg_method_sort_values_by_keys(
     llg_value_t* data, size_t count, const llg_queue_t* packed_keys,
-    const llg_queue_value_array_t* value_keys, int descending) {
+    const llg_queue_value_array_t* value_keys, int32_t descending) {
     if (count < 2) return 0;
     size_t* order = llg_alloc_items(count, 2 * sizeof(*order));
-    int changed = llg_method_key_order(count, packed_keys, value_keys,
+    int32_t changed = llg_method_key_order(count, packed_keys, value_keys,
                                        descending, order);
     if (changed > 0) llg_method_permute_values(data, order, count);
     free(order);
@@ -503,7 +503,7 @@ static int llg_method_sort_values_by_keys(
  * element, computed in index order before the call (SV 7.12.2). */
 void llg_dyn_sort_by_keys(llg_dyn_array_t* array, const llg_queue_t* packed_keys,
                           const llg_queue_value_array_t* value_keys,
-                          int descending) {
+                          int32_t descending) {
     if (!array || (!packed_keys == !value_keys))
         llg_container_fatal("malformed dynamic-array ordering");
     if (llg_method_sort_sv4_by_keys(array->data, NULL, array->size, packed_keys,
@@ -514,7 +514,7 @@ void llg_dyn_sort_by_keys(llg_dyn_array_t* array, const llg_queue_t* packed_keys
 
 void llg_queue_sort_by_keys(llg_queue_t* queue, const llg_queue_t* packed_keys,
                             const llg_queue_value_array_t* value_keys,
-                            int descending) {
+                            int32_t descending) {
     if (!queue || (!packed_keys == !value_keys))
         llg_container_fatal("malformed queue ordering");
     if (llg_method_sort_sv4_by_keys(queue->data, queue->element_ids, queue->size,
@@ -526,11 +526,11 @@ void llg_queue_sort_by_keys(llg_queue_t* queue, const llg_queue_t* packed_keys,
 void llg_dyn_value_sort_by_keys(llg_dyn_value_array_t* array,
                                 const llg_queue_t* packed_keys,
                                 const llg_queue_value_array_t* value_keys,
-                                int descending) {
+                                int32_t descending) {
     if (!array || (!packed_keys == !value_keys))
         llg_container_fatal("malformed dynamic-array ordering");
     llg_native_refs_mark(array->references, array->data);
-    int changed = llg_method_sort_values_by_keys(
+    int32_t changed = llg_method_sort_values_by_keys(
         array->data, array->size, packed_keys, value_keys, descending);
     llg_native_refs_unmark(array->references, array->data, array->size,
                            array->element);
@@ -542,11 +542,11 @@ void llg_dyn_value_sort_by_keys(llg_dyn_value_array_t* array,
 void llg_queue_value_sort_by_keys(llg_queue_value_array_t* queue,
                                   const llg_queue_t* packed_keys,
                                   const llg_queue_value_array_t* value_keys,
-                                  int descending) {
+                                  int32_t descending) {
     if (!queue || (!packed_keys == !value_keys))
         llg_container_fatal("malformed queue ordering");
     llg_native_refs_mark(queue->references, queue->data);
-    int changed = llg_method_sort_values_by_keys(
+    int32_t changed = llg_method_sort_values_by_keys(
         queue->data, queue->size, packed_keys, value_keys, descending);
     llg_native_refs_unmark(queue->references, queue->data, queue->size,
                            queue->element);

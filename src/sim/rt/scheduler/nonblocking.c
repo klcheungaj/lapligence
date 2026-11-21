@@ -147,7 +147,7 @@ static void enqueue_nba(llg_nba_t* n) {
 }
 
 static sv4_t nba_range_slice(uint32_t target_width, sv4_t value,
-                             sv4_select_plan_t plan, int reverse,
+                             sv4_select_plan_t plan, int32_t reverse,
                              uint32_t* offset, uint32_t* width) {
     if (plan.storage_width != target_width) {
         llg_msg(LLG_MSG_INTERNAL, NULL, "selected NBA storage width mismatch");
@@ -160,13 +160,13 @@ static sv4_t nba_range_slice(uint32_t target_width, sv4_t value,
 
 static void nba_capture_range(llg_nba_t* n, uint32_t target_width,
                               sv4_t value, sv4_select_plan_t plan,
-                              int reverse) {
+                              int32_t reverse) {
     n->value = nba_range_slice(target_width, value, plan, reverse,
                                &n->range_offset, &n->range_width);
     n->has_range = 1;
 }
 
-static int nba_mask_contiguous(uint32_t target_width, sv4_t value, sv4_t mask,
+static int32_t nba_mask_contiguous(uint32_t target_width, sv4_t value, sv4_t mask,
                                uint32_t* offset, uint32_t* width) {
     uint32_t limit = target_width;
     if (llg_sv4_width(value) < limit) limit = llg_sv4_width(value);
@@ -215,7 +215,7 @@ static void promote_delayed_nbas(void) {
            g.delayed_nba_buckets->time == g.now) {
         llg_nba_bucket_t* bucket = g.delayed_nba_buckets;
         g.delayed_nba_buckets = bucket->next;
-        for (int region = 0; region < LLG_REGION_COUNT; ++region) {
+        for (int32_t region = 0; region < LLG_REGION_COUNT; ++region) {
             llg_nba_queue_t* due = &bucket->queues[region];
             llg_nba_queue_t* current = &g.nba_queues[region];
             if (!due->head) continue;
@@ -268,7 +268,7 @@ static void nba_owner_release_all(llg_proc_t* proc) {
 }
 
 static void free_all_nbas(void) {
-    for (int region = 0; region < LLG_REGION_COUNT; ++region) {
+    for (int32_t region = 0; region < LLG_REGION_COUNT; ++region) {
         llg_nba_queue_t* queue = &g.nba_queues[region];
         while (queue->head) {
             llg_nba_t* n = queue->head;
@@ -280,7 +280,7 @@ static void free_all_nbas(void) {
     while (g.delayed_nba_buckets) {
         llg_nba_bucket_t* bucket = g.delayed_nba_buckets;
         g.delayed_nba_buckets = bucket->next;
-        for (int region = 0; region < LLG_REGION_COUNT; ++region) {
+        for (int32_t region = 0; region < LLG_REGION_COUNT; ++region) {
             llg_nba_queue_t* queue = &bucket->queues[region];
             while (queue->head) {
                 llg_nba_t* n = queue->head;
@@ -310,7 +310,7 @@ void llg_nba_after(sv4_t* target, sv4_t value, uint64_t ticks) {
     enqueue_nba(n);
 }
 
-void llg_nba_net_after(llg_net_t* net, int slot, sv4_t value, uint64_t ticks) {
+void llg_nba_net_after(llg_net_t* net, int32_t slot, sv4_t value, uint64_t ticks) {
     if (!net || slot < 0 || slot >= net->n_drivers || !net->drivers[slot]) return;
     llg_nba_t* n = new_nba(ticks);
     if (!n) return;
@@ -320,7 +320,7 @@ void llg_nba_net_after(llg_net_t* net, int slot, sv4_t value, uint64_t ticks) {
     enqueue_nba(n);
 }
 
-void llg_nba_net_masked_after(llg_net_t* net, int slot, sv4_t value,
+void llg_nba_net_masked_after(llg_net_t* net, int32_t slot, sv4_t value,
                               sv4_t mask, uint64_t ticks) {
     if (!net || slot < 0 || slot >= net->n_drivers || !net->drivers[slot]) return;
     llg_nba_t* n = new_nba(ticks);
@@ -331,8 +331,8 @@ void llg_nba_net_masked_after(llg_net_t* net, int slot, sv4_t value,
     enqueue_nba(n);
 }
 
-void llg_nba_net_selected_after(llg_net_t* net, int slot, sv4_t value,
-                                sv4_select_plan_t plan, int reverse,
+void llg_nba_net_selected_after(llg_net_t* net, int32_t slot, sv4_t value,
+                                sv4_select_plan_t plan, int32_t reverse,
                                 uint64_t ticks) {
     if (!net || slot < 0 || slot >= net->n_drivers || !net->drivers[slot]) return;
     llg_nba_t* n = new_nba(ticks);
@@ -348,7 +348,7 @@ void llg_nba_net_selected_after(llg_net_t* net, int slot, sv4_t value,
 // event, so it needs one more event unless `n` is zero (`##0` has no effect).
 static void clocking_drive_schedule(const llg_clocking_drive_t* drive,
                                     uint64_t cycles,
-                                    const llg_wait_src_t* specs, int n_specs) {
+                                    const llg_wait_src_t* specs, int32_t n_specs) {
     if (!specs || n_specs <= 0 || !region_can_mutate("clocking drive scheduling"))
         return;
     uint64_t events = cycles;
@@ -386,7 +386,7 @@ static void clocking_drive_schedule(const llg_clocking_drive_t* drive,
 
 void llg_clocking_nba_sync_after(sv4_t* target, sv4_t value, uint64_t ticks,
                                  uint64_t cycles,
-                                 const llg_wait_src_t* specs, int n_specs) {
+                                 const llg_wait_src_t* specs, int32_t n_specs) {
     llg_clocking_drive_t drive = {0};
     drive.target = target;
     drive.value = value;
@@ -394,9 +394,9 @@ void llg_clocking_nba_sync_after(sv4_t* target, sv4_t value, uint64_t ticks,
     clocking_drive_schedule(&drive, cycles, specs, n_specs);
 }
 
-void llg_clocking_nba_net_sync_after(llg_net_t* net, int slot, sv4_t value,
+void llg_clocking_nba_net_sync_after(llg_net_t* net, int32_t slot, sv4_t value,
                                      uint64_t ticks, uint64_t cycles,
-                                     const llg_wait_src_t* specs, int n_specs) {
+                                     const llg_wait_src_t* specs, int32_t n_specs) {
     llg_clocking_drive_t drive = {0};
     drive.net_target = net;
     drive.net_slot = slot;
@@ -407,7 +407,7 @@ void llg_clocking_nba_net_sync_after(llg_net_t* net, int slot, sv4_t value,
 
 void llg_clocking_nba_sync_masked_after(
     sv4_t* target, sv4_t value, sv4_t mask, uint64_t ticks, uint64_t cycles,
-    const llg_wait_src_t* specs, int n_specs) {
+    const llg_wait_src_t* specs, int32_t n_specs) {
     llg_clocking_drive_t drive = {0};
     drive.target = target;
     drive.value = value;
@@ -418,8 +418,8 @@ void llg_clocking_nba_sync_masked_after(
 }
 
 void llg_clocking_nba_net_sync_masked_after(
-    llg_net_t* net, int slot, sv4_t value, sv4_t mask, uint64_t ticks,
-    uint64_t cycles, const llg_wait_src_t* specs, int n_specs) {
+    llg_net_t* net, int32_t slot, sv4_t value, sv4_t mask, uint64_t ticks,
+    uint64_t cycles, const llg_wait_src_t* specs, int32_t n_specs) {
     llg_clocking_drive_t drive = {0};
     drive.net_target = net;
     drive.net_slot = slot;
@@ -431,8 +431,8 @@ void llg_clocking_nba_net_sync_masked_after(
 }
 
 void llg_clocking_nba_sync_selected_after(
-    sv4_t* target, sv4_t value, sv4_select_plan_t plan, int reverse,
-    uint64_t ticks, uint64_t cycles, const llg_wait_src_t* specs, int n_specs) {
+    sv4_t* target, sv4_t value, sv4_select_plan_t plan, int32_t reverse,
+    uint64_t ticks, uint64_t cycles, const llg_wait_src_t* specs, int32_t n_specs) {
     if (!target) return;
     llg_clocking_drive_t drive = {0};
     drive.target = target;
@@ -445,8 +445,8 @@ void llg_clocking_nba_sync_selected_after(
 }
 
 void llg_clocking_nba_net_sync_selected_after(
-    llg_net_t* net, int slot, sv4_t value, sv4_select_plan_t plan, int reverse,
-    uint64_t ticks, uint64_t cycles, const llg_wait_src_t* specs, int n_specs) {
+    llg_net_t* net, int32_t slot, sv4_t value, sv4_select_plan_t plan, int32_t reverse,
+    uint64_t ticks, uint64_t cycles, const llg_wait_src_t* specs, int32_t n_specs) {
     if (!net || slot < 0 || slot >= net->n_drivers || !net->drivers[slot]) return;
     llg_clocking_drive_t drive = {0};
     drive.net_target = net;
@@ -462,7 +462,7 @@ void llg_clocking_nba_net_sync_selected_after(
 
 void llg_clocking_nba_d_sync_after(double* target, double value, uint64_t ticks,
                                    uint64_t cycles,
-                                   const llg_wait_src_t* specs, int n_specs) {
+                                   const llg_wait_src_t* specs, int32_t n_specs) {
     llg_clocking_drive_t drive = {0};
     drive.real_target = target;
     drive.real_value = value;
@@ -499,7 +499,7 @@ void llg_nba_masked(sv4_t* target, sv4_t value, sv4_t mask, uint64_t ticks) {
 }
 
 void llg_nba_selected_after(sv4_t* target, sv4_t value,
-                            sv4_select_plan_t plan, int reverse,
+                            sv4_select_plan_t plan, int32_t reverse,
                             uint64_t ticks) {
     if (!target) return;
     llg_nba_t* n = new_nba(ticks);
@@ -511,7 +511,7 @@ void llg_nba_selected_after(sv4_t* target, sv4_t value,
 }
 
 void llg_nba_tagged_selected_after(sv4_t* target, sv4_t value,
-                                   sv4_select_plan_t plan, int reverse,
+                                   sv4_select_plan_t plan, int32_t reverse,
                                    uint64_t ticks,
                                    const llg_ref_tag_check_t* checks,
                                    size_t check_count, const char* location) {
@@ -626,7 +626,7 @@ void llg_nba_locate_end(void) {
 
 // An independent container of `src`'s type holding a copy of its elements.
 // A queue bound is applied by the commit, which assigns to the target.
-static void* nba_container_clone(int kind, const void* src) {
+static void* nba_container_clone(int32_t kind, const void* src) {
     switch (kind) {
     case LLG_NBA_CONTAINER_DYN: {
         const llg_dyn_array_t* from = src;
@@ -686,7 +686,7 @@ static void* nba_container_clone(int kind, const void* src) {
     }
 }
 
-void llg_container_nba_after(int kind, void* target, const void* src, uint64_t ticks) {
+void llg_container_nba_after(int32_t kind, void* target, const void* src, uint64_t ticks) {
     llg_nba_t* n = new_nba(ticks);
     if (!n) return;
     n->is_container = 1;
@@ -698,13 +698,13 @@ void llg_container_nba_after(int kind, void* target, const void* src, uint64_t t
 
 void llg_dyn_value_nba(llg_dyn_value_array_t* target, sv4_t dst_start,
                        const llg_dyn_value_array_t* src, sv4_t src_start,
-                       uint64_t count, int whole) {
+                       uint64_t count, int32_t whole) {
     llg_dyn_value_nba_after(target, dst_start, src, src_start, count, whole, 0);
 }
 
 void llg_dyn_value_nba_after(llg_dyn_value_array_t* target, sv4_t dst_start,
                              const llg_dyn_value_array_t* src,
-                             sv4_t src_start, uint64_t count, int whole,
+                             sv4_t src_start, uint64_t count, int32_t whole,
                              uint64_t ticks) {
     llg_nba_t* n = new_nba(ticks);
     if (!n) return;

@@ -293,7 +293,7 @@ typedef struct {
     uint64_t mag;
 } llg_cov_num_t;
 
-static int llg_cov_num_cmp(llg_cov_num_t a, llg_cov_num_t b) {
+static int32_t llg_cov_num_cmp(llg_cov_num_t a, llg_cov_num_t b) {
     if (a.neg != b.neg) return a.neg ? -1 : 1;
     if (a.mag == b.mag) return 0;
     return (a.mag < b.mag) == !a.neg ? -1 : 1;
@@ -336,7 +336,7 @@ static void llg_cov_value_warning(const llg_cov_item_t* item, const llg_cov_bin_
 
 // The key range of one item, resolved by 19.5.6 against the coverpoint
 // type; zero when the item does not participate in the bin's values.
-static int llg_cov_item_keys(const llg_cov_inst_t* inst, const llg_cov_point_t* point,
+static int32_t llg_cov_item_keys(const llg_cov_inst_t* inst, const llg_cov_point_t* point,
                              const llg_cov_bin_t* bin, const llg_cov_item_t* item,
                              llg_cov_span_t* keys) {
     if (item->lo_kind == LLG_COV_BOUND_KEY && item->hi_kind == LLG_COV_BOUND_KEY) {
@@ -347,7 +347,7 @@ static int llg_cov_item_keys(const llg_cov_inst_t* inst, const llg_cov_point_t* 
     llg_cov_num_t bounds[2];
     const uint64_t refs[2] = {item->lo, item->hi};
     const uint8_t kinds[2] = {item->lo_kind, item->hi_kind};
-    for (int i = 0; i < 2; ++i) {
+    for (int32_t i = 0; i < 2; ++i) {
         if (kinds[i] == LLG_COV_BOUND_MIN) {
             bounds[i] = llg_cov_type_min(point);
         } else if (kinds[i] == LLG_COV_BOUND_MAX) {
@@ -378,7 +378,7 @@ static int llg_cov_item_keys(const llg_cov_inst_t* inst, const llg_cov_point_t* 
 
 // ── Layouts ───────────────────────────────────────────────────────────────
 
-static int llg_cov_span_order(const void* a, const void* b) {
+static int32_t llg_cov_span_order(const void* a, const void* b) {
     const llg_cov_span_t* x = (const llg_cov_span_t*)a;
     const llg_cov_span_t* y = (const llg_cov_span_t*)b;
     if (x->lo != y->lo) return x->lo < y->lo ? -1 : 1;
@@ -413,13 +413,13 @@ typedef struct {
     uint8_t role;  // LLG_COV_BIN_BINS, _IGNORE or _ILLEGAL
 } llg_cov_piece_t;
 
-static int llg_cov_piece_order(const void* a, const void* b) {
+static int32_t llg_cov_piece_order(const void* a, const void* b) {
     const llg_cov_piece_t* x = (const llg_cov_piece_t*)a;
     const llg_cov_piece_t* y = (const llg_cov_piece_t*)b;
     return x->lo < y->lo ? -1 : x->lo > y->lo;
 }
 
-static int llg_cov_u64_order(const void* a, const void* b) {
+static int32_t llg_cov_u64_order(const void* a, const void* b) {
     uint64_t x = *(const uint64_t*)a, y = *(const uint64_t*)b;
     return x < y ? -1 : x > y;
 }
@@ -647,7 +647,7 @@ static llg_cov_layout_t* llg_cov_build_layout(const llg_cov_inst_t* inst, uint32
     }
     if (point->kind != LLG_COV_POINT_EXPLICIT) {
         uint64_t key = 0, max = llg_cov_mask(point);
-        int exhausted = 0;
+        int32_t exhausted = 0;
         for (uint32_t s = 0; s < layout->n_segments && !exhausted; ++s) {
             const llg_cov_seg_t* segment = &layout->segments[s];
             if (!segment->removed) continue;
@@ -870,7 +870,7 @@ static size_t llg_cov_select_spans(const llg_cov_inst_t* inst, const llg_cov_cro
                 else end = mid;
             }
             uint64_t next = lo;
-            int exhausted = 0;
+            int32_t exhausted = 0;
             for (; s < layout->n_segments && layout->segments[s].lo <= hi; ++s) {
                 const llg_cov_seg_t* segment = &layout->segments[s];
                 uint64_t first = segment->lo > lo ? segment->lo : lo;
@@ -936,7 +936,7 @@ static size_t llg_cov_spans_and(const llg_cov_span_t* a, size_t n_a, const llg_c
     return n;
 }
 
-static int llg_cov_spans_hold(const llg_cov_span_t* spans, size_t n, uint64_t value) {
+static int32_t llg_cov_spans_hold(const llg_cov_span_t* spans, size_t n, uint64_t value) {
     size_t lo = 0, hi = n;
     while (lo < hi) {
         size_t mid = lo + (hi - lo) / 2u;
@@ -962,7 +962,7 @@ typedef struct {
 } llg_cov_xclass_t;
 
 static uint32_t llg_cov_sort_words;
-static int llg_cov_xclass_order(const void* a, const void* b) {
+static int32_t llg_cov_xclass_order(const void* a, const void* b) {
     const llg_cov_xclass_t* x = (const llg_cov_xclass_t*)a;
     const llg_cov_xclass_t* y = (const llg_cov_xclass_t*)b;
     return memcmp(x->sig, y->sig, llg_cov_sort_words * sizeof(uint64_t));
@@ -978,7 +978,7 @@ static void llg_cov_xlayout_count(const llg_cov_inst_t* inst, const llg_cov_cros
         (llg_cov_xclass_t**)llg_checked_calloc(dims, sizeof(void*), "coverage cross");
     size_t* n_classes = (size_t*)llg_checked_calloc(dims, sizeof(size_t), "coverage cross");
     uint64_t tuples = 1;
-    int too_many = 0;
+    int32_t too_many = 0;
     for (uint32_t d = 0; d < dims; ++d) {
         size_t runs = xl->n_runs[d];
         llg_cov_xclass_t* list =
@@ -1014,7 +1014,7 @@ static void llg_cov_xlayout_count(const llg_cov_inst_t* inst, const llg_cov_cros
                 size *= cls->size;
                 for (uint32_t w = 0; w < words; ++w) acc[w] &= cls->sig[w];
             }
-            int any = 0, removed = 0;
+            int32_t any = 0, removed = 0;
             for (uint32_t w = 0; w < words; ++w) {
                 any |= acc[w] != 0;
                 removed |= (acc[w] & xl->removal[w]) != 0;
@@ -1059,7 +1059,7 @@ static llg_cov_xlayout_t* llg_cov_build_xlayout(const llg_cov_inst_t* inst, uint
     xl->removal = (uint64_t*)llg_checked_calloc(words, sizeof(uint64_t), "coverage cross");
     xl->significant = (uint8_t*)llg_checked_calloc(bins, 1, "coverage cross");
     xl->product = 1;
-    int overflow = 0;
+    int32_t overflow = 0;
     for (uint32_t d = 0; d < dims; ++d) {
         const llg_cov_layout_t* layout = inst->points[cross->dims[d]].layout;
         xl->from[d] = layout;
@@ -1199,7 +1199,7 @@ static const llg_cov_xlayout_t* llg_cov_xlayout_for(llg_cov_inst_t* inst, uint32
     }
     llg_cov_xlayout_t* shared = group->xlayouts[index];
     if (shared) {
-        int same = 1;
+        int32_t same = 1;
         for (uint32_t d = 0; d < cross->n_dims; ++d)
             same &= shared->from[d] == inst->points[cross->dims[d]].layout;
         if (same) return shared;
@@ -1278,7 +1278,7 @@ void llg_cov_cross_hit(void* record, uint32_t index, const uint8_t* guards) {
             const uint64_t* sig = llg_cov_run_sig(xl, d, rank);
             for (uint32_t w = 0; w < words; ++w) acc[w] &= sig[w];
         }
-        int any = 0, removed = 0;
+        int32_t any = 0, removed = 0;
         for (uint32_t w = 0; w < words; ++w) {
             any |= acc[w] != 0;
             removed |= (acc[w] & xl->removal[w]) != 0;
@@ -1288,7 +1288,7 @@ void llg_cov_cross_hit(void* record, uint32_t index, const uint8_t* guards) {
         } else {
             for (uint32_t b = 0; b < cross->n_bins; ++b) {
                 const llg_cov_xbin_t* bin = &cross->bins[b];
-                int member = 0;
+                int32_t member = 0;
                 for (uint32_t w = 0; w < words; ++w)
                     member |= (acc[w] & xl->bin_masks[(size_t)b * words + w]) != 0;
                 if (!member || (bin->guard >= 0 && guards && !guards[bin->guard])) continue;
@@ -1400,7 +1400,7 @@ static void llg_cov_option_range_error(const char* scope, const char* option, in
 }
 
 // `scope` is "option" or "type_option", `option` the member name.
-static int llg_cov_option_value(sv4_t value, int64_t* out, const char* scope, const char* option,
+static int32_t llg_cov_option_value(sv4_t value, int64_t* out, const char* scope, const char* option,
                                 const char* site) {
     if (sv4_is_unknown(value)) {
         llg_cov_report(LLG_MSG_RUNTIME_ERROR, site, "coverage %s.%s is X or Z; the option keeps its value", scope, option);
@@ -1550,7 +1550,7 @@ static const char* llg_cov_inst_name(llg_cov_inst_t* inst) {
     if (!inst->name) {
         const char* base = inst->group->path ? inst->group->path : inst->group->name;
         char suffix[32];
-        int digits = snprintf(suffix, sizeof suffix, "#%llu", (unsigned long long)inst->ordinal);
+        int32_t digits = snprintf(suffix, sizeof suffix, "#%llu", (unsigned long long)inst->ordinal);
         size_t len = strlen(base);
         inst->name = (char*)llg_checked_malloc(len + (size_t)digits + 1u, 1, "covergroup name");
         memcpy(inst->name, base, len);
@@ -1697,7 +1697,7 @@ void llg_cov_slot(void* record, uint32_t slot, sv4_t value) {
     target->raw = bits;
 }
 
-static int llg_cov_pair_order(const void* a, const void* b) {
+static int32_t llg_cov_pair_order(const void* a, const void* b) {
     const uint32_t* x = (const uint32_t*)a;
     const uint32_t* y = (const uint32_t*)b;
     if (x[0] != y[0]) return x[0] < y[0] ? -1 : 1;
@@ -1773,7 +1773,7 @@ void llg_cov_ready(void* record) {
     for (uint32_t k = 0; k < inst->group->n_crosses; ++k) llg_cov_cross_ready(inst, k);
 }
 
-static int llg_cov_guard(const llg_cov_point_t* point, uint32_t decl, const uint8_t* guards) {
+static int32_t llg_cov_guard(const llg_cov_point_t* point, uint32_t decl, const uint8_t* guards) {
     int32_t guard = point->bins[decl].guard;
     return guard < 0 || !guards || guards[guard];
 }
@@ -1834,10 +1834,10 @@ static void llg_cov_history_reset(llg_cov_history_t* history) {
     history->fresh = 1;
 }
 
-static int llg_cov_accepts(const llg_cov_trans_t* trans, uint32_t step, uint32_t cls) {
+static int32_t llg_cov_accepts(const llg_cov_trans_t* trans, uint32_t step, uint32_t cls) {
     if (cls == UINT32_MAX) return 0;
     uint64_t word = trans->accept[(size_t)step * trans->words + cls / 64u];
-    return (int)((word >> (cls % 64u)) & 1u);
+    return (int32_t)((word >> (cls % 64u)) & 1u);
 }
 
 // The class of a key: the last bound at or below it.
@@ -1890,7 +1890,7 @@ static void llg_cov_consume(const llg_cov_trans_t* trans, llg_cov_history_t* his
                             uint32_t step, uint32_t count, uint32_t cls, uint64_t start,
                             uint8_t old) {
     const llg_cov_step_t* spec = &trans->steps[step];
-    int accepted = llg_cov_accepts(trans, step, cls);
+    int32_t accepted = llg_cov_accepts(trans, step, cls);
     switch (spec->repeat) {
     case LLG_COV_REPEAT_CONSECUTIVE:
         if (!accepted) return;
@@ -1916,7 +1916,7 @@ static void llg_cov_consume(const llg_cov_trans_t* trans, llg_cov_history_t* his
         }
         // Enough repetitions: the next item may occur at this sample, which
         // ends the gap (decision S45-D8).
-        int begins = llg_cov_accepts(trans, step + 1u, cls);
+        int32_t begins = llg_cov_accepts(trans, step + 1u, cls);
         if (begins) llg_cov_consume(trans, history, step + 1u, 0u, cls, start, old);
         if (accepted) {
             if (count < spec->hi)
@@ -2070,9 +2070,9 @@ LLG_COLD LLG_OUTLYING static void llg_cov_history_resolve(const llg_cov_inst_t* 
     for (uint32_t t = 0; t < tpl->n_sets; ++t) {
         const llg_cov_tset_t* set = &tpl->sets[t];
         if (bins[set->bin].kind != LLG_COV_BIN_BINS || bins[set->bin].array) continue;
-        int every = 1;
+        int32_t every = 1;
         for (uint32_t s = set->first_step; every && s < set->first_step + set->n_steps; ++s) {
-            int any = 0;
+            int32_t any = 0;
             for (uint32_t i = tpl->step_items[s]; i < tpl->step_items[s + 1u]; ++i) any |= held[i];
             every = any;
         }
@@ -2170,7 +2170,7 @@ static void llg_cov_sequence_count(llg_cov_history_t* history, uint32_t bin,
 }
 
 static void llg_cov_illegal_transition(const llg_cov_inst_t* inst, const llg_cov_point_t* point,
-                                       const llg_cov_tbin_t* bin, int known, uint64_t key) {
+                                       const llg_cov_tbin_t* bin, int32_t known, uint64_t key) {
     if (bin->kind != LLG_COV_BIN_ILLEGAL_DEFAULT && llg_rt_exiting()) return;
     char value[48];  // a value of up to 128 bits in decimal
     if (known) llg_cov_format_key(point, key, value, sizeof value);
@@ -2194,7 +2194,7 @@ static void llg_cov_illegal_transition(const llg_cov_inst_t* inst, const llg_cov
 // sequence that contains a completed ignored or illegal sequence counts in
 // no bin (19.5.4, 19.5.5).
 LLG_NOINLINE static void llg_cov_transitions(const llg_cov_inst_t* inst, llg_cov_history_t* history,
-                                const llg_cov_point_t* point, int known, uint64_t key,
+                                const llg_cov_point_t* point, int32_t known, uint64_t key,
                                 const uint8_t* guards) {
     const llg_cov_trans_t* trans = history->trans;
     history->serial++;
@@ -2376,7 +2376,7 @@ void llg_cov_hit(void* record, uint32_t point_index, const sv4_t* value, const u
         return;
     }
     const llg_cov_point_t* point = &inst->group->points[point_index];
-    int known = !sv4_is_unknown(*value);
+    int32_t known = !sv4_is_unknown(*value);
     uint64_t key = known ? llg_cov_key(point, sv4_to_u64(*value)) : 0u;
     if (point->crossed) {
         state->hit_serial = inst->serial;
@@ -2424,7 +2424,7 @@ typedef struct {
     uint64_t lo, hi;
 } llg_cov_u128_t;
 
-static int llg_cov_u128_less(llg_cov_u128_t a, llg_cov_u128_t b) {
+static int32_t llg_cov_u128_less(llg_cov_u128_t a, llg_cov_u128_t b) {
     return a.hi != b.hi ? a.hi < b.hi : a.lo < b.lo;
 }
 
@@ -2432,7 +2432,7 @@ static int llg_cov_u128_less(llg_cov_u128_t a, llg_cov_u128_t b) {
 LLG_COLD LLG_OUTLYING static llg_cov_u128_t llg_cov_u128_div(llg_cov_u128_t a, llg_cov_u128_t d,
                                                    llg_cov_u128_t* rem) {
     llg_cov_u128_t q = {0, 0}, r = {0, 0};
-    for (int bit = 127; bit >= 0; --bit) {
+    for (int32_t bit = 127; bit >= 0; --bit) {
         r.hi = (r.hi << 1) | (r.lo >> 63);
         r.lo = (r.lo << 1) | ((bit >= 64 ? a.hi >> (bit - 64) : a.lo >> bit) & 1u);
         if (!llg_cov_u128_less(r, d)) {
@@ -2504,7 +2504,7 @@ LLG_INTERNAL LLG_COLD LLG_OUTLYING void llg_cov_hit_wide(void* record, uint32_t 
     sv4_destroy(&key);
 }
 
-void llg_cov_control(void* record, int32_t point, int start) {
+void llg_cov_control(void* record, int32_t point, int32_t start) {
     llg_cov_inst_t* inst = (llg_cov_inst_t*)record;
     if (!inst) return;
     // Samples while stopped are not seen; a stop does not end the transition
@@ -2542,7 +2542,7 @@ void* llg_cov_registered_at(const llg_cov_group_t* group, size_t index) {
     return index < group->n_registered ? group->registry[index] : NULL;
 }
 
-int llg_cov_sampling(const void* record) {
+int32_t llg_cov_sampling(const void* record) {
     const llg_cov_inst_t* inst = (const llg_cov_inst_t*)record;
     return inst && !inst->stopped;
 }
@@ -2805,7 +2805,7 @@ static void llg_cov_merged_values(const llg_cov_inst_t* const* recs, size_t n, u
                                   uint64_t* covered, uint64_t* defined) {
     const llg_cov_layout_t* shared = recs[0]->points[index].layout;
     uint64_t at_least = 0;
-    int same = 1;
+    int32_t same = 1;
     for (size_t r = 0; r < n; ++r) {
         same &= recs[r]->points[index].layout == shared;
         uint64_t value = llg_cov_at_least(&recs[r]->points[index]);
@@ -2923,7 +2923,7 @@ static void llg_cov_merged_transitions(const llg_cov_inst_t* const* recs, size_t
     free(merged.pool);
 }
 
-static int llg_cov_xlayout_same(const llg_cov_xlayout_t* a, const llg_cov_xlayout_t* b) {
+static int32_t llg_cov_xlayout_same(const llg_cov_xlayout_t* a, const llg_cov_xlayout_t* b) {
     if (a == b) return 1;
     if (a->n_dims != b->n_dims || a->words != b->words || a->product != b->product ||
         a->n_auto != b->n_auto || a->n_user != b->n_user)
@@ -3018,7 +3018,7 @@ static void llg_cov_union_item(llg_cov_type_t* type, const llg_cov_inst_t* const
 // option.weight (19.11), or of one of its items for `point` >= 0. The
 // covered and defined bins of the items considered are added to `*covered`
 // and `*total`. Returns 0 when the denominator is zero.
-static int llg_cov_member_score(llg_cov_type_t* type, const llg_cov_inst_t* const* recs,
+static int32_t llg_cov_member_score(llg_cov_type_t* type, const llg_cov_inst_t* const* recs,
                                 size_t n, int32_t point, double* score, uint64_t* covered,
                                 uint64_t* total) {
     const llg_cov_inst_t* lead = recs[0];
@@ -3070,7 +3070,7 @@ typedef struct {
 static uint64_t llg_cov_text_hash(const char* text) {
     uint64_t hash = UINT64_C(0xcbf29ce484222325);
     for (; *text; ++text) {
-        hash ^= (unsigned char)*text;
+        hash ^= (uint8_t)*text;
         hash *= UINT64_C(0x100000001b3);
     }
     return hash;
@@ -3145,7 +3145,7 @@ static void llg_cov_members_free(llg_cov_members_t* members) {
 
 // Merged type coverage of one item, or of the group weighted by the items'
 // type_option.weight (19.7.1, 19.11.3). Returns 0 for a zero denominator.
-static int llg_cov_merged_score(llg_cov_type_t* type, int32_t point, double* score,
+static int32_t llg_cov_merged_score(llg_cov_type_t* type, int32_t point, double* score,
                                 uint64_t* covered, uint64_t* total) {
     if (!type->first) return 0;
     const llg_cov_group_t* group = type->first->group;
@@ -3155,7 +3155,7 @@ static int llg_cov_merged_score(llg_cov_type_t* type, int32_t point, double* sco
         n ? n : 1u, sizeof(void*), "coverage members");
     for (const llg_cov_inst_t* inst = type->first; inst; inst = inst->next) recs[k++] = inst;
     double numerator = 0.0, denominator = 0.0;
-    int found = 0;
+    int32_t found = 0;
     for (uint32_t i = 0; i < items; ++i) {
         if (point >= 0 && (uint32_t)point != i) continue;
         uint64_t c, d;
@@ -3193,7 +3193,7 @@ static void llg_cov_store_counts(int32_t* covered, int32_t* total, uint64_t c, u
 // Type coverage (19.11.3): with merge_instances = 0 the members weighted by
 // their option.weight (or a coverpoint's option.weight for one coverpoint),
 // else the union of every record's bins.
-static int llg_cov_type_score(llg_cov_type_t* type, int32_t point, double* score,
+static int32_t llg_cov_type_score(llg_cov_type_t* type, int32_t point, double* score,
                               uint64_t* covered, uint64_t* total) {
     if (type->merge) return llg_cov_merged_score(type, point, score, covered, total);
     if (!type->first) return 0;

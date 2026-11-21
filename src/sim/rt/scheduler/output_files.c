@@ -29,7 +29,7 @@ static char* llg_output_path(const char* path) {
         return llg_output_strdup(path);
     size_t dir_len = strlen(llg_output_dir);
     size_t path_len = strlen(path);
-    int separator = dir_len > 0 && !llg_path_is_separator(llg_output_dir[dir_len - 1]);
+    int32_t separator = dir_len > 0 && !llg_path_is_separator(llg_output_dir[dir_len - 1]);
     char* joined = (char*)llg_checked_malloc(dir_len + (size_t)separator + path_len + 1u, 1,
                                              "output path");
     memcpy(joined, llg_output_dir, dir_len);
@@ -38,14 +38,14 @@ static char* llg_output_path(const char* path) {
     return joined;
 }
 
-static int llg_output_mkdir_one(const char* dir) {
+static int32_t llg_output_mkdir_one(const char* dir) {
     return llg_mkdir(dir) == 0 || errno == EEXIST;
 }
 
 // `mkdir -p`: create every missing component of `dir`.
-static int llg_output_make_dirs(const char* dir) {
+static int32_t llg_output_make_dirs(const char* dir) {
     char* path = llg_output_strdup(dir);
-    int ok = 1;
+    int32_t ok = 1;
     for (char* p = path + 1; *p && ok; ++p) {
         if (!llg_path_is_separator(*p) || llg_path_is_separator(p[-1])) continue;
         if (llg_path_ends_drive_prefix(p[-1])) continue;  // drive root such as `C:\`
@@ -55,7 +55,7 @@ static int llg_output_make_dirs(const char* dir) {
         *p = saved;
     }
     if (ok) ok = llg_output_mkdir_one(path);
-    int saved_errno = errno;
+    int32_t saved_errno = errno;
     if (ok && !llg_path_is_dir(path)) {
         ok = 0;
         saved_errno = ENOTDIR;
@@ -70,13 +70,13 @@ static int llg_output_make_dirs(const char* dir) {
 // A once-per-process tee (see llg_console_log_start in llg_platform.h); later
 // initializations keep the active log.
 
-static int llg_console_log_active;
+static int32_t llg_console_log_active;
 
-static int llg_output_console_log(const char* path) {
+static int32_t llg_output_console_log(const char* path) {
     if (llg_console_log_active) return 1;
     char* resolved = llg_output_path(path);
     char error[4096 + 256];  // a resolved path plus the reason
-    int ok = llg_console_log_start(resolved, error, sizeof error);
+    int32_t ok = llg_console_log_start(resolved, error, sizeof error);
     free(resolved);
     // A log that cannot start stops the run before time zero, so it is an
     // error like the other unusable settings (SIM-020 is for a setting the
@@ -93,7 +93,7 @@ static const char* llg_output_env(const char* name) {
     return value && value[0] ? value : NULL;
 }
 
-static int configure_output_files(void) {
+static int32_t configure_output_files(void) {
     free(llg_output_dir);
     llg_output_dir = NULL;
     const char* dir = llg_output_env("LLG_SIM_OUT_DIR");

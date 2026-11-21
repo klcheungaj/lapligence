@@ -6,8 +6,8 @@ llg_nested_assoc_t* llg_nested_assoc_new(const llg_value_desc_t* desc) {
     nested->pins = 1;
     nested->desc = desc;
     const llg_value_desc_t* element = desc->element;
-    int string_key = desc->item_count == 1;
-    int class_key = desc->item_count == 2;
+    int32_t string_key = desc->item_count == 1;
+    int32_t class_key = desc->item_count == 2;
     if (element->kind == LLG_VALUE_PACKED) {
         if (class_key)
             llg_assoc_init_class(&nested->array.packed, element->packed_width,
@@ -61,11 +61,11 @@ size_t llg_nested_assoc_size(const llg_nested_assoc_t* nested) {
         : nested->array.values.size;
 }
 
-static int llg_nested_assoc_key_equal(const sv4_t* left_integral,
-                                      const unsigned char* left_text,
+static int32_t llg_nested_assoc_key_equal(const sv4_t* left_integral,
+                                      const uint8_t* left_text,
                                       size_t left_length,
                                       const sv4_t* right_integral,
-                                      const unsigned char* right_text,
+                                      const uint8_t* right_text,
                                       size_t right_length) {
     if (left_text || right_text)
         return left_length == right_length &&
@@ -74,7 +74,7 @@ static int llg_nested_assoc_key_equal(const sv4_t* left_integral,
     return sv4_same(*left_integral, *right_integral);
 }
 
-int llg_nested_assoc_equal(const llg_nested_assoc_t* a,
+int32_t llg_nested_assoc_equal(const llg_nested_assoc_t* a,
                            const llg_nested_assoc_t* b) {
     if (a == b) return 1;
     size_t size = llg_nested_assoc_size(a);
@@ -108,7 +108,7 @@ int llg_nested_assoc_equal(const llg_nested_assoc_t* a,
 
 void llg_nested_assoc_trace(const llg_nested_assoc_t* nested,
                             llg_value_visit_fn visit, void* context) {
-    int packed = nested->desc->element->kind == LLG_VALUE_PACKED;
+    int32_t packed = nested->desc->element->kind == LLG_VALUE_PACKED;
     if (nested->desc->item_count == 2) {
         size_t size = llg_nested_assoc_size(nested);
         for (size_t i = 0; i < size; ++i) {
@@ -152,7 +152,7 @@ static void llg_nested_assoc_value(llg_value_t* value,
         llg_assoc_value_copy(&value->value.assoc->array.values, source);
 }
 
-void llg_queue_value_push_assoc(llg_queue_value_array_t* queue, int back,
+void llg_queue_value_push_assoc(llg_queue_value_array_t* queue, int32_t back,
                                 const void* source) {
     llg_value_t value;
     llg_nested_assoc_value(&value, queue->element, source);
@@ -160,11 +160,11 @@ void llg_queue_value_push_assoc(llg_queue_value_array_t* queue, int back,
     llg_value_drop(&value);
 }
 
-int llg_queue_value_insert_assoc(llg_queue_value_array_t* queue, sv4_t index,
+int32_t llg_queue_value_insert_assoc(llg_queue_value_array_t* queue, sv4_t index,
                                  const void* source) {
     llg_value_t value;
     llg_nested_assoc_value(&value, queue->element, source);
-    int inserted = llg_queue_value_insert_value(queue, index, &value);
+    int32_t inserted = llg_queue_value_insert_value(queue, index, &value);
     llg_value_drop(&value);
     return inserted;
 }

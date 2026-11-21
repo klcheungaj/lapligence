@@ -23,25 +23,25 @@
 
 /* One error status as vpi_chk_error() reports it. */
 typedef struct {
-    int pending;
-    int state;
-    int level;
-    int line;
+    int32_t pending;
+    int32_t state;
+    int32_t level;
+    int32_t line;
     char message[sizeof(g_vpi.error_message)];
     char code[sizeof(g_vpi.error_code)];
 } svc_error_t;
 
 static struct {
-    int error_cbs;     /* live cbError records */
-    int pli_cbs;       /* live cbPLIError records */
-    int signal_cbs;    /* live cbSignal records */
-    int dispatching;   /* a cbPLIError dispatch is running */
+    int32_t error_cbs;     /* live cbError records */
+    int32_t pli_cbs;       /* live cbPLIError records */
+    int32_t signal_cbs;    /* live cbSignal records */
+    int32_t dispatching;   /* a cbPLIError dispatch is running */
     svc_error_t* queue;  /* errors recorded since the last dispatch point */
     size_t queued;
     size_t capacity;
     uint64_t dropped;  /* errors beyond LLG_VPI_MAX_PLI_ERRORS */
-    int handlers[LLG_VPI_SIGNALS]; /* live cbSignal records per signal */
-    void (*previous[LLG_VPI_SIGNALS])(int);
+    int32_t handlers[LLG_VPI_SIGNALS]; /* live cbSignal records per signal */
+    void (*previous[LLG_VPI_SIGNALS])(int32_t);
     /* Strength views attached to nets that had none (svc_strength_bind),
      * kept until shutdown. */
     llg_net_t** view_nets;
@@ -72,12 +72,12 @@ static void svc_restore(const svc_error_t* in) {
     memcpy(g_vpi.error_code, in->code, sizeof(in->code));
 }
 
-static int svc_reason(int reason) {
+static int32_t svc_reason(int32_t reason) {
     return reason == cbError || reason == cbPLIError || reason == cbSignal;
 }
 
-static int svc_matches(const llg_vpi_cb_t* cb, const void* context) {
-    const int* want = (const int*)context;
+static int32_t svc_matches(const llg_vpi_cb_t* cb, const void* context) {
+    const int32_t* want = (const int32_t*)context;
     return cb->kind == CB_SERVICE && cb->data.reason == want[0] &&
            (want[0] != cbSignal || cb->data.index == want[1]);
 }
@@ -85,8 +85,8 @@ static int svc_matches(const llg_vpi_cb_t* cb, const void* context) {
 /* Run every live record of `reason` (and signal `index`), each with the
  * error status `status` (NULL: leave it) visible to vpi_chk_error(). The
  * status current before the dispatch is restored afterwards. */
-static void svc_dispatch(int reason, int index, const svc_error_t* status) {
-    int want[2] = {reason, index};
+static void svc_dispatch(int32_t reason, int32_t index, const svc_error_t* status) {
+    int32_t want[2] = {reason, index};
     svc_error_t saved;
     svc_save(&saved);
     llg_vpi_cb_t* buffer[LLG_VPI_DISPATCH_INLINE];
@@ -153,7 +153,7 @@ static void svc_safe_point(void) {
     g_svc.queued = 0;
     while (g_svc_any_signal) {
         g_svc_any_signal = 0;
-        for (int sig = 1; sig < LLG_VPI_SIGNALS; ++sig) {
+        for (int32_t sig = 1; sig < LLG_VPI_SIGNALS; ++sig) {
             if (!g_svc_signal_pending[sig]) continue;
             g_svc_signal_pending[sig] = 0;
             svc_dispatch(cbSignal, sig, NULL);
@@ -169,7 +169,7 @@ static void svc_safe_point(void) {
  * cbTchkViolation does); vpi_chk_error() gives the report as a vpiRun
  * error (38.36.3: "On a cbError callback, the routine vpi_chk_error() can
  * be called to retrieve error information"). */
-static void svc_runtime_error(int fatal, const char* message, const char* location) {
+static void svc_runtime_error(int32_t fatal, const char* message, const char* location) {
     if (!g_svc.error_cbs || !g_vpi.indexed) return;
     svc_error_t status;
     memset(&status, 0, sizeof(status));
@@ -187,7 +187,7 @@ static void svc_runtime_error(int fatal, const char* message, const char* locati
 
 /* ── cbSignal ───────────────────────────────────────────────────────────── */
 
-static void svc_signal_handler(int sig) {
+static void svc_signal_handler(int32_t sig) {
     /* Some C libraries reset the disposition before calling the handler. */
     (void)signal(sig, svc_signal_handler);
     if (sig > 0 && sig < LLG_VPI_SIGNALS) g_svc_signal_pending[sig] = 1;
@@ -198,21 +198,21 @@ static void svc_signal_handler(int sig) {
 
 /* 38.36.3: only reason, cb_rtn and user_data matter for these reasons;
  * cbSignal also takes the signal number in index. */
-static int svc_bind_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
+static int32_t svc_bind_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
     cb->target.object = LLG_VPI_NONE;
     cb->target.element = LLG_VPI_NO_ELEMENT;
     if (data->reason != cbSignal) return 1;
-    int sig = data->index;
+    int32_t sig = data->index;
     if (sig <= 0 || sig >= LLG_VPI_SIGNALS) {
         vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_CALLBACK",
-                       "cbSignal needs a signal number in index, not %d", (int)sig);
+                       "cbSignal needs a signal number in index, not %" PRId32, (int32_t)sig);
         return 0;
     }
     if (!g_svc.handlers[sig]) {
-        void (*previous)(int) = signal(sig, svc_signal_handler);
+        void (*previous)(int32_t) = signal(sig, svc_signal_handler);
         if (previous == SIG_ERR) {
             vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_CALLBACK",
-                           "signal %d cannot be caught", (int)sig);
+                           "signal %" PRId32 " cannot be caught", (int32_t)sig);
             return 0;
         }
         g_svc.previous[sig] = previous;
@@ -247,7 +247,7 @@ static void svc_cb_removed(const llg_vpi_cb_t* cb) {
             if (!--g_svc.pli_cbs) g_svc.queued = 0;
             break;
         case cbSignal: {
-            int sig = cb->data.index;
+            int32_t sig = cb->data.index;
             --g_svc.signal_cbs;
             if (!--g_svc.handlers[sig]) {
                 /* The last record restores the handler it replaced; a
@@ -285,9 +285,9 @@ static uint32_t svc_target_width(const llg_vpi_target_t* target) {
 
 /* The strength code of net bit `bit` in a view (llg_net_t.strength: high
  * nibble hi + 7, low nibble lo + 7 on the scale -7 = Su0 .. 7 = Su1). */
-static unsigned svc_code(sv4_t view, uint32_t bit) {
+static uint32_t svc_code(sv4_t view, uint32_t bit) {
     uint64_t position = (uint64_t)bit * 8u;
-    return (unsigned)(llg_sv4_word(view, (size_t)(position / 64u), LLG_SV4_BITS) >>
+    return (uint32_t)(llg_sv4_word(view, (size_t)(position / 64u), LLG_SV4_BITS) >>
                       (position % 64u)) &
            0xffu;
 }
@@ -297,11 +297,11 @@ static unsigned svc_code(sv4_t view, uint32_t bit) {
  * strength of its 1 part in s0 and of its 0 part in s1, vpiHiZ for a
  * missing part, as industry-standard tools do (the text gives the fields no
  * meaning beyond "refer to strength coding in Annex K"; decision A20-D21). */
-static void svc_strength_of(unsigned code, s_vpi_strengthval* out) {
+static void svc_strength_of(uint32_t code, s_vpi_strengthval* out) {
     static const PLI_INT32 drive[8] = {vpiHiZ,        vpiSmallCharge, vpiMediumCharge,
                                        vpiWeakDrive,  vpiLargeCharge, vpiPullDrive,
                                        vpiStrongDrive, vpiSupplyDrive};
-    int hi = (int)(code >> 4) - 7, lo = (int)(code & 15u) - 7;
+    int32_t hi = (int32_t)(code >> 4) - 7, lo = (int32_t)(code & 15u) - 7;
     if (hi < -7 || hi > 7 || lo < -7 || lo > 7 || lo > hi) {
         out->logic = vpiX;
         out->s0 = out->s1 = vpiStrongDrive;
@@ -337,11 +337,11 @@ static void svc_strength_fill(const llg_vpi_target_t* target, p_vpi_value value)
 
 /* Whether the strength codes of a strength record's bits differ from those
  * it last reported; records the new codes. */
-static int svc_strength_changed(llg_vpi_cb_t* cb) {
+static int32_t svc_strength_changed(llg_vpi_cb_t* cb) {
     uint32_t width = svc_target_width(&cb->target);
     sv4_t view = VPI_EMPTY;
     llg_net_strength_snapshot(cb->strength_net, &view);
-    int changed = 0;
+    int32_t changed = 0;
     for (uint32_t i = 0; i < width; ++i) {
         uint8_t code = (uint8_t)svc_code(view, cb->target.lsb + i);
         if (cb->strength_last[i] != code) {
@@ -360,7 +360,7 @@ static int svc_strength_changed(llg_vpi_cb_t* cb) {
  * strength view, attaching one when the net has none; the net then
  * publishes its strengths after every resolution, a cost only nets with
  * such a record pay. */
-static int svc_strength_bind(llg_vpi_cb_t* cb) {
+static int32_t svc_strength_bind(llg_vpi_cb_t* cb) {
     llg_net_t* net = svc_target_net(&cb->target);
     if (!net) return 1;
     if (!net->strength) {
@@ -417,7 +417,7 @@ static int svc_strength_bind(llg_vpi_cb_t* cb) {
 
 /* A static string variable of the catalog (37.17): its storage is the
  * row's own llg_string_t. */
-static int svc_string_row(const llg_vpi_slot_t* slot) {
+static int32_t svc_string_row(const llg_vpi_slot_t* slot) {
     if (slot->kind != SLOT_OBJECT) return 0;
     const llg_vpi_model_object_t* object = row_object(slot->object);
     return object && (object->flags & LLG_VPI_OBJ_DYNAMIC) && object->type == vpiStringVar &&
@@ -431,7 +431,7 @@ static int svc_string_row(const llg_vpi_slot_t* slot) {
  * properties and container elements still take vpiNoDelay only, and force
  * and release stay refused (decision A19-D23). */
 static vpiHandle svc_put_string_delayed(llg_vpi_slot_t* slot, p_vpi_value input, p_vpi_time time,
-                                        int mode, int return_event) {
+                                        int32_t mode, int32_t return_event) {
     llg_vpi_model_object_t* object = row_object(slot->object);
     if (!input) {
         vpi_error("LLG_VPI_VALUE", "null vpi_put_value value");
@@ -441,7 +441,7 @@ static vpiHandle svc_put_string_delayed(llg_vpi_slot_t* slot, p_vpi_value input,
         vpi_error("LLG_VPI_TIME", "a delayed vpi_put_value needs a time");
         return NULL;
     }
-    int ok;
+    int32_t ok;
     uint64_t ticks = ticks_from_time(time, object, &ok);
     if (!ok) {
         vpi_error("LLG_VPI_TIME", "unsupported or negative vpi_put_value delay");

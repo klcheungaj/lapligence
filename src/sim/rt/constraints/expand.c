@@ -80,7 +80,7 @@ typedef struct {
     llg_cr_session_t* session;
     cr_u32vec_t key;
     uint64_t used;
-    int phase;
+    int32_t phase;
     llg_cr_node_t* nodes;
     size_t nodes_len, nodes_cap;
     cr_u64vec_t consts;
@@ -142,7 +142,7 @@ struct cr_tpl {
     uint32_t* leaf_unit;
     uint32_t* block_unit;
     uint8_t* leaf_index;    /* per leaf: a handle element index reads it */
-    int has_leaf_index;
+    int32_t has_leaf_index;
     uint8_t* global;        /* per var */
     uint32_t* g_off;
     uint32_t* g_cyc_off;
@@ -160,7 +160,7 @@ struct cr_tpl {
     void** hkey;
     uint32_t* hval;
     size_t hcap, hcount;
-    int phase;
+    int32_t phase;
     cr_flat_t* flat;
     cr_flat_t* cache[CR_TPL_FLATS];
     uint64_t clock;
@@ -218,11 +218,11 @@ static void cr_tpl_operands(const llg_cr_problem_t* p, uint32_t n, cr_u32vec_t* 
     }
 }
 
-static int cr_is_ref(const llg_cr_problem_t* p, uint32_t x, uint32_t n) {
+static int32_t cr_is_ref(const llg_cr_problem_t* p, uint32_t x, uint32_t n) {
     return x == LLG_CR_NONE || (x < n && p->nodes[x].op == LLG_CR_REF);
 }
 
-static int cr_tpl_array_ok(const llg_cr_problem_t* p, uint32_t a) {
+static int32_t cr_tpl_array_ok(const llg_cr_problem_t* p, uint32_t a) {
     if (a & LLG_CR_SLOT_ARRAY) {
         uint32_t slot = a & ~LLG_CR_SLOT_ARRAY;
         return slot < p->slot_count && p->slots[slot].is_array;
@@ -230,7 +230,7 @@ static int cr_tpl_array_ok(const llg_cr_problem_t* p, uint32_t a) {
     return a < p->array_count;
 }
 
-static int cr_tpl_loop_ok(const llg_cr_problem_t* p, uint32_t a) {
+static int32_t cr_tpl_loop_ok(const llg_cr_problem_t* p, uint32_t a) {
     if (!(a & LLG_CR_SLOT_ARRAY) && (a & LLG_CR_RANGE_LOOP)) {
         uint32_t first = a & ~LLG_CR_RANGE_LOOP;
         return (size_t)first + 2u <= p->arg_count;
@@ -238,7 +238,7 @@ static int cr_tpl_loop_ok(const llg_cr_problem_t* p, uint32_t a) {
     return cr_tpl_array_ok(p, a);
 }
 
-static int cr_tpl_side_ok(const llg_cr_problem_t* p, uint32_t side, int after) {
+static int32_t cr_tpl_side_ok(const llg_cr_problem_t* p, uint32_t side, int32_t after) {
     if (side & LLG_CR_ORDER_ARRAY) return (side & ~LLG_CR_ORDER_ARRAY) < p->array_count;
     if (side & LLG_CR_ORDER_SIZE) return after && (side & ~LLG_CR_ORDER_SIZE) < p->array_count;
     if (side & LLG_CR_ORDER_ELEM) {
@@ -592,7 +592,7 @@ static uint32_t cr_hmap_find(const cr_tpl_t* t, const void* handle) {
     return LLG_CR_NONE;
 }
 
-static uint32_t cr_inst_add(cr_tpl_t* t, void* handle, uint32_t unit, int random) {
+static uint32_t cr_inst_add(cr_tpl_t* t, void* handle, uint32_t unit, int32_t random) {
     if (unit >= t->uc) cr_fatal("unit out of range");
     if (t->count == t->cap) {
         uint32_t cap = t->cap ? t->cap * 2u : 8u;
@@ -674,7 +674,7 @@ uint32_t llg_cr_visit(const llg_cr_session_t* s, uint32_t k) {
     return k < t->order.len ? t->order.data[k] : LLG_CR_NONE;
 }
 
-int llg_cr_inst_pre(llg_cr_session_t* s, uint32_t inst) {
+int32_t llg_cr_inst_pre(llg_cr_session_t* s, uint32_t inst) {
     cr_inst_t* in = cr_inst_get(s, inst);
     if (!in->random || in->pre) return 0;
     in->pre = 1;
@@ -693,7 +693,7 @@ uint32_t llg_cr_inst_unit(const llg_cr_session_t* s, uint32_t inst) {
     return cr_inst_get(s, inst)->unit;
 }
 
-int llg_cr_inst_random(const llg_cr_session_t* s, uint32_t inst) {
+int32_t llg_cr_inst_random(const llg_cr_session_t* s, uint32_t inst) {
     return cr_inst_get(s, inst)->random;
 }
 
@@ -715,7 +715,7 @@ void llg_cr_set_slot_size(llg_cr_session_t* s, uint32_t inst, uint32_t slot, uin
 }
 
 uint32_t llg_cr_link(llg_cr_session_t* s, uint32_t inst, uint32_t slot, uint32_t index,
-                     void* child, uint32_t unit, int random) {
+                     void* child, uint32_t unit, int32_t random) {
     cr_tpl_t* t = s->tpl;
     cr_islot_t* sl = cr_inst_slot(s, inst, slot);
     if (index >= sl->count) cr_fatal("handle array index out of range");
@@ -796,7 +796,7 @@ static void cr_store_words(uint64_t* d, const uint64_t* words, uint32_t width) {
 }
 
 void llg_cr_iset_var(llg_cr_session_t* s, uint32_t inst, uint32_t var, const uint64_t* words,
-                     int active, int input_state) {
+                     int32_t active, int32_t input_state) {
     cr_tpl_t* t = s->tpl;
     if (!t) cr_fatal("not a problem with units");
     if (var >= t->vc) cr_fatal("variable out of range");
@@ -815,7 +815,7 @@ void llg_cr_iset_var(llg_cr_session_t* s, uint32_t inst, uint32_t var, const uin
     in->var_input[pos] = (uint8_t)input_state;
 }
 
-void llg_cr_iset_block(llg_cr_session_t* s, uint32_t inst, uint32_t block, int enabled) {
+void llg_cr_iset_block(llg_cr_session_t* s, uint32_t inst, uint32_t block, int32_t enabled) {
     cr_inst_t* in = cr_inst_get(s, inst);
     const llg_cr_unit_t* u = &s->tpl->p->units[in->unit];
     if (block < u->block_first || block >= u->block_first + u->block_count)
@@ -824,7 +824,7 @@ void llg_cr_iset_block(llg_cr_session_t* s, uint32_t inst, uint32_t block, int e
 }
 
 void llg_cr_iset_leaf(llg_cr_session_t* s, uint32_t inst, uint32_t leaf,
-                      const uint64_t* words, int input_state) {
+                      const uint64_t* words, int32_t input_state) {
     cr_inst_t* in = cr_inst_get(s, inst);
     const cr_tpl_t* t = s->tpl;
     const llg_cr_unit_t* u = &t->p->units[in->unit];
@@ -867,7 +867,7 @@ static cr_iarr_t* cr_inst_array(const llg_cr_session_t* s, uint32_t inst, uint32
 }
 
 void llg_cr_set_array(llg_cr_session_t* s, uint32_t inst, uint32_t array, uint32_t size,
-                      int active) {
+                      int32_t active) {
     cr_iarr_t* arr = cr_inst_array(s, inst, array);
     const llg_cr_array_t* a = &s->tpl->p->arrays[array];
     size_t ew = CR_WORDS(a->elem_width);
@@ -899,7 +899,7 @@ void llg_cr_set_key(llg_cr_session_t* s, uint32_t inst, uint32_t array, uint32_t
 }
 
 void llg_cr_set_elem(llg_cr_session_t* s, uint32_t inst, uint32_t array, uint32_t index,
-                     const uint64_t* words, int input_state) {
+                     const uint64_t* words, int32_t input_state) {
     cr_iarr_t* arr = cr_inst_array(s, inst, array);
     const llg_cr_array_t* a = &s->tpl->p->arrays[array];
     if (index >= arr->size) cr_fatal("array element out of range");
@@ -928,7 +928,7 @@ static void cr_flat_free(cr_flat_t* f) {
     free(f);
 }
 
-static int cr_random_size(const cr_tpl_t* t, const cr_inst_t* in, uint32_t pos) {
+static int32_t cr_random_size(const cr_tpl_t* t, const cr_inst_t* in, uint32_t pos) {
     uint32_t array = cr_unit_arrays(t->p, in->unit)[pos];
     uint8_t kind = t->p->arrays[array].kind;
     return in->random && in->arrays[pos].active && kind != LLG_CR_ARRAY_FIXED &&
@@ -937,7 +937,7 @@ static int cr_random_size(const cr_tpl_t* t, const cr_inst_t* in, uint32_t pos) 
 
 /* Structure of the expansion for `phase`: what makes two calls expand to
  * the same problem. */
-static void cr_tpl_key(const cr_tpl_t* t, int phase, cr_u32vec_t* key) {
+static void cr_tpl_key(const cr_tpl_t* t, int32_t phase, cr_u32vec_t* key) {
     key->len = 0;
     cr_u32_push(key, (uint32_t)phase);
     cr_u32_push(key, t->count);
@@ -986,7 +986,7 @@ typedef struct {
     const llg_cr_problem_t* p;
     cr_flat_t* f;
     const llg_cr_tunables_t* tun;
-    int phase;
+    int32_t phase;
     uint32_t inst;           /* instance whose constraints are expanded */
     uint32_t frame, frames;  /* loop iteration frame (0: outside loops) */
     int64_t* loop_val;
@@ -1007,7 +1007,7 @@ typedef struct {
     cr_u32vec_t items;       /* stack of loop results */
     cr_u32vec_t ops;
     uint8_t* called;
-    int failed;
+    int32_t failed;
     /* folding */
     llg_cr_session_t fs;
     llg_cr_problem_t fp;
@@ -1034,7 +1034,7 @@ static uint64_t cr_fb_hash(const cr_flat_t* f, const llg_cr_node_t* nd) {
     return h;
 }
 
-static int cr_fb_same(const cr_flat_t* f, const llg_cr_node_t* x, const llg_cr_node_t* y) {
+static int32_t cr_fb_same(const cr_flat_t* f, const llg_cr_node_t* x, const llg_cr_node_t* y) {
     if (x->op != y->op || x->sign_flag != y->sign_flag || x->bit_width != y->bit_width) return 0;
     if (x->op == LLG_CR_CONST)
         return memcmp(f->consts.data + x->a, f->consts.data + y->a,
@@ -1067,7 +1067,7 @@ static void cr_fb_rehash(cr_ex_t* ex) {
  * never shared. */
 static uint32_t cr_fb_intern(cr_ex_t* ex, const llg_cr_node_t* nd) {
     cr_flat_t* f = ex->f;
-    int shared = nd->op != LLG_CR_CALL && nd->op != LLG_CR_DIST;
+    int32_t shared = nd->op != LLG_CR_CALL && nd->op != LLG_CR_DIST;
     uint64_t h = cr_fb_hash(f, nd);
     if (shared) {
         if ((ex->hccount + 1u) * 2u > ex->hccap) cr_fb_rehash(ex);
@@ -1090,7 +1090,7 @@ static uint32_t cr_fb_intern(cr_ex_t* ex, const llg_cr_node_t* nd) {
     return (uint32_t)(f->nodes_len - 1u);
 }
 
-static uint32_t cr_fb_const(cr_ex_t* ex, const uint64_t* words, uint32_t width, int sign) {
+static uint32_t cr_fb_const(cr_ex_t* ex, const uint64_t* words, uint32_t width, int32_t sign) {
     cr_flat_t* f = ex->f;
     llg_cr_node_t nd;
     memset(&nd, 0, sizeof(nd));
@@ -1103,7 +1103,7 @@ static uint32_t cr_fb_const(cr_ex_t* ex, const uint64_t* words, uint32_t width, 
     return cr_fb_intern(ex, &nd);
 }
 
-static uint32_t cr_fb_small(cr_ex_t* ex, int64_t value, uint32_t width, int sign) {
+static uint32_t cr_fb_small(cr_ex_t* ex, int64_t value, uint32_t width, int32_t sign) {
     uint64_t* words = (uint64_t*)cr_alloc(CR_WORDS(width), sizeof(uint64_t));
     for (uint32_t i = 0; i < CR_WORDS(width); ++i) words[i] = value < 0 ? UINT64_MAX : 0u;
     words[0] = (uint64_t)value;
@@ -1112,11 +1112,11 @@ static uint32_t cr_fb_small(cr_ex_t* ex, int64_t value, uint32_t width, int sign
     return n;
 }
 
-static int cr_fb_is_const(const cr_ex_t* ex, uint32_t x) {
+static int32_t cr_fb_is_const(const cr_ex_t* ex, uint32_t x) {
     return x < ex->f->nodes_len && ex->f->nodes[x].op == LLG_CR_CONST;
 }
 
-static int cr_fb_truth(const cr_ex_t* ex, uint32_t x) {
+static int32_t cr_fb_truth(const cr_ex_t* ex, uint32_t x) {
     const llg_cr_node_t* nd = &ex->f->nodes[x];
     return !bv_is_zero(ex->f->consts.data + nd->a, nd->bit_width);
 }
@@ -1184,7 +1184,7 @@ static uint32_t cr_fb_eval(cr_ex_t* ex, const llg_cr_node_t* nd, const uint32_t*
 
 /* A node with operands a, b, c (by the operation's shape), folded when its
  * operands are constants or a known operand decides Figure 18-3 logic. */
-static uint32_t cr_fb_node(cr_ex_t* ex, uint32_t op, uint32_t width, int sign, uint32_t a,
+static uint32_t cr_fb_node(cr_ex_t* ex, uint32_t op, uint32_t width, int32_t sign, uint32_t a,
                            uint32_t b, uint32_t c) {
     llg_cr_node_t nd;
     memset(&nd, 0, sizeof(nd));
@@ -1221,15 +1221,15 @@ static uint32_t cr_fb_node(cr_ex_t* ex, uint32_t op, uint32_t width, int sign, u
         nops = 2;
         break;
     }
-    int all_const = 1;
+    int32_t all_const = 1;
     for (uint32_t i = 0; i < nops; ++i) all_const &= cr_fb_is_const(ex, ops[i]);
     if (all_const) {
         uint32_t folded = cr_fb_eval(ex, &nd, ops, nops);
         if (folded != LLG_CR_NONE) return folded;
     } else if (width == 1u) {
         /* A known operand that decides the result (Figure 18-3). */
-        int ka = cr_fb_is_const(ex, a), kb = nops > 1 && cr_fb_is_const(ex, b);
-        int ta = ka && cr_fb_truth(ex, a), tb = kb && cr_fb_truth(ex, b);
+        int32_t ka = cr_fb_is_const(ex, a), kb = nops > 1 && cr_fb_is_const(ex, b);
+        int32_t ta = ka && cr_fb_truth(ex, a), tb = kb && cr_fb_truth(ex, b);
         uint32_t wa = ex->f->nodes[a].bit_width;
         uint32_t wb = nops > 1 ? ex->f->nodes[b].bit_width : 0u;
         switch (op) {
@@ -1301,7 +1301,7 @@ static uint32_t* cr_vec_slot(cr_u32vec_t* v, size_t index) {
 }
 
 /* A new flat variable with its origin. */
-static uint32_t cr_fx_new_var(cr_ex_t* ex, const char* name, uint32_t width, int sign, int cyclic,
+static uint32_t cr_fx_new_var(cr_ex_t* ex, const char* name, uint32_t width, int32_t sign, int32_t cyclic,
                               uint32_t kind, uint32_t inst, uint32_t idx, uint32_t elem) {
     cr_flat_t* f = ex->f;
     llg_cr_var_t* v = CR_VEC_PUSH(f->vars, f->vars_len, f->vars_cap);
@@ -1374,7 +1374,7 @@ static uint32_t cr_fx_leaf(cr_ex_t* ex, uint32_t inst, uint32_t leaf) {
 
 /* A value read through a null handle: a leaf that is a null-dereference
  * evaluation error (18.5.12 E), so a guard can still eliminate it. */
-static uint32_t cr_fx_object_less(cr_ex_t* ex, uint32_t width, int sign, const char* name,
+static uint32_t cr_fx_object_less(cr_ex_t* ex, uint32_t width, int32_t sign, const char* name,
                                   uint32_t kind) {
     cr_flat_t* f = ex->f;
     llg_cr_leaf_t* l = CR_VEC_PUSH(f->leaves, f->leaves_len, f->leaves_cap);
@@ -1392,7 +1392,7 @@ static uint32_t cr_fx_object_less(cr_ex_t* ex, uint32_t width, int sign, const c
     return cr_fb_intern(ex, &nd);
 }
 
-static uint32_t cr_fx_null(cr_ex_t* ex, uint32_t width, int sign) {
+static uint32_t cr_fx_null(cr_ex_t* ex, uint32_t width, int32_t sign) {
     return cr_fx_object_less(ex, width, sign, "null", LLG_CR_NONE);
 }
 
@@ -1464,7 +1464,7 @@ static uint32_t cr_fx_size_var(cr_ex_t* ex, uint32_t inst, uint32_t array, uint3
 }
 
 /* Element count and declared index base of a loop's array. */
-static uint32_t cr_fx_count(cr_ex_t* ex, uint32_t inst, uint32_t array, int* random_size) {
+static uint32_t cr_fx_count(cr_ex_t* ex, uint32_t inst, uint32_t array, int32_t* random_size) {
     const cr_tpl_t* t = ex->t;
     *random_size = 0;
     if (!(array & LLG_CR_SLOT_ARRAY) && (array & LLG_CR_RANGE_LOOP)) {
@@ -1583,7 +1583,7 @@ static uint32_t cr_ex_ref(const cr_ex_t* ex, uint32_t x) {
     return x == LLG_CR_NONE ? ex->inst : cr_ex_res(ex, x);
 }
 
-static int cr_ex_budget(cr_ex_t* ex) {
+static int32_t cr_ex_budget(cr_ex_t* ex) {
     if (ex->tun->expand_nodes && ex->f->nodes_len > ex->tun->expand_nodes) ex->failed = 1;
     return ex->failed;
 }
@@ -1594,10 +1594,10 @@ static uint32_t cr_ex_loop(cr_ex_t* ex, uint32_t n) {
     const uint32_t* x = ex->p->args + nd->b;
     uint32_t array = x[0], body = x[1], loop = x[3];
     uint32_t inst = cr_ex_ref(ex, x[2]);
-    int reduce = nd->op == LLG_CR_REDUCE;
+    int32_t reduce = nd->op == LLG_CR_REDUCE;
     uint32_t op = reduce ? x[4] : 0u;
     if (inst == CR_X_NULL) return cr_fx_null(ex, nd->bit_width, nd->sign_flag);
-    int random_size;
+    int32_t random_size;
     uint32_t count = cr_fx_count(ex, inst, array, &random_size);
     if (random_size) return CR_X_DROP;
     if (loop >= ex->t->loops || ex->loop_on[loop]) cr_fatal("invalid loop nesting");
@@ -1650,7 +1650,7 @@ static uint32_t cr_ex_loop(cr_ex_t* ex, uint32_t n) {
         } else {
             uint32_t acc = ex->items.data[base];
             uint32_t w = (op == LLG_CR_LAND || op == LLG_CR_LOR) ? 1u : nd->bit_width;
-            int sg = (op == LLG_CR_LAND || op == LLG_CR_LOR) ? 0 : nd->sign_flag;
+            int32_t sg = (op == LLG_CR_LAND || op == LLG_CR_LOR) ? 0 : nd->sign_flag;
             for (size_t i = 1; i < count_items; ++i)
                 acc = cr_fb_node(ex, op, w, sg, acc, ex->items.data[base + i], 0u);
             if (w != nd->bit_width) acc = cr_fb_node(ex, LLG_CR_RESIZE, nd->bit_width, nd->sign_flag, acc, 0u, 0u);
@@ -1757,7 +1757,7 @@ static uint32_t cr_ex_node(cr_ex_t* ex, uint32_t n) {
     case LLG_CR_ASIZE: {
         uint32_t inst = cr_ex_ref(ex, nd->c);
         if (inst == CR_X_NULL) return cr_fx_null(ex, 32u, 1);
-        int random_size;
+        int32_t random_size;
         uint32_t count = cr_fx_count(ex, inst, nd->a, &random_size);
         if (random_size) {
             inst = cr_fx_arr_inst(ex, inst, nd->a);
@@ -1865,7 +1865,7 @@ static uint32_t cr_ex_node(cr_ex_t* ex, uint32_t n) {
     }
 }
 
-static int cr_u32_cmp(const void* x, const void* y) {
+static int32_t cr_u32_cmp(const void* x, const void* y) {
     uint32_t a = *(const uint32_t*)x, b = *(const uint32_t*)y;
     return a < b ? -1 : a > b;
 }
@@ -2039,7 +2039,7 @@ static void cr_fx_order_side(const cr_flat_t* f, const cr_tpl_t* t, uint32_t i, 
         return;
     }
     if (side & (LLG_CR_ORDER_ARRAY | LLG_CR_ORDER_ELEM)) {
-        int whole = (side & LLG_CR_ORDER_ARRAY) != 0u;
+        int32_t whole = (side & LLG_CR_ORDER_ARRAY) != 0u;
         const uint32_t* x = whole ? NULL : p->args + (side & ~LLG_CR_ORDER_ELEM);
         uint32_t array = whole ? side & ~LLG_CR_ORDER_ARRAY : x[0];
         uint32_t pos = t->arr_pos[(size_t)in->unit * t->ac + array];
@@ -2058,7 +2058,7 @@ static void cr_fx_order_side(const cr_flat_t* f, const cr_tpl_t* t, uint32_t i, 
     if (v != LLG_CR_NONE) cr_u32_push(out, v);
 }
 
-static cr_flat_t* cr_flat_build(cr_tpl_t* t, int phase, const char** budget) {
+static cr_flat_t* cr_flat_build(cr_tpl_t* t, int32_t phase, const char** budget) {
     const llg_cr_problem_t* p = t->p;
     cr_flat_t* f = (cr_flat_t*)cr_alloc(1u, sizeof(*f));
     f->phase = phase;
@@ -2184,7 +2184,7 @@ static cr_flat_t* cr_flat_build(cr_tpl_t* t, int phase, const char** budget) {
     }
     /* Sizes first: every size before every other variable (S30-D5). */
     if (phase == CR_PH_SIZES && !ex.failed) {
-        int any = 0;
+        int32_t any = 0;
         for (size_t v = 0; v < f->vars_len; ++v) any |= f->var_kind.data[v] == CR_FV_SIZE;
         if (any) {
             llg_cr_block_t* b = CR_VEC_PUSH(f->blocks, f->blocks_len, f->blocks_cap);
@@ -2206,7 +2206,7 @@ static cr_flat_t* cr_flat_build(cr_tpl_t* t, int phase, const char** budget) {
         }
     }
     cr_ex_budget(&ex);
-    int failed = ex.failed;
+    int32_t failed = ex.failed;
     free(ex.loop_val); free(ex.loop_on); free(ex.stamp); free(ex.called);
     free(ex.mkey); free(ex.mval); free(ex.hc); free(ex.nhash.data);
     free(ex.work.data); free(ex.dfs.data); free(ex.items.data); free(ex.ops.data);
@@ -2254,7 +2254,7 @@ static void cr_flat_feed(cr_tpl_t* t, cr_flat_t* f) {
     llg_cr_begin(fs);
     for (size_t b = 0; b < f->blocks_len; ++b) {
         uint32_t inst = f->block_inst.data[b];
-        int enabled = 1;
+        int32_t enabled = 1;
         if (inst != LLG_CR_NONE) {
             const cr_inst_t* in = &t->inst[inst];
             enabled = in->block_en[f->block_idx.data[b] - p->units[in->unit].block_first];
@@ -2295,7 +2295,7 @@ static void cr_flat_feed(cr_tpl_t* t, cr_flat_t* f) {
         }
         uint32_t e = f->var_elem.data[v];
         size_t ew = CR_WORDS(p->arrays[idx].elem_width);
-        int active = in->random && arr->active;
+        int32_t active = in->random && arr->active;
         if (e < arr->size)
             llg_cr_set_var(fs, (uint32_t)v, arr->words + (size_t)e * ew, active, arr->input[e]);
         else
@@ -2318,7 +2318,7 @@ static void cr_flat_feed(cr_tpl_t* t, cr_flat_t* f) {
 }
 
 /* Find the expanded problem of the current structure, or build it. */
-static llg_cr_status_t cr_tpl_enter(cr_tpl_t* t, int phase, llg_cr_report_t* report) {
+static llg_cr_status_t cr_tpl_enter(cr_tpl_t* t, int32_t phase, llg_cr_report_t* report) {
     cr_u32vec_t key = {0, 0, 0};
     cr_tpl_key(t, phase, &key);
     cr_flat_t* found = NULL;
@@ -2382,7 +2382,7 @@ static void cr_tpl_translate(const cr_flat_t* f, llg_cr_report_t* r) {
     }
 }
 
-static int cr_has_random_size(const cr_tpl_t* t) {
+static int32_t cr_has_random_size(const cr_tpl_t* t) {
     for (uint32_t i = 0; i < t->count; ++i) {
         const cr_inst_t* in = &t->inst[i];
         for (uint32_t k = 0; k < t->p->units[in->unit].array_count; ++k)
@@ -2392,7 +2392,7 @@ static int cr_has_random_size(const cr_tpl_t* t) {
 }
 
 /* Random elements of the solve (LLG_RAND_ARRAY_ELEMENTS). */
-static int cr_elements_ok(const cr_tpl_t* t) {
+static int32_t cr_elements_ok(const cr_tpl_t* t) {
     uint64_t limit = llg_cr_tunables()->array_elements, total = 0;
     if (!limit) return 1;
     for (uint32_t i = 0; i < t->count; ++i) {
@@ -2508,7 +2508,7 @@ const uint64_t* llg_cr_ivalue(const llg_cr_session_t* s, uint32_t inst, uint32_t
     return cr_tpl_value(s->tpl, inst, var);
 }
 
-int llg_cr_iactive(const llg_cr_session_t* s, uint32_t inst, uint32_t var) {
+int32_t llg_cr_iactive(const llg_cr_session_t* s, uint32_t inst, uint32_t var) {
     const cr_tpl_t* t = s->tpl;
     if (!t || var >= t->vc) cr_fatal("variable out of range");
     if (inst == LLG_CR_NONE || t->global[var]) return t->g_active[var] != 0u;
@@ -2516,7 +2516,7 @@ int llg_cr_iactive(const llg_cr_session_t* s, uint32_t inst, uint32_t var) {
     return in->random && in->var_active[cr_inst_var(t, in, var)] != 0u;
 }
 
-int llg_cr_array_active(const llg_cr_session_t* s, uint32_t inst, uint32_t array) {
+int32_t llg_cr_array_active(const llg_cr_session_t* s, uint32_t inst, uint32_t array) {
     return cr_inst_get(s, inst)->random && cr_inst_array(s, inst, array)->active;
 }
 
@@ -2599,7 +2599,7 @@ uint32_t llg_cr_xcall_inst(const llg_cr_session_t* s, uint32_t x) {
     return s->tpl->flat->call_inst.data[x];
 }
 
-int llg_cr_xcall_ready(const llg_cr_session_t* s, uint32_t x) {
+int32_t llg_cr_xcall_ready(const llg_cr_session_t* s, uint32_t x) {
     return llg_cr_call_ready(s, s->p->call_count + x);
 }
 
@@ -2608,6 +2608,6 @@ const uint64_t* llg_cr_xcall_arg(const llg_cr_session_t* s, uint32_t x, uint32_t
 }
 
 void llg_cr_xcall_set_result(llg_cr_session_t* s, uint32_t x, const uint64_t* words,
-                             int input_state) {
+                             int32_t input_state) {
     llg_cr_set_call_result(s, s->p->call_count + x, words, input_state);
 }

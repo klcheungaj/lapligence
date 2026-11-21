@@ -6,7 +6,7 @@
 // aborts without leaving a partially rebound event. Only `used` entries are
 // copied; the rest of a freshly allocated table is unspecified.
 static void event_table_reserve(llg_proc_t*** table, size_t* capacity,
-                                int needed, int used, const char* what) {
+                                int32_t needed, int32_t used, const char* what) {
     if (needed < 0 || (size_t)needed <= *capacity) return;
     size_t next = *capacity ? *capacity : 8u;
     while (next < (size_t)needed) {
@@ -112,22 +112,22 @@ static void install_value_handle_hooks(void) {
 
 // Slot arrays share the event-list allocation; a single ordinary event uses
 // the existing inline payload. Positions survive waiter-table reallocations.
-static llg_event_object_t** event_wait_list_new(int count, int** slots) {
+static llg_event_object_t** event_wait_list_new(int32_t count, int32_t** slots) {
     if (!count) {
         *slots = NULL;
         return NULL;
     }
     llg_event_object_t** events = (llg_event_object_t**)llg_checked_malloc(
         (size_t)count, sizeof(*events) + sizeof(**slots), "indexed event wait list");
-    *slots = (int*)(events + count);
-    for (int i = 0; i < count; i++) (*slots)[i] = -1;
+    *slots = (int32_t*)(events + count);
+    for (int32_t i = 0; i < count; i++) (*slots)[i] = -1;
     return events;
 }
 
-static int* event_wait_slot(llg_wait_t* w, llg_event_object_t* ev, int index) {
+static int32_t* event_wait_slot(llg_wait_t* w, llg_event_object_t* ev, int32_t index) {
     llg_event_object_t** events = NULL;
-    int* slots = NULL;
-    int count = 0;
+    int32_t* slots = NULL;
+    int32_t count = 0;
     switch (w->kind) {
         case W_EVENT:
             events = w->payload.event.evs;
@@ -152,13 +152,13 @@ static int* event_wait_slot(llg_wait_t* w, llg_event_object_t* ev, int index) {
         default:
             return NULL;
     }
-    for (int i = 0; i < count; i++)
+    for (int32_t i = 0; i < count; i++)
         if (events[i] == ev && slots[i] == index) return &slots[i];
     return NULL;
 }
 
 // Register `p` on `ev`'s waiter table, growing it with checked allocation.
-static void event_list_add(llg_event_object_t* ev, llg_proc_t* p, int* slot) {
+static void event_list_add(llg_event_object_t* ev, llg_proc_t* p, int32_t* slot) {
     if (!ev) return;
     if (ev->n_waiters == INT_MAX) {
         llg_msg(LLG_MSG_INTERNAL, NULL, "named-event waiter count overflow");
@@ -192,8 +192,8 @@ static void event_triggered_list_add(llg_event_object_t* ev, llg_proc_t* p) {
 // signal half of a mixed list), and must not stay registered on the others.
 static void event_unlink(llg_wait_t* w) {
     llg_event_object_t** events = NULL;
-    int* slots = NULL;
-    int count = 0;
+    int32_t* slots = NULL;
+    int32_t count = 0;
     if (w->kind == W_EVENT) {
         events = w->payload.event.evs;
         slots = w->payload.event.event_slots;
@@ -211,15 +211,15 @@ static void event_unlink(llg_wait_t* w) {
         slots = w->payload.rare->order.event_slots;
         count = w->payload.rare->order.n_evs;
     }
-    for (int i = 0; i < count; i++) {
+    for (int32_t i = 0; i < count; i++) {
         llg_event_object_t* ev = events[i];
         if (!ev) continue;
-        int index = slots[i];
+        int32_t index = slots[i];
         if (index < 0) continue; // already detached into a trigger snapshot
-        int last = --ev->n_waiters;
+        int32_t last = --ev->n_waiters;
         if (index != last) {
             llg_proc_t* moved = ev->waiters[last];
-            int* moved_slot = event_wait_slot(&moved->wait, ev, last);
+            int32_t* moved_slot = event_wait_slot(&moved->wait, ev, last);
             if (!moved_slot) abort();
             *moved_slot = index;
             ev->waiters[index] = moved;
@@ -232,9 +232,9 @@ static void event_triggered_unlink(llg_wait_t* w) {
     if (!w || w->kind != W_EVENT_TRIGGERED) return;
     llg_event_object_t* ev = w->payload.event.triggered_ev;
     if (!ev) return;
-    int index = w->payload.event.inline_slot;
+    int32_t index = w->payload.event.inline_slot;
     if (index < 0) return;
-    int last = --ev->n_triggered_waiters;
+    int32_t last = --ev->n_triggered_waiters;
     if (index != last) {
         llg_proc_t* moved = ev->triggered_waiters[last];
         ev->triggered_waiters[index] = moved;

@@ -5,6 +5,7 @@
 
 #define _GNU_SOURCE
 #define LLG_PLATFORM_CONSOLE_LOG 1
+#define LLG_PLATFORM_FILE_POSITIONS 1
 // This unit holds the one copy of the message reporter and the message
 // counts of a model (llg_msg.h).
 #define LLG_MSG_IMPLEMENTATION 1
@@ -86,7 +87,7 @@ typedef struct {
 
 static void llg_rt_co_trace_frame(void* user, const llg_co_desc_t* desc,
                                   const llg_co_frame_t* frame,
-                                  unsigned depth) {
+                                  uint32_t depth) {
     llg_rt_co_trace_t* trace = (llg_rt_co_trace_t*)user;
     llg_report_t* report = trace->report;
     const char* location = NULL;
@@ -95,7 +96,7 @@ static void llg_rt_co_trace_frame(void* user, const llg_co_desc_t* desc,
     const char* name = desc && desc->name ? desc->name
                        : desc && trace->root_name ? trace->root_name
                                                   : "<unknown HDL frame>";
-    llg_report_printf(report, "  #%u %s", depth, name);
+    llg_report_printf(report, "  #%" PRIu32 " %s", depth, name);
     if (location && location[0] != '\0') llg_report_printf(report, " at %s", location);
     llg_report_bytes(report, "\n", 1);
 }
@@ -215,12 +216,12 @@ static void* llg_checked_calloc(size_t count, size_t size, const char* what) {
     return ptr;
 }
 
-static void llg_fmt_args_destroy(llg_fmt_arg_t* args, int n);
+static void llg_fmt_args_destroy(llg_fmt_arg_t* args, int32_t n);
 static size_t llg_format_time_integer(sv4_t value, uint64_t source_unit_fs,
                                       char* raw, size_t cap);
 
-static const char* llg_parse_legacy_spec(const char* p, int* has_width,
-                                         int* width, int* zero) {
+static const char* llg_parse_legacy_spec(const char* p, int32_t* has_width,
+                                         int32_t* width, int32_t* zero) {
     *has_width = 0;
     *width = 0;
     *zero = 0;
@@ -242,12 +243,12 @@ static const char* llg_parse_legacy_spec(const char* p, int* has_width,
     return p;
 }
 
-static int llg_sv4_nlimbs(uint32_t width) {
-    return width == 0 ? 0 : (int)((width + 63u) / 64u);
+static int32_t llg_sv4_nlimbs(uint32_t width) {
+    return width == 0 ? 0 : (int32_t)((width + 63u) / 64u);
 }
 
-static uint64_t llg_sv4_limb_mask(uint32_t width, int index) {
-    int limbs = llg_sv4_nlimbs(width);
+static uint64_t llg_sv4_limb_mask(uint32_t width, int32_t index) {
+    int32_t limbs = llg_sv4_nlimbs(width);
     if (index < 0 || index >= limbs) return 0;
     if (index == limbs - 1 && (width % 64) != 0)
         return LLG_MASK((uint32_t)(width % 64));

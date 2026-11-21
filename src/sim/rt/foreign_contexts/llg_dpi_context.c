@@ -48,7 +48,7 @@ typedef struct llg_dpi_party {
     llg_atomic_int_t go;           // set with the token, polled before sleeping
     struct llg_dpi_party* resumer; // who resumed it, and gets the token back
     llg_dpi_guard_t* guards;       // its open-array guard stack while parked
-    int unwinding;                 // its chain belongs to a killed process
+    int32_t unwinding;                 // its chain belongs to a killed process
 } llg_dpi_party_t;
 
 struct llg_dpi_context {
@@ -59,13 +59,13 @@ struct llg_dpi_context {
     llg_co_chain_t* chain;
     void* owner; // llg_proc_t* of `chain`
     llg_co_anchor_t* request;
-    int event;
-    int quit;
+    int32_t event;
+    int32_t quit;
     llg_dpi_context_t* next;
 };
 
 static struct {
-    int ready;
+    int32_t ready;
     llg_mutex_t mutex;
     llg_dpi_party_t scheduler;
     llg_dpi_party_t* token;   // the participant allowed to run
@@ -78,7 +78,7 @@ static struct {
     llg_dpi_context_t* orphans;
 } g_contexts;
 
-static void contexts_process_end(llg_proc_t* proc, int unwind);
+static void contexts_process_end(llg_proc_t* proc, int32_t unwind);
 static void contexts_park_forever(void);
 static void contexts_shutdown(void);
 
@@ -105,9 +105,9 @@ static void contexts_switch(llg_dpi_party_t* to) {
 // One poll of a wake flag. It needs only eventual visibility, because the
 // poller takes the mutex before it runs on; on MSVC it is a plain volatile
 // read rather than llg_atomic_int_load's interlocked operation.
-static inline int contexts_poll(const llg_atomic_int_t* flag) {
+static inline int32_t contexts_poll(const llg_atomic_int_t* flag) {
 #if LLG_COMPILER_MSVC
-    return (int)*flag;
+    return (int32_t)*flag;
 #else
     return atomic_load_explicit(flag, memory_order_relaxed);
 #endif
@@ -119,7 +119,7 @@ static inline int contexts_poll(const llg_atomic_int_t* flag) {
 static void contexts_wait(llg_dpi_party_t* self) {
     if (g_contexts.token != self && LLG_DPI_CONTEXT_SPIN != 0) {
         llg_mutex_unlock(&g_contexts.mutex);
-        for (unsigned i = 0; i < LLG_DPI_CONTEXT_SPIN && !contexts_poll(&self->go); i++) {
+        for (uint32_t i = 0; i < LLG_DPI_CONTEXT_SPIN && !contexts_poll(&self->go); i++) {
         }
         llg_mutex_lock(&g_contexts.mutex);
     }
@@ -239,7 +239,7 @@ llg_co_anchor_t* llg_dpi_export_begin(const llg_co_desc_t* desc, const char* c_n
     return slot;
 }
 
-int llg_dpi_export_wait(llg_co_anchor_t* slot) {
+int32_t llg_dpi_export_wait(llg_co_anchor_t* slot) {
     llg_mutex_lock(&g_contexts.mutex);
     llg_dpi_context_t* context = (llg_dpi_context_t*)g_contexts.running;
     context->request = slot;
@@ -262,7 +262,7 @@ static void contexts_park_forever(void) {
 
 // The scheduler ends `proc`. Its contexts are blocked in exported task calls;
 // the newest is the innermost of the chain and goes first.
-static void contexts_process_end(llg_proc_t* proc, int unwind) {
+static void contexts_process_end(llg_proc_t* proc, int32_t unwind) {
     for (;;) {
         llg_dpi_context_t* context = g_contexts.active;
         while (context && (context->owner != (void*)proc ||

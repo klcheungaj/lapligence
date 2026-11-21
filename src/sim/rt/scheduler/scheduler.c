@@ -10,7 +10,7 @@ static void report_zero_delay_loop(void) {
 // inertial-update and delayed-NBA lists are predicted empty there (their
 // scans sit behind the loop's hot path), and the pending tests below are
 // shared out-of-line copies instead of one inlined copy per call site.
-static int callback_pending(llg_region_t region) {
+static int32_t callback_pending(llg_region_t region) {
     if (LLG_CO_LIKELY(!g.callbacks)) return 0;
     for (llg_region_callback_t* entry = g.callbacks; entry; entry = entry->next) {
         if (entry->time > g.now) break;
@@ -34,11 +34,11 @@ static llg_region_callback_t* take_region_callback(llg_region_t region) {
     return NULL;
 }
 
-static int region_pending(llg_region_t region) {
+static int32_t region_pending(llg_region_t region) {
     return g.process_queues[region].head != NULL || callback_pending(region);
 }
 
-static int run_region_queue(llg_region_t region) {
+static int32_t run_region_queue(llg_region_t region) {
     g.current_region = region;
     while (!g.finish) {
         llg_region_callback_t* callback = take_region_callback(region);
@@ -115,8 +115,8 @@ static int run_region_queue(llg_region_t region) {
 // one pass of the zero-delay limit. Nets defer exactly (scheduler/nets.c,
 // "Deferred net updates") and publish when the batch ends, before any process
 // the updates woke runs; 0 when the limit stops the run.
-static int commit_inertial_batch(llg_region_t region) {
-    int ok = 1;
+static int32_t commit_inertial_batch(llg_region_t region) {
+    int32_t ok = 1;
     net_defer_active = 1;
     net_defer_exact = 1;
     do {
@@ -147,17 +147,17 @@ static void wake_zero_waits(llg_region_t region) {
     }
 }
 
-static LLG_NOINLINE int design_pending(void) {
+static LLG_NOINLINE int32_t design_pending(void) {
     for (llg_region_t region = LLG_REGION_ACTIVE;
          region <= LLG_REGION_POST_NBA_PLI; region++) {
         if (region_pending(region)) return 1;
     }
-    int pending = g.zero_waits[LLG_REGION_INACTIVE].head != NULL ||
+    int32_t pending = g.zero_waits[LLG_REGION_INACTIVE].head != NULL ||
                   inertial_ready(LLG_REGION_ACTIVE) || nba_due(LLG_REGION_NBA);
     return pending;
 }
 
-static LLG_NOINLINE int reactive_pending(void) {
+static LLG_NOINLINE int32_t reactive_pending(void) {
     for (llg_region_t region = LLG_REGION_REACTIVE;
          region <= LLG_REGION_POST_RE_NBA_PLI; region++) {
         if (region_pending(region)) return 1;
@@ -166,7 +166,7 @@ static LLG_NOINLINE int reactive_pending(void) {
            inertial_ready(LLG_REGION_REACTIVE) || nba_due(LLG_REGION_RE_NBA);
 }
 
-static int drain_design_set(void) {
+static int32_t drain_design_set(void) {
     for (;;) {
         while (!g.finish &&
                (region_pending(LLG_REGION_ACTIVE) ||
@@ -192,7 +192,7 @@ static int drain_design_set(void) {
 
 // Earlier-phase work enabled by a callback precedes the next phase. NBA
 // batches themselves retain issue order before another Active iteration.
-static LLG_NOINLINE int design_pending_before(llg_region_t stop) {
+static LLG_NOINLINE int32_t design_pending_before(llg_region_t stop) {
     for (llg_region_t region = LLG_REGION_ACTIVE; region < stop; region++)
         if (region_pending(region)) return 1;
     return g.zero_waits[LLG_REGION_INACTIVE].head != NULL ||
@@ -200,7 +200,7 @@ static LLG_NOINLINE int design_pending_before(llg_region_t stop) {
            (stop > LLG_REGION_NBA && nba_due(LLG_REGION_NBA));
 }
 
-static int run_design_set(void) {
+static int32_t run_design_set(void) {
     for (;;) {
         if (!drain_design_set()) return 0;
         if (!run_region_queue(LLG_REGION_PRE_NBA_PLI)) return 0;
@@ -229,7 +229,7 @@ static int run_design_set(void) {
 // Observed work enabled after the design set reached its fixed point: an
 // assertion clock edge produced by the reactive set, or a queued Observed
 // process/callback.
-static LLG_NOINLINE int observed_pending(void) {
+static LLG_NOINLINE int32_t observed_pending(void) {
     // A pending procedural concurrent assertion instance matures only in
     // Observed (SV 16.15.6), also when a reactive process queued it.
     // A write after the last Observed pass can raise an asynchronous abort
@@ -243,7 +243,7 @@ static LLG_NOINLINE int observed_pending(void) {
     return 0;
 }
 
-static int run_observed_set(void) {
+static int32_t run_observed_set(void) {
     // Active free checker variables are solved "when an implementation is
     // about to begin the Observed region" (IEEE 1800-2009 17.7.2).
     if (g.free_sets) {
@@ -267,7 +267,7 @@ static int run_observed_set(void) {
     return run_region_queue(LLG_REGION_POST_OBSERVED_PLI);
 }
 
-static int drain_reactive_set(void) {
+static int32_t drain_reactive_set(void) {
     for (;;) {
         while (!g.finish &&
                (region_pending(LLG_REGION_REACTIVE) ||
@@ -300,7 +300,7 @@ static int drain_reactive_set(void) {
     return 1;
 }
 
-static LLG_NOINLINE int reactive_pending_before(llg_region_t stop) {
+static LLG_NOINLINE int32_t reactive_pending_before(llg_region_t stop) {
     for (llg_region_t region = LLG_REGION_REACTIVE; region < stop; region++)
         if (region_pending(region)) return 1;
     return g.zero_waits[LLG_REGION_RE_INACTIVE].head != NULL ||
@@ -308,7 +308,7 @@ static LLG_NOINLINE int reactive_pending_before(llg_region_t stop) {
            (stop > LLG_REGION_RE_NBA && nba_due(LLG_REGION_RE_NBA));
 }
 
-static int run_reactive_set(void) {
+static int32_t run_reactive_set(void) {
     // Exhaust the reactive set before returning to newly enabled design work
     // (IEEE 1800-2009 4.5).
     for (;;) {
@@ -336,12 +336,12 @@ static int run_reactive_set(void) {
     }
 }
 
-static int run_pre_postponed_set(void) {
+static int32_t run_pre_postponed_set(void) {
     if (!run_region_queue(LLG_REGION_PRE_POSTPONED_PLI)) return 0;
     return run_region_queue(LLG_REGION_PRE_POSTPONED);
 }
 
-static int run_postponed_set(void) {
+static int32_t run_postponed_set(void) {
     if (!run_region_queue(LLG_REGION_POSTPONED)) return 0;
     g.current_region = LLG_REGION_POSTPONED;
     g.private_evaluation = 1;
@@ -394,7 +394,7 @@ void llg_rt_run_finals(void) {
     g.stop_policy = llg_configured_stop_policy;
     g.initialized = 1;
     llg_in_finals = 1;
-    for (int i = 0; i < llg_n_finals; i++) {
+    for (int32_t i = 0; i < llg_n_finals; i++) {
         llg_proc_t process;
         memset(&process, 0, sizeof(process));
         process.name = llg_finals[i].name;
@@ -436,13 +436,13 @@ void llg_rt_run_finals(void) {
  * resume. Runs only after a normal end, not after a runtime error. */
 static void run_end_of_simulation_assertions(void) {
     if (llg_last_failure) return;
-    int saved_finish = g.finish;
+    int32_t saved_finish = g.finish;
     llg_proc_queue_t abandoned = g.process_queues[LLG_REGION_REACTIVE];
     g.process_queues[LLG_REGION_REACTIVE].head = NULL;
     g.process_queues[LLG_REGION_REACTIVE].tail = NULL;
     g.finish = 0;
     assertion_events_enter();
-    int reported = settle_property_attempts_at_end();
+    int32_t reported = settle_property_attempts_at_end();
     assertion_events_leave();
     if (reported && !g.finish) (void)run_region_queue(LLG_REGION_REACTIVE);
     llg_proc_queue_t* queue = &g.process_queues[LLG_REGION_REACTIVE];
@@ -458,7 +458,7 @@ static void (*time_slot_hook)(void);
 
 void llg_time_slot_hook(void (*hook)(void)) { time_slot_hook = hook; }
 
-int llg_rt_running(void) { return g.running; }
+int32_t llg_rt_running(void) { return g.running; }
 
 void llg_rt_run(void) {
     if (g.config_error) {
@@ -516,7 +516,7 @@ void llg_rt_run(void) {
         if (g.finish) break;
         if (!run_postponed_set()) break;
         if (g.finish) break;
-        int have_future_event = g.timed_head || g.delayed_nba_buckets ||
+        int32_t have_future_event = g.timed_head || g.delayed_nba_buckets ||
                                 g.inertial_pending || g.callbacks;
         uint64_t t = g.timed_head ? g.timed_head->payload.timer.time : UINT64_MAX;
         if (g.delayed_nba_buckets && g.delayed_nba_buckets->time < t)

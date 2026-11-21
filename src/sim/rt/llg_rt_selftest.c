@@ -20,24 +20,24 @@ size_t value_test_live(void);
 size_t value_test_bytes(void);
 #endif
 
-static int failures = 0;
+static int32_t failures = 0;
 
 static llg_event_object_t lifecycle_event_object;
 static llg_event_t lifecycle_event = { &lifecycle_event_object };
-static int lifecycle_triggered_inside_run;
+static int32_t lifecycle_triggered_inside_run;
 
-static int deferred_termination_seen;
+static int32_t deferred_termination_seen;
 
 // Self-test results use the model's message layout with id SIM-032: a failed
 // check is an ERROR on stderr located at its selftest line, a pass an INFO on
 // stdout, so the streams keep what they carried before.
 LLG_MSG_PRINTF(4, 5)
-static void selftest_report(FILE* stream, int severity, int line, const char* fmt, ...) {
+static void selftest_report(FILE* stream, int32_t severity, int32_t line, const char* fmt, ...) {
     char location[64];
     llg_report_t text;
     llg_report_t out;
     va_list args;
-    if (line > 0) snprintf(location, sizeof location, "llg_rt_selftest.c:%d", line);
+    if (line > 0) snprintf(location, sizeof location, "llg_rt_selftest.c:%" PRId32, line);
     llg_report_init(&text);
     llg_report_init(&out);
     va_start(args, fmt);
@@ -60,10 +60,10 @@ static void selftest_report(FILE* stream, int severity, int line, const char* fm
 
 // sv4 helpers mirroring the elab.rs test helpers.
 static sv4_t b4(const char* s) { // MSB-first bit string with 0/1/x/z
-    int n = (int)strlen(s);
+    int32_t n = (int32_t)strlen(s);
     sv4_t v = sv4_zero((uint32_t)n, 0);
-    for (int i = 0; i < n; i++) {
-        int lsb = n - 1 - i;
+    for (int32_t i = 0; i < n; i++) {
+        int32_t lsb = n - 1 - i;
         char c = s[i];
         llg_sv4_set_state(&v, (uint64_t)lsb,
                           c == 'x' ? 2u : c == 'z' ? 3u : c == '1' ? 1u : 0u);
@@ -72,7 +72,7 @@ static sv4_t b4(const char* s) { // MSB-first bit string with 0/1/x/z
 }
 
 static uint64_t u(sv4_t v) { return sv4_to_u64(v); }
-static int isx(sv4_t v) { return sv4_is_unknown(v); }
+static int32_t isx(sv4_t v) { return sv4_is_unknown(v); }
 static double real_from_bits(uint64_t bits) {
     double value;
     memcpy(&value, &bits, sizeof(value));
@@ -85,7 +85,7 @@ static sv4_t w128(uint64_t lo, uint64_t hi) {
     return sv4_from_limbs(b, x, z, 128, 0);
 }
 
-static int w_same(sv4_t a, uint64_t lo, uint64_t hi) {
+static int32_t w_same(sv4_t a, uint64_t lo, uint64_t hi) {
     return llg_sv4_width(a) == 128 && !sv4_is_unknown(a) && llg_sv4_word(a, 0, LLG_SV4_BITS) == lo &&
            llg_sv4_word(a, 1, LLG_SV4_BITS) == hi;
 }
@@ -752,7 +752,7 @@ enum {
 };
 
 typedef struct {
-    int op;
+    int32_t op;
     uint64_t a_bits, a_x, a_z;
     uint16_t a_w;
     int8_t a_s;
@@ -864,10 +864,10 @@ static const sv4_vec_t VECTORS[] = {
     { V_CASEX, 0x9ULL, 0x0ULL, 0x0ULL, 4, 0, 0x8ULL, 0x0ULL, 0x0ULL, 4, 0, 0x0ULL, 0x0ULL, 0x0ULL, 0, 0, 0x0ULL, 0x0ULL, 0x0ULL, 1, 0 },
     { V_CASEX, 0x8ULL, 0x0ULL, 0x0ULL, 8, 0, 0x8ULL, 0x4ULL, 0x1ULL, 4, 0, 0x0ULL, 0x0ULL, 0x0ULL, 0, 0, 0x1ULL, 0x0ULL, 0x0ULL, 1, 0 },
 };
-static const int N_VECTORS = (int)(sizeof(VECTORS) / sizeof(VECTORS[0]));
+static const int32_t N_VECTORS = (int32_t)(sizeof(VECTORS) / sizeof(VECTORS[0]));
 
 static void check_vector_table(void) {
-    for (int i = 0; i < N_VECTORS; i++) {
+    for (int32_t i = 0; i < N_VECTORS; i++) {
         const sv4_vec_t* v = &VECTORS[i];
         sv4_t a = test_temp(SV4_INIT(v->a_bits, v->a_x, v->a_z, v->a_w, v->a_s));
         sv4_t b = test_temp(SV4_INIT(v->b_bits, v->b_x, v->b_z, v->b_w, v->b_s));
@@ -890,32 +890,32 @@ static void check_vector_table(void) {
             case V_CONCAT: got = test_temp(sv4_concat(a, b)); break;
             case V_CASEZ: got = test_temp(sv4_casez_eq(a, b)); break;
             case V_CASEX: got = test_temp(sv4_casex_eq(a, b)); break;
-            default: selftest_report(stderr, LLG_SEVERITY_ERROR, __LINE__, "vector %d: unknown op %d", i, v->op); failures++; test_clear_temporaries(); continue;
+            default: selftest_report(stderr, LLG_SEVERITY_ERROR, __LINE__, "vector %" PRId32 ": unknown op %" PRId32, i, v->op); failures++; test_clear_temporaries(); continue;
         }
         sv4_t exp = test_temp(SV4_INIT(v->e_bits, v->e_x, v->e_z, v->e_w, v->e_s));
         if (!sv4_same(got, exp)) {
             selftest_report(stderr, LLG_SEVERITY_ERROR, __LINE__,
-                    "vector %d (op %d): got %016llx/%016llx/%016llx w=%u, "
-                    "expected %016llx/%016llx/%016llx w=%u",
+                    "vector %" PRId32 " (op %" PRId32 "): got %016llx/%016llx/%016llx w=%" PRIu32 ", "
+                    "expected %016llx/%016llx/%016llx w=%" PRIu32,
                     i, v->op,
                     (unsigned long long)llg_sv4_word(got, 0, LLG_SV4_BITS), (unsigned long long)llg_sv4_word(got, 0, LLG_SV4_X),
-                    (unsigned long long)llg_sv4_word(got, 0, LLG_SV4_Z), (unsigned)llg_sv4_width(got),
+                    (unsigned long long)llg_sv4_word(got, 0, LLG_SV4_Z), (uint32_t)llg_sv4_width(got),
                     (unsigned long long)llg_sv4_word(exp, 0, LLG_SV4_BITS), (unsigned long long)llg_sv4_word(exp, 0, LLG_SV4_X),
-                    (unsigned long long)llg_sv4_word(exp, 0, LLG_SV4_Z), (unsigned)llg_sv4_width(exp));
+                    (unsigned long long)llg_sv4_word(exp, 0, LLG_SV4_Z), (uint32_t)llg_sv4_width(exp));
             failures++;
         }
     }
     test_clear_temporaries();
     test_clear_temporaries();
     if (failures == 0)
-        selftest_report(stdout, LLG_SEVERITY_INFO, 0, "vector table (%d vectors): ok", N_VECTORS);
+        selftest_report(stdout, LLG_SEVERITY_INFO, 0, "vector table (%" PRId32 " vectors): ok", N_VECTORS);
 }
 
 // ── Scheduler tests ───────────────────────────────────────────────────────────
 
 static sv4_t s_a = SV4_EMPTY, s_b = SV4_EMPTY; // ping-pong signals
-static int n_a, n_b;
-static int ping_done;
+static int32_t n_a, n_b;
+static int32_t ping_done;
 
 LLG_SELFTEST_PROCESS(proc_ping, 1) {
     LLG_SELFTEST_BEGIN(1);
@@ -947,8 +947,8 @@ LLG_SELFTEST_PROCESS(proc_kick, 0) {
 }
 
 static double real_dependency_value;
-static int real_dependency_wakes;
-static int real_expression_wakes;
+static int32_t real_dependency_wakes;
+static int32_t real_expression_wakes;
 
 static void real_expression_eval(double* out, void* context) {
     (void)context;
@@ -1024,10 +1024,10 @@ static void test_real_dependencies(void) {
 // `rw_b` alternates between two lists, `rw_d` waits on one selected bit.
 static sv4_t rw_x, rw_y, rw_v;
 static char rw_log[32];
-static int rw_n;
+static int32_t rw_n;
 
 static void rw_note(char id) {
-    if (rw_n < (int)sizeof(rw_log) - 1) rw_log[rw_n++] = id;
+    if (rw_n < (int32_t)sizeof(rw_log) - 1) rw_log[rw_n++] = id;
 }
 
 LLG_SELFTEST_PROCESS(rw_a, 1) {
@@ -1126,10 +1126,10 @@ static void test_retained_dependency_waits(void) {
 // only when its bits change; an undone change keeps its first position.
 static sv4_t ow_x, ow_y, ow_v;
 static char ow_log[64];
-static int ow_n;
+static int32_t ow_n;
 
 static void ow_record(llg_wait_changes_t changes) {
-    for (size_t i = 0; i < changes.n && ow_n < (int)sizeof(ow_log) - 3; i++) {
+    for (size_t i = 0; i < changes.n && ow_n < (int32_t)sizeof(ow_log) - 3; i++) {
         const llg_wait_change_t* change = &changes.changes[i];
         ow_log[ow_n++] = change->key == (const void*)&ow_x ? 'x'
                          : change->key == (const void*)&ow_y ? 'y' : 'v';
@@ -1190,8 +1190,8 @@ static void test_ordered_dependency_waits(void) {
 
 // Delay ordering: two processes with staggered #delays must wake in time order.
 static uint64_t order_log[8];
-static int order_n;
-static int delay_ok;
+static int32_t order_n;
+static int32_t delay_ok;
 
 LLG_SELFTEST_PROCESS(proc_delay_a, 2) {
     LLG_SELFTEST_BEGIN(2);
@@ -1215,8 +1215,8 @@ LLG_SELFTEST_PROCESS(proc_delay_b, 2) {
 // A reader woken by the edge of `a` must still see the OLD `b` (0); a level
 // waiter on b must only fire after the NBA region commits.
 static sv4_t n_sig_a = SV4_EMPTY, n_sig_b = SV4_EMPTY;
-static int nba_read_old_ok;
-static int nba_level_ok;
+static int32_t nba_read_old_ok;
+static int32_t nba_level_ok;
 
 LLG_SELFTEST_PROCESS(proc_nba_write, 2) {
     LLG_SELFTEST_BEGIN(2);
@@ -1311,8 +1311,8 @@ static void test_scheduler(void) {
 // after BOTH have finished, in completion order (5, 10, then the parent).
 static sv4_t fj1_sig_a = SV4_EMPTY, fj1_sig_b = SV4_EMPTY;
 static uint64_t fj1_log[8];
-static int fj1_log_n;
-static int fj1_ok;
+static int32_t fj1_log_n;
+static int32_t fj1_ok;
 
 LLG_SELFTEST_PROCESS(fj1_child_a, 1) {
     LLG_SELFTEST_BEGIN(1);
@@ -1344,7 +1344,7 @@ LLG_SELFTEST_PROCESS(fj1_parent, 1) {
 // (2) join_any: the parent resumes on the FIRST completion; the other child
 // keeps running and both signals end up written.
 static sv4_t fj2_sig_a = SV4_EMPTY, fj2_sig_b = SV4_EMPTY;
-static int fj2_ok;
+static int32_t fj2_ok;
 
 LLG_SELFTEST_PROCESS(fj2_child_a, 1) {
     LLG_SELFTEST_BEGIN(1);
@@ -1375,7 +1375,7 @@ LLG_SELFTEST_PROCESS(fj2_parent, 2) {
 // (3) join_none: llg_join returns immediately (children still pending) and
 // the children complete on their own.
 static sv4_t fj3_sig_a = SV4_EMPTY, fj3_sig_b = SV4_EMPTY;
-static int fj3_immediate_ok, fj3_done_ok;
+static int32_t fj3_immediate_ok, fj3_done_ok;
 
 LLG_SELFTEST_PROCESS(fj3_child_a, 1) {
     LLG_SELFTEST_BEGIN(1);
@@ -1407,7 +1407,7 @@ LLG_SELFTEST_PROCESS(fj3_parent, 2) {
 
 // (4) wait_fork after join_none: blocks until the group completes.
 static sv4_t fj4_sig_a = SV4_EMPTY, fj4_sig_b = SV4_EMPTY;
-static int fj4_ok;
+static int32_t fj4_ok;
 
 LLG_SELFTEST_PROCESS(fj4_child_a, 1) {
     LLG_SELFTEST_BEGIN(1);
@@ -1438,7 +1438,7 @@ LLG_SELFTEST_PROCESS(fj4_parent, 2) {
 // stays unset and the simulation ends without hanging (no $finish below: the
 // run loop must terminate on its own once the killed child's wait is gone).
 static sv4_t fj5_sig = SV4_EMPTY;
-static int fj5_ok;
+static int32_t fj5_ok;
 
 LLG_SELFTEST_PROCESS(fj5_child, 1) {
     LLG_SELFTEST_BEGIN(1);
@@ -1462,7 +1462,7 @@ LLG_SELFTEST_PROCESS(fj5_parent, 2) {
 // non-blocking assignment, wakes the parent, then is killed before the NBA
 // region runs.  fj6_sig must stay 0.
 static sv4_t fj6_go = SV4_EMPTY, fj6_sig = SV4_EMPTY;
-static int fj6_ok;
+static int32_t fj6_ok;
 
 LLG_SELFTEST_PROCESS(fj6_child, 1) {
     LLG_SELFTEST_BEGIN(1);
@@ -1486,7 +1486,7 @@ LLG_SELFTEST_PROCESS(fj6_parent, 2) {
 
 // (7) nested join_none: a completed child stays alive while its detached
 // descendant still uses the child as its fork-group parent.
-static int fj7_descendant_done, fj7_ok;
+static int32_t fj7_descendant_done, fj7_ok;
 
 LLG_SELFTEST_PROCESS(fj7_grandchild, 1) {
     LLG_SELFTEST_BEGIN(1);
@@ -1518,7 +1518,7 @@ LLG_SELFTEST_PROCESS(fj7_parent, 3) {
 
 // (8) completed fork slots are reusable across more than the process-table
 // capacity when only one child is live at a time.
-static int fj8_count, fj8_ok;
+static int32_t fj8_count, fj8_ok;
 
 LLG_SELFTEST_PROCESS(fj8_child, 1) {
     LLG_SELFTEST_BEGIN(1);
@@ -1540,7 +1540,7 @@ LLG_SELFTEST_PROCESS(fj8_parent, 1) {
 
 // (9) an empty fork group is finalized even though no child can issue the
 // completion callback; a following wait_fork therefore returns immediately.
-static int fj9_ok;
+static int32_t fj9_ok;
 
 LLG_SELFTEST_PROCESS(fj9_parent, 2) {
     LLG_SELFTEST_BEGIN(2);
@@ -1666,8 +1666,8 @@ static void test_llg_net(void) {
         const uint8_t subset1[] = {
             LLG_STRENGTH_STRONG, LLG_STRENGTH_PULL
         };
-        const int indices[] = { 0, 2 };
-        const int modes[] = {
+        const int32_t indices[] = { 0, 2 };
+        const int32_t modes[] = {
             LLG_RESOLVE_WIRE, LLG_RESOLVE_WAND, LLG_RESOLVE_WOR,
             LLG_RESOLVE_TRI0, LLG_RESOLVE_TRI1,
             LLG_RESOLVE_SUPPLY0, LLG_RESOLVE_SUPPLY1
@@ -1817,7 +1817,7 @@ static void test_llg_net(void) {
             LLG_STRENGTH_WEAK, LLG_STRENGTH_STRONG, LLG_STRENGTH_PULL
         };
         llg_net_driver_index_t index[3];
-        int scratch[3];
+        int32_t scratch[3];
         llg_net_t net = { .resolved = SV4_EMPTY, .width = 257,
                           .resolution = LLG_RESOLVE_WIRE, .n_drivers = 3,
                           .drivers = drivers, .strength0 = strength0,
@@ -1971,7 +1971,7 @@ static void test_force_release(void) {
 // NBA to a forced target is dropped at commit: the writer forces x, records
 // `x <= 8'h5a`, and the NBA region must NOT overwrite the forced value.
 static sv4_t f_nba_sig = SV4_EMPTY;
-static int f_nba_ok;
+static int32_t f_nba_ok;
 
 LLG_SELFTEST_PROCESS(f_nba_writer, 1) {
     LLG_SELFTEST_BEGIN(1);
@@ -1994,7 +1994,7 @@ static void test_force_nba_dropped(void) {
 
 // A `wait_any` on the signal fires when `force` writes the forced value.
 static sv4_t f_wait_sig = SV4_EMPTY;
-static int f_wait_woken;
+static int32_t f_wait_woken;
 static uint64_t f_wait_seen;
 
 LLG_SELFTEST_PROCESS(f_wait_consumer, 1) {
@@ -2052,7 +2052,7 @@ LLG_SELFTEST_PROCESS(inertial_observer, 1) {
 }
 
 static void test_inertial_lifetime(void) {
-    for (int run = 0; run < 2; run++) {
+    for (int32_t run = 0; run < 2; run++) {
         llg_rt_init();
         sv4_replace(&inertial_target, sv4_x(1, 0));
         llg_spawn(&inertial_producer_desc, "inertial-producer");
@@ -2085,9 +2085,9 @@ static sv4_t* const path_sources[] = { &path_source };
 static llg_module_path_set_t path_set = { "tb.u", path_sources, 1, &path_dest, 1,
                                           NULL, NULL, NULL, .conditions = NULL };
 
-static void path_check_pending(uint64_t time, int state) {
+static void path_check_pending(uint64_t time, int32_t state) {
     uint64_t due = 0;
-    int value = -1;
+    int32_t value = -1;
     CHECK(llg_net_path_pending(&path_net, 0, &due, &value));
     CHECK(due == time);
     CHECK(value == state);
@@ -2179,7 +2179,7 @@ static llg_timing_check_set_t timing_set = { .scope = "tb.u", .terminals = timin
                                              .n_notifiers = 1, .lines = timing_lines,
                                              .n_lines = 1 };
 
-static unsigned timing_bit(const sv4_t* value) { return llg_sv4_state(*value, 0); }
+static uint32_t timing_bit(const sv4_t* value) { return llg_sv4_state(*value, 0); }
 
 LLG_SELFTEST_PROCESS(timing_check_proc, 6) {
     LLG_SELFTEST_BEGIN(6);
@@ -2343,15 +2343,15 @@ static sv4_t* const pulse_sources[] = { &pulse_source };
 static llg_module_path_set_t pulse_set = { "tb.p", pulse_sources, 1, &pulse_dest, 1,
                                            NULL, NULL, NULL, .conditions = NULL };
 
-static void pulse_check_event(uint32_t index, uint64_t time, int state) {
+static void pulse_check_event(uint32_t index, uint64_t time, int32_t state) {
     uint64_t due = 0;
-    int value = -1;
+    int32_t value = -1;
     CHECK(llg_net_path_event(&pulse_net, 0, index, &due, &value));
     CHECK(due == time);
     CHECK(value == state);
 }
 
-static void pulse_drive(unsigned value) {
+static void pulse_drive(uint32_t value) {
     sv4_replace(&pulse_source, SV4_C(value, 1));
     llg_module_path_stamp(&pulse_set);
     llg_net_write(&pulse_net, 0, test_temp(SV4_C(value, 1)));
@@ -2420,7 +2420,7 @@ static void test_module_path_pulses(void) {
     sv4_destroy(&pulse_source);
 }
 
-static int run_time_overflow_probe(void) {
+static int32_t run_time_overflow_probe(void) {
     llg_rt_init();
     llg_spawn(&time_overflow_proc_desc, "time-overflow");
     llg_rt_run();
@@ -2435,14 +2435,14 @@ LLG_SELFTEST_PROCESS(scaled_time_overflow_proc, 1) {
     LLG_SELFTEST_DONE();
 }
 
-static int run_scaled_time_overflow_probe(void) {
+static int32_t run_scaled_time_overflow_probe(void) {
     llg_rt_init();
     llg_spawn(&scaled_time_overflow_proc_desc, "scaled-time-overflow");
     llg_rt_run();
     return 2; // llg_time_scaled must abort before the scheduler returns
 }
 
-static int budget_finite_count;
+static int32_t budget_finite_count;
 
 LLG_SELFTEST_PROCESS(budget_finite_proc, 0) {
     LLG_SELFTEST_BEGIN(0);
@@ -2460,7 +2460,7 @@ LLG_SELFTEST_PROCESS(budget_infinite_proc, 0) {
     }
 }
 
-static int run_budget_finite_probe(void) {
+static int32_t run_budget_finite_probe(void) {
     llg_rt_init();
     budget_finite_count = 0;
     llg_spawn(&budget_finite_proc_desc, "budget-finite");
@@ -2468,15 +2468,15 @@ static int run_budget_finite_probe(void) {
     return !llg_rt_failed() && budget_finite_count == 4 ? 0 : 1;
 }
 
-static int run_budget_infinite_probe(void) {
+static int32_t run_budget_infinite_probe(void) {
     llg_rt_init();
     llg_spawn(&budget_infinite_proc_desc, "budget-infinite");
     llg_rt_run();
     return llg_rt_failed() ? 0 : 1;
 }
 
-static int stop_resume_stage;
-static int stop_resume_future_seen;
+static int32_t stop_resume_stage;
+static int32_t stop_resume_future_seen;
 
 static void stop_resume_future(void* data) {
     (void)data;
@@ -2496,7 +2496,7 @@ LLG_SELFTEST_PROCESS(stop_resume_proc, 2) {
     LLG_SELFTEST_DONE();
 }
 
-static int run_stop_resume_probe(void) {
+static int32_t run_stop_resume_probe(void) {
     CHECK(llg_rt_set_stop_policy(LLG_STOP_POLICY_EXIT) == 1);
     llg_rt_init();
     stop_resume_stage = 0;
@@ -2601,20 +2601,20 @@ static void test_activation_frame_cancellation(void) {
     CHECK(!llg_rt_failed());
 }
 
-static int region_trace[LLG_REGION_COUNT];
-static int region_trace_args[LLG_REGION_COUNT];
-static int region_trace_n;
-static int region_reentry_seen;
-static int region_timed_seen;
-static int region_pre_postponed_reentry_seen;
-static int region_observed_reactive_seen;
+static int32_t region_trace[LLG_REGION_COUNT];
+static int32_t region_trace_args[LLG_REGION_COUNT];
+static int32_t region_trace_n;
+static int32_t region_reentry_seen;
+static int32_t region_timed_seen;
+static int32_t region_pre_postponed_reentry_seen;
+static int32_t region_observed_reactive_seen;
 static sv4_t region_sample_signal = SV4_EMPTY;
 static sv4_t region_resume_signal = SV4_EMPTY;
-static int region_resume_seen;
+static int32_t region_resume_seen;
 
 static void region_trace_callback(void* data) {
-    int expected = *(const int*)data;
-    int actual = (int)llg_current_region();
+    int32_t expected = *(const int32_t*)data;
+    int32_t actual = (int32_t)llg_current_region();
     CHECK(actual == expected);
     region_trace[actual]++;
     region_trace_n++;
@@ -2723,14 +2723,14 @@ LLG_SELFTEST_PROCESS(region_resume_proc, 1) {
 }
 
 static void region_timed_callback(void* data) {
-    int expected = *(const int*)data;
+    int32_t expected = *(const int32_t*)data;
     CHECK(llg_current_region() == (llg_region_t)expected);
     CHECK(llg_time() == 1);
     region_timed_seen++;
     llg_rt_request_finish();
 }
 
-static int region_cancel_runs;
+static int32_t region_cancel_runs;
 static llg_region_callback_id_t region_cancel_ran_id;
 static llg_region_callback_id_t region_cancel_future_id;
 
@@ -2748,14 +2748,14 @@ static void region_cancel_late_callback(void* data) {
     CHECK(llg_cancel_region_callback(region_cancel_future_id) == 0);
 }
 
-static int run_region_probe(void) {
+static int32_t run_region_probe(void) {
     llg_rt_init();
     sv4_replace(&region_sample_signal, SV4_C(0, 1));
     llg_sampled_register(&region_sample_signal);
     memset(region_trace, 0, sizeof(region_trace));
     region_trace_n = 0;
     region_reentry_seen = 0;
-    for (int i = 0; i < LLG_REGION_COUNT; i++) {
+    for (int32_t i = 0; i < LLG_REGION_COUNT; i++) {
         region_trace_args[i] = i;
         CHECK(llg_schedule_region_callback(
                   (llg_region_t)i, region_trace_callback, &region_trace_args[i]) == 1);
@@ -2764,7 +2764,7 @@ static int run_region_probe(void) {
               LLG_REGION_PRE_ACTIVE_PLI, region_trace_callback,
               &region_trace_args[LLG_REGION_PRE_ACTIVE_PLI]) == 1);
     llg_rt_run();
-    for (int i = 0; i < LLG_REGION_COUNT; i++) CHECK(region_trace[i] >= 1);
+    for (int32_t i = 0; i < LLG_REGION_COUNT; i++) CHECK(region_trace[i] >= 1);
     CHECK(region_trace[LLG_REGION_ACTIVE] == 2);
     CHECK(region_trace_n == LLG_REGION_COUNT + 2);
     region_reentry_seen = region_trace[LLG_REGION_ACTIVE] == 2;
@@ -2867,7 +2867,7 @@ static int run_region_probe(void) {
     return failures == 0 ? 0 : 1;
 }
 
-static int run_selftests(int argc, char** argv) {
+static int32_t run_selftests(int32_t argc, char** argv) {
     if (argc == 2 && strcmp(argv[1], "--time-overflow-probe") == 0)
         return run_time_overflow_probe();
     if (argc == 2 && strcmp(argv[1], "--scaled-time-overflow-probe") == 0)
@@ -2935,7 +2935,7 @@ static int run_selftests(int argc, char** argv) {
         selftest_report(stdout, LLG_SEVERITY_INFO, 0, "llg_rt selftest: all ok");
         return 0;
     }
-    selftest_report(stderr, LLG_SEVERITY_ERROR, 0, "llg_rt selftest: %d failure(s)", failures);
+    selftest_report(stderr, LLG_SEVERITY_ERROR, 0, "llg_rt selftest: %" PRId32 " failure(s)", failures);
     return 1;
 }
 
@@ -2961,7 +2961,7 @@ int main(int argc, char** argv) {
     sv4_replace(&f_live_source, SV4_C(1, 1));
     sv4_replace(&f_nba_sig, SV4_C(0, 8));
     sv4_replace(&f_wait_sig, SV4_C(0, 8));
-    int result = run_selftests(argc, argv);
+    int32_t result = run_selftests(argc, argv);
     llg_rt_cleanup();
     test_clear_temporaries();
     sv4_destroy(&s_a);

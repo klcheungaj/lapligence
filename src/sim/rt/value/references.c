@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-int llg_ref_view_valid(const llg_ref_view_t* view, const sv4_t* parent,
+int32_t llg_ref_view_valid(const llg_ref_view_t* view, const sv4_t* parent,
                        size_t* failed_check) {
     if (failed_check) *failed_check = 0;
     if (!view || !parent || (view->tag_check_count && !view->tag_checks)) return 0;
@@ -19,7 +19,7 @@ int llg_ref_view_valid(const llg_ref_view_t* view, const sv4_t* parent,
         sv4_t tag = sv4_part_select(receiver, left, right);
         sv4_t expected = sv4_from_u64(check->member_index, check->tag_width, 0);
         sv4_t matches = sv4_case_eq(tag, expected);
-        int valid = sv4_to_bool(matches);
+        int32_t valid = sv4_to_bool(matches);
         sv4_destroy(&matches);
         sv4_destroy(&expected);
         sv4_destroy(&tag);
@@ -69,7 +69,7 @@ sv4_t llg_ref_read(const llg_ref_t* ref) {
         const llg_ref_view_t* view = (const llg_ref_view_t*)ref->retained;
         if (!view || !view->parent) { llg_msg(LLG_MSG_INTERNAL, NULL, "invalid reference view"); abort(); }
         sv4_t parent = llg_ref_read(view->parent);
-        int valid = (llg_ref_kind_t)ref->kind != LLG_REF_TAGGED_VIEW ||
+        int32_t valid = (llg_ref_kind_t)ref->kind != LLG_REF_TAGGED_VIEW ||
                     llg_ref_view_valid(view, &parent, NULL);
         sv4_t result = valid ? sv4_select_plan_read(parent, &view->plan)
                              : (ref->two_state ? sv4_zero(ref->width, ref->is_signed)

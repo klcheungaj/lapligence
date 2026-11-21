@@ -1,5 +1,5 @@
 
-static int llg_ref_report_tag_failure(const llg_ref_view_t* view,
+static int32_t llg_ref_report_tag_failure(const llg_ref_view_t* view,
                                       const sv4_t* parent) {
     size_t failed = 0;
     if (llg_ref_view_valid(view, parent, &failed)) return 1;
@@ -26,7 +26,7 @@ sv4_t llg_rt_ref_read(const llg_ref_t* ref) {
         abort();
     }
     sv4_t parent = llg_rt_ref_read(view->parent);
-    int valid = llg_ref_report_tag_failure(view, &parent);
+    int32_t valid = llg_ref_report_tag_failure(view, &parent);
     sv4_t result = valid ? sv4_select_plan_read(parent, &view->plan)
                          : (ref->two_state ? sv4_zero(ref->width, ref->is_signed)
                                            : sv4_x(ref->width, ref->is_signed));
@@ -361,7 +361,7 @@ static void ref_wait_eval(sv4_t* out, void* context) {
     llg_rt_ref_read_to(out, ref);
 }
 
-llg_expr_event_spec_t llg_ref_wait_spec(const llg_ref_t* ref, int kind) {
+llg_expr_event_spec_t llg_ref_wait_spec(const llg_ref_t* ref, int32_t kind) {
     llg_expr_event_spec_t spec = { .kind = kind };
     if (ref && (llg_ref_kind_t)ref->kind == LLG_REF_WHOLE) {
         spec.sig = llg_dependency_or_never(ref->base);
@@ -380,7 +380,7 @@ llg_expr_event_spec_t llg_ref_wait_spec(const llg_ref_t* ref, int kind) {
     spec.eval = ref_wait_eval;
     spec.eval_context = frame;
     spec.dependencies = dependencies;
-    spec.n_dependencies = (int)count;
+    spec.n_dependencies = (int32_t)count;
     // Nothing can change a value whose selection is out of range.
     if (!count) spec.sig = llg_dependency_or_never(NULL);
     return spec;
@@ -390,7 +390,7 @@ llg_expr_event_spec_t llg_ref_wait_spec(const llg_ref_t* ref, int kind) {
  * descriptor that reads the default and drops writes, which a waiter on the
  * formal would never see change. Meaningful right after the descriptor was
  * built. */
-int llg_ref_selected(const llg_ref_t* ref) {
+int32_t llg_ref_selected(const llg_ref_t* ref) {
     if (!ref) return 0;
     switch ((llg_ref_kind_t)ref->kind) {
     case LLG_REF_ARRAY:
@@ -422,11 +422,11 @@ int llg_ref_selected(const llg_ref_t* ref) {
 enum { REF_WAIT_INLINE_DEPENDENCIES = 8 };
 
 llg_co_arm_t llg_arm_ref_dependencies(llg_proc_t* self, const llg_wait_dependency_t* deps,
-                                      int n, const llg_ref_t* const* refs, int n_refs,
-                                      int event) {
+                                      int32_t n, const llg_ref_t* const* refs, int32_t n_refs,
+                                      int32_t event) {
     if (n < 0 || n_refs < 0) abort();
     size_t total = (size_t)n;
-    for (int i = 0; i < n_refs; i++) total += ref_dependencies(refs[i], NULL);
+    for (int32_t i = 0; i < n_refs; i++) total += ref_dependencies(refs[i], NULL);
     if (total > INT_MAX) {
         llg_msg(LLG_MSG_INTERNAL, NULL, "`ref` wait names too many storage locations");
         abort();
@@ -439,9 +439,9 @@ llg_co_arm_t llg_arm_ref_dependencies(llg_proc_t* self, const llg_wait_dependenc
                                                      "reference wait dependencies");
     if (n) memcpy(all, deps, (size_t)n * sizeof(*all));
     size_t used = (size_t)n;
-    for (int i = 0; i < n_refs; i++) used += ref_dependencies(refs[i], all + used);
-    llg_co_arm_t arm = event ? llg_arm_event_dependencies(self, all, (int)total)
-                             : llg_arm_any_dependencies(self, all, (int)total);
+    for (int32_t i = 0; i < n_refs; i++) used += ref_dependencies(refs[i], all + used);
+    llg_co_arm_t arm = event ? llg_arm_event_dependencies(self, all, (int32_t)total)
+                             : llg_arm_any_dependencies(self, all, (int32_t)total);
     if (all != inline_buffer) free(all);
     return arm;
 }

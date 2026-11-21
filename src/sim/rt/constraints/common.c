@@ -79,7 +79,7 @@ static void cr_u64_push(cr_u64vec_t* v, uint64_t x) {
 /* ---- tunables --------------------------------------------------------- */
 
 static llg_cr_tunables_t cr_tunables_value;
-static int cr_tunables_ready;
+static int32_t cr_tunables_ready;
 
 static uint64_t cr_env_u64(const char* name, uint64_t fallback) {
     const char* text = getenv(name);
@@ -196,7 +196,7 @@ struct llg_cr_session {
     uint8_t* call_state;        /* 0 not evaluated, 1 ready, 2 done */
     uint8_t* call_input;
     const uint64_t** call_args; /* argument pointers for the thunk */
-    int need_calls;             /* a classification found ready calls */
+    int32_t need_calls;             /* a classification found ready calls */
     uint32_t engines;           /* engines used since llg_cr_begin */
     /* Scratch for big-integer and evaluation helpers. */
     uint64_t* tmp_a;
@@ -207,7 +207,7 @@ struct llg_cr_session {
     uint32_t* cyc_off;
     uint64_t* cyc;
     /* A dist item value, bound or weight reads a random variable (S30-D10). */
-    int dist_random;
+    int32_t dist_random;
     /* Structural hash of each node (randc signatures), 0 until computed. */
     uint64_t* node_hash;
     /* Exact-engine cache (most recent components). */

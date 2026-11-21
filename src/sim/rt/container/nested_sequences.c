@@ -73,7 +73,7 @@ llg_nested_seq_t* llg_nested_seq_new(const llg_value_desc_t* desc) {
     seq->pins = 1;
     seq->desc = desc;
     const llg_value_desc_t* element = desc->element;
-    int queue = desc->item_count != LLG_VALUE_CONTAINER_DYNAMIC;
+    int32_t queue = desc->item_count != LLG_VALUE_CONTAINER_DYNAMIC;
     if (element->kind == LLG_VALUE_PACKED) {
         if (queue) {
             seq->kind = LLG_NESTED_SEQ_QUEUE;
@@ -181,7 +181,7 @@ size_t llg_nested_seq_size(const llg_nested_seq_t* seq) {
     return llg_nested_seq_view(seq).size;
 }
 
-int llg_nested_seq_equal(const llg_nested_seq_t* a, const llg_nested_seq_t* b) {
+int32_t llg_nested_seq_equal(const llg_nested_seq_t* a, const llg_nested_seq_t* b) {
     if (a == b) return 1;
     llg_seq_view_t left = llg_nested_seq_view(a);
     llg_seq_view_t right = llg_nested_seq_view(b);
@@ -198,8 +198,8 @@ int llg_nested_seq_equal(const llg_nested_seq_t* a, const llg_nested_seq_t* b) {
     return 1;
 }
 
-int llg_nested_seq_equality(const llg_nested_seq_t* a,
-                            const llg_nested_seq_t* b, int case_equality) {
+int32_t llg_nested_seq_equality(const llg_nested_seq_t* a,
+                            const llg_nested_seq_t* b, int32_t case_equality) {
     llg_seq_view_t left = llg_nested_seq_view(a);
     llg_seq_view_t right = llg_nested_seq_view(b);
     if (left.size != right.size) return LLG_VALUE_UNEQUAL;
@@ -208,7 +208,7 @@ int llg_nested_seq_equality(const llg_nested_seq_t* a,
         return llg_value_items_equality(left.values, left.size, right.values,
                                         right.size, case_equality);
     if (!left.packed || !right.packed) return LLG_VALUE_UNEQUAL;
-    int result = LLG_VALUE_EQUAL;
+    int32_t result = LLG_VALUE_EQUAL;
     for (size_t i = 0; i < left.size && result != LLG_VALUE_UNEQUAL; ++i)
         result = llg_value_equality_fold(
             result,
@@ -298,10 +298,10 @@ void llg_nested_seq_unpin(void* pin) {
 
 /* What an in-place assignment changed in a nested sequence, which has no
  * dependencies of its own: its notification lands here for the owner. */
-static int llg_nested_seq_changes;
+static int32_t llg_nested_seq_changes;
 
 static void llg_nested_seq_note_change(sv4_t* contents, sv4_t* shape,
-                                       int change) {
+                                       int32_t change) {
     (void)contents;
     (void)shape;
     llg_nested_seq_changes |= change;
@@ -311,7 +311,7 @@ static void llg_nested_seq_note_change(sv4_t* contents, sv4_t* shape,
  * copies of `source`, in place: an alias a statement holds still names the
  * element. Returns whether the elements changed. An empty sequence no alias
  * names is the null default. */
-static int llg_nested_seq_store(llg_value_t* target, llg_seq_view_t source) {
+static int32_t llg_nested_seq_store(llg_value_t* target, llg_seq_view_t source) {
     llg_nested_seq_t* seq = target->value.container;
     if (!seq) {
         target->value.container = llg_nested_seq_from_view(target->desc, source);
@@ -332,12 +332,12 @@ static int llg_nested_seq_store(llg_value_t* target, llg_seq_view_t source) {
             notify = &seq->array.queue_values.notify;
             break;
     }
-    int outer = llg_nested_seq_changes;
+    int32_t outer = llg_nested_seq_changes;
     llg_nested_seq_changes = 0;
     *notify = llg_nested_seq_note_change;
     llg_nested_seq_assign(seq, source);
     *notify = NULL;
-    int changed = llg_nested_seq_changes != 0;
+    int32_t changed = llg_nested_seq_changes != 0;
     llg_nested_seq_changes = outer;
     /* Emptied and unaliased: back to the null default. */
     if (seq->pins == 1 && !llg_nested_seq_size(seq)) {
@@ -356,7 +356,7 @@ llg_value_t* llg_nested_seq_value_at(const llg_value_t* owner, sv4_t index) {
     return (llg_value_t*)&view.values[native];
 }
 
-int llg_nested_seq_holds_packed(const llg_value_t* owner) {
+int32_t llg_nested_seq_holds_packed(const llg_value_t* owner) {
     return owner && owner->desc && owner->desc->kind == LLG_VALUE_CONTAINER &&
            owner->desc->element->kind == LLG_VALUE_PACKED;
 }
@@ -372,10 +372,10 @@ sv4_t llg_nested_seq_get_packed(const llg_value_t* owner, sv4_t index) {
     return sv4_clone(&view.packed[native]);
 }
 
-int llg_nested_seq_set_packed(llg_value_t* owner, sv4_t index, sv4_t value,
-                              int* change) {
+int32_t llg_nested_seq_set_packed(llg_value_t* owner, sv4_t index, sv4_t value,
+                              int32_t* change) {
     const llg_value_desc_t* desc = owner->desc;
-    int queue = desc->item_count != LLG_VALUE_CONTAINER_DYNAMIC;
+    int32_t queue = desc->item_count != LLG_VALUE_CONTAINER_DYNAMIC;
     llg_nested_seq_t* seq = owner->value.container;
     size_t size = llg_nested_seq_size(seq);
     size_t native;

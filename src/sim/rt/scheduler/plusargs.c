@@ -9,14 +9,14 @@ typedef struct {
     size_t suffix_len;
 } llg_plusarg_format_t;
 
-static int llg_plusarg_conversion(int c) {
-    c = tolower((unsigned char)c);
+static int32_t llg_plusarg_conversion(int32_t c) {
+    c = tolower((uint8_t)c);
     return c == 'd' || c == 'h' || c == 'x' || c == 'o' || c == 'b' ||
            c == 'f' || c == 'e' || c == 'g' || c == 's';
 }
 
 static char llg_plusarg_normalize_conversion(char c) {
-    c = (char)tolower((unsigned char)c);
+    c = (char)tolower((uint8_t)c);
     return c == 'x' ? 'h' : c;
 }
 
@@ -27,14 +27,14 @@ static void llg_plusarg_format_free(llg_plusarg_format_t* format) {
     memset(format, 0, sizeof(*format));
 }
 
-static int llg_plusarg_format_parse(const char* text,
+static int32_t llg_plusarg_format_parse(const char* text,
                                     llg_plusarg_format_t* format) {
     if (!text || !format) return 0;
     memset(format, 0, sizeof(*format));
     size_t length = strlen(text);
     format->prefix = llg_checked_malloc(length + 1, 1, "plusarg format prefix");
     format->suffix = llg_checked_malloc(length + 1, 1, "plusarg format suffix");
-    int after_conversion = 0;
+    int32_t after_conversion = 0;
     for (size_t i = 0; i < length;) {
         char c = text[i++];
         char* output = after_conversion ? format->suffix : format->prefix;
@@ -75,10 +75,10 @@ static int llg_plusarg_format_parse(const char* text,
     return 1;
 }
 
-static int llg_plusarg_find(const llg_plusarg_format_t* format,
+static int32_t llg_plusarg_find(const llg_plusarg_format_t* format,
                             const char** value, size_t* value_len) {
     if (!format || !value || !value_len || !g.argv) return 0;
-    for (int i = 1; i < g.argc; ++i) {
+    for (int32_t i = 1; i < g.argc; ++i) {
         const char* argument = g.argv[i];
         if (!argument || argument[0] != '+') continue;
         const char* body = argument + 1;
@@ -101,8 +101,8 @@ static int llg_plusarg_find(const llg_plusarg_format_t* format,
     return 0;
 }
 
-static void llg_plusarg_set_bit(sv4_t* value, uint32_t index, int state) {
-    if (value) llg_sv4_set_state(value, index, (unsigned)state);
+static void llg_plusarg_set_bit(sv4_t* value, uint32_t index, int32_t state) {
+    if (value) llg_sv4_set_state(value, index, (uint32_t)state);
 }
 
 static void llg_plusarg_mask_top(sv4_t* value) {
@@ -113,29 +113,29 @@ static void llg_plusarg_unknown(sv4_t* value) {
     if (value) sv4_replace(value, sv4_x(llg_sv4_width(*value), llg_sv4_signed(*value)));
 }
 
-static int llg_plusarg_digit(int c, int base) {
-    int digit = -1;
+static int32_t llg_plusarg_digit(int32_t c, int32_t base) {
+    int32_t digit = -1;
     if (c >= '0' && c <= '9') digit = c - '0';
     else if (c >= 'a' && c <= 'f') digit = c - 'a' + 10;
     else if (c >= 'A' && c <= 'F') digit = c - 'A' + 10;
     return digit >= 0 && digit < base ? digit : -1;
 }
 
-static int llg_plusarg_unknown_digit(int c) {
+static int32_t llg_plusarg_unknown_digit(int32_t c) {
     return c == 'x' || c == 'X' || c == 'z' || c == 'Z';
 }
 
-static int llg_plusarg_decimal(const char* text, size_t length, sv4_t* output) {
+static int32_t llg_plusarg_decimal(const char* text, size_t length, sv4_t* output) {
     size_t start = 0;
-    int negative = 0;
+    int32_t negative = 0;
     if (start < length && (text[start] == '+' || text[start] == '-')) {
         negative = text[start++] == '-';
     }
-    int digits = 0, unknown = 0;
+    int32_t digits = 0, unknown = 0;
     for (size_t i = start; i < length; ++i) {
         if (text[i] == '_') continue;
         if (llg_plusarg_unknown_digit(text[i])) unknown = 1;
-        else if (llg_plusarg_digit((unsigned char)text[i], 10) < 0) return 0;
+        else if (llg_plusarg_digit((uint8_t)text[i], 10) < 0) return 0;
         digits = 1;
     }
     if (!digits) return 0;
@@ -150,10 +150,10 @@ static int llg_plusarg_decimal(const char* text, size_t length, sv4_t* output) {
     return 1;
 }
 
-static int llg_plusarg_based(const char* text, size_t length, int base,
-                             int bits_per_digit, sv4_t* output) {
+static int32_t llg_plusarg_based(const char* text, size_t length, int32_t base,
+                             int32_t bits_per_digit, sv4_t* output) {
     size_t start = 0;
-    int negative = 0;
+    int32_t negative = 0;
     if (start < length && (text[start] == '+' || text[start] == '-')) {
         negative = text[start] == '-';
         ++start;
@@ -165,22 +165,22 @@ static int llg_plusarg_based(const char* text, size_t length, int base,
         start += 2;
     }
     uint32_t bit = 0;
-    int digits = 0;
-    int unknown = 0;
+    int32_t digits = 0;
+    int32_t unknown = 0;
     for (size_t i = length; i > start;) {
         char c = text[--i];
         if (c == '_') continue;
-        int digit = llg_plusarg_digit((unsigned char)c, base);
-        int state = 0;
+        int32_t digit = llg_plusarg_digit((uint8_t)c, base);
+        int32_t state = 0;
         if (digit >= 0) state = 0;
-        else if (llg_plusarg_unknown_digit((unsigned char)c)) {
+        else if (llg_plusarg_unknown_digit((uint8_t)c)) {
             state = c == 'z' || c == 'Z' ? 3 : 2;
             unknown = 1;
         } else {
             return 0;
         }
         ++digits;
-        for (int j = 0; j < bits_per_digit; ++j) {
+        for (int32_t j = 0; j < bits_per_digit; ++j) {
             if (state != 0) {
                 llg_plusarg_set_bit(output, bit + (uint32_t)j, state);
             } else {
@@ -202,7 +202,7 @@ static int llg_plusarg_based(const char* text, size_t length, int base,
     return 1;
 }
 
-static int llg_plusarg_real_value(const char* text, size_t length,
+static int32_t llg_plusarg_real_value(const char* text, size_t length,
                                   double* output) {
     if (length == 0) {
         *output = 0.0;
@@ -213,13 +213,13 @@ static int llg_plusarg_real_value(const char* text, size_t length,
     copy[length] = '\0';
     char* end = NULL;
     double parsed = strtod(copy, &end);
-    int converted = end != copy && *end == '\0' && isfinite(parsed);
+    int32_t converted = end != copy && *end == '\0' && isfinite(parsed);
     if (converted) *output = parsed;
     free(copy);
     return converted;
 }
 
-static int llg_plusarg_packed_value(const char* text, size_t length,
+static int32_t llg_plusarg_packed_value(const char* text, size_t length,
                                      char conversion, sv4_t* output) {
     sv4_replace(output, sv4_zero(llg_sv4_width(*output), llg_sv4_signed(*output)));
     if (length == 0) return 1;
@@ -234,8 +234,8 @@ static int llg_plusarg_packed_value(const char* text, size_t length,
             // integral assignment from a SystemVerilog string value.
             uint32_t bit = 0;
             for (size_t i = length; i > 0 && bit < llg_sv4_width(*output); --i) {
-                unsigned char byte = (unsigned char)text[i - 1];
-                for (int j = 0; j < 8 && bit + (uint32_t)j < llg_sv4_width(*output); ++j) {
+                uint8_t byte = (uint8_t)text[i - 1];
+                for (int32_t j = 0; j < 8 && bit + (uint32_t)j < llg_sv4_width(*output); ++j) {
                     llg_plusarg_set_bit(output, bit + (uint32_t)j,
                                         (byte >> j) & 1);
                 }
@@ -261,10 +261,10 @@ static void llg_plusarg_to_two_state(sv4_t* value) {
     llg_sv4_two_state_inplace(value);
 }
 
-int llg_test_plusargs(const char* pattern) {
+int32_t llg_test_plusargs(const char* pattern) {
     if (!pattern || !g.argv) return 0;
     size_t length = strlen(pattern);
-    for (int i = 1; i < g.argc; ++i) {
+    for (int32_t i = 1; i < g.argc; ++i) {
         const char* argument = g.argv[i];
         if (!argument || argument[0] != '+') continue;
         if (strncmp(argument + 1, pattern, length) == 0) return 1;
@@ -272,16 +272,16 @@ int llg_test_plusargs(const char* pattern) {
     return 0;
 }
 
-int llg_value_plusargs_packed(const char* format_text, sv4_t* out,
-                              uint32_t width, int is_signed, int two_state) {
+int32_t llg_value_plusargs_packed(const char* format_text, sv4_t* out,
+                              uint32_t width, int32_t is_signed, int32_t two_state) {
     if (!out || width == 0 || width >= LLG_SUPPORTED_WIDTH_LIMIT) return 0;
     llg_plusarg_format_t format;
     if (!llg_plusarg_format_parse(format_text, &format)) return 0;
     const char* value = NULL;
     size_t value_len = 0;
-    int matched = llg_plusarg_find(&format, &value, &value_len);
+    int32_t matched = llg_plusarg_find(&format, &value, &value_len);
     sv4_t parsed = sv4_from_u64(0, width, (int8_t)is_signed);
-    int converted = 0;
+    int32_t converted = 0;
     if (matched) {
         converted = llg_plusarg_packed_value(
             value, value_len, format.conversion, &parsed);
@@ -302,23 +302,23 @@ int llg_value_plusargs_packed(const char* format_text, sv4_t* out,
 // Parse only the magnitude required by this argument. Leading zeroes consume no
 // limb storage, and base-2 input does not reserve four bits for every digit.
 // Accumulate integers exactly before applying the packed-to-real rounding order.
-static int llg_plusarg_integral_real(const char* text, size_t length,
+static int32_t llg_plusarg_integral_real(const char* text, size_t length,
                                      char conversion, double* output) {
-    unsigned base = conversion == 'b' ? 2u : conversion == 'o' ? 8u :
+    uint32_t base = conversion == 'b' ? 2u : conversion == 'o' ? 8u :
                     conversion == 'h' ? 16u : 10u;
     size_t start = 0;
-    int negative = length && text[0] == '-';
+    int32_t negative = length && text[0] == '-';
     if (length && (text[0] == '-' || text[0] == '+')) ++start;
     if (base != 10u && length - start >= 2 && text[start] == '0' &&
         ((base == 2u && (text[start + 1] == 'b' || text[start + 1] == 'B')) ||
          (base == 8u && (text[start + 1] == 'o' || text[start + 1] == 'O')) ||
          (base == 16u && (text[start + 1] == 'x' || text[start + 1] == 'X'))))
         start += 2;
-    int digits = 0, unknown = 0;
+    int32_t digits = 0, unknown = 0;
     for (size_t i = start; i < length; ++i) {
         if (text[i] == '_') continue;
-        if (llg_plusarg_unknown_digit((unsigned char)text[i])) unknown = 1;
-        else if (llg_plusarg_digit((unsigned char)text[i], (int)base) < 0) return 0;
+        if (llg_plusarg_unknown_digit((uint8_t)text[i])) unknown = 1;
+        else if (llg_plusarg_digit((uint8_t)text[i], (int32_t)base) < 0) return 0;
         digits = 1;
     }
     if (!digits) return 0;
@@ -328,8 +328,8 @@ static int llg_plusarg_integral_real(const char* text, size_t length,
     const size_t maximum = (LLG_SUPPORTED_WIDTH_LIMIT - 1u + 63u) / 64u;
     for (size_t i = start; i < length; ++i) {
         if (text[i] == '_') continue;
-        int digit = llg_plusarg_digit((unsigned char)text[i], (int)base);
-        uint64_t carry = digit < 0 ? 0u : (unsigned)digit;
+        int32_t digit = llg_plusarg_digit((uint8_t)text[i], (int32_t)base);
+        uint64_t carry = digit < 0 ? 0u : (uint32_t)digit;
         for (size_t limb = 0; limb < used; ++limb) {
             uint64_t low = (limbs[limb] & UINT32_MAX) * base + carry;
             uint64_t high = (limbs[limb] >> 32) * base + (low >> 32);
@@ -364,7 +364,7 @@ static int llg_plusarg_integral_real(const char* text, size_t length,
     return 1;
 }
 
-int llg_value_plusargs_real(const char* format_text, double* out) {
+int32_t llg_value_plusargs_real(const char* format_text, double* out) {
     if (!out) return 0;
     llg_plusarg_format_t format = {0};
     if (!llg_plusarg_format_parse(format_text, &format) ||
@@ -374,7 +374,7 @@ int llg_value_plusargs_real(const char* format_text, double* out) {
     }
     const char* value = NULL;
     size_t value_len = 0;
-    int converted = 0;
+    int32_t converted = 0;
     if (llg_plusarg_find(&format, &value, &value_len)) {
         if (format.conversion == 'f' || format.conversion == 'e' ||
             format.conversion == 'g') {
@@ -399,7 +399,7 @@ int llg_value_plusargs_real(const char* format_text, double* out) {
     return converted;
 }
 
-int llg_value_plusargs_string(const char* format_text, llg_string_t* out) {
+int32_t llg_value_plusargs_string(const char* format_text, llg_string_t* out) {
     if (!out) return 0;
     llg_plusarg_format_t format = {0};
     if (!llg_plusarg_format_parse(format_text, &format) ||
@@ -409,7 +409,7 @@ int llg_value_plusargs_string(const char* format_text, llg_string_t* out) {
     }
     const char* value = NULL;
     size_t value_len = 0;
-    int converted = llg_plusarg_find(&format, &value, &value_len);
+    int32_t converted = llg_plusarg_find(&format, &value, &value_len);
     llg_string_t result = {0};
     if (converted) result = llg_string_bytes(value, value_len);
     llg_plusarg_format_free(&format);
@@ -420,7 +420,7 @@ int llg_value_plusargs_string(const char* format_text, llg_string_t* out) {
 
 // Command line of the run, borrowed for vpi_get_vlog_info (38.30). The
 // strings belong to the model's main() and outlive the run.
-int llg_rt_command_line(char*** argv) {
+int32_t llg_rt_command_line(char*** argv) {
     if (argv) *argv = g.argv;
     return g.argv ? g.argc : 0;
 }

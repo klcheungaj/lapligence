@@ -17,7 +17,7 @@
 #define LLG_DEFERRED_PROCEDURAL 0xFEu
 
 // Defined with the control rules in assertion_control.c.
-static int deferred_action_enabled(int kind, int passed, const char* label,
+static int32_t deferred_action_enabled(int32_t kind, int32_t passed, const char* label,
                                    const char* scope);
 
 static void free_assertion_rules(void) {
@@ -133,7 +133,7 @@ static llg_deferred_assertion_report_t* deferred_pending_append(uint64_t identit
     return report;
 }
 
-void llg_deferred_assertion_scoped(int kind, int passed, uint64_t identity,
+void llg_deferred_assertion_scoped(int32_t kind, int32_t passed, uint64_t identity,
                                    const char* label, const char* location,
                                    const char* scope,
                                    llg_deferred_assertion_fn action,
@@ -155,7 +155,7 @@ void llg_deferred_assertion_scoped(int kind, int passed, uint64_t identity,
     // later report, so omitting these records changes no outcome. With
     // assertion coverage they are queued to be counted when they mature
     // (S46-D8), still running no report or action.
-    int silent = (kind == LLG_ASSERTION_COVER && !passed) ||
+    int32_t silent = (kind == LLG_ASSERTION_COVER && !passed) ||
                  (kind != LLG_ASSERTION_COVER && passed && !action);
     if (!llg_deferred_assertion_enabled(kind, label, scope)) {
         llg_frame_release(frame);
@@ -193,7 +193,7 @@ void llg_deferred_assertion_scoped(int kind, int passed, uint64_t identity,
 // instances until $asserton (SV 20.11).
 void llg_assertion_queue(uint32_t index) {
     if (index >= g.procedural_assertion_count) {
-        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid procedural assertion %u", (unsigned)index);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid procedural assertion %" PRIu32, (uint32_t)index);
         abort();
     }
     llg_concurrent_assertion_t* assertion = g.procedural_assertions[index];
@@ -212,7 +212,7 @@ void llg_assertion_queue(uint32_t index) {
 // pending instance owns `frame` until it matures or is flushed.
 LLG_INTERNAL LLG_OUTLYING void llg_assertion_queue_values(uint32_t index, llg_frame_t* frame) {
     if (index >= g.procedural_assertion_count) {
-        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid procedural assertion %u", (unsigned)index);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid procedural assertion %" PRIu32, (uint32_t)index);
         abort();
     }
     llg_concurrent_assertion_t* assertion = g.procedural_assertions[index];
@@ -225,7 +225,7 @@ LLG_INTERNAL LLG_OUTLYING void llg_assertion_queue_values(uint32_t index, llg_fr
 }
 
 // Compatibility entrypoint for embedding callers without hierarchy metadata.
-void llg_deferred_assertion(int kind, int passed, uint64_t identity,
+void llg_deferred_assertion(int32_t kind, int32_t passed, uint64_t identity,
                             const char* label, const char* location,
                             llg_deferred_assertion_fn action, llg_frame_t* frame) {
     llg_deferred_assertion_scoped(kind, passed, identity, label, location, "", action, frame);
@@ -258,7 +258,7 @@ void llg_deferred_assertion_flush_scope(uint32_t declaration, uint32_t instance)
 static void deferred_report_execute(llg_deferred_assertion_report_t* report) {
     llg_frame_t* frame = report->frame;
     report->frame = NULL;
-    int saved = g.in_deferred_action;
+    int32_t saved = g.in_deferred_action;
     if (report->kind == LLG_DEFERRED_MATCH_CALL) {
         // A sequence match-item call: no assertion result, counter or
         // action control applies to it.
@@ -278,7 +278,7 @@ static void deferred_report_execute(llg_deferred_assertion_report_t* report) {
     if (report->passed && report->kind == LLG_ASSERTION_COVER)
         llg_assertion_cover(report->identity, report->label, report->location);
     // Action controls are read when the report executes (SV 20.12).
-    int allowed = deferred_action_enabled(report->kind, report->passed, report->label,
+    int32_t allowed = deferred_action_enabled(report->kind, report->passed, report->label,
                                           report->scope);
     if (report->acov &&
         (report->acov->control & (report->passed ? LLG_ACOV_CTL_PASS_OFF : LLG_ACOV_CTL_FAIL_OFF)))
@@ -301,7 +301,7 @@ static void deferred_report_execute(llg_deferred_assertion_report_t* report) {
 
 static void deferred_matured_callback(void* data);
 
-static int deferred_schedule_matured(void) {
+static int32_t deferred_schedule_matured(void) {
     if (LLG_CO_LIKELY(g.deferred_matured_scheduled ||
                       g.deferred_matured_next >= g.deferred_matured.count))
         return 1;
@@ -316,7 +316,7 @@ static int deferred_schedule_matured(void) {
 // (an action calling $finish) continue with the next report rather than
 // repeating one. A $stop from an action suspends the scheduler; the
 // remaining reports run after it resumes.
-static void deferred_run_matured(int stop_on_suspend) {
+static void deferred_run_matured(int32_t stop_on_suspend) {
     while (g.deferred_matured_next < g.deferred_matured.count) {
         if (stop_on_suspend && g.suspended) return;
         llg_deferred_assertion_report_t* slot =
@@ -424,7 +424,7 @@ static void deferred_resume_flush(llg_proc_t* proc) {
     if (deferred_pending_head(proc)) deferred_flush_process(proc);
 }
 
-static int wait_is_deferred_flush_point(llg_wait_kind_t kind) {
+static int32_t wait_is_deferred_flush_point(llg_wait_kind_t kind) {
     switch (kind) {
     case W_EVENTS:
     case W_EVENTS_INLINE:
@@ -457,7 +457,7 @@ static void deferred_assertions_finish(void) {
         return;
     }
     llg_region_t saved_region = g.current_region;
-    int saved_action = g.in_deferred_action;
+    int32_t saved_action = g.in_deferred_action;
     g.current_region = LLG_REGION_REACTIVE;
     while (g.deferred_matured_next < g.deferred_matured.count) {
         llg_deferred_assertion_report_t* slot =
@@ -489,7 +489,7 @@ static void run_deferred_assertions_now(void) {
         return;
     }
     llg_region_t saved_region = g.current_region;
-    int saved_action = g.in_deferred_action;
+    int32_t saved_action = g.in_deferred_action;
     g.current_region = LLG_REGION_REACTIVE;
     for (;;) {
         deferred_run_matured(0);

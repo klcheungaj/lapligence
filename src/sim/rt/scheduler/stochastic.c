@@ -12,11 +12,11 @@ static void llg_q_write_integer(sv4_t* target, int64_t number) {
     llg_value_scope_end(scope);
 }
 
-static void llg_q_set_status(sv4_t* status, int code) {
+static void llg_q_set_status(sv4_t* status, int32_t code) {
     llg_q_write_integer(status, (int64_t)code);
 }
 
-static int llg_q_read_integer(sv4_t value, int64_t* result,
+static int32_t llg_q_read_integer(sv4_t value, int64_t* result,
                               const char* operation, const char* argument) {
     if (llg_sv4_width(value) == 0 || sv4_is_unknown(value) || !sv4_fits_i64(value)) {
         llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "%s %s must be a known integer representable as int64_t", operation, argument);
@@ -35,7 +35,7 @@ static llg_q_queue_t* llg_q_find(int64_t id) {
     return NULL;
 }
 
-static int llg_q_checked_add_u64(uint64_t left, uint64_t right,
+static int32_t llg_q_checked_add_u64(uint64_t left, uint64_t right,
                                  uint64_t* result, const char* what) {
     if (right > UINT64_MAX - left) {
         llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "stochastic queue %s overflow", what);
@@ -47,7 +47,7 @@ static int llg_q_checked_add_u64(uint64_t left, uint64_t right,
     return 1;
 }
 
-static int llg_q_round_average(uint64_t total, uint64_t count,
+static int32_t llg_q_round_average(uint64_t total, uint64_t count,
                                uint64_t* result) {
     if (count == 0) {
         *result = 0;
@@ -70,7 +70,7 @@ static int llg_q_round_average(uint64_t total, uint64_t count,
     return 1;
 }
 
-static int llg_q_write_stat(sv4_t* target, uint64_t value) {
+static int32_t llg_q_write_stat(sv4_t* target, uint64_t value) {
     if (!target) return 1;
     if (value > (uint64_t)INT64_MAX) {
         llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "stochastic queue statistic exceeds signed integer range");
@@ -82,7 +82,7 @@ static int llg_q_write_stat(sv4_t* target, uint64_t value) {
     return 1;
 }
 
-static int llg_q_wait(const llg_q_entry_t* entry, uint64_t* result) {
+static int32_t llg_q_wait(const llg_q_entry_t* entry, uint64_t* result) {
     if (g.now < entry->arrival) {
         llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "stochastic queue time moved backwards");
         llg_last_failure = 1;
@@ -131,7 +131,7 @@ void llg_q_initialize(sv4_t q_id_value, sv4_t q_type_value,
     }
     memset(queue, 0, sizeof(*queue));
     queue->id = q_id;
-    queue->type = (int)q_type;
+    queue->type = (int32_t)q_type;
     queue->capacity = (uint64_t)max_length;
     queue->next = g.q_queues;
     g.q_queues = queue;

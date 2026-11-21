@@ -66,7 +66,7 @@ extern "C" {
 #define LLG_VPI_TS_ASSOC 0x80u
 
 typedef struct {
-    int type;                 /* vpiXxxTypespec */
+    int32_t type;                 /* vpiXxxTypespec */
     const char* name;         /* typedef name, or NULL */
     uint32_t alias;           /* vpiTypedefAlias: index + 1 */
     uint32_t element;         /* vpiElemTypespec: index + 1 */
@@ -100,7 +100,7 @@ typedef struct {
  * absolute bit offset in the value; the children of a node are contiguous. */
 typedef struct {
     const char* name;
-    int type;                 /* vpiType of the member variable */
+    int32_t type;                 /* vpiType of the member variable */
     uint32_t typespec;        /* index */
     uint32_t lsb;
     uint32_t width;
@@ -183,15 +183,15 @@ typedef struct {
 typedef struct {
     const char* name;
     const char* file;
-    int line;
+    int32_t line;
     uint32_t input_count;     /* vpiSize */
-    int sequential;           /* vpiPrimType vpiSeqPrim, else vpiCombPrim */
-    int initial;              /* '0', '1' or 'x' of an initial statement, else 0 */
+    int32_t sequential;           /* vpiPrimType vpiSeqPrim, else vpiCombPrim */
+    int32_t initial;              /* '0', '1' or 'x' of an initial statement, else 0 */
     const char* const* ports; /* port names, the output first */
-    const int* directions;    /* vpiDirection of each port */
+    const int32_t* directions;    /* vpiDirection of each port */
     uint32_t port_count;
     const char* const* entries; /* decompiled table entries (inputs[:state]:output) */
-    const int* entry_lines;
+    const int32_t* entry_lines;
     uint32_t entry_count;
 } llg_vpi_udp_t;
 
@@ -222,7 +222,7 @@ typedef struct {
     int8_t is_signed;
     int8_t is_real;
     int8_t ref_kind;          /* LLG_VPI_ARG_* */
-    int const_type;           /* vpiConstType of a constant */
+    int32_t const_type;           /* vpiConstType of a constant */
     int64_t object;           /* catalog index, or -1 */
     uint64_t offset;
     uint32_t select_width;
@@ -237,10 +237,10 @@ typedef struct {
  * `value` holds the digits of a constant (0/1/x/z, most significant first). */
 typedef struct {
     llg_vpi_compile_arg_t ref;
-    int direction;            /* vpiInput/vpiOutput/vpiInout of a terminal, else 0 */
+    int32_t direction;            /* vpiInput/vpiOutput/vpiInout of a terminal, else 0 */
     const char* value;
-    int role;                 /* LLG_VPI_ROLE_* of a module path or timing check entry */
-    int edge;                 /* vpiEdge of a path or timing check terminal */
+    int32_t role;                 /* LLG_VPI_ROLE_* of a module path or timing check entry */
+    int32_t edge;                 /* vpiEdge of a path or timing check terminal */
     uint32_t condition;       /* a terminal's condition: conn index + 1, 0: none */
 } llg_vpi_conn_t;
 
@@ -276,9 +276,9 @@ typedef struct {
     const int64_t* declared;
     uint32_t declared_count;
     uint32_t count;
-    int polarity;             /* vpiPolarity of a path */
-    int data_polarity;        /* vpiDataPolarity of a path */
-    int has_ifnone;           /* vpiModPathHasIfNone */
+    int32_t polarity;             /* vpiPolarity of a path */
+    int32_t data_polarity;        /* vpiDataPolarity of a path */
+    int32_t has_ifnone;           /* vpiModPathHasIfNone */
     uint32_t delay;           /* vpiDelay expression (37.3.4): code row + 1, 0: none */
 } llg_vpi_timing_t;
 
@@ -286,12 +286,12 @@ typedef struct {
  * instance (IEEE 1800-2009 37.10, 33.7). */
 typedef struct {
     const char* def_file;     /* vpiDefFile, or NULL */
-    int def_line;             /* vpiDefLineNo */
+    int32_t def_line;             /* vpiDefLineNo */
     const char* library;      /* vpiLibrary */
     const char* cell;         /* vpiCell */
     const char* config;       /* vpiConfig: library.config, or NULL */
-    int net_type;             /* vpiDefNetType (vpiNone: `default_nettype none) */
-    int unconnected_drive;    /* vpiUnconnDrive: vpiHighZ, vpiPull0, vpiPull1 */
+    int32_t net_type;             /* vpiDefNetType (vpiNone: `default_nettype none) */
+    int32_t unconnected_drive;    /* vpiUnconnDrive: vpiHighZ, vpiPull0, vpiPull1 */
     int8_t cell_define;       /* vpiCellInstance */
     int8_t automatic;         /* vpiAutomatic: the default lifetime */
 } llg_vpi_instance_t;
@@ -312,17 +312,17 @@ typedef struct {
     const llg_co_desc_t* desc;
     const void* record;
     size_t record_offset;
-    int slot;
+    int32_t slot;
     uint64_t identity;
 } llg_vpi_udp_put_t;
 
 typedef struct llg_vpi_model_object {
-    int type;                 /* vpiType */
+    int32_t type;                 /* vpiType */
     const char* name;
     const char* full_name;    /* SV 27.4 hierarchical name */
     const char* definition_name;
     const char* file;
-    int line;
+    int32_t line;
     uint32_t width;           /* packed width; element width of an array */
     int8_t is_signed;
     int8_t is_real;
@@ -331,7 +331,7 @@ typedef struct llg_vpi_model_object {
     double* real;             /* real value, or element 0 of a real array */
     struct llg_vpi_model_object* parent;
     uint64_t time_unit_fs;    /* 0 inherits the parent or simulation time unit. */
-    int subtype;              /* array element vpiType, vpiNetType, port vpiDirection */
+    int32_t subtype;              /* array element vpiType, vpiNetType, port vpiDirection */
     uint32_t flags;           /* LLG_VPI_OBJ_* */
     int64_t left;             /* outermost packed range (LLG_VPI_OBJ_RANGE) */
     int64_t right;
@@ -345,7 +345,7 @@ typedef struct llg_vpi_model_object {
     const char* constant;     /* parameter: 0/1/x/z digits MSB first, or text */
     double real_constant;     /* real parameter value */
     uint32_t typespec;        /* vpiTypespec: typespec index + 1, 0: none */
-    int detail;               /* vpiAlwaysType, vpiPrimType, vpiFuncType, vpiPortType,
+    int32_t detail;               /* vpiAlwaysType, vpiPrimType, vpiFuncType, vpiPortType,
                                * the element vpiType of an instance array, or the
                                * vpiInputEdge | vpiOutputEdge << 8 of a clocking
                                * block or clocking io declaration */
@@ -368,7 +368,7 @@ typedef struct llg_vpi_model_object {
     uint32_t code;            /* vpiStmt of a process, task or function, the
                                * statement of a named block: code row + 1 */
     const llg_vpi_instance_t* instance; /* instance properties, or NULL */
-    int strength;             /* vpiStrength0 | vpiStrength1 << 8 of a primitive or
+    int32_t strength;             /* vpiStrength0 | vpiStrength1 << 8 of a primitive or
                                * continuous assignment */
 } llg_vpi_model_object_t;
 
@@ -405,7 +405,7 @@ enum {
 };
 
 typedef struct {
-    int type;                 /* vpiType of a variable of this shape */
+    int32_t type;                 /* vpiType of a variable of this shape */
     uint8_t shape;            /* LLG_VPI_SHAPE_* */
     uint8_t array_type;       /* vpiDynamicArray, vpiQueueArray, vpiAssocArray */
     uint8_t values;           /* container elements are llg_value_t, not sv4_t */
@@ -542,9 +542,9 @@ typedef struct {
     const llg_vpi_class_item_t* items;
     uint32_t item_count;
     /* The class layout of a live object (0 when it was reclaimed). */
-    int (*object)(void* handle, uint32_t* class_id);
+    int32_t (*object)(void* handle, uint32_t* class_id);
     /* The storage of field `index` of a live object and its kind. */
-    void* (*field)(void* handle, uint32_t index, unsigned* kind);
+    void* (*field)(void* handle, uint32_t index, uint32_t* kind);
     /* The environment records virtual interface properties may hold. */
     const llg_vpi_vif_t* vifs;
     uint32_t vif_count;
@@ -562,7 +562,7 @@ typedef struct {
 
 /* The dynamic tables of the catalog, borrowed like the catalog and
  * validated on the first VPI use; NULL for a model without them. */
-int llg_vpi_model_dynamic(const llg_vpi_dynamic_tables_t* tables);
+int32_t llg_vpi_model_dynamic(const llg_vpi_dynamic_tables_t* tables);
 /* cbCreateObj (38.36.1): models generated with the catalog report every
  * class object after its constructor (or shallow copy) completed. */
 void llg_vpi_object_created(void* handle);
@@ -572,11 +572,11 @@ void llg_vpi_object_created(void* handle);
 typedef struct {
     const char* name;
     const char* file;
-    int line;
+    int32_t line;
 } llg_vpi_builtin_call_t;
 
 typedef struct {
-    int kind;
+    int32_t kind;
     uint32_t width;
     int8_t is_signed;
     int8_t is_real;
@@ -588,14 +588,14 @@ typedef struct {
  * llg_vpi_shutdown, while all public handles remain generation-checked.
  * Initialization only records the table: it is validated and indexed on the
  * first VPI use, so models that never load an application pay nothing. */
-int llg_vpi_model_init(const char* design_name,
+int32_t llg_vpi_model_init(const char* design_name,
                        llg_vpi_model_object_t* objects, size_t object_count);
 /* The typespec tables the catalog rows name, borrowed like the catalog and
  * validated on the first VPI use; NULL for a model without a catalog. */
-int llg_vpi_model_types(const llg_vpi_type_tables_t* tables);
+int32_t llg_vpi_model_types(const llg_vpi_type_tables_t* tables);
 /* The expression and statement tables, borrowed like the catalog and
  * validated on the first VPI use; NULL for a model generated without them. */
-int llg_vpi_model_code(const llg_vpi_code_tables_t* tables);
+int32_t llg_vpi_model_code(const llg_vpi_code_tables_t* tables);
 
 /* Packed catalog rows. A model generated with the catalog leaves its
  * object array zero and its code tables' `nodes` NULL and emits their rows
@@ -624,13 +624,13 @@ typedef struct {
     const void* const* refs;
     uint32_t ref_count;
 } llg_vpi_packed_t;
-int llg_vpi_model_packed(const llg_vpi_packed_t* packed);
+int32_t llg_vpi_model_packed(const llg_vpi_packed_t* packed);
 /* How the model was generated for vpi_put_delays: `writable` is 1 when every
  * delay the catalog names is runtime storage (generated for VPI
  * applications), `delay_select` the min:typ:max operand the model uses (0
  * min, 1 typ, 2 max), which a put with mtm values takes. */
-void llg_vpi_model_delays(int writable, int delay_select);
-int llg_vpi_startup(void);
+void llg_vpi_model_delays(int32_t writable, int32_t delay_select);
+int32_t llg_vpi_startup(void);
 /* Frames (IEEE 1800-2009 37.39). A model built with the catalog brackets
  * every task and function body with llg_vpi_frame_enter (after its inputs
  * are copied in, naming the subprogram's full name) and, when that returned
@@ -638,7 +638,7 @@ int llg_vpi_startup(void);
  * llg_vpi_frames_on is set, which the bridge sets once it runs an
  * application's startup routines in a catalog model; a model without an
  * application pays one load and branch per call. */
-extern int llg_vpi_frames_on;
+extern int32_t llg_vpi_frames_on;
 /* The call object (code row + 1, 0 for none) that activates the next frame,
  * its vpiOrigin: stored by the caller right before a call of a task or
  * function with a frame, taken and cleared by llg_vpi_frame_enter. */
@@ -705,12 +705,12 @@ uint64_t llg_vpi_frame_enter_autos(const char* full_name, const llg_vpi_auto_t* 
 void llg_vpi_frame_exit(uint64_t frame);
 /* Run a statically linked application's startup table (the model links the
  * archive that defines it) before LLG_VPI_PLUGIN libraries are loaded. */
-int llg_vpi_startup_static(void (*const* routines)(void));
-int llg_vpi_compile_call(const char* name, const llg_vpi_compile_arg_t* args,
-                         int arg_count);
-int llg_vpi_compile_calls(const char* const* names,
+int32_t llg_vpi_startup_static(void (*const* routines)(void));
+int32_t llg_vpi_compile_call(const char* name, const llg_vpi_compile_arg_t* args,
+                         int32_t arg_count);
+int32_t llg_vpi_compile_calls(const char* const* names,
                           const llg_vpi_compile_arg_t* const* args,
-                          const int* arg_counts, int call_count);
+                          const int32_t* arg_counts, int32_t call_count);
 void llg_vpi_start_simulation(void);
 /* The model has queued its time-zero procedures except always_comb and
  * always_latch (9.2.2.2): the assertion system start callbacks run as the
@@ -721,31 +721,31 @@ void llg_vpi_shutdown(void);
 /* Run `hook` once at the next llg_vpi_shutdown (DPI-C scope user data). */
 void llg_vpi_on_shutdown(void (*hook)(void));
 
-int llg_vpi_call_task(const char* name, llg_vpi_arg_t* args, int arg_count);
+int32_t llg_vpi_call_task(const char* name, llg_vpi_arg_t* args, int32_t arg_count);
 sv4_t llg_vpi_call_function(const char* name, llg_vpi_arg_t* args,
-                            int arg_count, uint32_t fallback_width,
+                            int32_t arg_count, uint32_t fallback_width,
                             int8_t fallback_signed);
 double llg_vpi_call_real_function(const char* name, llg_vpi_arg_t* args,
-                                  int arg_count);
+                                  int32_t arg_count);
 /* Generated calls have stable per-model identities; return shape and scope
  * survive independently of the name-level registration. */
-int llg_vpi_compile_call_site(uint64_t site, const char* name,
-    const llg_vpi_compile_arg_t* args, int count, uint64_t time_unit_fs);
+int32_t llg_vpi_compile_call_site(uint64_t site, const char* name,
+    const llg_vpi_compile_arg_t* args, int32_t count, uint64_t time_unit_fs);
 /* llg_vpi_compile_call_site with the call's scope row (vpiScope), source
  * file and line. Site identities are dense from 0 in generated models. */
-int llg_vpi_compile_call_site_at(uint64_t site, const char* name,
-    const llg_vpi_compile_arg_t* args, int count, uint64_t time_unit_fs,
-    llg_vpi_model_object_t* scope, const char* file, int line);
-int llg_vpi_call_task_site(uint64_t site, const char* name, llg_vpi_arg_t* args, int count);
+int32_t llg_vpi_compile_call_site_at(uint64_t site, const char* name,
+    const llg_vpi_compile_arg_t* args, int32_t count, uint64_t time_unit_fs,
+    llg_vpi_model_object_t* scope, const char* file, int32_t line);
+int32_t llg_vpi_call_task_site(uint64_t site, const char* name, llg_vpi_arg_t* args, int32_t count);
 sv4_t llg_vpi_call_function_site(uint64_t site, const char* name, llg_vpi_arg_t* args,
-    int count, uint32_t fallback_width, int8_t fallback_signed);
-double llg_vpi_call_real_function_site(uint64_t site, const char* name, llg_vpi_arg_t* args, int count);
-int llg_vpi_failed(void);
+    int32_t count, uint32_t fallback_width, int8_t fallback_signed);
+double llg_vpi_call_real_function_site(uint64_t site, const char* name, llg_vpi_arg_t* args, int32_t count);
+int32_t llg_vpi_failed(void);
 /* After startup: fail, naming the call site, when a VPI application
  * registered one of the `count` built-ins in `calls`. llg runs built-ins
  * natively and cannot let a registration override them (IEEE 1800-2009
  * 36.3.2). Returns 1 when none is registered. */
-int llg_vpi_check_builtin_overrides(const llg_vpi_builtin_call_t* calls, uint32_t count);
+int32_t llg_vpi_check_builtin_overrides(const llg_vpi_builtin_call_t* calls, uint32_t count);
 
 #ifdef __cplusplus
 }
@@ -756,8 +756,8 @@ int llg_vpi_check_builtin_overrides(const llg_vpi_builtin_call_t* calls, uint32_
  * initialized owner at dst with exactly the result `X(...)` would return. Packed
  * arguments are borrowed by address; string arguments are consumed through
  * their address and left empty, like the returning forms' by-value strings. */
-void llg_vpi_call_function_to(sv4_t* dst, const char* name, llg_vpi_arg_t* args, int arg_count, uint32_t fallback_width, int8_t fallback_signed);
-void llg_vpi_call_function_site_to(sv4_t* dst, uint64_t site, const char* name, llg_vpi_arg_t* args, int count, uint32_t fallback_width, int8_t fallback_signed);
+void llg_vpi_call_function_to(sv4_t* dst, const char* name, llg_vpi_arg_t* args, int32_t arg_count, uint32_t fallback_width, int8_t fallback_signed);
+void llg_vpi_call_function_site_to(sv4_t* dst, uint64_t site, const char* name, llg_vpi_arg_t* args, int32_t count, uint32_t fallback_width, int8_t fallback_signed);
 
 /* The DPI-C bridge. Generated models receive it in the same header, ahead of
  * this text (so the guard skips the include); in-tree users find the file. */

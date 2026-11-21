@@ -21,8 +21,8 @@ uint64_t llg_time_scaled(uint64_t precision_fs, uint64_t unit_fs) {
         abort();
     }
     uint64_t quotient = 0, remainder = high;
-    for (unsigned i = 64; i > 0; --i) {
-        int overflow = (remainder >> 63) != 0;
+    for (uint32_t i = 64; i > 0; --i) {
+        int32_t overflow = (remainder >> 63) != 0;
         remainder = (remainder << 1) | ((low >> (i - 1)) & 1u);
         quotient <<= 1;
         if (overflow || remainder >= unit_fs) {
@@ -86,13 +86,13 @@ void llg_timeformat(sv4_t units, sv4_t precision, llg_string_t suffix,
     }
     llg_string_move(&g.time_format.suffix, suffix);
     g.time_format.unit_fs = unit_fs;
-    g.time_format.precision = (int)precision_value;
-    g.time_format.minimum_field_width = (int)width_value;
+    g.time_format.precision = (int32_t)precision_value;
+    g.time_format.minimum_field_width = (int32_t)width_value;
 }
 
-int llg_rt_process_count(void) {
-    int count = 0;
-    for (int i = 0; i < g.n_procs; i++)
+int32_t llg_rt_process_count(void) {
+    int32_t count = 0;
+    for (int32_t i = 0; i < g.n_procs; i++)
         if (g.all_procs[i]) count++;
     return count;
 }

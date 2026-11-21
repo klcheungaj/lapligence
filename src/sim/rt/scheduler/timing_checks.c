@@ -16,7 +16,7 @@
 // are design-precision ticks; a stamp of 0 means no event because events at
 // time 0 never stamp (A9-D3).
 
-static int timing_check_messages = 1;
+static int32_t timing_check_messages = 1;
 static llg_timing_violation_fn timing_violation_hook;
 
 void llg_timing_violation_hook(llg_timing_violation_fn hook) { timing_violation_hook = hook; }
@@ -43,21 +43,21 @@ typedef struct {
 
 static struct {
     sv4_t* doorbell;
-    int rung;
-    int running;
+    int32_t rung;
+    int32_t running;
     llg_timing_check_set_t* dirty_head;
     llg_timing_check_set_t* dirty_tail;
     timing_heap_t delays;  // delayed signal transitions (line; Active)
     timing_heap_t timers;  // skew window expiries (set, check; Pre-Postponed)
 } timing = {NULL, 0, 0, NULL, NULL, TIMING_HEAP_EMPTY, TIMING_HEAP_EMPTY};
 
-void llg_timing_checks_configure(int messages) { timing_check_messages = messages != 0; }
+void llg_timing_checks_configure(int32_t messages) { timing_check_messages = messages != 0; }
 
 void llg_timing_checks_doorbell(sv4_t* doorbell) { timing.doorbell = doorbell; }
 
 // 0, 1 or 2: z counts as x (31.5).
 static uint8_t timing_state(const sv4_t* value, uint64_t bit) {
-    unsigned state = llg_sv4_state(*value, bit);
+    uint32_t state = llg_sv4_state(*value, bit);
     return (uint8_t)(state > 1u ? 2u : state);
 }
 
@@ -72,7 +72,7 @@ static void* timing_grow(void* items, size_t* capacity, size_t size, const char*
 
 // ── Heaps ────────────────────────────────────────────────────────────────────
 
-static int timing_heap_before(const timing_heap_entry_t* a, const timing_heap_entry_t* b) {
+static int32_t timing_heap_before(const timing_heap_entry_t* a, const timing_heap_entry_t* b) {
     return a->time < b->time || (a->time == b->time && a->sequence < b->sequence);
 }
 
@@ -204,7 +204,7 @@ static void timing_delays_due(void* data);
 // Schedule bit `bit` of a delayed signal to become `state` at `time`; its
 // pending transitions that are not earlier are cancelled. Returns 1 when the
 // transition applies now.
-static int timing_line_schedule(llg_timing_line_t* line, uint32_t bit, uint8_t state,
+static int32_t timing_line_schedule(llg_timing_line_t* line, uint32_t bit, uint8_t state,
                                 uint64_t time) {
     uint32_t kept = 0;
     for (uint32_t index = 0; index < line->n_pending; index++) {
@@ -239,7 +239,7 @@ static void timing_line_source_changed(llg_timing_line_t* line) {
     const llg_timing_terminal_t* source = &line->set->terminals[line->source];
     const llg_timing_terminal_t* target = &line->set->terminals[line->target];
     uint32_t bits = source->n_bits < target->n_bits ? source->n_bits : target->n_bits;
-    int now = 0;
+    int32_t now = 0;
     for (uint32_t bit = 0; bit < bits; bit++) {
         uint8_t state = (uint8_t)llg_sv4_state(*source->value, (uint64_t)source->lsb + bit);
         uint8_t from = line->last[bit];
@@ -449,11 +449,11 @@ static uint8_t timing_transition(uint8_t from, uint8_t to) {
 
 typedef struct {
     llg_timing_check_set_t* set;
-    int evaluated;
+    int32_t evaluated;
 } timing_step_t;
 
-static int timing_condition_value(timing_step_t* step, uint32_t condition,
-                                  int nondeterministic) {
+static int32_t timing_condition_value(timing_step_t* step, uint32_t condition,
+                                  int32_t nondeterministic) {
     if (!condition) return 1;
     llg_timing_check_set_t* set = step->set;
     if (!step->evaluated) {
@@ -462,13 +462,13 @@ static int timing_condition_value(timing_step_t* step, uint32_t condition,
     }
     const sv4_t* value = &set->condition_values[condition - 1u];
     if (llg_sv4_width(*value) == 0) return 0;
-    unsigned state = llg_sv4_state(*value, 0);
+    uint32_t state = llg_sv4_state(*value, 0);
     return state == 1u || (state > 1u && nondeterministic);
 }
 
 // An event's conditions hold (31.7): each condition's least significant bit
 // is 1, or x or z for `==` and `!=`.
-static int timing_conditions(timing_step_t* step, const llg_timing_event_t* event) {
+static int32_t timing_conditions(timing_step_t* step, const llg_timing_event_t* event) {
     return timing_condition_value(step, event->condition, event->nondeterministic & 1u) &&
            timing_condition_value(step, event->condition2, event->nondeterministic & 2u);
 }
@@ -572,7 +572,7 @@ static void timing_report(llg_timing_check_set_t* set, const llg_timing_check_t*
 // Table 31-13 with x becoming 0 (V Table 61, A9-D5): x -> 0, 0 -> 1,
 // 1 -> 0, z stays.
 static void timing_toggle(sv4_t* notifier) {
-    unsigned state = llg_sv4_state(*notifier, 0);
+    uint32_t state = llg_sv4_state(*notifier, 0);
     if (state == 3u) return;
     sv4_t value = sv4_from_u64(state == 0u ? 1u : 0u, llg_sv4_width(*notifier),
                                llg_sv4_signed(*notifier));
@@ -658,8 +658,8 @@ void llg_timing_check_limits_changed(llg_timing_check_set_t* set) {
 // timer-based check dormant; a timer-based check reports at the expiry.
 static void timing_timeskew(timing_step_t* step, uint32_t index, llg_timing_check_t* check) {
     uint64_t now = g.now;
-    int timer = !(check->flags & LLG_TIMING_EVENT_BASED);
-    int remain = (check->flags & LLG_TIMING_REMAIN_ACTIVE) != 0;
+    int32_t timer = !(check->flags & LLG_TIMING_EVENT_BASED);
+    int32_t remain = (check->flags & LLG_TIMING_REMAIN_ACTIVE) != 0;
     if (timing_matched(step, &check->reference)) {
         if (timing_conditions(step, &check->reference)) {
             check->reference_time = now;
@@ -689,13 +689,13 @@ static void timing_timeskew(timing_step_t* step, uint32_t index, llg_timing_chec
 // active check dormant.
 static void timing_fullskew(timing_step_t* step, uint32_t index, llg_timing_check_t* check) {
     uint64_t now = g.now;
-    int timer = !(check->flags & LLG_TIMING_EVENT_BASED);
-    int remain = (check->flags & LLG_TIMING_REMAIN_ACTIVE) != 0;
+    int32_t timer = !(check->flags & LLG_TIMING_EVENT_BASED);
+    int32_t remain = (check->flags & LLG_TIMING_REMAIN_ACTIVE) != 0;
     const llg_timing_event_t* events[2] = {&check->reference, &check->data};
     for (uint8_t side = 1u; side <= 2u; side++) {
         const llg_timing_event_t* event = events[side - 1u];
         if (!timing_matched(step, event)) continue;
-        int enabled = timing_conditions(step, event);
+        int32_t enabled = timing_conditions(step, event);
         if (check->state && check->state != side) {
             // A timecheck event; one with a false condition is no event.
             if (!enabled) continue;
@@ -730,7 +730,7 @@ static void timing_fullskew(timing_step_t* step, uint32_t index, llg_timing_chec
 // arrives: E below the trailing edge's delay minus the data event's delay,
 // which without delayed signals is a negative E. Such events are kept and
 // each one inside the window is reported at the trailing edge.
-static int timing_nochange_deferred(int64_t end, int64_t trail_delay, uint64_t data_delay) {
+static int32_t timing_nochange_deferred(int64_t end, int64_t trail_delay, uint64_t data_delay) {
     return end - trail_delay + (int64_t)data_delay < 0;
 }
 
@@ -917,7 +917,7 @@ static void timing_check_run(timing_step_t* step, uint32_t index, llg_timing_che
 
 static void timing_check_step(llg_timing_check_set_t* set) {
     uint32_t changed = set->n_changed;
-    int any = 0;
+    int32_t any = 0;
     for (uint32_t position = 0; position < changed; position++) {
         uint32_t index = set->changed[position];
         const llg_timing_terminal_t* terminal = &set->terminals[index];

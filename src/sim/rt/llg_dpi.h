@@ -72,7 +72,7 @@ struct llg_dpi_member {
  * the thunk-owned C-layout buffer. Valid only during the import call. */
 typedef struct llg_dpi_open {
     const llg_dpi_type_t* type;
-    int dims;
+    int32_t dims;
     void* data;
 } llg_dpi_open_t;
 
@@ -156,14 +156,14 @@ typedef struct llg_dpi_scope {
 /* Source position of an import call (svGetCallerInfo, H.9.3). */
 typedef struct llg_dpi_site {
     const char* file;
-    int line;
+    int32_t line;
 } llg_dpi_site_t;
 
 /* Call-chain state saved by one crossing, on the C stack of its thunk. */
 typedef struct llg_dpi_call {
     llg_dpi_scope_t* scope;
     const llg_dpi_site_t* site;
-    int depth;
+    int32_t depth;
     uint8_t chain;
     uint8_t acked;
 } llg_dpi_call_t;
@@ -200,20 +200,20 @@ void llg_dpi_shutdown(void);
  * context call (`scope` its declaring scope) or, with `scope` NULL, a
  * noncontext call of an imported task (`task` 1) or function. `depth` is
  * the thunk's recursion depth. */
-void llg_dpi_import_enter(llg_dpi_call_t* saved, llg_dpi_scope_t* scope, int task, int depth);
+void llg_dpi_import_enter(llg_dpi_call_t* saved, llg_dpi_scope_t* scope, int32_t task, int32_t depth);
 /* The import returned: restore the chain state. For a function (`task`
  * 0), a disable that the foreign code did not acknowledge is a fatal
  * error (35.9 item c). */
-void llg_dpi_import_leave(const llg_dpi_call_t* saved, const char* c_name, int task);
+void llg_dpi_import_leave(const llg_dpi_call_t* saved, const char* c_name, int32_t task);
 /* The import's process was killed while its foreign code waited in an
  * export (ADV-018): restore the chain state and check that the task
  * returned 1 (35.9 item b). Nothing is copied out and the value scopes are
  * left to the process's cleanup. */
-void llg_dpi_import_abandoned(const llg_dpi_call_t* saved, int status, const char* c_name);
+void llg_dpi_import_abandoned(const llg_dpi_call_t* saved, int32_t status, const char* c_name);
 /* Check an imported task's disable-protocol result (35.9 item b) and
  * return nonzero when its outputs must not be copied out (it was disabled
  * or broke the protocol, a fatal error). */
-int llg_dpi_task_status(int status, const char* c_name);
+int32_t llg_dpi_task_status(int32_t status, const char* c_name);
 
 /* C -> SV: the entry point of exported C identifier `id` (a task when
  * `task` is 1) finds the export thunk of the current context scope. Calls
@@ -221,16 +221,16 @@ int llg_dpi_task_status(int status, const char* c_name);
  * disabled (35.9 item d) or into a scope that does not export `c_name` are
  * fatal errors that return NULL. A task called from an imported function
  * runs (decision S41-D8). */
-llg_dpi_fn_t llg_dpi_export_target(uint32_t id, const char* c_name, int task);
+llg_dpi_fn_t llg_dpi_export_target(uint32_t id, const char* c_name, int32_t task);
 /* An export thunk saves the chain state and returns the recursion depth of
  * the SystemVerilog call it makes. */
-int llg_dpi_export_enter(llg_dpi_call_t* saved);
+int32_t llg_dpi_export_enter(llg_dpi_call_t* saved);
 /* Restore the chain state; for an exported task return the disable status
  * of 35.9 item a) (1 when a disable now cancels the calling import). */
-int llg_dpi_export_leave(const llg_dpi_call_t* saved, int task);
+int32_t llg_dpi_export_leave(const llg_dpi_call_t* saved, int32_t task);
 /* Restore the chain state of an export whose calling process was killed
  * while the exported task waited, and return 1 (35.9 item a). */
-int llg_dpi_export_abandoned(const llg_dpi_call_t* saved);
+int32_t llg_dpi_export_abandoned(const llg_dpi_call_t* saved);
 
 /* ---- Foreign call contexts (ADV-018; foreign_contexts/readme.md) ----
  *
@@ -264,12 +264,12 @@ llg_co_anchor_t* llg_dpi_export_begin(const llg_co_desc_t* desc, const char* c_n
 /* The frame holds the arguments: hand the token back until the task
  * returned. Nonzero when the calling process was killed meanwhile (the
  * frame is gone; the thunk returns llg_dpi_export_abandoned). */
-int llg_dpi_export_wait(llg_co_anchor_t* slot);
+int32_t llg_dpi_export_wait(llg_co_anchor_t* slot);
 /* Nonzero while the token holder unwinds a killed process's chain. */
-int llg_dpi_context_abandoned(void);
+int32_t llg_dpi_context_abandoned(void);
 /* Hooks between llg_dpi.c and llg_dpi_context.c (contexts only). */
 void llg_dpi_context_hooks(void (*park)(void), void (*shutdown)(void));
-llg_dpi_guard_t* llg_dpi_context_switch(llg_dpi_guard_t* guards, int unwinding);
+llg_dpi_guard_t* llg_dpi_context_switch(llg_dpi_guard_t* guards, int32_t unwinding);
 void llg_dpi_chain_snapshot(llg_dpi_call_t* out);
 
 #ifdef __cplusplus

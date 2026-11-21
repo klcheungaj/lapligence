@@ -58,7 +58,7 @@ static llg_seq_view_t llg_seq_view_of_queue_value(
     const llg_queue_value_array_t* source);
 static llg_nested_seq_t* llg_nested_seq_from_view(const llg_value_desc_t* desc,
                                                   llg_seq_view_t source);
-static int llg_nested_seq_store(llg_value_t* target, llg_seq_view_t source);
+static int32_t llg_nested_seq_store(llg_value_t* target, llg_seq_view_t source);
 
 /* _Noreturn, and no statement follows an unconditional call: MSVC /O2 inlines
  * this helper, sees abort() and reports such a statement as unreachable
@@ -97,7 +97,7 @@ static void llg_invalid_key_access(const char* operation, const char* warning) {
 /* A queue method index outside the queue or with X or Z bits (SV 7.10.2).
  * `allow_end` admits the position after the last element. */
 static void llg_invalid_queue_index(const char* operation, const char* warning,
-                                    sv4_t index, size_t size, int allow_end) {
+                                    sv4_t index, size_t size, int32_t allow_end) {
     if (llg_index_stop_hook) {
         char detail[160];
         int64_t value = 0;
@@ -123,7 +123,7 @@ static void llg_invalid_queue_index(const char* operation, const char* warning,
 /* SV 7.8.6: a read through an invalid (X/Z) key or of a nonexistent entry
  * warns and yields the default; an explicit default (SV 7.9.11) is
  * returned without a warning. */
-static void llg_assoc_read_miss(int valid_key, int has_default) {
+static void llg_assoc_read_miss(int32_t valid_key, int32_t has_default) {
     if (!valid_key)
         llg_invalid_key_access("associative-array read",
                                "invalid associative-array key read");
@@ -134,7 +134,7 @@ static void llg_assoc_read_miss(int valid_key, int has_default) {
 
 /* Elements stored as one identity pointer: borrowed chandles, events and
  * class-like object handles. */
-static int llg_value_is_handle_kind(const llg_value_desc_t* desc) {
+static int32_t llg_value_is_handle_kind(const llg_value_desc_t* desc) {
     return desc && (desc->kind == LLG_VALUE_CHANDLE ||
                     desc->kind == LLG_VALUE_EVENT ||
                     desc->kind == LLG_VALUE_OPAQUE ||
@@ -187,7 +187,7 @@ static sv4_t llg_element_assign(sv4_t value, uint32_t width, int8_t is_signed,
 }
 
 static sv4_t llg_reduce_identity(uint32_t width, int8_t is_signed,
-                                 int operation) {
+                                 int32_t operation) {
     switch (operation) {
         case LLG_CONTAINER_REDUCE_PRODUCT:
             return sv4_from_u64(1, width, is_signed);
@@ -202,7 +202,7 @@ static sv4_t llg_reduce_identity(uint32_t width, int8_t is_signed,
     }
 }
 
-static sv4_t llg_reduce_step(sv4_t accumulated, sv4_t value, int operation) {
+static sv4_t llg_reduce_step(sv4_t accumulated, sv4_t value, int32_t operation) {
     switch (operation) {
         case LLG_CONTAINER_REDUCE_SUM:
             return sv4_add(accumulated, value);
@@ -221,7 +221,7 @@ static sv4_t llg_reduce_step(sv4_t accumulated, sv4_t value, int operation) {
 
 static sv4_t llg_reduce_values(const sv4_t* values, size_t count,
                                uint32_t width, int8_t is_signed,
-                               int operation) {
+                               int32_t operation) {
     sv4_t result = llg_reduce_identity(width, is_signed, operation);
     for (size_t i = 0; i < count; ++i)
         sv4_replace(&result, llg_reduce_step(result, values[i], operation));
@@ -239,9 +239,9 @@ static sv4_t llg_container_eval(llg_container_eval_fn eval, sv4_t item,
 }
 
 static sv4_t llg_reduce_values_with(const sv4_t* values, size_t count,
-                                    int operation, uint32_t result_width,
+                                    int32_t operation, uint32_t result_width,
                                     int8_t result_signed,
-                                    int result_two_state,
+                                    int32_t result_two_state,
                                     llg_container_eval_fn eval,
                                     void* context) {
     sv4_t result = llg_reduce_identity(result_width, result_signed, operation);
@@ -259,7 +259,7 @@ static sv4_t llg_reduce_values_with(const sv4_t* values, size_t count,
     return result;
 }
 
-static int llg_index(sv4_t value, size_t upper_exclusive, int allow_end,
+static int32_t llg_index(sv4_t value, size_t upper_exclusive, int32_t allow_end,
                      size_t* result) {
     uint64_t index = sv4_to_index(value);
     if (index == UINT64_MAX || index > (uint64_t)SIZE_MAX) return 0;
@@ -273,11 +273,11 @@ static int llg_index(sv4_t value, size_t upper_exclusive, int allow_end,
 /* A slice bound as a saturated 64-bit position. Returns 0 for an X or Z bound.
  * A known value that does not fit 64 bits saturates by its sign, which clips
  * the same way as any other value beyond the queue (it is never truncated). */
-static int llg_slice_bound(sv4_t value, int64_t* out) {
+static int32_t llg_slice_bound(sv4_t value, int64_t* out) {
     if (sv4_is_unknown(value)) return 0;
     if (sv4_to_index_i64(value, out)) return 1;
     uint32_t width = llg_sv4_width(value);
-    int negative = llg_sv4_signed(value) && width &&
+    int32_t negative = llg_sv4_signed(value) && width &&
         ((llg_sv4_word(value, (width - 1) / 64, LLG_SV4_BITS) >> ((width - 1) % 64)) & 1u);
     *out = negative ? INT64_MIN : INT64_MAX;
     return 1;
@@ -306,7 +306,7 @@ static void llg_queue_slice_range(const llg_queue_source_t* source, size_t size,
 /* Resolve one streaming `with` selector to its requested logical index range.
  * The range is deliberately independent of the container's current size:
  * streaming an out-of-range source element yields that element's default. */
-static void llg_stream_bounds(int selector_kind, sv4_t first, sv4_t second,
+static void llg_stream_bounds(int32_t selector_kind, sv4_t first, sv4_t second,
                               size_t container_size, int64_t* left,
                               int64_t* right, size_t* count) {
     if (!left || !right || !count)
@@ -390,7 +390,7 @@ static void llg_fixed_stream_orient(int64_t declaration_left,
     }
 }
 
-uint32_t llg_stream_selector_width(int selector_kind, sv4_t first,
+uint32_t llg_stream_selector_width(int32_t selector_kind, sv4_t first,
                                    sv4_t second, uint32_t element_width) {
     if (element_width == 0 || element_width > (LLG_SUPPORTED_WIDTH_LIMIT - 1u))
         llg_container_fatal("invalid streaming selector element width");
@@ -405,14 +405,14 @@ uint32_t llg_stream_selector_width(int selector_kind, sv4_t first,
     return (uint32_t)(count * element_width);
 }
 
-void llg_fixed_stream_bounds(int selector_kind, sv4_t first, sv4_t second,
+void llg_fixed_stream_bounds(int32_t selector_kind, sv4_t first, sv4_t second,
                              int64_t declaration_left, int64_t declaration_right,
                              int64_t* left, int64_t* right, size_t* count) {
     llg_stream_bounds(selector_kind, first, second, 0, left, right, count);
     llg_fixed_stream_orient(declaration_left, declaration_right, left, right);
 }
 
-uint32_t llg_fixed_stream_width(int selector_kind, sv4_t first, sv4_t second,
+uint32_t llg_fixed_stream_width(int32_t selector_kind, sv4_t first, sv4_t second,
                                 uint32_t element_width) {
     return llg_stream_selector_width(selector_kind, first, second,
                                      element_width);
@@ -440,7 +440,7 @@ void llg_stream_require_bits(int64_t available, uint32_t required) {
         llg_container_fatal("streaming unpack source has insufficient bits");
 }
 
-int llg_fixed_stream_target_in_bounds(int64_t declaration_left,
+int32_t llg_fixed_stream_target_in_bounds(int64_t declaration_left,
                                       int64_t declaration_right,
                                       int64_t left, int64_t right, size_t count) {
     if (!count) return 0;
@@ -455,7 +455,7 @@ int64_t llg_fixed_stream_index_at(int64_t left, int64_t right, size_t offset) {
     return llg_stream_index_at(left, right, offset);
 }
 
-sv4_t llg_stream_to_fixed(sv4_t value, uint32_t width, int is_signed) {
+sv4_t llg_stream_to_fixed(sv4_t value, uint32_t width, int32_t is_signed) {
     if (llg_sv4_width(value) > width)
         llg_container_fatal("streaming concatenation is larger than its fixed-size target");
     sv4_t result = sv4_zero(width, (int8_t)is_signed);
@@ -465,7 +465,7 @@ sv4_t llg_stream_to_fixed(sv4_t value, uint32_t width, int is_signed) {
     return result;
 }
 
-sv4_t llg_stream_cast_fixed(sv4_t value, uint32_t width, int is_signed) {
+sv4_t llg_stream_cast_fixed(sv4_t value, uint32_t width, int32_t is_signed) {
     if (llg_sv4_width(value) != width)
         llg_container_fatal(
             "bit-stream cast source size does not match its fixed-size target");
@@ -475,7 +475,7 @@ sv4_t llg_stream_cast_fixed(sv4_t value, uint32_t width, int is_signed) {
 /* SV 11.4.14.3 consumes a wider unpack source from its left end, before the
  * stream operator reorders the consumed bits. */
 sv4_t llg_stream_unpack_source(sv4_t value, uint64_t bits, uint32_t slice,
-                               int right_to_left) {
+                               int32_t right_to_left) {
     uint32_t width = llg_sv4_width(value);
     if (bits > width)
         llg_container_fatal("streaming unpack source has insufficient bits");
@@ -509,7 +509,7 @@ int64_t llg_fixed_stream_storage_offset(int64_t declaration_left,
 static size_t llg_fixed_stream_source_begin(int64_t declaration_left,
                                             int64_t declaration_right,
                                             uint32_t element_width,
-                                            int selector_kind, sv4_t first,
+                                            int32_t selector_kind, sv4_t first,
                                             sv4_t second, int64_t* left,
                                             int64_t* right, sv4_t* result) {
     llg_check_element_type(element_width);
@@ -531,7 +531,7 @@ static size_t llg_fixed_stream_source_begin(int64_t declaration_left,
 
 sv4_t llg_fixed_stream_source(const sv4_t* values, int64_t declaration_left,
                               int64_t declaration_right, uint32_t element_width,
-                              sv4_t fallback, int selector_kind,
+                              sv4_t fallback, int32_t selector_kind,
                               sv4_t first, sv4_t second) {
     int64_t left;
     int64_t right;
@@ -555,7 +555,7 @@ sv4_t llg_fixed_stream_source(const sv4_t* values, int64_t declaration_left,
 sv4_t llg_fixed_image_stream_source(sv4_t image, int64_t declaration_left,
                                     int64_t declaration_right,
                                     uint32_t element_width, sv4_t fallback,
-                                    int selector_kind, sv4_t first,
+                                    int32_t selector_kind, sv4_t first,
                                     sv4_t second) {
     int64_t left;
     int64_t right;
@@ -649,7 +649,7 @@ void llg_stream_segment_two_state(sv4_t* segment, uint32_t element_width,
 
 static sv4_t llg_pack_stream_values(const sv4_t* values, size_t count,
                                     uint32_t element_width, uint32_t slice,
-                                    int right_to_left) {
+                                    int32_t right_to_left) {
     llg_check_element_type(element_width);
     if (count > (size_t)((LLG_SUPPORTED_WIDTH_LIMIT - 1u) / element_width))
         llg_container_fatal("streaming value reaches supported width limit");
@@ -667,7 +667,7 @@ static sv4_t llg_pack_stream_values(const sv4_t* values, size_t count,
 }
 
 static void llg_notify(llg_container_notify_fn notify, sv4_t* contents,
-                       sv4_t* shape, int change) {
+                       sv4_t* shape, int32_t change) {
     if (notify && change) notify(contents, shape, change);
 }
 
@@ -683,7 +683,7 @@ static void llg_queue_reset_element_ids(llg_queue_t* queue) {
 }
 
 void llg_dyn_init(llg_dyn_array_t* array, uint32_t element_width,
-                  int8_t element_signed, int element_two_state) {
+                  int8_t element_signed, int32_t element_two_state) {
     llg_check_element_type(element_width);
     memset(array, 0, sizeof(*array));
     array->element_width = element_width;
@@ -701,7 +701,7 @@ void llg_dyn_destroy(llg_dyn_array_t* array) {
 
 void llg_dyn_delete(llg_dyn_array_t* array) {
     llg_dyn_outdate_references(array);
-    int changed = array->size != 0;
+    int32_t changed = array->size != 0;
     sv4_destroy_array(array->data, array->size);
     free(array->data);
     array->data = NULL;
@@ -750,7 +750,7 @@ static uint64_t llg_dynamic_size(sv4_t value) {
 /* Streaming is one container assignment. Accumulate dependency flags while
  * building it, then publish only after all temporary packed values are freed.
  * The record is a descriptor used only for its width field, not a value owner. */
-static void llg_stream_collect_change(sv4_t* record, sv4_t* unused, int flags) {
+static void llg_stream_collect_change(sv4_t* record, sv4_t* unused, int32_t flags) {
     (void)unused;
     record->width |= (uint32_t)flags;
 }

@@ -1,0 +1,5 @@
+1: tb.a2
+early: a1=1 c1=5 n1=0 k=0 m1=0 v8=0f w8=xx y=0
+2: tb.k
+late: c1=100 n1=101 k=2 m1=3 w8=ff
+b1=2 b2=1 z=1 c1=100 n1=101 n2=1 m1=3 w8=ff y=2

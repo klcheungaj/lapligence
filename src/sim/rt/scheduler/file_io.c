@@ -26,26 +26,26 @@ static void llg_file_init_table(void) {
     llg_file_slots[LLG_FILE_STDIN].stream = stdin;
     llg_file_slots[LLG_FILE_STDOUT].stream = stdout;
     llg_file_slots[LLG_FILE_STDERR].stream = stderr;
-    for (unsigned i = 0; i < 3u; ++i) llg_file_slots[i].open = 1;
+    for (uint32_t i = 0; i < 3u; ++i) llg_file_slots[i].open = 1;
     llg_files_initialized = 1;
     llg_file_global_error = 0;
     llg_file_global_message[0] = 0;
 }
 
-static uint32_t llg_file_mcd_bit(unsigned slot) {
+static uint32_t llg_file_mcd_bit(uint32_t slot) {
     if (slot == LLG_FILE_STDOUT) return 1u;
     if (slot >= LLG_FILE_MCD_FIRST && slot < LLG_FILE_MCD_END)
         return UINT32_C(1) << (slot - 2u);
     return 0;
 }
 
-static int llg_file_selected(uint32_t descriptor, unsigned slot) {
+static int32_t llg_file_selected(uint32_t descriptor, uint32_t slot) {
     if (descriptor & LLG_FILE_FD_TAG)
         return (descriptor & ~LLG_FILE_FD_TAG) == slot;
     return (descriptor & llg_file_mcd_bit(slot)) != 0;
 }
 
-static int llg_file_mask_valid(uint32_t descriptor) {
+static int32_t llg_file_mask_valid(uint32_t descriptor) {
     llg_file_init_table();
     if (!descriptor) {
         llg_file_global_failure("invalid file descriptor");
@@ -61,7 +61,7 @@ static int llg_file_mask_valid(uint32_t descriptor) {
         }
         return 1;
     }
-    for (unsigned i = 0; i < LLG_FILE_SLOTS; i++) {
+    for (uint32_t i = 0; i < LLG_FILE_SLOTS; i++) {
         if (llg_file_selected(descriptor, i) &&
             (!llg_file_slots[i].open || !llg_file_slots[i].stream)) {
             llg_file_global_failure("invalid or closed multichannel descriptor");
@@ -77,7 +77,7 @@ static int llg_file_mask_valid(uint32_t descriptor) {
 static uint32_t llg_file_open_channels(uint32_t descriptor) {
     llg_file_init_table();
     uint32_t open = 0;
-    for (unsigned i = 0; i < LLG_FILE_SLOTS; i++) {
+    for (uint32_t i = 0; i < LLG_FILE_SLOTS; i++) {
         uint32_t bit = llg_file_mcd_bit(i);
         if (bit && (descriptor & bit) && llg_file_slots[i].open && llg_file_slots[i].stream)
             open |= bit;
@@ -95,7 +95,7 @@ static uint32_t llg_file_output_descriptor(uint32_t descriptor) {
     return llg_file_mask_valid(descriptor) ? descriptor : 0;
 }
 
-static int llg_file_single_ordinary(uint32_t descriptor, llg_file_slot_t** out) {
+static int32_t llg_file_single_ordinary(uint32_t descriptor, llg_file_slot_t** out) {
     if (!(descriptor & LLG_FILE_FD_TAG) || !llg_file_mask_valid(descriptor)) {
         llg_file_global_failure("file input/position operation requires an FD, not an MCD");
         *out = NULL;
@@ -109,10 +109,10 @@ static int llg_file_single_ordinary(uint32_t descriptor, llg_file_slot_t** out) 
  * opened, 0, X or a multichannel descriptor) ends the run; final procedures
  * still run (decision S26-D2, industry-standard behaviour). The other input
  * functions return their failure code instead. */
-static int llg_file_read_source(uint32_t descriptor, llg_file_slot_t** out) {
+static int32_t llg_file_read_source(uint32_t descriptor, llg_file_slot_t** out) {
     if (llg_file_single_ordinary(descriptor, out)) return 1;
     if (!llg_rt_exiting()) {
-        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "$fread from file descriptor 0x%08x that is not open", (unsigned)descriptor);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "$fread from file descriptor 0x%08" PRIx32 " that is not open", (uint32_t)descriptor);
         llg_rt_mark_failed();
         llg_rt_fatal_typed(0, "invalid file descriptor", NULL, 0, "", "$fread");
     }
@@ -130,7 +130,7 @@ uint32_t llg_file_descriptor(sv4_t value) {
     return descriptor;
 }
 
-uint32_t llg_file_open(llg_string_t path, llg_string_t mode, int has_mode) {
+uint32_t llg_file_open(llg_string_t path, llg_string_t mode, int32_t has_mode) {
     llg_file_init_table();
     const char* selected_mode = has_mode ? mode.data : "w";
     size_t mode_len = has_mode ? mode.len : 1u;
@@ -144,8 +144,8 @@ uint32_t llg_file_open(llg_string_t path, llg_string_t mode, int has_mode) {
     llg_string_destroy(&path);
     llg_string_destroy(&mode);
 
-    unsigned slot_index = LLG_FILE_SLOTS;
-    for (unsigned i = has_mode ? LLG_FILE_FD_FIRST : LLG_FILE_MCD_FIRST;
+    uint32_t slot_index = LLG_FILE_SLOTS;
+    for (uint32_t i = has_mode ? LLG_FILE_FD_FIRST : LLG_FILE_MCD_FIRST;
          i < (has_mode ? LLG_FILE_SLOTS : LLG_FILE_MCD_END); i++) {
         if (!llg_file_slots[i].open) {
             slot_index = i;
@@ -163,7 +163,7 @@ uint32_t llg_file_open(llg_string_t path, llg_string_t mode, int has_mode) {
         "r", "w", "a", "r+", "w+", "a+",
         "rb", "wb", "ab", "r+b", "w+b", "a+b", "rb+", "wb+", "ab+",
     };
-    int mode_valid = 0;
+    int32_t mode_valid = 0;
     for (size_t i = 0; i < sizeof(valid_modes) / sizeof(valid_modes[0]); i++) {
         if (strcmp(mode_copy, valid_modes[i]) == 0) {
             mode_valid = 1;
@@ -205,20 +205,20 @@ uint32_t llg_file_open(llg_string_t path, llg_string_t mode, int has_mode) {
 }
 
 // Cancel deferred output before the slot can be reused by a later fopen.
-static uint32_t llg_file_without_slot(uint32_t descriptor, unsigned slot) {
+static uint32_t llg_file_without_slot(uint32_t descriptor, uint32_t slot) {
     if (descriptor & LLG_FILE_FD_TAG)
         return llg_file_selected(descriptor, slot) ? 0 : descriptor;
     return descriptor & ~llg_file_mcd_bit(slot);
 }
 
-static void llg_file_close_slot(unsigned i) {
+static void llg_file_close_slot(uint32_t i) {
     llg_monitors_cancel_slot(i);
     for (llg_strobe_t* e = g.strobes; e; e = e->next)
         if (e->typed) e->descriptor = llg_file_without_slot(e->descriptor, i);
     llg_file_slot_t* slot = &llg_file_slots[i];
     // Preopened streams are borrowed from the host. Invalidate their HDL
     // descriptors without closing the host's diagnostic/output channel.
-    int result = slot->owned ? fclose(slot->stream) : 0;
+    int32_t result = slot->owned ? fclose(slot->stream) : 0;
     slot->stream = NULL;
     slot->open = 0;
     slot->owned = 0;
@@ -230,14 +230,14 @@ static void llg_file_close_slot(unsigned i) {
 
 void llg_file_close(uint32_t descriptor) {
     if (!llg_file_mask_valid(descriptor)) return;
-    for (unsigned i = 0; i < LLG_FILE_SLOTS; i++)
+    for (uint32_t i = 0; i < LLG_FILE_SLOTS; i++)
         if (llg_file_selected(descriptor, i)) llg_file_close_slot(i);
 }
 
 /* VPI multichannel-descriptor services (IEEE 1800-2009 38.24-38.29). They
  * share the $fopen table, so a descriptor from either side works on both. */
 
-static int llg_file_mcd_channel_open(unsigned slot) {
+static int32_t llg_file_mcd_channel_open(uint32_t slot) {
     return llg_file_slots[slot].open && llg_file_slots[slot].stream;
 }
 
@@ -249,11 +249,11 @@ uint32_t llg_file_mcd_open(const char* path, uint32_t* open_fd) {
     // descriptor. A $fopen file descriptor (bit 31) is not an MCD; a second
     // write stream would truncate and interleave with it, so a file open
     // only as an FD is refused. Names compare as given, not as resolved paths.
-    for (unsigned i = LLG_FILE_MCD_FIRST; i < LLG_FILE_MCD_END; i++)
+    for (uint32_t i = LLG_FILE_MCD_FIRST; i < LLG_FILE_MCD_END; i++)
         if (llg_file_mcd_channel_open(i) && llg_file_slots[i].name &&
             strcmp(llg_file_slots[i].name, path) == 0)
             return llg_file_mcd_bit(i);
-    for (unsigned i = LLG_FILE_FD_FIRST; i < LLG_FILE_SLOTS; i++)
+    for (uint32_t i = LLG_FILE_FD_FIRST; i < LLG_FILE_SLOTS; i++)
         if (llg_file_mcd_channel_open(i) && llg_file_slots[i].name &&
             strcmp(llg_file_slots[i].name, path) == 0) {
             *open_fd = LLG_FILE_FD_TAG | i;
@@ -267,7 +267,7 @@ uint32_t llg_file_mcd_close(uint32_t mcd) {
     llg_file_init_table();
     if (mcd & LLG_FILE_FD_TAG) return mcd;
     uint32_t unclosed = 0;
-    for (unsigned i = LLG_FILE_STDOUT; i < LLG_FILE_MCD_END; i++) {
+    for (uint32_t i = LLG_FILE_STDOUT; i < LLG_FILE_MCD_END; i++) {
         uint32_t bit = llg_file_mcd_bit(i);
         if (!bit || !(mcd & bit)) continue;
         // 38.24: channel 1 (the tool's output and log) cannot be closed.
@@ -282,14 +282,14 @@ uint32_t llg_file_mcd_close(uint32_t mcd) {
 
 const char* llg_file_name(uint32_t descriptor) {
     llg_file_init_table();
-    unsigned slot = LLG_FILE_SLOTS;
+    uint32_t slot = LLG_FILE_SLOTS;
     if (descriptor & LLG_FILE_FD_TAG) {
         slot = descriptor & ~LLG_FILE_FD_TAG;
         if (slot >= LLG_FILE_SLOTS || (slot >= 3u && slot < LLG_FILE_FD_FIRST)) return NULL;
     } else {
         // A single-channel descriptor names exactly one channel.
         if (!descriptor || (descriptor & (descriptor - 1u))) return NULL;
-        for (unsigned i = LLG_FILE_STDOUT; i < LLG_FILE_MCD_END; i++)
+        for (uint32_t i = LLG_FILE_STDOUT; i < LLG_FILE_MCD_END; i++)
             if (llg_file_mcd_bit(i) == descriptor) slot = i;
         if (slot == LLG_FILE_SLOTS) return NULL;
     }
@@ -303,7 +303,7 @@ uint32_t llg_file_mcd_write(uint32_t mcd, const char* text, size_t length) {
     llg_file_init_table();
     if (mcd & LLG_FILE_FD_TAG) return 0;
     uint32_t written = 0;
-    for (unsigned i = LLG_FILE_STDOUT; i < LLG_FILE_MCD_END; i++) {
+    for (uint32_t i = LLG_FILE_STDOUT; i < LLG_FILE_MCD_END; i++) {
         uint32_t bit = llg_file_mcd_bit(i);
         if (!bit || !(mcd & bit) || !llg_file_mcd_channel_open(i)) continue;
         llg_file_slot_t* slot = &llg_file_slots[i];
@@ -323,7 +323,7 @@ uint32_t llg_file_mcd_flush(uint32_t mcd) {
     llg_file_init_table();
     if (mcd & LLG_FILE_FD_TAG) return 0;
     uint32_t flushed = 0;
-    for (unsigned i = LLG_FILE_STDOUT; i < LLG_FILE_MCD_END; i++) {
+    for (uint32_t i = LLG_FILE_STDOUT; i < LLG_FILE_MCD_END; i++) {
         uint32_t bit = llg_file_mcd_bit(i);
         if (!bit || !(mcd & bit) || !llg_file_mcd_channel_open(i)) continue;
         if (fflush(llg_file_slots[i].stream) != 0) {
@@ -335,11 +335,11 @@ uint32_t llg_file_mcd_flush(uint32_t mcd) {
     return flushed;
 }
 
-int llg_file_flush(uint32_t descriptor, int all) {
+int32_t llg_file_flush(uint32_t descriptor, int32_t all) {
     llg_file_init_table();
     if (!all && !llg_file_mask_valid(descriptor)) return -1;
-    int result = 0;
-    for (unsigned i = 0; i < LLG_FILE_SLOTS; i++) {
+    int32_t result = 0;
+    for (uint32_t i = 0; i < LLG_FILE_SLOTS; i++) {
         if (all ? (!llg_file_slots[i].open || i == LLG_FILE_STDIN)
                 : !llg_file_selected(descriptor, i)) continue;
         if (!llg_file_slots[i].open || !llg_file_slots[i].stream) {
@@ -368,7 +368,7 @@ void llg_file_rewind(uint32_t descriptor) {
 int64_t llg_file_tell(uint32_t descriptor) {
     llg_file_slot_t* slot = NULL;
     if (!llg_file_single_ordinary(descriptor, &slot)) return -1;
-    long position = ftell(slot->stream);
+    int64_t position = llg_file_tell64(slot->stream);
     if (position < 0) {
         llg_file_slot_failure(slot, "file tell failed");
         return -1;
@@ -377,10 +377,10 @@ int64_t llg_file_tell(uint32_t descriptor) {
         llg_file_slot_failure(slot, "file tell position precedes pushed-back characters");
         return -1;
     }
-    return (int64_t)position - (int64_t)slot->pushback_len;
+    return position - (int64_t)slot->pushback_len;
 }
 
-int llg_file_seek(uint32_t descriptor, sv4_t offset, sv4_t operation) {
+int32_t llg_file_seek(uint32_t descriptor, sv4_t offset, sv4_t operation) {
     llg_file_slot_t* slot = NULL;
     int64_t signed_offset;
     if (!llg_file_single_ordinary(descriptor, &slot) ||
@@ -389,7 +389,7 @@ int llg_file_seek(uint32_t descriptor, sv4_t offset, sv4_t operation) {
         llg_file_global_failure("invalid file seek arguments");
         return -1;
     }
-    int whence = (int)sv4_to_u64(operation);
+    int32_t whence = (int32_t)sv4_to_u64(operation);
     if (whence == SEEK_CUR) {
         if (signed_offset < INT64_MIN + (int64_t)slot->pushback_len) {
             llg_file_slot_failure(slot, "file seek offset underflow");
@@ -397,8 +397,7 @@ int llg_file_seek(uint32_t descriptor, sv4_t offset, sv4_t operation) {
         }
         signed_offset -= (int64_t)slot->pushback_len;
     }
-    if (signed_offset < (int64_t)LONG_MIN || signed_offset > (int64_t)LONG_MAX ||
-        fseek(slot->stream, (long)signed_offset, whence) != 0) {
+    if (llg_file_seek64(slot->stream, signed_offset, whence) != 0) {
         llg_file_slot_failure(slot, "file seek failed");
         return -1;
     }
@@ -412,9 +411,9 @@ int llg_file_seek(uint32_t descriptor, sv4_t offset, sv4_t operation) {
     return 0;
 }
 
-int llg_file_error(uint32_t descriptor, llg_string_t* message) {
+int32_t llg_file_error(uint32_t descriptor, llg_string_t* message) {
     const char* text = "";
-    int result = 0;
+    int32_t result = 0;
     llg_file_init_table();
     // A multichannel descriptor, or a file descriptor that is not open, has
     // no error status: the result is 0 and `str` keeps its value (decision
@@ -430,7 +429,7 @@ int llg_file_error(uint32_t descriptor, llg_string_t* message) {
         result = 1;
         text = llg_file_global_message;
     } else {
-        for (unsigned i = 0; i < LLG_FILE_SLOTS; i++) {
+        for (uint32_t i = 0; i < LLG_FILE_SLOTS; i++) {
             if (!llg_file_selected(descriptor, i)) continue;
             llg_file_slot_t* slot = &llg_file_slots[i];
             if (ferror(slot->stream)) llg_file_slot_failure(slot, "host stream error");
@@ -445,7 +444,7 @@ int llg_file_error(uint32_t descriptor, llg_string_t* message) {
     return result;
 }
 
-int llg_file_eof(uint32_t descriptor) {
+int32_t llg_file_eof(uint32_t descriptor) {
     llg_file_slot_t* slot = NULL;
     if (!llg_file_single_ordinary(descriptor, &slot)) return -1;
     return slot->eof != 0;
@@ -453,9 +452,9 @@ int llg_file_eof(uint32_t descriptor) {
 
 // ── File input ──────────────────────────────────────────────────────────────
 
-static int llg_file_getc_slot(llg_file_slot_t* slot) {
+static int32_t llg_file_getc_slot(llg_file_slot_t* slot) {
     if (!slot || !slot->open || !slot->stream) return EOF;
-    int value;
+    int32_t value;
     if (slot->pushback_len) {
         value = slot->pushback[--slot->pushback_len];
         slot->eof = 0;
@@ -471,14 +470,14 @@ static int llg_file_getc_slot(llg_file_slot_t* slot) {
     return value;
 }
 
-static int llg_file_ungetc_slot(llg_file_slot_t* slot, int value) {
+static int32_t llg_file_ungetc_slot(llg_file_slot_t* slot, int32_t value) {
     if (!slot || !slot->open || !slot->stream || value == EOF || value < 0 || value > UCHAR_MAX)
         return EOF;
     if (slot->pushback_len >= LLG_FILE_PUSHBACK) {
         llg_file_slot_failure(slot, "file input pushback limit exceeded");
         return EOF;
     }
-    slot->pushback[slot->pushback_len++] = (unsigned char)value;
+    slot->pushback[slot->pushback_len++] = (uint8_t)value;
     // A successful standard-library ungetc clears the stream EOF indicator;
     // mirror that behavior even though the bounded stack keeps bytes outside
     // the host FILE buffer.
@@ -487,13 +486,13 @@ static int llg_file_ungetc_slot(llg_file_slot_t* slot, int value) {
     return value;
 }
 
-int llg_file_getc(uint32_t descriptor) {
+int32_t llg_file_getc(uint32_t descriptor) {
     llg_file_slot_t* slot = NULL;
     if (!llg_file_single_ordinary(descriptor, &slot)) return EOF;
     return llg_file_getc_slot(slot);
 }
 
-int llg_file_ungetc(uint32_t descriptor, sv4_t character) {
+int32_t llg_file_ungetc(uint32_t descriptor, sv4_t character) {
     llg_file_slot_t* slot = NULL;
     int64_t value;
     if (!llg_file_single_ordinary(descriptor, &slot) ||
@@ -502,19 +501,19 @@ int llg_file_ungetc(uint32_t descriptor, sv4_t character) {
         return EOF;
     }
     // IEEE 1364-2001 17.2.4.1 / 1800-2009 21.3.4.1: success returns zero.
-    return llg_file_ungetc_slot(slot, (int)value) == EOF ? EOF : 0;
+    return llg_file_ungetc_slot(slot, (int32_t)value) == EOF ? EOF : 0;
 }
 
 // Read one line, or at most `limit` characters, into a fresh string.
-static int llg_file_gets_bounded(uint32_t descriptor, llg_string_t* target, size_t limit) {
+static int32_t llg_file_gets_bounded(uint32_t descriptor, llg_string_t* target, size_t limit) {
     llg_file_slot_t* slot = NULL;
     if (!target || !llg_file_single_ordinary(descriptor, &slot)) return 0;
     if (limit == 0) return 0;
     size_t capacity = limit < 128u ? limit : 128u;
     size_t length = 0;
-    unsigned char* bytes = (unsigned char*)llg_checked_malloc(capacity, 1, "file input line");
+    uint8_t* bytes = (uint8_t*)llg_checked_malloc(capacity, 1, "file input line");
     while (length < limit) {
-        int value = llg_file_getc_slot(slot);
+        int32_t value = llg_file_getc_slot(slot);
         if (value == EOF) break;
         if (length == capacity) {
             if (capacity > (SIZE_MAX / 2u)) {
@@ -522,14 +521,14 @@ static int llg_file_gets_bounded(uint32_t descriptor, llg_string_t* target, size
                 llg_fatal_allocation("file input line", capacity, 2u);
             }
             capacity = capacity * 2u < limit ? capacity * 2u : limit;
-            unsigned char* replacement = (unsigned char*)realloc(bytes, capacity);
+            uint8_t* replacement = (uint8_t*)realloc(bytes, capacity);
             if (!replacement) {
                 free(bytes);
                 llg_fatal_allocation("file input line", capacity, 1u);
             }
             bytes = replacement;
         }
-        bytes[length++] = (unsigned char)value;
+        bytes[length++] = (uint8_t)value;
         if (value == '\n') break;
     }
     if (length == 0) {
@@ -546,19 +545,19 @@ static int llg_file_gets_bounded(uint32_t descriptor, llg_string_t* target, size
     /* Commit owns the string before it notifies; no line buffer remains on
      * the abandoned stack if a dependency callback calls $finish. */
     llg_string_move(target, line);
-    return length > (size_t)INT_MAX ? INT_MAX : (int)length;
+    return length > (size_t)INT_MAX ? INT_MAX : (int32_t)length;
 }
 
-int llg_file_gets(uint32_t descriptor, llg_string_t* target) {
+int32_t llg_file_gets(uint32_t descriptor, llg_string_t* target) {
     return llg_file_gets_bounded(descriptor, target, SIZE_MAX);
 }
 
-int llg_file_gets_packed(uint32_t descriptor, llg_ref_t* target) {
+int32_t llg_file_gets_packed(uint32_t descriptor, llg_ref_t* target) {
     if (!target || target->width == 0) return 0;
     llg_string_t value = {0};
     // 17.2.4.2 / 21.3.4.2: the destination is filled with whole bytes; a most
     // significant partial byte does not count toward its size.
-    int result = llg_file_gets_bounded(descriptor, &value, target->width / 8u);
+    int32_t result = llg_file_gets_bounded(descriptor, &value, target->width / 8u);
     if (result) llg_ref_write_owned(target, llg_string_to_packed(value, target->width,
                                                             target->is_signed));
     else llg_string_destroy(&value);

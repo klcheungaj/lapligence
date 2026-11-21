@@ -47,12 +47,12 @@ static inline void llg_cond_wait(llg_cond_t* c, llg_mutex_t* m) {
 static inline void llg_cond_signal(llg_cond_t* c) { WakeConditionVariable(c); }
 static inline void llg_cond_broadcast(llg_cond_t* c) { WakeAllConditionVariable(c); }
 static inline llg_thread_id_t llg_thread_self(void) { return GetCurrentThreadId(); }
-static inline int llg_thread_equal(llg_thread_id_t a, llg_thread_id_t b) { return a == b; }
+static inline int32_t llg_thread_equal(llg_thread_id_t a, llg_thread_id_t b) { return a == b; }
 
 // Starts `fn(arg)` with the default stack size. Returns 0 on success, or
 // writes a description of the failure to `error` (NUL-terminated, truncated
 // to `error_size`) and returns nonzero.
-static inline int llg_thread_start(llg_thread_t* thread, llg_thread_fn fn, void* arg,
+static inline int32_t llg_thread_start(llg_thread_t* thread, llg_thread_fn fn, void* arg,
                                    char* error, size_t error_size) {
     *thread = CreateThread(NULL, 0, fn, arg, 0, NULL);
     if (*thread) return 0;
@@ -61,7 +61,7 @@ static inline int llg_thread_start(llg_thread_t* thread, llg_thread_fn fn, void*
 }
 // Like llg_thread_start with `stack_bytes` of reserved stack (committed as
 // it is touched).
-static inline int llg_thread_start_sized(llg_thread_t* thread, llg_thread_fn fn, void* arg,
+static inline int32_t llg_thread_start_sized(llg_thread_t* thread, llg_thread_fn fn, void* arg,
                                          size_t stack_bytes, char* error, size_t error_size) {
     *thread = CreateThread(NULL, stack_bytes, fn, arg, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
     if (*thread) return 0;
@@ -93,21 +93,21 @@ static inline void llg_cond_wait(llg_cond_t* c, llg_mutex_t* m) {
 static inline void llg_cond_signal(llg_cond_t* c) { (void)pthread_cond_signal(c); }
 static inline void llg_cond_broadcast(llg_cond_t* c) { (void)pthread_cond_broadcast(c); }
 static inline llg_thread_id_t llg_thread_self(void) { return pthread_self(); }
-static inline int llg_thread_equal(llg_thread_id_t a, llg_thread_id_t b) {
+static inline int32_t llg_thread_equal(llg_thread_id_t a, llg_thread_id_t b) {
     return pthread_equal(a, b);
 }
 
-static inline int llg_thread_start(llg_thread_t* thread, llg_thread_fn fn, void* arg,
+static inline int32_t llg_thread_start(llg_thread_t* thread, llg_thread_fn fn, void* arg,
                                    char* error, size_t error_size) {
-    int rc = pthread_create(thread, NULL, fn, arg);
+    int32_t rc = pthread_create(thread, NULL, fn, arg);
     if (rc == 0) return 0;
     (void)snprintf(error, error_size, "%s", strerror(rc));
     return 1;
 }
-static inline int llg_thread_start_sized(llg_thread_t* thread, llg_thread_fn fn, void* arg,
+static inline int32_t llg_thread_start_sized(llg_thread_t* thread, llg_thread_fn fn, void* arg,
                                          size_t stack_bytes, char* error, size_t error_size) {
     pthread_attr_t attributes;
-    int rc = pthread_attr_init(&attributes);
+    int32_t rc = pthread_attr_init(&attributes);
     if (rc == 0) {
         rc = pthread_attr_setstacksize(&attributes, stack_bytes);
         if (rc == 0) rc = pthread_create(thread, &attributes, fn, arg);

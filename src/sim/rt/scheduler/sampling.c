@@ -122,7 +122,7 @@ const sv4_t* llg_sampled_value(const sv4_t* signal) {
     return NULL;
 }
 
-int llg_sampled_copy(const sv4_t* signal, sv4_t* out) {
+int32_t llg_sampled_copy(const sv4_t* signal, sv4_t* out) {
     if (!out) return 0;
     const sv4_t* value = llg_sampled_value(signal);
     if (!value) return 0;
@@ -252,7 +252,7 @@ LLG_OUTLYING const double* llg_sampled_real_cells(const double* cells, uint64_t 
 // lists the cell it hits for the next Preponed sample and returns 1, or
 // returns 0 between images. Each cell is listed at most once per sample, so
 // `changed` never exceeds `count`.
-static LLG_OUTLYING int sampled_cells_written(uintptr_t address) {
+static LLG_OUTLYING int32_t sampled_cells_written(uintptr_t address) {
     size_t low = 0, high = g.sampled_cell_index_count;
     while (low < high) {
         size_t middle = low + (high - low) / 2;
@@ -280,7 +280,7 @@ static LLG_OUTLYING int sampled_cells_written(uintptr_t address) {
 static void sampled_cells_check(const llg_sampled_cells_t* item) {
     for (size_t index = 0; index < item->count; index++) {
         if (item->listed[index]) continue;
-        int same = item->real_image
+        int32_t same = item->real_image
                        ? memcmp(&item->real_image[index], &item->real_cells[index],
                                 sizeof(double)) == 0
                        : llg_sv4_width(item->image[index]) ==
@@ -387,7 +387,7 @@ static llg_sampled_clock_t* sampled_clock_new(uint64_t identity) {
     return clock;
 }
 
-int llg_sampled_clock_register_edge(uint64_t identity, sv4_t* signal, int edge,
+int32_t llg_sampled_clock_register_edge(uint64_t identity, sv4_t* signal, int32_t edge,
                                     llg_sampled_gate_fn gate, void* data) {
     if (!signal || (edge != LLG_EV_POSEDGE && edge != LLG_EV_NEGEDGE)) {
         report_sampled_failure("invalid sampled-value clock", identity);
@@ -406,7 +406,7 @@ int llg_sampled_clock_register_edge(uint64_t identity, sv4_t* signal, int edge,
     return 1;
 }
 
-int llg_sampled_clock_register_event(uint64_t identity, llg_sampled_gate_fn gate,
+int32_t llg_sampled_clock_register_event(uint64_t identity, llg_sampled_gate_fn gate,
                                      void* data) {
     llg_sampled_clock_t* clock = sampled_clock_new(identity);
     if (!clock) return 0;
@@ -415,7 +415,7 @@ int llg_sampled_clock_register_event(uint64_t identity, llg_sampled_gate_fn gate
     return 1;
 }
 
-int llg_sampled_domain_register(uint64_t identity, uint64_t clock_identity,
+int32_t llg_sampled_domain_register(uint64_t identity, uint64_t clock_identity,
                                 llg_sampled_domain_eval_fn value, void* data,
                                 uint64_t history_ticks) {
     llg_sampled_clock_t* clock = find_sampled_clock(clock_identity);
@@ -517,7 +517,7 @@ void llg_sampled_clock_tick(uint64_t identity) {
 }
 
 static void sampled_domain_clock_signal_changed(sv4_t* signal, sv4_t old,
-                                                sv4_t value, int deferred) {
+                                                sv4_t value, int32_t deferred) {
     for (llg_sampled_clock_t* clock = g.sampled_edge_clocks; clock;
          clock = clock->next_edge) {
         if (clock->signal != signal || !ev_matches_changed(old, value, clock->edge))
@@ -574,12 +574,12 @@ void llg_sampled_domain_past_to(sv4_t* dst, uint64_t identity, uint64_t ticks) {
     sv4_copy(dst, prior ? prior : &domain->initial);
 }
 
-static int sampled_domain_lsb_one(sv4_t value) {
+static int32_t sampled_domain_lsb_one(sv4_t value) {
     if (llg_sv4_width(value) == 0 || llg_sv4_word(value, 0, LLG_SV4_X) & 1ULL || llg_sv4_word(value, 0, LLG_SV4_Z) & 1ULL) return 0;
     return (llg_sv4_word(value, 0, LLG_SV4_BITS) & 1ULL) != 0;
 }
 
-static int sampled_domain_lsb_zero(sv4_t value) {
+static int32_t sampled_domain_lsb_zero(sv4_t value) {
     if (llg_sv4_width(value) == 0 || llg_sv4_word(value, 0, LLG_SV4_X) & 1ULL || llg_sv4_word(value, 0, LLG_SV4_Z) & 1ULL) return 0;
     return (llg_sv4_word(value, 0, LLG_SV4_BITS) & 1ULL) == 0;
 }
@@ -597,7 +597,7 @@ static const sv4_t* sampled_domain_current(llg_sampled_domain_t* domain) {
     return &domain->current;
 }
 
-int llg_sampled_domain_status(uint64_t identity, int kind) {
+int32_t llg_sampled_domain_status(uint64_t identity, int32_t kind) {
     llg_sampled_domain_t* domain = find_sampled_domain(identity);
     if (!domain) {
         report_sampled_failure("sampled-value domain is not registered", identity);
@@ -615,7 +615,7 @@ int llg_sampled_domain_status(uint64_t identity, int kind) {
         case 2: return sv4_same(current, previous);
         case 3: return !sv4_same(current, previous);
         default:
-            llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid sampled-value status kind %d", kind);
+            llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid sampled-value status kind %" PRId32, kind);
             llg_last_failure = 1;
             g.finish = 1;
             return 0;
@@ -667,7 +667,7 @@ static void clocking_publish_real(double* sample, double value) {
     clocking_sample_publication = 0;
 }
 
-int llg_clocking_sample(const sv4_t* source, sv4_t* sample) {
+int32_t llg_clocking_sample(const sv4_t* source, sv4_t* sample) {
     if (!sample) return 0;
     const sv4_t* value = llg_sampled_value(source);
     if (!value) return 0;
@@ -686,7 +686,7 @@ static void clocking_copy_observed(void* data) {
     free(copy);
 }
 
-int llg_clocking_sample_observed(sv4_t* source, sv4_t* sample) {
+int32_t llg_clocking_sample_observed(sv4_t* source, sv4_t* sample) {
     if (!source || !sample) return 0;
     if (!find_sampled_value(source)) {
         report_unregistered_sampled_signal();
@@ -721,7 +721,7 @@ static const sv4_t* clocking_history_value(const sv4_t* source, uint64_t ticks) 
     return selected ? &selected->value : &item->value;
 }
 
-int llg_clocking_sample_history(sv4_t* source, sv4_t* sample, uint64_t ticks) {
+int32_t llg_clocking_sample_history(sv4_t* source, sv4_t* sample, uint64_t ticks) {
     if (!source || !sample) return 0;
     const sv4_t* value = clocking_history_value(source, ticks);
     if (!value) return 0;
@@ -732,7 +732,7 @@ int llg_clocking_sample_history(sv4_t* source, sv4_t* sample, uint64_t ticks) {
 // Real clockvars are sampled from the 64-bit IEEE image their expression
 // keeps in packed storage, so they share the packed Preponed, Observed and
 // history entries; only the final store decodes the image.
-static int clocking_store_real(const sv4_t* image, double* sample) {
+static int32_t clocking_store_real(const sv4_t* image, double* sample) {
     if (!image || llg_sv4_width(*image) != 64) {
         llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "real clocking sample needs a 64-bit image");
         llg_last_failure = 1;
@@ -743,7 +743,7 @@ static int clocking_store_real(const sv4_t* image, double* sample) {
     return 1;
 }
 
-int llg_clocking_sample_real(const sv4_t* source, double* sample) {
+int32_t llg_clocking_sample_real(const sv4_t* source, double* sample) {
     if (!source || !sample) return 0;
     return clocking_store_real(llg_sampled_value(source), sample);
 }
@@ -759,7 +759,7 @@ static void clocking_copy_observed_real(void* data) {
     free(copy);
 }
 
-int llg_clocking_sample_observed_real(sv4_t* source, double* sample) {
+int32_t llg_clocking_sample_observed_real(sv4_t* source, double* sample) {
     if (!source || !sample) return 0;
     if (!find_sampled_value(source)) {
         report_unregistered_sampled_signal();
@@ -778,7 +778,7 @@ int llg_clocking_sample_observed_real(sv4_t* source, double* sample) {
     return 1;
 }
 
-int llg_clocking_sample_history_real(sv4_t* source, double* sample,
+int32_t llg_clocking_sample_history_real(sv4_t* source, double* sample,
                                      uint64_t ticks) {
     if (!source || !sample) return 0;
     const sv4_t* value = clocking_history_value(source, ticks);

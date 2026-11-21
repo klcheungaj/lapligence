@@ -1,5 +1,5 @@
 #include "internal.h"
-int llg_gmp_ref_view_valid(const llg_gmp_ref_view_t* view, const g4_t* parent,
+int32_t llg_gmp_ref_view_valid(const llg_gmp_ref_view_t* view, const g4_t* parent,
                            size_t* failed_check) {
     if (failed_check)
         *failed_check = 0;
@@ -19,7 +19,7 @@ int llg_gmp_ref_view_valid(const llg_gmp_ref_view_t* view, const g4_t* parent,
         g4_t tag = llg_gmp_sv4_part_select(receiver, left, right);
         g4_t expected = llg_gmp_sv4_from_u64(check->member_index, check->tag_width, 0);
         g4_t matches = llg_gmp_sv4_case_eq(tag, expected);
-        int valid = llg_gmp_sv4_to_bool(matches);
+        int32_t valid = llg_gmp_sv4_to_bool(matches);
         llg_gmp_sv4_destroy(&matches);
         llg_gmp_sv4_destroy(&expected);
         llg_gmp_sv4_destroy(&tag);
@@ -78,7 +78,7 @@ g4_t llg_gmp_ref_read(const llg_gmp_ref_t* ref) {
             llg_gmp_sv4_fail("invalid reference view");
         }
         g4_t parent = llg_gmp_ref_read(view->parent);
-        int valid = (llg_gmp_ref_kind_t)ref->kind != LLG_GMP_REF_TAGGED_VIEW ||
+        int32_t valid = (llg_gmp_ref_kind_t)ref->kind != LLG_GMP_REF_TAGGED_VIEW ||
                     llg_gmp_ref_view_valid(view, &parent, NULL);
         g4_t result = valid ? llg_gmp_sv4_select_plan_read(parent, &view->plan)
                             : (ref->two_state ? llg_gmp_sv4_zero(ref->width, ref->is_signed)

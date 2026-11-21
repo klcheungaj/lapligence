@@ -28,7 +28,7 @@ g4_t llg_gmp_sv4_array_conditional_merge_wide(g4_t a, g4_t b, g4_t element_defau
         return result;
     }
     for (uint32_t offset = 0; offset < a.width; offset += stride) {
-        int equal = 1;
+        int32_t equal = 1;
         for (uint32_t bit = 0; bit < stride;) {
             uint32_t take = stride - bit;
             if (take > 64u)
@@ -65,7 +65,7 @@ g4_t llg_gmp_sv4_record_conditional_merge(g4_t a, g4_t b, g4_t period_default,
             uint32_t end = start + 1;
             while (end < period && !((starts[end / 64u] >> (end % 64u)) & 1u))
                 ++end;
-            int equal = 1;
+            int32_t equal = 1;
             for (uint32_t bit = start; bit < end;) {
                 uint32_t take = end - bit;
                 if (take > 64u)
@@ -133,7 +133,7 @@ g4_t llg_gmp_sv4_repeat_count_wide(g4_t value) {
     value.is_signed = 0;
     return llg_gmp_sv4_clone(&value);
 }
-static g4_t g4_stream(g4_t value, uint32_t slice, int reverse) {
+static g4_t g4_stream(g4_t value, uint32_t slice, int32_t reverse) {
     if (!slice)
         llg_gmp_sv4_fail("zero streaming slice size");
     if (!reverse || !value.width || slice >= value.width) {
@@ -181,6 +181,6 @@ static g4_t g4_stream(g4_t value, uint32_t slice, int reverse) {
     }
     return result;
 }
-g4_t llg_gmp_sv4_stream_wide(g4_t value, uint32_t slice, int right_to_left) {
+g4_t llg_gmp_sv4_stream_wide(g4_t value, uint32_t slice, int32_t right_to_left) {
     return g4_stream(value, slice, right_to_left);
 }

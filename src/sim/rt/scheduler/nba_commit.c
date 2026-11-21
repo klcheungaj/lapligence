@@ -1,5 +1,5 @@
 
-static int nba_due(llg_region_t region) {
+static int32_t nba_due(llg_region_t region) {
     promote_delayed_nbas();
     return g.nba_queues[region].head != NULL;
 }
@@ -9,7 +9,7 @@ static int nba_due(llg_region_t region) {
 // retag after issue makes the queued member write a runtime error; the
 // write is dropped rather than storing one member's payload under another
 // member's tag (SV 7.3.2).
-static int nba_tag_commit_valid(const llg_ref_view_t* view, const sv4_t* target) {
+static int32_t nba_tag_commit_valid(const llg_ref_view_t* view, const sv4_t* target) {
     size_t failed = 0;
     if (llg_ref_view_valid(view, target, &failed)) return 1;
     const char* member = "<unknown>";
@@ -67,7 +67,7 @@ static void apply_nba_target(llg_nba_t* next) {
             real_write(next->real_target, next->real_value);
     } else {
         sv4_t* target = next->target;
-        int forced = 0;
+        int32_t forced = 0;
         if (next->net_target) {
             if (next->net_slot < 0 || next->net_slot >= next->net_target->n_drivers)
                 return;
@@ -150,7 +150,7 @@ static void commit_nbas(llg_region_t region) {
     llg_nba_queue_t* queue = &g.nba_queues[region];
     // Updates that matured from an earlier slot lead the queue and are a batch
     // of their own: a later update of this slot undoing one is still a change.
-    int matured = queue->head && queue->head->sequence < g.nba_slot_sequence;
+    int32_t matured = queue->head && queue->head->sequence < g.nba_slot_sequence;
     change_defer_active = 1;
     while (queue->head) {
         llg_nba_t* next = queue->head;

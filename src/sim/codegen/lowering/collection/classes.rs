@@ -486,8 +486,7 @@ impl<'a> Codegen<'a> {
                             });
                             self.class_static_objects.insert(child, index);
                             // A static property initializes once before any
-                            // process (SV 6.8), in the static schedule with
-                            // the other declarations it reads or that read it.
+                            // process (SV 6.8), in the static schedule.
                             if let Some(initializer) = self.db.var_initializer(child) {
                                 self.reserve_initializer_order(child);
                                 self.string_object_initializers.push((

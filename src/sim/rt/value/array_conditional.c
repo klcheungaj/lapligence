@@ -11,10 +11,10 @@ sv4_t sv4_array_conditional_merge(sv4_t a, sv4_t b, sv4_t element_default) {
     }
     sv4_t result = sv4_zero(a.width, 0);
     for (uint32_t offset = 0; offset < a.width; offset += stride) {
-        int equal = 1;
+        int32_t equal = 1;
         for (uint32_t i = 0; i < stride; ++i) {
-            int left = sv4_lsb_bit(a, (int)(offset + i));
-            int right = sv4_lsb_bit(b, (int)(offset + i));
+            int32_t left = sv4_lsb_bit(a, (int32_t)(offset + i));
+            int32_t right = sv4_lsb_bit(b, (int32_t)(offset + i));
             // A comparison containing X/Z is not known true, even when
             // the raw state planes match. Do not substitute case equality.
             if (left >= 2 || right >= 2 || left != right) {
@@ -41,11 +41,11 @@ sv4_t sv4_record_conditional_merge(sv4_t a, sv4_t b, sv4_t period_default,
     for (uint32_t base = 0; base < a.width; base += period) {
         for (uint32_t start = 0; start < period;) {
             uint32_t end = start + 1;
-            while (end < period && sv4_lsb_bit(leaf_starts, (int)end) != 1) ++end;
-            int equal = 1;
+            while (end < period && sv4_lsb_bit(leaf_starts, (int32_t)end) != 1) ++end;
+            int32_t equal = 1;
             for (uint32_t i = start; i < end; ++i) {
-                int left = sv4_lsb_bit(a, (int)(base + i));
-                int right = sv4_lsb_bit(b, (int)(base + i));
+                int32_t left = sv4_lsb_bit(a, (int32_t)(base + i));
+                int32_t right = sv4_lsb_bit(b, (int32_t)(base + i));
                 // As for arrays: X/Z is never a known match.
                 if (left >= 2 || right >= 2 || left != right) {
                     equal = 0;

@@ -1,34 +1,34 @@
 
-static int llg_method_is_index(int method) {
+static int32_t llg_method_is_index(int32_t method) {
     return method == LLG_CONTAINER_METHOD_FIND_INDEX ||
            method == LLG_CONTAINER_METHOD_FIND_FIRST_INDEX ||
            method == LLG_CONTAINER_METHOD_FIND_LAST_INDEX ||
            method == LLG_CONTAINER_METHOD_UNIQUE_INDEX;
 }
 
-static int llg_method_is_locator(int method) {
+static int32_t llg_method_is_locator(int32_t method) {
     return method >= LLG_CONTAINER_METHOD_FIND &&
            method <= LLG_CONTAINER_METHOD_FIND_LAST_INDEX;
 }
 
-static int llg_method_is_last(int method) {
+static int32_t llg_method_is_last(int32_t method) {
     return method == LLG_CONTAINER_METHOD_FIND_LAST ||
            method == LLG_CONTAINER_METHOD_FIND_LAST_INDEX;
 }
 
-static int llg_method_is_first_only(int method) {
+static int32_t llg_method_is_first_only(int32_t method) {
     return method == LLG_CONTAINER_METHOD_FIND_FIRST ||
            method == LLG_CONTAINER_METHOD_FIND_FIRST_INDEX ||
            method == LLG_CONTAINER_METHOD_FIND_LAST ||
            method == LLG_CONTAINER_METHOD_FIND_LAST_INDEX;
 }
 
-static void llg_method_distinct_sv4(unsigned char* keep, const sv4_t* keys,
+static void llg_method_distinct_sv4(uint8_t* keep, const sv4_t* keys,
                                     size_t count);
 
 static void llg_method_assign_values(llg_queue_t* dst, const sv4_t* values,
                                      const sv4_t* indices, size_t count,
-                                     int method, llg_container_eval_fn eval,
+                                     int32_t method, llg_container_eval_fn eval,
                                      void* context) {
     if (!dst || (!values && count))
         llg_container_fatal("malformed array-method result");
@@ -47,7 +47,7 @@ static void llg_method_assign_values(llg_queue_t* dst, const sv4_t* values,
                     : sv4_from_u64((uint64_t)index, 32, 1);
                 sv4_t selected = llg_container_eval(
                     eval, values[index], item_index, context);
-                int selected_bool = sv4_to_bool(selected);
+                int32_t selected_bool = sv4_to_bool(selected);
                 sv4_destroy(&selected);
                 sv4_destroy(&item_index);
                 if (selected_bool) {
@@ -82,7 +82,7 @@ static void llg_method_assign_values(llg_queue_t* dst, const sv4_t* values,
                 // A key with an X or Z bit orders below every known key and
                 // equal to another such key, so the extreme does not depend
                 // on the order of the elements (the first of equals wins).
-                int replace;
+                int32_t replace;
                 if (sv4_is_unknown(best_key)) {
                     replace = method == LLG_CONTAINER_METHOD_MAX &&
                               !sv4_is_unknown(key);
@@ -111,7 +111,7 @@ static void llg_method_assign_values(llg_queue_t* dst, const sv4_t* values,
         // Keys are evaluated once each in index order; the first position of
         // every distinct key is kept, found by hashing in expected O(n).
         sv4_t* keys = llg_alloc_items(count, sizeof(*keys));
-        unsigned char* keep = llg_alloc_items(count, sizeof(*keep));
+        uint8_t* keep = llg_alloc_items(count, sizeof(*keep));
         if (count) memset(keep, 0, count);
         for (size_t index = 0; index < count; ++index) {
             sv4_t item_index = indices
@@ -141,7 +141,7 @@ static void llg_method_assign_values(llg_queue_t* dst, const sv4_t* values,
 }
 
 void llg_dyn_method_assign(llg_queue_t* dst, const llg_dyn_array_t* src,
-                           int method, llg_container_eval_fn eval,
+                           int32_t method, llg_container_eval_fn eval,
                            void* context) {
     if (!src) llg_container_fatal("null dynamic-array method source");
     llg_method_assign_values(dst, src->data, NULL, src->size, method, eval,
@@ -149,7 +149,7 @@ void llg_dyn_method_assign(llg_queue_t* dst, const llg_dyn_array_t* src,
 }
 
 void llg_queue_method_assign(llg_queue_t* dst, const llg_queue_t* src,
-                             int method, llg_container_eval_fn eval,
+                             int32_t method, llg_container_eval_fn eval,
                              void* context) {
     if (!src) llg_container_fatal("null queue method source");
     llg_method_assign_values(dst, src->data, NULL, src->size, method, eval,
@@ -157,7 +157,7 @@ void llg_queue_method_assign(llg_queue_t* dst, const llg_queue_t* src,
 }
 
 void llg_assoc_method_assign(llg_queue_t* dst, const llg_assoc_t* src,
-                             int method, llg_container_eval_fn eval,
+                             int32_t method, llg_container_eval_fn eval,
                              void* context) {
     if (!dst || !src)
         llg_container_fatal("null associative-array method source or result");
@@ -185,7 +185,7 @@ void llg_assoc_method_assign(llg_queue_t* dst, const llg_assoc_t* src,
 static llg_rng_state_t llg_container_rng_state = {
     UINT64_C(0), UINT64_C(0), UINT64_C(0)
 };
-static int llg_container_rng_initialized;
+static int32_t llg_container_rng_initialized;
 
 static llg_rng_state_t* (*llg_container_rng_source)(void);
 
@@ -213,18 +213,18 @@ static llg_rng_state_t* llg_container_rng(void) {
 typedef struct {
     const sv4_t* keys;
     const uint64_t* fast;    // order-preserving keys when all share one <=64 bit shape
-    int descending;
+    int32_t descending;
 } llg_sort_ctx_t;
 
 // Word `index` of a known key extended to `width` bits (sign-extended only when
 // the comparison is signed), matching the packed relational operators.
-static uint64_t llg_sort_key_word(sv4_t key, uint32_t width, int sign_extend,
+static uint64_t llg_sort_key_word(sv4_t key, uint32_t width, int32_t sign_extend,
                                   size_t index) {
     uint32_t own = llg_sv4_width(key);
     uint64_t word = llg_sv4_word(key, index, LLG_SV4_BITS);
     if (sign_extend && own && own < width) {
         size_t top = (own - 1) / 64;
-        unsigned offset = (unsigned)((own - 1) % 64);
+        uint32_t offset = (uint32_t)((own - 1) % 64);
         if ((llg_sv4_word(key, top, LLG_SV4_BITS) >> offset) & 1u) {
             if (index == top && offset < 63) word |= ~UINT64_C(0) << (offset + 1);
             else if (index > top) word = ~UINT64_C(0);
@@ -235,25 +235,25 @@ static uint64_t llg_sort_key_word(sv4_t key, uint32_t width, int sign_extend,
     return word;
 }
 
-static int llg_sort_key_negative(sv4_t key) {
+static int32_t llg_sort_key_negative(sv4_t key) {
     uint32_t width = llg_sv4_width(key);
     if (!llg_sv4_signed(key) || !width) return 0;
-    return (int)((llg_sv4_word(key, (width - 1) / 64, LLG_SV4_BITS) >>
+    return (int32_t)((llg_sv4_word(key, (width - 1) / 64, LLG_SV4_BITS) >>
                   ((width - 1) % 64)) & 1u);
 }
 
 // Strict "a < b" for known keys; operand widths and signs follow sv4_lt.
-static int llg_sort_key_less(sv4_t a, sv4_t b) {
+static int32_t llg_sort_key_less(sv4_t a, sv4_t b) {
     uint32_t width = llg_sv4_width(a) > llg_sv4_width(b) ? llg_sv4_width(a)
                                                          : llg_sv4_width(b);
-    int sign_extend = llg_sv4_signed(a) && llg_sv4_signed(b);
+    int32_t sign_extend = llg_sv4_signed(a) && llg_sv4_signed(b);
     for (size_t word = width ? (width - 1) / 64 + 1 : 0; word-- > 0;) {
         uint64_t left = llg_sort_key_word(a, width, sign_extend, word);
         uint64_t right = llg_sort_key_word(b, width, sign_extend, word);
         if (left == right) continue;
         if (sign_extend) {
-            int left_negative = llg_sort_key_negative(a);
-            int right_negative = llg_sort_key_negative(b);
+            int32_t left_negative = llg_sort_key_negative(a);
+            int32_t right_negative = llg_sort_key_negative(b);
             if (left_negative != right_negative) return left_negative;
         }
         return left < right;
@@ -263,7 +263,7 @@ static int llg_sort_key_less(sv4_t a, sv4_t b) {
 
 // True when element `later` must be placed before `earlier`; strictness keeps
 // equal keys in their original order, for rsort as well.
-static int llg_sort_before(const llg_sort_ctx_t* ctx, size_t later,
+static int32_t llg_sort_before(const llg_sort_ctx_t* ctx, size_t later,
                            size_t earlier) {
     if (ctx->descending) {
         size_t swap = later;
@@ -304,15 +304,15 @@ static void llg_sort_merge(const llg_sort_ctx_t* ctx, size_t* order,
 // Order the positions [0, count) of `keys`: on return order[i] names the
 // original position whose element belongs at i. `scratch` holds count entries.
 // Returns whether any element moves.
-static int llg_sort_permutation(const sv4_t* keys, size_t count,
-                                int descending, size_t* order,
+static int32_t llg_sort_permutation(const sv4_t* keys, size_t count,
+                                int32_t descending, size_t* order,
                                 size_t* scratch) {
     for (size_t i = 0; i < count; ++i) order[i] = i;
     if (count < 2) return 0;
 
     uint32_t shape_width = llg_sv4_width(keys[0]);
-    int shape_signed = llg_sv4_signed(keys[0]) != 0;
-    int uniform = shape_width <= 64;
+    int32_t shape_signed = llg_sv4_signed(keys[0]) != 0;
+    int32_t uniform = shape_width <= 64;
     for (size_t i = 1; uniform && i < count; ++i)
         uniform = llg_sv4_width(keys[i]) == shape_width &&
                   (llg_sv4_signed(keys[i]) != 0) == shape_signed;
@@ -342,9 +342,9 @@ static int llg_sort_permutation(const sv4_t* keys, size_t count,
 
 // Returns whether any element moved. `item.index` is the element's position
 // before sorting (LRM 7.12.4), so keys do not depend on the sort progress.
-static int llg_method_sort(sv4_t* data, uint64_t* element_ids, size_t count,
+static int32_t llg_method_sort(sv4_t* data, uint64_t* element_ids, size_t count,
                            llg_container_eval_fn eval, void* context,
-                           int descending) {
+                           int32_t descending) {
     if (count < 2) return 0;
     size_t* order = llg_alloc_items(count, 2 * sizeof(*order));
     size_t* scratch = order + count;
@@ -360,7 +360,7 @@ static int llg_method_sort(sv4_t* data, uint64_t* element_ids, size_t count,
         }
     }
     const sv4_t* keys = owned_keys ? owned_keys : data;
-    int changed = llg_sort_permutation(keys, count, descending, order, scratch);
+    int32_t changed = llg_sort_permutation(keys, count, descending, order, scratch);
 
     for (size_t i = 0; changed && i < count; ++i) {
         if (order[i] == i) continue;
@@ -404,7 +404,7 @@ void llg_fixed_order_init(llg_fixed_order_t* order, uint64_t count,
     for (size_t i = 0; i < cells; ++i) order->row[i] = (sv4_t)SV4_EMPTY;
 }
 
-int llg_fixed_order_sort(llg_fixed_order_t* order, int descending) {
+int32_t llg_fixed_order_sort(llg_fixed_order_t* order, int32_t descending) {
     if (!order || (order->count && (!order->keys || !order->order)))
         llg_container_fatal("malformed fixed-array ordering workspace");
     return llg_sort_permutation(order->keys, order->count, descending,
@@ -430,13 +430,13 @@ void llg_fixed_order_destroy(void* object) {
     order->row_cells = 0;
 }
 
-static int llg_method_reorder(sv4_t* data, uint64_t* element_ids,
-                              size_t count, int method,
+static int32_t llg_method_reorder(sv4_t* data, uint64_t* element_ids,
+                              size_t count, int32_t method,
                               llg_container_eval_fn eval, void* context) {
     if (!data && count)
         llg_container_fatal("malformed array-method storage");
     if (method == LLG_CONTAINER_METHOD_REVERSE) {
-        int changed = 0;
+        int32_t changed = 0;
         for (size_t left = 0; left < count / 2; ++left) {
             size_t right = count - left - 1;
             if (!sv4_same(data[left], data[right]) ||
@@ -455,7 +455,7 @@ static int llg_method_reorder(sv4_t* data, uint64_t* element_ids,
         return changed;
     }
     if (method == LLG_CONTAINER_METHOD_SHUFFLE) {
-        int changed = 0;
+        int32_t changed = 0;
         llg_rng_state_t* rng = count > 1 ? llg_container_rng() : NULL;
         for (size_t index = count; index > 1; --index) {
             if (index > UINT32_MAX)
@@ -485,20 +485,20 @@ static int llg_method_reorder(sv4_t* data, uint64_t* element_ids,
                            method == LLG_CONTAINER_METHOD_RSORT);
 }
 
-void llg_dyn_method(llg_dyn_array_t* array, int method,
+void llg_dyn_method(llg_dyn_array_t* array, int32_t method,
                     llg_container_eval_fn eval, void* context) {
     if (!array) llg_container_fatal("null dynamic-array method target");
-    int changed = llg_method_reorder(array->data, NULL, array->size, method,
+    int32_t changed = llg_method_reorder(array->data, NULL, array->size, method,
                                      eval, context);
     if (changed)
         llg_notify(array->notify, array->contents_dependency,
                    array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
 }
 
-void llg_queue_method(llg_queue_t* queue, int method,
+void llg_queue_method(llg_queue_t* queue, int32_t method,
                       llg_container_eval_fn eval, void* context) {
     if (!queue) llg_container_fatal("null queue method target");
-    int changed = llg_method_reorder(queue->data, queue->element_ids,
+    int32_t changed = llg_method_reorder(queue->data, queue->element_ids,
                                      queue->size, method, eval, context);
     if (changed)
         llg_notify(queue->notify, queue->contents_dependency,
@@ -507,14 +507,14 @@ void llg_queue_method(llg_queue_t* queue, int method,
 
 // True when real key `later` must be placed before `earlier`; strictness
 // keeps equal keys (including -0.0 and +0.0) in their original order.
-static int llg_real_sort_before(const double* keys, int descending,
+static int32_t llg_real_sort_before(const double* keys, int32_t descending,
                                 size_t later, size_t earlier) {
     return descending ? keys[later] > keys[earlier]
                       : keys[later] < keys[earlier];
 }
 
 // Stable bottom-up merge of order[0, count) by real keys.
-static void llg_real_sort_merge(const double* keys, int descending,
+static void llg_real_sort_merge(const double* keys, int32_t descending,
                                 size_t* order, size_t* scratch, size_t count) {
     size_t* source = order;
     size_t* target = scratch;
@@ -540,7 +540,7 @@ static void llg_real_sort_merge(const double* keys, int descending,
     if (source != order) memcpy(order, source, count * sizeof(*order));
 }
 
-int llg_real_sort_order(const double* keys, size_t count, int descending,
+int32_t llg_real_sort_order(const double* keys, size_t count, int32_t descending,
                         size_t* order) {
     if (count && (!keys || !order))
         llg_container_fatal("malformed real ordering workspace");
@@ -559,8 +559,8 @@ int llg_real_sort_order(const double* keys, size_t count, int descending,
     return 0;
 }
 
-static int llg_value_reorder(llg_value_t* data, size_t count,
-                                  const llg_value_desc_t* element, int method) {
+static int32_t llg_value_reorder(llg_value_t* data, size_t count,
+                                  const llg_value_desc_t* element, int32_t method) {
     if (count && (!data || !element))
         llg_container_fatal("malformed recursive array-method target");
     /* Reverse and shuffle move whole descriptors and suit every element
@@ -572,7 +572,7 @@ static int llg_value_reorder(llg_value_t* data, size_t count,
     if (count < 2) return 0;
     if (method == LLG_CONTAINER_METHOD_REVERSE ||
         method == LLG_CONTAINER_METHOD_SHUFFLE) {
-        int changed = 0;
+        int32_t changed = 0;
         if (method == LLG_CONTAINER_METHOD_REVERSE) {
             for (size_t left = 0; left < count / 2; ++left) {
                 size_t right = count - left - 1;
@@ -603,7 +603,7 @@ static int llg_value_reorder(llg_value_t* data, size_t count,
     double* keys = llg_alloc_items(count, sizeof(*keys));
     size_t* order = llg_alloc_items(count, 2 * sizeof(*order));
     for (size_t i = 0; i < count; ++i) keys[i] = data[i].value.real;
-    int changed = llg_real_sort_order(keys, count,
+    int32_t changed = llg_real_sort_order(keys, count,
                                       method == LLG_CONTAINER_METHOD_RSORT,
                                       order);
     for (size_t i = 0; changed && i < count; ++i) {
@@ -626,10 +626,10 @@ static int llg_value_reorder(llg_value_t* data, size_t count,
     return changed;
 }
 
-void llg_dyn_value_method(llg_dyn_value_array_t* array, int method) {
+void llg_dyn_value_method(llg_dyn_value_array_t* array, int32_t method) {
     if (!array) llg_container_fatal("null dynamic-array method target");
     llg_native_refs_mark(array->references, array->data);
-    int changed = llg_value_reorder(array->data, array->size, array->element,
+    int32_t changed = llg_value_reorder(array->data, array->size, array->element,
                                     method);
     llg_native_refs_unmark(array->references, array->data, array->size,
                            array->element);
@@ -638,10 +638,10 @@ void llg_dyn_value_method(llg_dyn_value_array_t* array, int method) {
                    array->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
 }
 
-void llg_queue_value_method(llg_queue_value_array_t* queue, int method) {
+void llg_queue_value_method(llg_queue_value_array_t* queue, int32_t method) {
     if (!queue) llg_container_fatal("null queue method target");
     llg_native_refs_mark(queue->references, queue->data);
-    int changed = llg_value_reorder(queue->data, queue->size, queue->element,
+    int32_t changed = llg_value_reorder(queue->data, queue->size, queue->element,
                                     method);
     llg_native_refs_unmark(queue->references, queue->data, queue->size,
                            queue->element);
@@ -655,7 +655,7 @@ void llg_queue_value_method(llg_queue_value_array_t* queue, int method) {
 // Positions of the real elements selected by a queue-valued method, in the
 // result order. Returns the number of positions written to `selected`.
 static size_t llg_real_method_select(const llg_value_t* data, size_t count,
-                                     int method,
+                                     int32_t method,
                                      llg_container_real_eval_fn eval,
                                      void* context, size_t* selected) {
     if (count && !data) llg_container_fatal("malformed real array-method source");
@@ -670,7 +670,7 @@ static size_t llg_real_method_select(const llg_value_t* data, size_t count,
             sv4_t item_index = sv4_from_u64((uint64_t)index, 32, 1);
             sv4_t truth = (sv4_t)SV4_EMPTY;
             eval(&truth, data[index].value.real, item_index, context);
-            int known_true = sv4_to_bool(truth);
+            int32_t known_true = sv4_to_bool(truth);
             sv4_destroy(&truth);
             sv4_destroy(&item_index);
             if (!known_true) continue;
@@ -700,15 +700,15 @@ static size_t llg_real_method_select(const llg_value_t* data, size_t count,
     double* keys = llg_alloc_items(count, sizeof(*keys));
     size_t* positions = llg_alloc_items(count, sizeof(*positions));
     size_t* order = llg_alloc_items(count, 2 * sizeof(*order));
-    unsigned char* keep = llg_alloc_items(count, sizeof(*keep));
+    uint8_t* keep = llg_alloc_items(count, sizeof(*keep));
     size_t known = 0;
     // Branch-free compaction: every iteration stores, and a NaN slot is
     // overwritten by the next known value. Conditional stores here made GCC
     // -O2 report the keys as maybe-uninitialized at the sort call.
     for (size_t index = 0; index < count; ++index) {
         double value = data[index].value.real;
-        int is_nan = value != value;
-        keep[index] = (unsigned char)is_nan;
+        int32_t is_nan = value != value;
+        keep[index] = (uint8_t)is_nan;
         keys[known] = value;
         positions[known] = index;
         known += !is_nan;
@@ -728,7 +728,7 @@ static size_t llg_real_method_select(const llg_value_t* data, size_t count,
 
 void llg_real_method_assign_values(llg_queue_value_array_t* dst,
                                    const llg_value_t* data, size_t count,
-                                   int method, llg_container_real_eval_fn eval,
+                                   int32_t method, llg_container_real_eval_fn eval,
                                    void* context) {
     if (!dst || llg_method_is_index(method))
         llg_container_fatal("malformed real array-method result");
@@ -745,7 +745,7 @@ void llg_real_method_assign_values(llg_queue_value_array_t* dst,
 
 void llg_real_method_assign_indices(llg_queue_t* dst_indices,
                                     const llg_value_t* data, size_t count,
-                                    int method, llg_container_real_eval_fn eval,
+                                    int32_t method, llg_container_real_eval_fn eval,
                                     void* context) {
     if (!dst_indices || !llg_method_is_index(method))
         llg_container_fatal("malformed real array-method index result");

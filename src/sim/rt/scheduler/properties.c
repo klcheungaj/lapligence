@@ -86,7 +86,7 @@ static uint32_t property_call_target(const llg_property_program_t* program, uint
 
 static llg_property_inst_t* property_inst_new(const llg_property_program_t* program,
                                               uint32_t node, llg_property_launch_t launch,
-                                              int strict, llg_property_locals_t* locals) {
+                                              int32_t strict, llg_property_locals_t* locals) {
     llg_property_inst_t* inst = g.property_inst_pool;
     if (inst) {
         g.property_inst_pool = inst->next;
@@ -137,7 +137,7 @@ static void free_property_pool(void) {
     }
 }
 
-static void property_resolve(llg_property_inst_t* inst, int status, int nonvacuous) {
+static void property_resolve(llg_property_inst_t* inst, int32_t status, int32_t nonvacuous) {
     inst->status = (uint8_t)status;
     inst->nonvacuous = nonvacuous ||
                        (status == LLG_PROP_TRUE ? inst->carry_true : inst->carry_false);
@@ -152,8 +152,8 @@ static void property_resolve(llg_property_inst_t* inst, int status, int nonvacuo
 
 /* Resolve `inst` with an outcome that keeps the cover vacuity of the operand
  * or condition it comes from (see llg_property_inst_t::cover_vacuous). */
-static void property_pass_on(llg_property_inst_t* inst, int status, int nonvacuous,
-                             int cover_vacuous) {
+static void property_pass_on(llg_property_inst_t* inst, int32_t status, int32_t nonvacuous,
+                             int32_t cover_vacuous) {
     property_resolve(inst, status, nonvacuous);
     inst->cover_vacuous = (uint8_t)(cover_vacuous && !inst->carry_hit);
 }
@@ -175,7 +175,7 @@ static void property_drop_child(llg_property_inst_t* inst, llg_property_inst_t**
  * never cover-vacuous. The instance keeps its place among its siblings, so
  * no parent needs to know. */
 static void property_collapse(llg_property_inst_t* inst, llg_property_inst_t* child,
-                              int carry_true, int carry_false, int hit) {
+                              int32_t carry_true, int32_t carry_false, int32_t hit) {
     llg_property_inst_t** link = &inst->children;
     while (*link != child) link = &(*link)->next;
     *link = child->next;
@@ -201,9 +201,9 @@ static void property_collapse(llg_property_inst_t* inst, llg_property_inst_t* ch
     sequence_thread_release();
 }
 
-static int property_atom(llg_property_ctx_t* ctx, uint32_t atom) {
+static int32_t property_atom(llg_property_ctx_t* ctx, uint32_t atom) {
     if (!ctx->program->atom || atom >= ctx->program->atom_count) {
-        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid property atom %u", (unsigned)atom);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid property atom %" PRIu32, (uint32_t)atom);
         llg_last_failure = 1;
         g.finish = 1;
         return 0;
@@ -213,7 +213,7 @@ static int property_atom(llg_property_ctx_t* ctx, uint32_t atom) {
 
 /* The clock of a node: the leading clock of a singly clocked program. */
 static void property_node_clock(const llg_property_ctx_t* ctx, const llg_property_node_t* node,
-                                sv4_t** clock, int* edge) {
+                                sv4_t** clock, int32_t* edge) {
     if (ctx->program->clock_count) {
         const llg_property_clock_t* entry = &ctx->program->clocks[node->clock];
         *clock = entry->signal;
@@ -226,7 +226,7 @@ static void property_node_clock(const llg_property_ctx_t* ctx, const llg_propert
 
 /* Whether a tick of the node's own clock is at or after (strictly after)
  * its start point. */
-static int property_reached(const llg_property_inst_t* inst, sv4_t* clock, int edge,
+static int32_t property_reached(const llg_property_inst_t* inst, sv4_t* clock, int32_t edge,
                             const llg_assertion_clock_event_t* event) {
     if (inst->launch.clock == clock && inst->launch.edge == edge)
         return inst->strict ? event->tick > inst->launch.tick : event->tick >= inst->launch.tick;
@@ -239,7 +239,7 @@ static int property_reached(const llg_property_inst_t* inst, sv4_t* clock, int e
  * clock's event (one time step is one letter of Annex F). */
 static const llg_assertion_clock_event_t* property_first_tick(const llg_property_ctx_t* ctx,
                                                               const llg_property_inst_t* inst,
-                                                              sv4_t* clock, int edge) {
+                                                              sv4_t* clock, int32_t edge) {
     const llg_assertion_clock_event_t* event = &ctx->event;
     if (event->signal == clock && event->edge == edge)
         return property_reached(inst, clock, edge, event) ? event : NULL;
@@ -270,16 +270,16 @@ static llg_sequence_attempt_t* property_sequence_new(llg_property_ctx_t* ctx,
     return attempt;
 }
 
-static int property_sequence_step(llg_property_ctx_t* ctx, llg_sequence_attempt_t* attempt) {
+static int32_t property_sequence_step(llg_property_ctx_t* ctx, llg_sequence_attempt_t* attempt) {
     const llg_assertion_clock_event_t* event = &ctx->event;
-    int accepted = 0;
+    int32_t accepted = 0;
     return sequence_attempt_step(attempt, ctx->assertion, 0, event->signal, event->edge,
                                  event->time, event->order, event->tick, &accepted);
 }
 
 /* Start a child at `launch` and deliver the current event to it. */
 static void property_spawn(llg_property_ctx_t* ctx, llg_property_inst_t* inst, uint32_t node,
-                           llg_property_launch_t launch, int strict,
+                           llg_property_launch_t launch, int32_t strict,
                            llg_property_locals_t* locals) {
     llg_property_inst_t* child = property_inst_new(ctx->program, node, launch, strict, locals);
     if (inst->children_tail) inst->children_tail->next = child;
@@ -303,7 +303,7 @@ static void property_tick_children(llg_property_ctx_t* ctx, llg_property_inst_t*
  * true for accept_on, false for reject_on; the evaluation is vacuous
  * (16.13.14, 16.15.8 ab/ac). `atom` is the condition's sampled atom at a
  * clock tick, or for accept_on/reject_on between ticks its current one. */
-static int property_abort_fires(llg_property_ctx_t* ctx, llg_property_inst_t* inst,
+static int32_t property_abort_fires(llg_property_ctx_t* ctx, llg_property_inst_t* inst,
                                 uint32_t atom) {
     if (!property_atom(ctx, atom)) return 0;
     const llg_property_node_t* node = inst->node;
@@ -316,11 +316,11 @@ static int property_abort_fires(llg_property_ctx_t* ctx, llg_property_inst_t* in
  * accept_on/reject_on in every time step from its start point (the next
  * time step after |=>), sync_accept_on/sync_reject_on at the ticks of its
  * clock from that point (F.3.4.3.7 `accept_on(b && c)`). */
-static int property_abort_due(const llg_property_ctx_t* ctx, const llg_property_inst_t* inst) {
+static int32_t property_abort_due(const llg_property_ctx_t* ctx, const llg_property_inst_t* inst) {
     const llg_property_node_t* node = inst->node;
     if (node->flags & LLG_PROPERTY_SYNC) {
         sv4_t* clock;
-        int edge;
+        int32_t edge;
         property_node_clock(ctx, node, &clock, &edge);
         return ctx->event.signal == clock && ctx->event.edge == edge &&
                property_reached(inst, clock, edge, &ctx->event);
@@ -335,10 +335,10 @@ static int property_abort_due(const llg_property_ctx_t* ctx, const llg_property_
  * 16.13.22). */
 static void property_antecedent_step(llg_property_ctx_t* ctx, llg_property_inst_t* inst) {
     const llg_property_node_t* node = inst->node;
-    int alive = property_sequence_step(ctx, inst->sequence);
+    int32_t alive = property_sequence_step(ctx, inst->sequence);
     if (g.finish) return;
     if (inst->sequence->started) inst->begun = 1;
-    int overlapped = (node->flags & LLG_PROPERTY_OVERLAPPED) != 0;
+    int32_t overlapped = (node->flags & LLG_PROPERTY_OVERLAPPED) != 0;
     const llg_sequence_graph_t* graph = inst->sequence->graph;
     for (const llg_sequence_endpoint_t* endpoint = inst->sequence->endpoints;
          endpoint && !g.finish; endpoint = endpoint->next) {
@@ -397,7 +397,7 @@ static void property_clock_tick(llg_property_ctx_t* ctx, llg_property_inst_t* in
     if (!g.finish) property_settle(inst);
 }
 
-static int property_clocked_kind(uint32_t kind) {
+static int32_t property_clocked_kind(uint32_t kind) {
     return kind == LLG_PROPERTY_BOOLEAN || kind == LLG_PROPERTY_NEXTTIME ||
            kind == LLG_PROPERTY_ALWAYS || kind == LLG_PROPERTY_EVENTUALLY ||
            kind == LLG_PROPERTY_UNTIL;
@@ -407,14 +407,14 @@ static int property_clocked_kind(uint32_t kind) {
  * its graph's first transition, evaluated in a scratch attempt that inherits
  * the node's locals. Out of line: only designs with such conditions reach
  * it. */
-static LLG_OUTLYING int property_local_condition(llg_property_ctx_t* ctx,
+static LLG_OUTLYING int32_t property_local_condition(llg_property_ctx_t* ctx,
                                                  const llg_property_inst_t* inst,
                                                  uint32_t index) {
     const llg_sequence_graph_t* graph = ctx->program->sequences[index];
     const llg_property_locals_t* locals = inst->locals;
     llg_sequence_attempt_t* attempt = sequence_attempt_new(
         graph, 0, locals ? locals->graph : NULL, locals ? locals->values : NULL);
-    int holds = !g.finish && graph->atom(graph->transitions[0].atom, attempt) != 0;
+    int32_t holds = !g.finish && graph->atom(graph->transitions[0].atom, attempt) != 0;
     sequence_attempt_discard(attempt);
     return holds;
 }
@@ -425,19 +425,19 @@ static LLG_OUTLYING int property_local_condition(llg_property_ctx_t* ctx,
  * A13-D3, which follows the industry-standard behaviour rather than the
  * F.3.4.3.4 rewrite `(b |-> p) and (weak(b) or q)`, whose q would start
  * with the if). */
-static void property_if_step(llg_property_ctx_t* ctx, llg_property_inst_t* inst, int start) {
+static void property_if_step(llg_property_ctx_t* ctx, llg_property_inst_t* inst, int32_t start) {
     const llg_property_node_t* node = inst->node;
     if (!start) property_tick_children(ctx, inst);
     if (inst->phase || inst->status || g.finish) return;
     sv4_t* clock;
-    int edge;
+    int32_t edge;
     property_node_clock(ctx, node, &clock, &edge);
     const llg_assertion_clock_event_t* first = property_first_tick(ctx, inst, clock, edge);
     if (!first) return;
     llg_property_ctx_t at = *ctx;
     at.event = *first;
     uint32_t branch;
-    int holds = LLG_CO_UNLIKELY(node->flags & LLG_PROPERTY_LOCALS)
+    int32_t holds = LLG_CO_UNLIKELY(node->flags & LLG_PROPERTY_LOCALS)
                     ? property_local_condition(&at, inst, node->first)
                     : property_atom(&at, node->first);
     if (holds) {
@@ -462,7 +462,7 @@ static void property_tick(llg_property_ctx_t* ctx, llg_property_inst_t* inst) {
     const llg_property_node_t* node = inst->node;
     if (property_clocked_kind(node->kind)) {
         sv4_t* clock;
-        int edge;
+        int32_t edge;
         property_node_clock(ctx, node, &clock, &edge);
         if (!inst->ticks) {
             const llg_assertion_clock_event_t* first = property_first_tick(ctx, inst, clock, edge);
@@ -484,14 +484,14 @@ static void property_tick(llg_property_ctx_t* ctx, llg_property_inst_t* inst) {
         property_clock_tick(ctx, inst);
         return;
     }
-    int start = inst->ticks == 0;
+    int32_t start = inst->ticks == 0;
     inst->ticks = 1;
     switch (node->kind) {
     case LLG_PROPERTY_SEQUENCE: {
         // A sequence property holds at its first nonempty match (16.13.1) and
         // fails once no thread can match any more.
         if (start) inst->sequence = property_sequence_new(ctx, inst, node->first);
-        int alive = property_sequence_step(ctx, inst->sequence);
+        int32_t alive = property_sequence_step(ctx, inst->sequence);
         if (g.finish) return;
         if (inst->sequence->started) inst->begun = 1;
         if (inst->sequence->matched) property_resolve(inst, LLG_PROP_TRUE, 1);
@@ -530,7 +530,7 @@ static void property_tick(llg_property_ctx_t* ctx, llg_property_inst_t* inst) {
     if (!g.finish) property_settle(inst);
 }
 
-static int property_and3(int a, int b) {
+static int32_t property_and3(int32_t a, int32_t b) {
     if (a == LLG_PROP_FALSE || b == LLG_PROP_FALSE) return LLG_PROP_FALSE;
     if (a == LLG_PROP_TRUE && b == LLG_PROP_TRUE) return LLG_PROP_TRUE;
     return LLG_PROP_PENDING;
@@ -540,8 +540,8 @@ static void property_settle_binary(llg_property_inst_t* inst) {
     llg_property_inst_t* left = inst->children;
     llg_property_inst_t* right = left ? left->next : NULL;
     if (!left || !right) return;
-    int ls = left->status, rs = right->status;
-    int lv = ls && left->nonvacuous, rv = rs && right->nonvacuous;
+    int32_t ls = left->status, rs = right->status;
+    int32_t lv = ls && left->nonvacuous, rv = rs && right->nonvacuous;
     switch (inst->node->kind) {
     case LLG_PROPERTY_AND:
         if (ls == LLG_PROP_FALSE || rs == LLG_PROP_FALSE)
@@ -582,13 +582,13 @@ static void property_settle_binary(llg_property_inst_t* inst) {
  * and hold once no child can start and every child held; existential nodes
  * (followed-by, eventually) are the duals. Consumed children leave their
  * nonvacuity in `accumulated`. */
-static void property_settle_quantifier(llg_property_inst_t* inst, int universal) {
-    int decisive = universal ? LLG_PROP_FALSE : LLG_PROP_TRUE;
+static void property_settle_quantifier(llg_property_inst_t* inst, int32_t universal) {
+    int32_t decisive = universal ? LLG_PROP_FALSE : LLG_PROP_TRUE;
     llg_property_inst_t** link = &inst->children;
     llg_property_inst_t* previous = NULL;
     // An implication passes on the cover vacuity of its consequents (none:
     // no antecedent match); the other quantifiers never yield one.
-    int implication = inst->node->kind == LLG_PROPERTY_IMPLICATION;
+    int32_t implication = inst->node->kind == LLG_PROPERTY_IMPLICATION;
     while (*link) {
         llg_property_inst_t* child = *link;
         if (child->status == decisive) {
@@ -616,7 +616,7 @@ static void property_settle_quantifier(llg_property_inst_t* inst, int universal)
  * from every earlier tick (and from tick j itself for until_with); a weak
  * until also holds when p holds from every tick (16.13.12). */
 static void property_settle_until(llg_property_inst_t* inst) {
-    int overlapping = (inst->node->flags & LLG_PROPERTY_OVERLAPPED) != 0;
+    int32_t overlapping = (inst->node->flags & LLG_PROPERTY_OVERLAPPED) != 0;
     // Leading stages whose left operand held and right operand failed only
     // extend the prefix; drop them so a long-running until stays bounded.
     while (inst->children && inst->children->next &&
@@ -628,14 +628,14 @@ static void property_settle_until(llg_property_inst_t* inst) {
         property_drop_child(inst, &inst->children, NULL);
         property_drop_child(inst, &inst->children, NULL);
     }
-    int prefix = LLG_PROP_TRUE;
-    int pending = 0;
-    int nonvacuous = inst->accumulated;
+    int32_t prefix = LLG_PROP_TRUE;
+    int32_t pending = 0;
+    int32_t nonvacuous = inst->accumulated;
     for (llg_property_inst_t* left = inst->children; left && left->next;
          left = left->next->next) {
         llg_property_inst_t* right = left->next;
-        int ls = left->status, rs = right->status;
-        int candidate = property_and3(prefix, property_and3(overlapping ? ls : LLG_PROP_TRUE, rs));
+        int32_t ls = left->status, rs = right->status;
+        int32_t candidate = property_and3(prefix, property_and3(overlapping ? ls : LLG_PROP_TRUE, rs));
         nonvacuous |= (ls && left->nonvacuous) | (!overlapping && rs && right->nonvacuous);
         if (candidate == LLG_PROP_TRUE) {
             property_resolve(inst, LLG_PROP_TRUE, nonvacuous);
@@ -671,7 +671,7 @@ static void property_settle(llg_property_inst_t* inst) {
         if (!inst->phase || !child) break;
         // An if-else is a choice between two properties, so its result is
         // never cover-vacuous; an else-less if passes its branch's on.
-        int has_else = inst->node->third != LLG_PROPERTY_NONE;
+        int32_t has_else = inst->node->third != LLG_PROPERTY_NONE;
         if (child->status)
             property_pass_on(inst, child->status, child->nonvacuous,
                              !has_else && child->cover_vacuous);
@@ -724,7 +724,7 @@ static void property_async(llg_property_ctx_t* ctx, llg_property_inst_t* inst) {
 /* Whether an evaluation has begun: a node with a clock of its own has had
  * its first tick, a sequence has started, an if has sampled its condition,
  * and an operator has an operand that began. */
-static int property_begun(const llg_property_inst_t* inst) {
+static int32_t property_begun(const llg_property_inst_t* inst) {
     switch (inst->node->kind) {
     case LLG_PROPERTY_BOOLEAN:
     case LLG_PROPERTY_NEXTTIME:
@@ -750,7 +750,7 @@ static int property_begun(const llg_property_inst_t* inst) {
  * forward pass is exact unless a CALL names a later node). */
 static uint8_t* property_eventuality_table(const llg_property_program_t* program) {
     uint8_t* has = llg_checked_calloc(program->node_count, 1, "property eventuality table");
-    for (int changed = 1; changed;) {
+    for (int32_t changed = 1; changed;) {
         changed = 0;
         for (uint32_t index = 0; index < program->node_count; index++) {
             const llg_property_node_t* node = &program->nodes[index];
@@ -780,7 +780,7 @@ static uint8_t* property_eventuality_table(const llg_property_program_t* program
             }
             uint8_t value = node->kind == LLG_PROPERTY_EVENTUALLY &&
                             (node->flags & LLG_PROPERTY_STRONG) != 0;
-            for (int i = 0; i < 2 && !value; i++)
+            for (int32_t i = 0; i < 2 && !value; i++)
                 value = operands[i] != LLG_PROPERTY_NONE && has[operands[i]];
             if (value && !has[index]) {
                 has[index] = 1;
@@ -798,7 +798,7 @@ static uint8_t* property_eventuality_table(const llg_property_program_t* program
  * obligation, strong ones included, ends without a result, and an
  * implication or followed-by whose antecedent has not matched imposes
  * nothing (decisions S38-D1, A13-D7). */
-static int property_end_fails(const llg_property_inst_t* inst,
+static int32_t property_end_fails(const llg_property_inst_t* inst,
                               const llg_property_node_t* nodes, const uint8_t* eventuality) {
     if (inst->status) return 0;
     const llg_property_node_t* node = inst->node;
@@ -822,8 +822,8 @@ static int property_end_fails(const llg_property_inst_t* inst,
 
 /* property_report of an attempt with saved values: its action process takes
  * a reference to them. */
-static LLG_OUTLYING void property_report_values(llg_concurrent_assertion_t* assertion, int pass,
-                                                int vacuous, uint64_t start,
+static LLG_OUTLYING void property_report_values(llg_concurrent_assertion_t* assertion, int32_t pass,
+                                                int32_t vacuous, uint64_t start,
                                                 llg_frame_t* values) {
     llg_frame_t* saved = g.assertion_values;
     g.assertion_values = values;
@@ -835,8 +835,8 @@ static LLG_OUTLYING void property_report_values(llg_concurrent_assertion_t* asse
 /* A cover counts a success as a hit unless it is cover-vacuous (decision
  * S38-D10); assert and assume keep the 16.15.8 vacuity. */
 static void property_report(llg_concurrent_assertion_t* assertion, llg_property_inst_t* root) {
-    int pass = root->status == LLG_PROP_TRUE;
-    int vacuous = pass && (assertion->hot->kind == LLG_ASSERTION_COVER ? root->cover_vacuous
+    int32_t pass = root->status == LLG_PROP_TRUE;
+    int32_t vacuous = pass && (assertion->hot->kind == LLG_ASSERTION_COVER ? root->cover_vacuous
                                                                        : !root->nonvacuous);
     uint64_t start = root->launch.time;
     // The action of an instance that saved values reads them (16.15.6.1).
@@ -867,7 +867,7 @@ static void free_property_attempts(llg_concurrent_assertion_t* assertion) {
  * clock tick, begin a new attempt (16.15). Each attempt reports one result
  * (16.15.3). */
 static void run_property_assertion(llg_concurrent_assertion_t* assertion,
-                                   const llg_assertion_clock_event_t* event, int root_event) {
+                                   const llg_assertion_clock_event_t* event, int32_t root_event) {
     llg_property_ctx_t ctx = {assertion, assertion->property, *event, event->order};
     g.sequence_current = assertion;
     llg_property_inst_t** link = &assertion->property_attempts;
@@ -969,21 +969,21 @@ static LLG_OUTLYING void property_assertions_async(void) {
  * waits on an `s_eventually` obligation and otherwise ends without a result
  * (16.13.21 calls both "Pending"; decisions S38-D1, A13-D7). Covers and
  * expects are not settled. Returns whether any failure was reported. */
-static int settle_property_attempts_at_end(void) {
-    int reported = 0;
+static int32_t settle_property_attempts_at_end(void) {
+    int32_t reported = 0;
     for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
          assertion = assertion->next) {
         if (!assertion->property) continue;
         llg_property_inst_t* attempts = assertion->property_attempts;
         assertion->property_attempts = assertion->property_attempts_tail = NULL;
         // A blocked expect never resumes after the end of simulation.
-        int settled = attempts && assertion->hot->kind != LLG_ASSERTION_EXPECT &&
+        int32_t settled = attempts && assertion->hot->kind != LLG_ASSERTION_EXPECT &&
                       assertion->hot->kind != LLG_ASSERTION_COVER;
         uint8_t* eventuality = settled ? property_eventuality_table(assertion->property) : NULL;
         while (attempts) {
             llg_property_inst_t* attempt = attempts;
             attempts = attempt->next;
-            int fails = settled &&
+            int32_t fails = settled &&
                         property_end_fails(attempt, assertion->property->nodes, eventuality);
             uint64_t start = attempt->launch.time;
             property_inst_free(attempt);
@@ -997,15 +997,15 @@ static int settle_property_attempts_at_end(void) {
     return reported;
 }
 
-static int valid_property_clock(const llg_property_program_t* program, sv4_t* signal, int edge) {
+static int32_t valid_property_clock(const llg_property_program_t* program, sv4_t* signal, int32_t edge) {
     for (uint32_t index = 0; index < program->clock_count; index++)
         if (program->clocks[index].signal == signal && program->clocks[index].edge == edge)
             return 1;
     return 0;
 }
 
-static int valid_property_program(const llg_property_program_t* program, sv4_t* clock,
-                                  int edge) {
+static int32_t valid_property_program(const llg_property_program_t* program, sv4_t* clock,
+                                  int32_t edge) {
     if (!program || program->node_count == 0 || !program->nodes ||
         program->root >= program->node_count ||
         (program->sequence_count != 0 && !program->sequences) ||
@@ -1103,7 +1103,7 @@ static int valid_property_program(const llg_property_program_t* program, sv4_t* 
             if (node->max < node->min) return 0;
         }
         // Operands precede their users, so evaluation cannot recurse forever.
-        for (int i = 0; i < 3; i++)
+        for (int32_t i = 0; i < 3; i++)
             if (operands[i] != LLG_PROPERTY_NONE && operands[i] >= index) return 0;
         if ((node->kind == LLG_PROPERTY_NOT || node->kind == LLG_PROPERTY_NEXTTIME ||
              node->kind == LLG_PROPERTY_ALWAYS || node->kind == LLG_PROPERTY_EVENTUALLY ||
@@ -1126,10 +1126,10 @@ static int valid_property_program(const llg_property_program_t* program, sv4_t* 
     return 1;
 }
 
-int llg_assertion_register_property(
-    sv4_t* clock, int edge, sv4_t* disable, const llg_property_program_t* program,
+int32_t llg_assertion_register_property(
+    sv4_t* clock, int32_t edge, sv4_t* disable, const llg_property_program_t* program,
     const llg_co_desc_t* pass_desc, const llg_co_desc_t* fail_desc, void* data,
-    int kind, uint64_t identity, const char* label, const char* location,
+    int32_t kind, uint64_t identity, const char* label, const char* location,
     const char* scope) {
     if (!g.initialized || g.running || g.config_error || !clock ||
         (edge != LLG_EV_POSEDGE && edge != LLG_EV_NEGEDGE) ||

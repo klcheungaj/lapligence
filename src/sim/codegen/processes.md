@@ -66,11 +66,21 @@ recursion depth reset; fail the whole replay on error. Declaration-call and memb
 default initialization finish before SystemVerilog processes start, never lazily
 on first call. Reject unavailable lifetime/provenance or unrepresented native/
 resizable initialization rather than fabricating storage.
-Static initializers form one schedule (`lowering/initialization/order.rs`): an
-initializer runs after every static declaration its value reads, directly or
-through called functions (including their static locals), and otherwise keeps
-the declaration order reserved at collection, so deferred and late-lowered
-initializers keep their declaration slot. Package and `$unit` parameters are
+Static initializers form one schedule (`lowering/initialization/order.rs`)
+sorted by scope and position only (S22-D8): packages, `$unit`, then the
+design in post-order; in each the class static properties, then each generate
+block, then the scope's own declarations, each of these its constant
+initializers (no call, no variable value read; array queries may name a
+variable) first, then the others in declaration order. Positions come from the
+declaring scope's members, and scopes keep the order reserved at collection,
+so deferred and late-lowered initializers keep their declaration slot. A
+forward read sees what the later declaration holds then (its default value, or
+its constant once the scope has started). A static local takes its
+subroutine's or procedure's place in the scope, or runs with the scope's
+constants when constant, so an earlier caller of a non-constant one reads its
+default. Constants folded into storage defaults (`var_inits`, `scalar_inits`:
+constant static numeric class properties, constant packed-struct patterns)
+hold from the start. Package and `$unit` parameters are
 collected before any module initializer folds them. Descriptor-backed fixed
 arrays (module, package, function-static and block-static) initialize through
 the typed pattern transport as `IrInitStep::Execute` in SystemVerilog and as an
