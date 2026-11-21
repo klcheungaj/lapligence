@@ -10,10 +10,10 @@ sources run in both optimizer modes and in the stated compilation-unit modes.
 Owner policy for static initialization order: SystemVerilog runs every static
 declaration initializer before any process (§10.5). Within one scope a
 declaration precedes its simple references; across scopes the order is left
-open (the frontend warns). The simulator runs a static initializer after every
-static declaration its value reads, directly or through called functions,
-and otherwise keeps declaration order. Fixtures that cross scopes either
-follow a declaration dependency or use order-independent results.
+open (the frontend warns). The simulator runs the scopes in the order of
+decision S22-D8 and, in each, the constant initializers first, then the others
+in declaration order. Fixtures that cross scopes either read a scope that
+runs earlier or use order-independent results.
 
 - `package_order` chains package constants and variables through zero-time
   calls, a typed package parameter and an importing package; a module reads

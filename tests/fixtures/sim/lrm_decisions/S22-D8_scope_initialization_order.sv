@@ -1,6 +1,6 @@
-// Decision S22-D8: static initializers that read nothing from one another
-// run scope by scope, as industry-standard simulators order them: every
-// package first, in declaration order (also one declared after the design),
+// Decision S22-D8: static initializers run scope by scope, as
+// industry-standard simulators order them: every package first, in
+// declaration order (also one declared after the design),
 // then the compilation unit, then the design hierarchy in post-order (the
 // instances below a module before the module). In each package and in the
 // compilation unit the class static properties run first, then the

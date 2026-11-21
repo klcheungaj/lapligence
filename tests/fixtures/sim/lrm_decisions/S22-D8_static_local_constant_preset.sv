@@ -1,7 +1,7 @@
 // Decision S22-D8: a static local whose initializer is a constant expression
 // without calls (literals, parameters, enumeration constants, operators,
 // casts, patterns and constant system functions such as $clog2 and $bits)
-// holds its value before every other static initializer runs, as
+// runs with its scope's constants, before the scope's other initializers, as
 // industry-standard simulators preset it: a caller before the subroutine's
 // place reads the value. An initializer with a call (also a constant
 // function or `new`) or that reads a variable runs at the subroutine's place

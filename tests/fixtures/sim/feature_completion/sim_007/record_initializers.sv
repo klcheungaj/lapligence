@@ -1,8 +1,9 @@
 // SIM-007: declaration initializers of module records with string, real
 // and container members accept any record source: a copy, a function
 // result, a conditional and patterns with whole sub-record or container
-// items. Each runs once in the static initialization schedule after the
-// declarations it reads (SV 6.21, 10.5), including module strings.
+// items. Each runs once in the static initialization schedule at its
+// declaration's place (SV 6.21, 10.5; S22-D8), after the module strings
+// declared before it.
 typedef struct {
     string n;
     int v;

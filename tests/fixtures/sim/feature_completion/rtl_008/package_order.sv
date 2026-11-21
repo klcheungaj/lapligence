@@ -2,9 +2,9 @@
 // before any process. A declaration precedes its simple references, so within
 // a scope each initializer observes every earlier declaration's initial value,
 // including values produced by zero-time function calls. Across scopes the
-// language leaves the order open; the owner policy initializes a declaration
-// after every static declaration its value reads (directly or through called
-// functions), which matches declaration order whenever that is defined.
+// language leaves the order open; the owner policy (decision S22-D8) runs
+// packages before the design, a package before the packages declared after
+// it, and declaration order within a scope.
 package base_pkg;
   localparam int K = 4;
   int a = 3;

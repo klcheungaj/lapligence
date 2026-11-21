@@ -10,8 +10,9 @@
 //   declaration (including static class members) shall occur before any
 //   initial or always procedures are started"
 // IEEE 1800-2009 10.5 (L13286-13287) repeats the rule. Every initializer
-// here reads only declarations that precede it, so declaration order and
-// dependency order agree.
+// here reads only declarations that precede it; the order among the
+// initializers is declaration order (S22-D8,
+// S22-D1_handle_initializers_declaration_order).
 package pkg;
   class Counter;
     int value;
