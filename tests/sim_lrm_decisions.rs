@@ -3368,6 +3368,15 @@ fn a19_d6_primitive_names() {
 }
 
 #[test]
+fn a19_d6_generate_block_primitive_names() {
+    run_vpi_decision(
+        "A19-D6_generate_block_primitive_names",
+        &["task $d6g()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D6_generate_block_primitive_names.out"),
+    );
+}
+
+#[test]
 fn a19_d7_structure_order() {
     run_vpi_decision(
         "A19-D7_structure_order",
