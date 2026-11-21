@@ -1796,6 +1796,14 @@ struct Codegen<'a> {
     shared_run_slot_bits: u64,
     /// Ports a previous lowering showed must keep their link.
     port_collapse_exclusions: HashSet<NodeId>,
+    /// The subroutines, with their bodies, that the design reaches through
+    /// statically known calls, built on first use: port collapse and the
+    /// process checks both read them (`collection/processes.rs`).
+    called_subroutines: std::cell::OnceCell<std::rc::Rc<[(NodeId, NodeId)]>>,
+    /// The member paths written through a virtual-interface handle, built
+    /// on first use: port collapse and the virtual-interface checks both
+    /// read them (`collection/virtual_interfaces.rs`).
+    virtual_interface_write_paths: std::cell::OnceCell<Vec<NodeId>>,
     /// Converting net ports and the strength readers of their sinks
     /// (`collection/nets/port_merges.rs`, T1-D13).
     strength_links: collection::StrengthLinks,
@@ -2617,6 +2625,8 @@ impl<'a> Codegen<'a> {
             merge_ports: false,
             shared_run_slot_bits: collection::MAX_SHARED_RUN_SLOT_BITS,
             port_collapse_exclusions: HashSet::new(),
+            called_subroutines: std::cell::OnceCell::new(),
+            virtual_interface_write_paths: std::cell::OnceCell::new(),
             strength_links: Default::default(),
             record_column_types: HashSet::new(),
             pattern_stops: Vec::new(),

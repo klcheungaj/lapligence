@@ -451,7 +451,7 @@ impl Codegen<'_> {
         // also where the walks above do not follow the call (a class method;
         // decision A21-D8).
         if !failed {
-            for (subroutine, body) in self.called_subroutines(nodes) {
+            for &(subroutine, body) in self.called_subroutines(Some(nodes)).iter() {
                 for (_, writes) in self.subroutine_body_writes(subroutine, body) {
                     for write in &writes {
                         let mut storage = write;

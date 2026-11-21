@@ -1818,8 +1818,6 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
-    /// Physical `file:line:col` of a node; a `` `line``-mapped position, when
-    /// one applies, follows it and never replaces it.
     /// A write in a subroutine body is a procedural assignment of the
     /// process that calls it, also where the walk of the process's own
     /// writes does not follow the call: a class method, and what it calls.
@@ -1832,8 +1830,7 @@ impl<'a> Codegen<'a> {
         &mut self,
         continuous: &[&ProcessWriter],
     ) -> Result<(), String> {
-        let nodes = self.design_nodes();
-        for (subroutine, body) in self.called_subroutines(&nodes) {
+        for &(subroutine, body) in self.called_subroutines(None).iter() {
             for (target, writes) in self.subroutine_body_writes(subroutine, body) {
                 for driver in continuous {
                     let Some(storage) = writes.iter().find(|write| {
@@ -1861,10 +1858,35 @@ impl<'a> Codegen<'a> {
     }
 
     /// Every subroutine, with its body, that a process, a continuous
-    /// assignment's right-hand side or a variable initializer among `nodes`
+    /// assignment's right-hand side or a variable initializer of the design
     /// reaches through calls whose callee is known statically (a virtual
-    /// method through the class its handle names), each once.
-    pub(super) fn called_subroutines(&self, nodes: &[NodeId]) -> Vec<(NodeId, NodeId)> {
+    /// method through the class its handle names), each once. Built on first
+    /// use from `nodes`, the design's nodes ([`Self::design_nodes`], walked
+    /// here when `None`). Only a subroutine with a body is reached, so a
+    /// design without one walks none of its processes.
+    pub(super) fn called_subroutines(
+        &self,
+        nodes: Option<&[NodeId]>,
+    ) -> std::rc::Rc<[(NodeId, NodeId)]> {
+        self.called_subroutines
+            .get_or_init(|| {
+                let has_body = self
+                    .db
+                    .nodes()
+                    .iter()
+                    .any(|node| matches!(node.kind, NodeKind::FuncTask { body: Some(_), .. }));
+                match (has_body, nodes) {
+                    (false, _) => std::rc::Rc::from([]),
+                    (true, Some(nodes)) => self.find_called_subroutines(nodes).into(),
+                    (true, None) => self.find_called_subroutines(&self.design_nodes()).into(),
+                }
+            })
+            .clone()
+    }
+
+    /// [`Self::called_subroutines`], walked from the processes, continuous
+    /// assignments and variable initializers among `nodes`.
+    fn find_called_subroutines(&self, nodes: &[NodeId]) -> Vec<(NodeId, NodeId)> {
         let mut pending = Vec::new();
         for node in nodes {
             match self.kind(*node) {
@@ -1965,6 +1987,8 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// Physical `file:line:col` of a node; a `` `line``-mapped position, when
+    /// one applies, follows it and never replaces it.
     pub(in super::super) fn source_location(&self, id: NodeId) -> String {
         let node = self.node(id);
         let physical = format!(

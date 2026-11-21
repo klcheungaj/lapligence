@@ -480,7 +480,7 @@ impl<'a> Codegen<'a> {
             }
         }
         let mut seen = HashSet::new();
-        for path in paths {
+        for &path in paths {
             let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.kind(path) else {
                 continue;
             };
@@ -523,18 +523,20 @@ impl<'a> Codegen<'a> {
     /// The member paths through a virtual-interface handle that an
     /// assignment target, output or inout actual or non-`const` `ref` actual
     /// in the owned database writes ([`Self::written_targets`],
-    /// [`Self::handle_member_writes`]), in node order.
-    fn virtual_interface_write_paths(&self) -> Vec<NodeId> {
-        let mut paths = Vec::new();
-        let mut targets = Vec::new();
-        for id in self.db.node_ids() {
-            targets.clear();
-            self.written_targets(id, &mut targets);
-            for target in &targets {
-                self.handle_member_writes(*target, &mut paths);
+    /// [`Self::handle_member_writes`]), in node order. Built on first use.
+    fn virtual_interface_write_paths(&self) -> &[NodeId] {
+        self.virtual_interface_write_paths.get_or_init(|| {
+            let mut paths = Vec::new();
+            let mut targets = Vec::new();
+            for id in self.db.node_ids() {
+                targets.clear();
+                self.written_targets(id, &mut targets);
+                for target in &targets {
+                    self.handle_member_writes(*target, &mut paths);
+                }
             }
-        }
-        paths
+            paths
+        })
     }
 
     /// "Assignments to variables declared as input ports shall be illegal"
@@ -577,7 +579,7 @@ impl<'a> Codegen<'a> {
         if inputs.is_empty() {
             return Ok(());
         }
-        for path in self.virtual_interface_write_paths() {
+        for &path in self.virtual_interface_write_paths() {
             let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.kind(path) else {
                 continue;
             };
