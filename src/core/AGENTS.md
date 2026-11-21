@@ -18,6 +18,7 @@ in-memory buffers and returns owned diagnostics plus a `ffi::slang::Snapshot`;
 - `model.rs`, `tokens.rs`, `macros.rs`: editor/hierarchy projections, exact
   bindings, macros.
 - `lint/`: shared rules ([guide](lint/AGENTS.md)).
+- `design_checks.rs`: design-wide errors `llg` stops on and `llg_ls` publishes.
 
 ## Rules
 
