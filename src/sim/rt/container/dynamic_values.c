@@ -20,7 +20,7 @@ static llg_value_t* llg_dyn_value_nested_at(
  * (llg_nested_seq_write_at). */
 static llg_value_t* llg_dyn_value_nested_target(
     const llg_dyn_value_array_t* array, const sv4_t* indices, size_t count,
-    int* change) {
+    int32_t* change) {
     if (!indices || count < 2)
         return llg_dyn_value_nested_at(array, indices, count);
     return llg_nested_seq_write_at(
@@ -49,8 +49,8 @@ static const llg_value_desc_t* llg_dyn_value_nested_desc(
 
 static void llg_dyn_value_commit(llg_dyn_value_array_t* array,
                                  llg_value_t* data, size_t size) {
-    int shape_changed = array->size != size;
-    int contents_changed = shape_changed;
+    int32_t shape_changed = array->size != size;
+    int32_t contents_changed = shape_changed;
     if (!contents_changed) {
         for (size_t i = 0; i < size; ++i) {
             if (!llg_value_equal(&array->data[i], &data[i])) {
@@ -90,7 +90,7 @@ void llg_dyn_value_destroy(llg_dyn_value_array_t* array) {
 }
 
 void llg_dyn_value_delete(llg_dyn_value_array_t* array) {
-    int changed = array->size != 0;
+    int32_t changed = array->size != 0;
     llg_native_refs_outdate_all(&array->references);
     for (size_t i = 0; i < array->size; ++i)
         llg_value_drop(&array->data[i]);
@@ -136,8 +136,8 @@ void llg_dyn_value_copy(llg_dyn_value_array_t* dst,
      * storage being kept: only the elements that differ change, so a repeated
      * copy allocates nothing. */
     if (dst->size == src->size && !dst->references) {
-        int kind = dst->element->kind, changed = 0;
-        int handles = kind == LLG_VALUE_CHANDLE || kind == LLG_VALUE_OPAQUE ||
+        int32_t kind = dst->element->kind, changed = 0;
+        int32_t handles = kind == LLG_VALUE_CHANDLE || kind == LLG_VALUE_OPAQUE ||
                       kind == LLG_VALUE_EVENT || kind == LLG_VALUE_PROCESS;
         if (handles && src->element->kind == kind) {
             llg_value_t* target = dst->data;
@@ -186,7 +186,7 @@ void llg_dyn_value_copy_range(llg_dyn_value_array_t* dst, sv4_t dst_start,
     int64_t to = 0;
     if (!sv4_to_index_i64(dst_start, &to)) return;
     int64_t from = 0;
-    int from_known = sv4_to_index_i64(src_start, &from);
+    int32_t from_known = sv4_to_index_i64(src_start, &from);
     size_t n = llg_checked_count(count, sizeof(llg_value_t));
     /* Snapshot every selected source element (the default outside the
      * source) before the first write, so overlapping ranges of one array
@@ -200,7 +200,7 @@ void llg_dyn_value_copy_range(llg_dyn_value_array_t* dst, sv4_t dst_start,
             source = &src->data[(size_t)from + i];
         llg_value_copy(&items[i], dst->element, source);
     }
-    int changed = 0;
+    int32_t changed = 0;
     for (size_t i = 0; i < n; ++i) {
         if (to < 0 || (uint64_t)to > SIZE_MAX - i || (size_t)to + i >= dst->size)
             continue;
@@ -397,7 +397,7 @@ void* llg_dyn_value_get_nested_chandle(
         : NULL;
 }
 
-int llg_dyn_value_set_real(llg_dyn_value_array_t* array, sv4_t index,
+int32_t llg_dyn_value_set_real(llg_dyn_value_array_t* array, sv4_t index,
                            double value) {
     llg_value_t* target = llg_dyn_value_at(array, index);
     if (!target || target->desc->kind != LLG_VALUE_REAL) return 0;
@@ -409,13 +409,13 @@ int llg_dyn_value_set_real(llg_dyn_value_array_t* array, sv4_t index,
     return 1;
 }
 
-static int dyn_value_store_string(llg_dyn_value_array_t* array, llg_value_t* target,
+static int32_t dyn_value_store_string(llg_dyn_value_array_t* array, llg_value_t* target,
                                   llg_string_t value) {
     if (!target || target->desc->kind != LLG_VALUE_STRING) {
         llg_string_destroy(&value);
         return 0;
     }
-    int changed = target->value.string.len != value.len ||
+    int32_t changed = target->value.string.len != value.len ||
                   (value.len &&
                    memcmp(target->value.string.data, value.data, value.len) != 0);
     if (changed) {
@@ -429,7 +429,7 @@ static int dyn_value_store_string(llg_dyn_value_array_t* array, llg_value_t* tar
     return 1;
 }
 
-static int dyn_value_store_chandle(llg_dyn_value_array_t* array, llg_value_t* target,
+static int32_t dyn_value_store_chandle(llg_dyn_value_array_t* array, llg_value_t* target,
                                    void* value) {
     if (!target || !llg_value_is_handle_kind(target->desc))
         return 0;
@@ -439,12 +439,12 @@ static int dyn_value_store_chandle(llg_dyn_value_array_t* array, llg_value_t* ta
     return 1;
 }
 
-int llg_dyn_value_set_string(llg_dyn_value_array_t* array, sv4_t index,
+int32_t llg_dyn_value_set_string(llg_dyn_value_array_t* array, sv4_t index,
                              llg_string_t value) {
     return dyn_value_store_string(array, llg_dyn_value_at(array, index), value);
 }
 
-int llg_dyn_value_move_string_at(llg_dyn_value_array_t* array, uint64_t position,
+int32_t llg_dyn_value_move_string_at(llg_dyn_value_array_t* array, uint64_t position,
                                  llg_string_t* value) {
     llg_value_t* target = llg_dyn_value_element_at(array, position);
     if (!target) {
@@ -465,22 +465,22 @@ int llg_dyn_value_move_string_at(llg_dyn_value_array_t* array, uint64_t position
     return 1;
 }
 
-int llg_dyn_value_set_chandle(llg_dyn_value_array_t* array, sv4_t index,
+int32_t llg_dyn_value_set_chandle(llg_dyn_value_array_t* array, sv4_t index,
                               void* value) {
     return dyn_value_store_chandle(array, llg_dyn_value_at(array, index), value);
 }
 
-int llg_dyn_value_store_chandle_at(llg_dyn_value_array_t* array, llg_value_t* target,
+int32_t llg_dyn_value_store_chandle_at(llg_dyn_value_array_t* array, llg_value_t* target,
                                    void* value) {
     return dyn_value_store_chandle(array, target, value);
 }
 
-int llg_dyn_value_set_nested(llg_dyn_value_array_t* array,
+int32_t llg_dyn_value_set_nested(llg_dyn_value_array_t* array,
                              const sv4_t* indices, size_t count, sv4_t value) {
     llg_value_t* owner = llg_dyn_value_packed_owner(array, indices, count);
     if (owner) {
-        int change = 0;
-        int result = llg_nested_seq_set_packed(owner, indices[count - 1],
+        int32_t change = 0;
+        int32_t result = llg_nested_seq_set_packed(owner, indices[count - 1],
                                                value, &change);
         llg_notify(array->notify, array->contents_dependency,
                    array->shape_dependency, change);
@@ -502,10 +502,10 @@ int llg_dyn_value_set_nested(llg_dyn_value_array_t* array,
     return 1;
 }
 
-int llg_dyn_value_set_nested_real(llg_dyn_value_array_t* array,
+int32_t llg_dyn_value_set_nested_real(llg_dyn_value_array_t* array,
                                   const sv4_t* indices, size_t count,
                                   double value) {
-    int change = 0;
+    int32_t change = 0;
     llg_value_t* target =
         llg_dyn_value_nested_target(array, indices, count, &change);
     if (!target || target->desc->kind != LLG_VALUE_REAL) return 0;
@@ -519,17 +519,17 @@ int llg_dyn_value_set_nested_real(llg_dyn_value_array_t* array,
     return 1;
 }
 
-int llg_dyn_value_set_nested_string(llg_dyn_value_array_t* array,
+int32_t llg_dyn_value_set_nested_string(llg_dyn_value_array_t* array,
                                     const sv4_t* indices, size_t count,
                                     llg_string_t value) {
-    int change = 0;
+    int32_t change = 0;
     llg_value_t* target =
         llg_dyn_value_nested_target(array, indices, count, &change);
     if (!target || target->desc->kind != LLG_VALUE_STRING) {
         llg_string_destroy(&value);
         return 0;
     }
-    int changed = target->value.string.len != value.len ||
+    int32_t changed = target->value.string.len != value.len ||
                   (value.len &&
                    memcmp(target->value.string.data, value.data, value.len) != 0);
     if (changed) {
@@ -544,10 +544,10 @@ int llg_dyn_value_set_nested_string(llg_dyn_value_array_t* array,
     return 1;
 }
 
-int llg_dyn_value_set_nested_chandle(llg_dyn_value_array_t* array,
+int32_t llg_dyn_value_set_nested_chandle(llg_dyn_value_array_t* array,
                                      const sv4_t* indices, size_t count,
                                      void* value) {
-    int change = 0;
+    int32_t change = 0;
     llg_value_t* target =
         llg_dyn_value_nested_target(array, indices, count, &change);
     if (!target || !llg_value_is_handle_kind(target->desc))
@@ -583,14 +583,14 @@ static void llg_dyn_value_replace_from_packed(
     llg_dyn_value_commit(dst, data, source->size);
 }
 
-int llg_dyn_value_set_nested_container(
+int32_t llg_dyn_value_set_nested_container(
     llg_dyn_value_array_t* array, const sv4_t* indices, size_t count,
     const llg_dyn_value_array_t* source) {
     const llg_value_desc_t* desc = llg_dyn_value_nested_desc(array->element, count);
     if (!desc || desc->kind != LLG_VALUE_CONTAINER || !source ||
         !llg_value_desc_compatible(desc->element, source->element))
         return 0;
-    int change = 0;
+    int32_t change = 0;
     llg_value_t* target =
         llg_dyn_value_nested_target(array, indices, count, &change);
     if (target && llg_nested_seq_store(target, llg_seq_view_of_dyn_value(source)))
@@ -600,7 +600,7 @@ int llg_dyn_value_set_nested_container(
     return target != NULL;
 }
 
-int llg_dyn_value_set_nested_container_from_packed(
+int32_t llg_dyn_value_set_nested_container_from_packed(
     llg_dyn_value_array_t* array, const sv4_t* indices, size_t count,
     const llg_dyn_array_t* source) {
     const llg_value_desc_t* desc = llg_dyn_value_nested_desc(array->element, count);
@@ -609,7 +609,7 @@ int llg_dyn_value_set_nested_container_from_packed(
         (desc->element->kind != LLG_VALUE_PACKED &&
          desc->element->kind != LLG_VALUE_REAL))
         return 0;
-    int change = 0;
+    int32_t change = 0;
     llg_value_t* target =
         llg_dyn_value_nested_target(array, indices, count, &change);
     if (target && llg_nested_seq_store(target, llg_seq_view_of_dyn(source)))

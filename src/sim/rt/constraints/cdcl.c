@@ -25,7 +25,7 @@
 typedef struct {
     uint32_t* d;  /* pairs: clause reference, blocker literal */
     uint32_t len, cap;
-    int borrowed; /* d points into a shared block (cr_cnf_run): copy before growing */
+    int32_t borrowed; /* d points into a shared block (cr_cnf_run): copy before growing */
 } cr_watch_t;
 
 typedef struct {
@@ -68,7 +68,7 @@ static uint32_t cr_sat_level_now(const cr_sat_t* s) {
     return (uint32_t)s->trail_lim.len;
 }
 
-static int cr_heap_before(const cr_sat_t* s, uint32_t a, uint32_t b) {
+static int32_t cr_heap_before(const cr_sat_t* s, uint32_t a, uint32_t b) {
     return s->activity[a] > s->activity[b] ||
            (s->activity[a] == s->activity[b] && a < b);
 }
@@ -159,7 +159,7 @@ static void cr_sat_attach(cr_sat_t* s, uint32_t cref) {
     cr_watch_push(&s->watches[c[3]], cref, c[2]);
 }
 
-static uint32_t cr_sat_add(cr_sat_t* s, const uint32_t* lits, uint32_t size, int learned,
+static uint32_t cr_sat_add(cr_sat_t* s, const uint32_t* lits, uint32_t size, int32_t learned,
                            uint32_t lbd) {
     if (s->arena.len > (size_t)UINT32_MAX - size - 2u) cr_fatal("clause arena too large");
     uint32_t cref = (uint32_t)s->arena.len;
@@ -205,7 +205,7 @@ static uint32_t cr_sat_propagate(cr_sat_t* s) {
                 w->d[j++] = first;
                 continue;
             }
-            int moved = 0;
+            int32_t moved = 0;
             for (uint32_t k = 2; k < c[0]; ++k) {
                 if (cr_sat_value(s, lits[k]) != CR_LV_FALSE) {
                     lits[1] = lits[k];
@@ -284,7 +284,7 @@ static uint32_t cr_sat_analyze(cr_sat_t* s, uint32_t conflict, uint32_t* lbd) {
     for (uint32_t i = 1; i < s->learnt.len; ++i) {
         uint32_t q = s->learnt.data[i];
         uint32_t r = s->reason[q >> 1];
-        int keep = r == CR_SAT_NONE;
+        int32_t keep = r == CR_SAT_NONE;
         if (!keep) {
             uint32_t* c = cr_clause(s, r);
             for (uint32_t k = 1; k < c[0]; ++k) {
@@ -348,7 +348,7 @@ static void cr_sat_reduce(cr_sat_t* s) {
         at += 2u + size;
         uint32_t lbd = flags >> 1;
         if ((flags & 1u) && (lbd > 32u ? 32u : lbd) > threshold) continue;
-        int satisfied = 0;
+        int32_t satisfied = 0;
         uint32_t kept = 0;
         for (uint32_t k = 0; k < size; ++k) {
             uint32_t value = cr_sat_value(s, c[2 + k]);
@@ -412,7 +412,7 @@ typedef struct {
     uint32_t* input_var;  /* per input: SAT variable or CR_SAT_NONE */
     uint8_t* is_input;    /* per SAT variable: an AIG input (random priority) */
     uint32_t root_lit;    /* SAT literal that must hold, or CR_SAT_NONE (root true) */
-    int root_false;
+    int32_t root_false;
     cr_u32vec_t arena;
     cr_watch_t* watches;  /* per literal, as the encoding leaves them */
     size_t watch_words;
@@ -496,7 +496,7 @@ static void cr_cnf_build(cr_cnf_t* f, const cr_aig_t* g, uint32_t root) {
  * the cone are drawn uniformly. `budget` must be nonzero. A cached encoding
  * is copied; with `consume` the search takes its clauses and watch lists
  * over instead (the caller frees what is left). */
-static llg_cr_status_t cr_cnf_run(cr_cnf_t* f, int consume, const llg_cr_rng_t* rng,
+static llg_cr_status_t cr_cnf_run(cr_cnf_t* f, int32_t consume, const llg_cr_rng_t* rng,
                                   uint64_t budget, uint8_t* bits, uint64_t* conflicts) {
     *conflicts = 0;
     if (f->root_false) return LLG_CR_UNSAT;

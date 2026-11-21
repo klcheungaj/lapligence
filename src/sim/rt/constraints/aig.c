@@ -20,7 +20,7 @@ typedef struct {
     size_t table_cap;
     uint32_t inputs;
     uint64_t limit;
-    int overflow;
+    int32_t overflow;
 } cr_aig_t;
 
 static uint32_t cr_aig_hash(uint32_t a, uint32_t b) {
@@ -116,7 +116,7 @@ static uint32_t cr_blast_any(cr_aig_t* g, const uint32_t* a, uint32_t w) {
 }
 
 static void cr_blast_extend(uint32_t* out, uint32_t w, const uint32_t* a,
-                            uint32_t aw, int sgn) {
+                            uint32_t aw, int32_t sgn) {
     for (uint32_t i = 0; i < w; ++i)
         out[i] = i < aw ? a[i] : (sgn && aw ? a[aw - 1u] : CR_FALSE);
 }
@@ -205,7 +205,7 @@ static void cr_blast_udivmod(cr_aig_t* g, uint32_t* q, uint32_t* r,
 }
 
 static void cr_blast_shift(cr_aig_t* g, uint32_t* out, const uint32_t* a, uint32_t w,
-                           const uint32_t* amount, uint32_t aw, int left, uint32_t fill) {
+                           const uint32_t* amount, uint32_t aw, int32_t left, uint32_t fill) {
     uint32_t* cur = cr_lits(w);
     uint32_t* next = cr_lits(w);
     memcpy(cur, a, w * sizeof(uint32_t));
@@ -252,7 +252,7 @@ static uint32_t cr_node_err(const cr_blast_t* b, uint32_t n) {
  * known 0; otherwise an error operand makes the result an error. Returns
  * the value literal and stores the error literal. */
 static uint32_t cr_blast_logic(cr_aig_t* g, const uint32_t* t, const uint32_t* e,
-                               uint32_t count, int disjunction, uint32_t* err) {
+                               uint32_t count, int32_t disjunction, uint32_t* err) {
     uint32_t dominant = CR_FALSE, any_err = CR_FALSE, value = disjunction ? CR_FALSE : CR_TRUE;
     for (uint32_t i = 0; i < count; ++i) {
         uint32_t decided = disjunction ? t[i] : t[i] ^ 1u;
@@ -314,7 +314,7 @@ static uint32_t cr_index_compare_width(uint32_t index_width, uint64_t limit) {
 }
 
 /* Literal of "a == k" for the constant k (a extended by `sgn` to `w` bits). */
-static uint32_t cr_blast_eq_const(cr_aig_t* g, const uint32_t* a, uint32_t aw, int sgn,
+static uint32_t cr_blast_eq_const(cr_aig_t* g, const uint32_t* a, uint32_t aw, int32_t sgn,
                                   uint64_t k, uint32_t w) {
     uint32_t eq = CR_TRUE;
     for (uint32_t i = 0; i < w; ++i) {
@@ -550,7 +550,7 @@ static void cr_blast_node(llg_cr_session_t* s, cr_blast_t* b, uint32_t n,
     case LLG_CR_GE: {
         const llg_cr_node_t* nb = &p->nodes[nd->b];
         uint32_t cw = na->bit_width > nb->bit_width ? na->bit_width : nb->bit_width;
-        int sgn = na->sign_flag && nb->sign_flag;
+        int32_t sgn = na->sign_flag && nb->sign_flag;
         uint32_t* a = cr_operand_lits(s, b, nd->a, cw);
         uint32_t* c = cr_operand_lits(s, b, nd->b, cw);
         if (sgn && cw) {

@@ -46,14 +46,14 @@ static void llg_bitstream_reserve(llg_bitstream_t* stream, uint64_t bits) {
 
 /* Append the `count` (1..64) high bits of each plane of `chunk`. */
 static void llg_bitstream_push(llg_bitstream_t* stream, llg_bitstream_word_t chunk,
-                               unsigned count) {
+                               uint32_t count) {
     uint64_t mask = count == 64u ? UINT64_MAX : ~(UINT64_MAX >> count);
     chunk.plane[LLG_SV4_BITS] &= mask;
     chunk.plane[LLG_SV4_X] &= mask;
     chunk.plane[LLG_SV4_Z] &= mask;
     llg_bitstream_reserve(stream, stream->length + count);
     uint64_t index = stream->length / 64u;
-    unsigned offset = (unsigned)(stream->length % 64u);
+    uint32_t offset = (uint32_t)(stream->length % 64u);
     llg_bitstream_word_t* word = &stream->words[index];
     word->plane[LLG_SV4_BITS] |= chunk.plane[LLG_SV4_BITS] >> offset;
     word->plane[LLG_SV4_X] |= chunk.plane[LLG_SV4_X] >> offset;
@@ -69,9 +69,9 @@ static void llg_bitstream_push(llg_bitstream_t* stream, llg_bitstream_word_t chu
 
 /* Read `count` (1..64) stream bits starting at `position`, MSB-aligned. */
 static llg_bitstream_word_t llg_bitstream_peek(const llg_bitstream_t* stream,
-                                         uint64_t position, unsigned count) {
+                                         uint64_t position, uint32_t count) {
     uint64_t index = position / 64u;
-    unsigned offset = (unsigned)(position % 64u);
+    uint32_t offset = (uint32_t)(position % 64u);
     llg_bitstream_word_t word = stream->words[index];
     llg_bitstream_word_t chunk = {{word.plane[LLG_SV4_BITS] << offset,
                                    word.plane[LLG_SV4_X] << offset,
@@ -91,9 +91,9 @@ static llg_bitstream_word_t llg_bitstream_peek(const llg_bitstream_t* stream,
 
 /* Bits [low, low + count) of little-endian words, LSB-aligned (count 1..64). */
 static llg_bitstream_word_t llg_bitstream_word_bits(const llg_bitstream_word_t* words,
-                                              uint64_t low, unsigned count) {
+                                              uint64_t low, uint32_t count) {
     size_t index = (size_t)(low / 64u);
-    unsigned offset = (unsigned)(low % 64u);
+    uint32_t offset = (uint32_t)(low % 64u);
     llg_bitstream_word_t chunk = {{words[index].plane[LLG_SV4_BITS] >> offset,
                                    words[index].plane[LLG_SV4_X] >> offset,
                                    words[index].plane[LLG_SV4_Z] >> offset}};
@@ -118,10 +118,10 @@ static void llg_bitstream_push_words(llg_bitstream_t* stream,
     llg_bitstream_reserve(stream, stream->length + width);
     uint64_t remaining = width;
     while (remaining) {
-        unsigned count = remaining > 64u ? 64u : (unsigned)remaining;
+        uint32_t count = remaining > 64u ? 64u : (uint32_t)remaining;
         llg_bitstream_word_t chunk =
             llg_bitstream_word_bits(words, remaining - count, count);
-        unsigned shift = 64u - count;
+        uint32_t shift = 64u - count;
         llg_bitstream_word_t aligned = {{chunk.plane[LLG_SV4_BITS] << shift,
                                          chunk.plane[LLG_SV4_X] << shift,
                                          chunk.plane[LLG_SV4_Z] << shift}};
@@ -139,7 +139,7 @@ void llg_bitstream_append_value(llg_bitstream_t* stream, sv4_t value) {
                                 ? local
                                 : llg_alloc_items(count, sizeof(*words));
     for (size_t index = 0; index < count; ++index)
-        for (unsigned plane = 0; plane < 3u; ++plane)
+        for (uint32_t plane = 0; plane < 3u; ++plane)
             words[index].plane[plane] = llg_sv4_word(value, index, plane);
     llg_bitstream_push_words(stream, words, width);
     if (words != local) free(words);
@@ -156,7 +156,7 @@ void llg_bitstream_append_stream(llg_bitstream_t* stream,
     llg_bitstream_reserve(stream, stream->length + source->length);
     for (uint64_t position = 0; position < source->length; position += 64u) {
         uint64_t left = source->length - position;
-        unsigned count = left > 64u ? 64u : (unsigned)left;
+        uint32_t count = left > 64u ? 64u : (uint32_t)left;
         llg_bitstream_push(stream, llg_bitstream_peek(source, position, count),
                            count);
     }
@@ -168,7 +168,7 @@ static void llg_bitstream_append_elements(llg_bitstream_t* stream,
                                           const sv4_t* data, size_t size,
                                           uint32_t width, int8_t is_signed,
                                           uint8_t two_state,
-                                          int selector_kind, sv4_t first,
+                                          int32_t selector_kind, sv4_t first,
                                           sv4_t second) {
     int64_t left;
     int64_t right;
@@ -179,7 +179,7 @@ static void llg_bitstream_append_elements(llg_bitstream_t* stream,
         llg_container_fatal("bit stream length overflows");
     llg_bitstream_reserve(stream, stream->length + (uint64_t)count * width);
     sv4_t fallback = SV4_EMPTY;
-    int has_fallback = 0;
+    int32_t has_fallback = 0;
     for (size_t offset = 0; offset < count; ++offset) {
         int64_t index = llg_stream_index_at(left, right, offset);
         if (index >= 0 && (uint64_t)index < (uint64_t)size) {
@@ -196,7 +196,7 @@ static void llg_bitstream_append_elements(llg_bitstream_t* stream,
 }
 
 void llg_bitstream_append_dyn(llg_bitstream_t* stream,
-                              const llg_dyn_array_t* array, int selector_kind,
+                              const llg_dyn_array_t* array, int32_t selector_kind,
                               sv4_t first, sv4_t second) {
     llg_bitstream_append_elements(stream, array->data, array->size,
                                   array->element_width, array->element_signed,
@@ -205,7 +205,7 @@ void llg_bitstream_append_dyn(llg_bitstream_t* stream,
 }
 
 void llg_bitstream_append_queue(llg_bitstream_t* stream,
-                                const llg_queue_t* queue, int selector_kind,
+                                const llg_queue_t* queue, int32_t selector_kind,
                                 sv4_t first, sv4_t second) {
     llg_bitstream_append_elements(stream, queue->data, queue->size,
                                   queue->element_width, queue->element_signed,
@@ -269,7 +269,7 @@ static void llg_bitstream_append_item(llg_bitstream_t* stream,
 static void llg_bitstream_append_items(llg_bitstream_t* stream,
                                        const llg_value_t* data, size_t size,
                                        const llg_value_desc_t* element,
-                                       int selector_kind, sv4_t first,
+                                       int32_t selector_kind, sv4_t first,
                                        sv4_t second) {
     int64_t left;
     int64_t right;
@@ -277,14 +277,14 @@ static void llg_bitstream_append_items(llg_bitstream_t* stream,
     llg_stream_bounds(selector_kind, first, second, size, &left, &right, &count);
     for (size_t offset = 0; offset < count; ++offset) {
         int64_t index = llg_stream_index_at(left, right, offset);
-        int in_range = index >= 0 && (uint64_t)index < (uint64_t)size;
+        int32_t in_range = index >= 0 && (uint64_t)index < (uint64_t)size;
         llg_bitstream_append_item(stream, in_range ? &data[index] : NULL, element);
     }
 }
 
 void llg_bitstream_append_dyn_values(llg_bitstream_t* stream,
                                      const llg_dyn_value_array_t* array,
-                                     int selector_kind, sv4_t first,
+                                     int32_t selector_kind, sv4_t first,
                                      sv4_t second) {
     llg_bitstream_append_items(stream, array->data, array->size,
                                array->element, selector_kind, first, second);
@@ -292,7 +292,7 @@ void llg_bitstream_append_dyn_values(llg_bitstream_t* stream,
 
 void llg_bitstream_append_queue_values(llg_bitstream_t* stream,
                                        const llg_queue_value_array_t* queue,
-                                       int selector_kind, sv4_t first,
+                                       int32_t selector_kind, sv4_t first,
                                        sv4_t second) {
     llg_bitstream_append_items(stream, queue->data, queue->size,
                                queue->element, selector_kind, first, second);
@@ -303,7 +303,7 @@ void llg_bitstream_append_string(llg_bitstream_t* stream, llg_string_t value) {
     llg_bitstream_reserve(stream, stream->length + (uint64_t)value.len * 8u);
     for (size_t index = 0; index < value.len; ++index) {
         llg_bitstream_word_t chunk = {
-            {(uint64_t)(unsigned char)value.data[index] << 56, 0, 0}};
+            {(uint64_t)(uint8_t)value.data[index] << 56, 0, 0}};
         llg_bitstream_push(stream, chunk, 8u);
     }
 }
@@ -313,7 +313,7 @@ static void llg_bitstream_copy(llg_bitstream_t* target,
                                const llg_bitstream_t* source,
                                uint64_t position, uint64_t count) {
     while (count) {
-        unsigned step = count > 64u ? 64u : (unsigned)count;
+        uint32_t step = count > 64u ? 64u : (uint32_t)count;
         llg_bitstream_push(target, llg_bitstream_peek(source, position, step),
                            step);
         position += step;
@@ -367,12 +367,12 @@ static sv4_t llg_bitstream_slice(const llg_bitstream_t* stream,
                                 : llg_alloc_items(count, sizeof(*words));
     for (size_t index = 0; index < count; ++index) {
         uint64_t low = (uint64_t)index * 64u;
-        unsigned step = width - low > 64u ? 64u : (unsigned)(width - low);
+        uint32_t step = width - low > 64u ? 64u : (uint32_t)(width - low);
         // Value bits [low, low + step) are the stream bits ending
         // `low` bits before the right end of the slice.
         llg_bitstream_word_t chunk = llg_bitstream_peek(
             stream, position + (width - low - step), step);
-        unsigned shift = 64u - step;
+        uint32_t shift = 64u - step;
         words[index].plane[LLG_SV4_BITS] = chunk.plane[LLG_SV4_BITS] >> shift;
         words[index].plane[LLG_SV4_X] = chunk.plane[LLG_SV4_X] >> shift;
         words[index].plane[LLG_SV4_Z] = chunk.plane[LLG_SV4_Z] >> shift;
@@ -407,7 +407,7 @@ sv4_t llg_bitstream_value(const llg_bitstream_t* stream) {
  * zero-fills the last element (SV 11.4.14, 11.4.14.4); a bit-stream cast
  * (`exact` 1) requires whole elements (SV 6.24.3). */
 static size_t llg_bitstream_elements(const llg_bitstream_t* stream,
-                                     uint32_t width, int exact) {
+                                     uint32_t width, int32_t exact) {
     if (!width) llg_container_fatal("streaming destination has an empty element type");
     if (exact && stream->length % width)
         llg_container_fatal(
@@ -438,7 +438,7 @@ static sv4_t* llg_bitstream_element_values(const llg_bitstream_t* stream,
 }
 
 void llg_bitstream_to_dyn(llg_dyn_array_t* dst, const llg_bitstream_t* stream,
-                          int exact) {
+                          int32_t exact) {
     size_t count = llg_bitstream_elements(stream, dst->element_width, exact);
     sv4_t* values = llg_bitstream_element_values(stream, dst->element_width,
                                                  count);
@@ -448,7 +448,7 @@ void llg_bitstream_to_dyn(llg_dyn_array_t* dst, const llg_bitstream_t* stream,
 }
 
 void llg_bitstream_to_queue(llg_queue_t* dst, const llg_bitstream_t* stream,
-                            int exact) {
+                            int32_t exact) {
     size_t count = llg_bitstream_elements(stream, dst->element_width, exact);
     sv4_t* values = llg_bitstream_element_values(stream, dst->element_width,
                                                  count);
@@ -459,18 +459,18 @@ void llg_bitstream_to_queue(llg_queue_t* dst, const llg_bitstream_t* stream,
 
 /* A string destination is a dynamic array of bytes (6.24.3); it cannot hold
  * "\0" (6.16), so zero bytes, including zero fill, are dropped. */
-llg_string_t llg_bitstream_string(const llg_bitstream_t* stream, int exact) {
+llg_string_t llg_bitstream_string(const llg_bitstream_t* stream, int32_t exact) {
     size_t count = llg_bitstream_elements(stream, 8u, exact);
     char* bytes = count ? llg_alloc_items(count, 1) : NULL;
     size_t length = 0;
     for (size_t index = 0; index < count; ++index) {
         uint64_t position = (uint64_t)index * 8u;
         uint64_t available = stream->length - position;
-        unsigned step = available >= 8u ? 8u : (unsigned)available;
+        uint32_t step = available >= 8u ? 8u : (uint32_t)available;
         llg_bitstream_word_t chunk = llg_bitstream_peek(stream, position, step);
         // X and Z bits become zero, as in a cast to a 2-state byte.
-        unsigned char byte =
-            (unsigned char)((chunk.plane[LLG_SV4_BITS] & ~(chunk.plane[LLG_SV4_X] | chunk.plane[LLG_SV4_Z])) >> 56);
+        uint8_t byte =
+            (uint8_t)((chunk.plane[LLG_SV4_BITS] & ~(chunk.plane[LLG_SV4_X] | chunk.plane[LLG_SV4_Z])) >> 56);
         if (byte) bytes[length++] = (char)byte;
     }
     llg_string_t result = llg_string_bytes(bytes, length);

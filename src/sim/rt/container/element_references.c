@@ -21,7 +21,7 @@ struct llg_element_cell {
     size_t refs;
     size_t index;
     sv4_t key;
-    unsigned char* string_key;
+    uint8_t* string_key;
     size_t string_length;
     sv4_t value;
     uint32_t element_width;
@@ -166,7 +166,7 @@ static void llg_assoc_outdate_references(llg_assoc_t* array, size_t position) {
     while (*link) {
         struct llg_element_cell* cell = *link;
         const llg_assoc_entry_t* entry = NULL;
-        int found = 0;
+        int32_t found = 0;
         size_t at = cell->kind == LLG_ELEMENT_CELL_ASSOC_STRING
                         ? llg_assoc_string_position(array, cell->string_key,
                                                     cell->string_length, &found)
@@ -183,7 +183,7 @@ static void llg_assoc_outdate_references(llg_assoc_t* array, size_t position) {
     }
 }
 
-int llg_element_cell_selected(const void* ptr) {
+int32_t llg_element_cell_selected(const void* ptr) {
     const struct llg_element_cell* cell = ptr;
     return cell && cell->valid;
 }
@@ -217,14 +217,14 @@ sv4_t llg_element_cell_read(const void* ptr) {
     }
 }
 
-int llg_element_cell_write(void* ptr, sv4_t value) {
+int32_t llg_element_cell_write(void* ptr, sv4_t value) {
     struct llg_element_cell* cell = ptr;
     if (!cell) llg_container_fatal("null retained element reference");
     if (!cell->valid) return 0;
     if (!cell->owner) {
         sv4_t assigned = llg_element_assign(value, cell->element_width, cell->element_signed,
                                             cell->element_two_state);
-        int changed = !sv4_same(cell->value, assigned);
+        int32_t changed = !sv4_same(cell->value, assigned);
         sv4_move(&cell->value, &assigned);
         if (changed)
             llg_notify(cell->notify, cell->dependency, NULL, LLG_CONTAINER_CHANGED_CONTENTS);

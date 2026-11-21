@@ -35,7 +35,7 @@ struct llg_gc_tracer {
     size_t interior_capacity;
     size_t interior_count;
     uint64_t marked;
-    int failed;
+    int32_t failed;
 };
 
 // A real, private object is the index tombstone, not a fabricated pointer.
@@ -62,20 +62,20 @@ static struct {
     uint32_t epoch;
     uint64_t since_last;
     uint64_t next_serial; // creation serial of the last allocated object
-    int ordered_serials;  // an array with class keys compares serials
+    int32_t ordered_serials;  // an array with class keys compares serials
     uint64_t threshold;
     uint64_t base_threshold;
     uint64_t growth_percent;
-    int disabled;
-    int stress;
-    int verify;
-    int print_stats;
-    int collecting;
+    int32_t disabled;
+    int32_t stress;
+    int32_t verify;
+    int32_t print_stats;
+    int32_t collecting;
     llg_gc_stats_t stats;
 } llg_gc;
 
 // Read by the scheduler at every safe point; set by allocation policy.
-static int llg_gc_pending;
+static int32_t llg_gc_pending;
 
 static size_t llg_gc_hash(const void* address) {
     uint64_t hash = (uint64_t)(uintptr_t)address;
@@ -89,7 +89,7 @@ static size_t llg_gc_hash(const void* address) {
 
 // Rebuild the identity index at `capacity` (a power of two). Returns 0 and
 // leaves the old index untouched when the allocation fails.
-static int gc_index_rebuild(size_t capacity) {
+static int32_t gc_index_rebuild(size_t capacity) {
     llg_gc_header_t** entries =
         (llg_gc_header_t**)calloc(capacity, sizeof(*entries));
     if (!entries) return 0;
@@ -164,7 +164,7 @@ void* llg_gc_alloc(size_t size, const llg_gc_type_t* type) {
     // Only an array with class keys compares serials; other models wrap.
     if (++llg_gc.next_serial > LLG_GC_SERIAL_MAX) {
         if (llg_gc.ordered_serials) {
-            llg_msg(LLG_MSG_INTERNAL, NULL, "more than %llu collected objects were created at time %llu; an array with class keys orders objects by a %d-bit creation serial", (unsigned long long)LLG_GC_SERIAL_MAX, (unsigned long long)llg_time(), LLG_GC_SERIAL_BITS);
+            llg_msg(LLG_MSG_INTERNAL, NULL, "more than %llu collected objects were created at time %llu; an array with class keys orders objects by a %" PRId32 "-bit creation serial", (unsigned long long)LLG_GC_SERIAL_MAX, (unsigned long long)llg_time(), LLG_GC_SERIAL_BITS);
             abort();
         }
         llg_gc.next_serial = 1;
@@ -183,7 +183,7 @@ void llg_gc_order_objects(void) {
     llg_gc.ordered_serials = 1;
 }
 
-int llg_gc_is_object(const void* handle) {
+int32_t llg_gc_is_object(const void* handle) {
     return gc_index_find(handle) != SIZE_MAX;
 }
 
@@ -223,7 +223,7 @@ void llg_gc_visit(llg_gc_tracer_t* tracer, const void* handle) {
     gc_push(tracer, object);
 }
 
-static int gc_interior_grow(llg_gc_tracer_t* tracer) {
+static int32_t gc_interior_grow(llg_gc_tracer_t* tracer) {
     size_t capacity = tracer->interior_capacity ? tracer->interior_capacity * 2 : 64;
     if (capacity > SIZE_MAX / sizeof(*tracer->interior)) return 0;
     const void** entries = (const void**)calloc(capacity, sizeof(*entries));
@@ -259,7 +259,7 @@ void llg_gc_visit_interior(llg_gc_tracer_t* tracer, const void* address) {
     ++tracer->interior_count;
 }
 
-int llg_gc_interior_hit(const llg_gc_tracer_t* tracer, const void* address) {
+int32_t llg_gc_interior_hit(const llg_gc_tracer_t* tracer, const void* address) {
     if (!tracer || !address || !tracer->interior_count) return 0;
     size_t mask = tracer->interior_capacity - 1;
     size_t slot = llg_gc_hash(address) & mask;
@@ -293,7 +293,7 @@ void llg_gc_visit_payload(llg_gc_tracer_t* tracer, void (*drop)(void*),
     }
 }
 
-static int gc_grow(void** items, size_t* capacity, size_t needed, size_t size) {
+static int32_t gc_grow(void** items, size_t* capacity, size_t needed, size_t size) {
     if (needed <= *capacity) return 1;
     size_t next = *capacity ? *capacity : 8;
     while (next < needed) {
@@ -307,7 +307,7 @@ static int gc_grow(void** items, size_t* capacity, size_t needed, size_t size) {
     return 1;
 }
 
-int llg_gc_register_roots(llg_gc_root_fn fn, void* context) {
+int32_t llg_gc_register_roots(llg_gc_root_fn fn, void* context) {
     if (!fn) return 0;
     for (size_t i = 0; i < llg_gc.root_count; ++i)
         if (llg_gc.roots[i].fn == fn && llg_gc.roots[i].context == context) return 1;
@@ -318,7 +318,7 @@ int llg_gc_register_roots(llg_gc_root_fn fn, void* context) {
     return 1;
 }
 
-int llg_gc_register_payload_tracer(void (*drop)(void*),
+int32_t llg_gc_register_payload_tracer(void (*drop)(void*),
                                    llg_gc_payload_trace_fn trace) {
     if (!drop || !trace) return 0;
     for (size_t i = 0; i < llg_gc.payload_count; ++i) {
@@ -345,7 +345,7 @@ static const llg_gc_frame_map_t* gc_frame_map(const llg_co_desc_t* desc) {
     return NULL;
 }
 
-int llg_gc_register_frame_map(const llg_co_desc_t* desc,
+int32_t llg_gc_register_frame_map(const llg_co_desc_t* desc,
                               const llg_gc_frame_map_t* map) {
     if (!desc || !map) return 0;
     if (llg_gc.frame_count + 1 > llg_gc.frame_capacity - llg_gc.frame_capacity / 4) {
@@ -394,7 +394,7 @@ void llg_gc_handle_cell_drop(void* cell) {
     if (cell) *(void**)cell = NULL;
 }
 
-int llg_gc_pin(void* handle) {
+int32_t llg_gc_pin(void* handle) {
     size_t slot = gc_index_find(handle);
     if (slot == SIZE_MAX) return 0;
     llg_gc_header_t* object = llg_gc.index[slot];
@@ -407,7 +407,7 @@ int llg_gc_pin(void* handle) {
     return 1;
 }
 
-int llg_gc_unpin(void* handle) {
+int32_t llg_gc_unpin(void* handle) {
     size_t slot = gc_index_find(handle);
     if (slot == SIZE_MAX) return 0;
     llg_gc_header_t* object = llg_gc.index[slot];
@@ -564,7 +564,7 @@ void llg_gc_get_stats(llg_gc_stats_t* stats) {
     if (stats) *stats = llg_gc.stats;
 }
 
-static int gc_parse_flag(const char* name, int* value) {
+static int32_t gc_parse_flag(const char* name, int32_t* value) {
     const char* text = getenv(name);
     if (!text) return 1;
     if (strcmp(text, "0") == 0 || strcmp(text, "1") == 0) {
@@ -575,7 +575,7 @@ static int gc_parse_flag(const char* name, int* value) {
     return 0;
 }
 
-static int gc_parse_count(const char* name, uint64_t fallback, uint64_t* value) {
+static int32_t gc_parse_count(const char* name, uint64_t fallback, uint64_t* value) {
     const char* text = getenv(name);
     if (!text) {
         *value = fallback;
@@ -641,10 +641,10 @@ static void gc_trace_native_value(const void* payload, llg_gc_tracer_t* tracer) 
 
 // Runtime initialization: read the policy. Registrations were released by
 // the preceding runtime cleanup.
-static int gc_configure(void) {
+static int32_t gc_configure(void) {
     gc_release_registrations();
     llg_gc.since_last = 0;
-    int enabled = 1;
+    int32_t enabled = 1;
     llg_gc.stress = llg_gc.verify = llg_gc.print_stats = 0;
     if (!gc_parse_flag("LLG_GC", &enabled) ||
         !gc_parse_flag("LLG_GC_STRESS", &llg_gc.stress) ||

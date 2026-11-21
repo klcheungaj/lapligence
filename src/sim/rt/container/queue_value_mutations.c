@@ -1,6 +1,6 @@
 
 static void llg_queue_value_append(llg_queue_value_array_t* queue,
-                                   const llg_value_t* source, int* change) {
+                                   const llg_value_t* source, int32_t* change) {
     if (queue->size == queue->limit) {
         llg_container_warning("bounded queue push_back discarded new element");
         return;
@@ -15,7 +15,7 @@ static void llg_queue_value_append(llg_queue_value_array_t* queue,
 }
 
 static void llg_queue_value_prepend(llg_queue_value_array_t* queue,
-                                    const llg_value_t* source, int* change) {
+                                    const llg_value_t* source, int32_t* change) {
     if (queue->limit == 0) {
         llg_container_warning("bounded queue push_front discarded new element");
         return;
@@ -43,7 +43,7 @@ static void llg_queue_value_prepend(llg_queue_value_array_t* queue,
 }
 
 void llg_queue_value_push_front(llg_queue_value_array_t* queue, sv4_t value) {
-    int change = 0;
+    int32_t change = 0;
     llg_value_t source = llg_value_from_packed(queue->element, value);
     llg_queue_value_prepend(queue, &source, &change);
     llg_value_drop(&source);
@@ -53,7 +53,7 @@ void llg_queue_value_push_front(llg_queue_value_array_t* queue, sv4_t value) {
 }
 
 void llg_queue_value_push_back(llg_queue_value_array_t* queue, sv4_t value) {
-    int change = 0;
+    int32_t change = 0;
     llg_value_t source = llg_value_from_packed(queue->element, value);
     llg_queue_value_append(queue, &source, &change);
     llg_value_drop(&source);
@@ -63,7 +63,7 @@ void llg_queue_value_push_back(llg_queue_value_array_t* queue, sv4_t value) {
 }
 
 void llg_queue_value_push_front_real(llg_queue_value_array_t* queue, double value) {
-    int change = 0;
+    int32_t change = 0;
     llg_value_t source = llg_value_from_real(queue->element, value);
     llg_queue_value_prepend(queue, &source, &change);
     llg_value_drop(&source);
@@ -73,7 +73,7 @@ void llg_queue_value_push_front_real(llg_queue_value_array_t* queue, double valu
 }
 
 void llg_queue_value_push_back_real(llg_queue_value_array_t* queue, double value) {
-    int change = 0;
+    int32_t change = 0;
     llg_value_t source = llg_value_from_real(queue->element, value);
     llg_queue_value_append(queue, &source, &change);
     llg_value_drop(&source);
@@ -84,7 +84,7 @@ void llg_queue_value_push_back_real(llg_queue_value_array_t* queue, double value
 
 void llg_queue_value_push_front_string(llg_queue_value_array_t* queue,
                                        llg_string_t value) {
-    int change = 0;
+    int32_t change = 0;
     llg_value_t source = llg_value_from_string(queue->element, value);
     llg_queue_value_prepend(queue, &source, &change);
     llg_value_drop(&source);
@@ -95,7 +95,7 @@ void llg_queue_value_push_front_string(llg_queue_value_array_t* queue,
 
 void llg_queue_value_push_back_string(llg_queue_value_array_t* queue,
                                       llg_string_t value) {
-    int change = 0;
+    int32_t change = 0;
     llg_value_t source = llg_value_from_string(queue->element, value);
     llg_queue_value_append(queue, &source, &change);
     llg_value_drop(&source);
@@ -106,7 +106,7 @@ void llg_queue_value_push_back_string(llg_queue_value_array_t* queue,
 
 void llg_queue_value_push_front_chandle(llg_queue_value_array_t* queue,
                                         void* value) {
-    int change = 0;
+    int32_t change = 0;
     llg_value_t source = llg_value_from_chandle(queue->element, value);
     llg_queue_value_prepend(queue, &source, &change);
     llg_value_drop(&source);
@@ -117,7 +117,7 @@ void llg_queue_value_push_front_chandle(llg_queue_value_array_t* queue,
 
 void llg_queue_value_push_back_chandle(llg_queue_value_array_t* queue,
                                        void* value) {
-    int change = 0;
+    int32_t change = 0;
     llg_value_t source = llg_value_from_chandle(queue->element, value);
     llg_queue_value_append(queue, &source, &change);
     llg_value_drop(&source);
@@ -128,7 +128,7 @@ void llg_queue_value_push_back_chandle(llg_queue_value_array_t* queue,
 
 void llg_queue_value_push_front_container(
     llg_queue_value_array_t* queue, const llg_dyn_value_array_t* source) {
-    int change = 0;
+    int32_t change = 0;
     llg_value_t value = llg_value_from_container(queue->element, source);
     llg_queue_value_prepend(queue, &value, &change);
     llg_value_drop(&value);
@@ -139,7 +139,7 @@ void llg_queue_value_push_front_container(
 
 void llg_queue_value_push_back_container(
     llg_queue_value_array_t* queue, const llg_dyn_value_array_t* source) {
-    int change = 0;
+    int32_t change = 0;
     llg_value_t value = llg_value_from_container(queue->element, source);
     llg_queue_value_append(queue, &value, &change);
     llg_value_drop(&value);
@@ -150,7 +150,7 @@ void llg_queue_value_push_back_container(
 
 void llg_queue_value_push_front_container_from_packed(
     llg_queue_value_array_t* queue, const llg_dyn_array_t* source) {
-    int change = 0;
+    int32_t change = 0;
     llg_value_t value = llg_value_from_packed_container(queue->element, source);
     llg_queue_value_prepend(queue, &value, &change);
     llg_value_drop(&value);
@@ -161,7 +161,7 @@ void llg_queue_value_push_front_container_from_packed(
 
 void llg_queue_value_push_back_container_from_packed(
     llg_queue_value_array_t* queue, const llg_dyn_array_t* source) {
-    int change = 0;
+    int32_t change = 0;
     llg_value_t value = llg_value_from_packed_container(queue->element, source);
     llg_queue_value_append(queue, &value, &change);
     llg_value_drop(&value);
@@ -170,9 +170,9 @@ void llg_queue_value_push_back_container_from_packed(
                queue->shape_dependency, change);
 }
 
-static int llg_queue_value_insert_source(llg_queue_value_array_t* queue,
+static int32_t llg_queue_value_insert_source(llg_queue_value_array_t* queue,
                                          sv4_t index,
-                                         const llg_value_t* source, int* change) {
+                                         const llg_value_t* source, int32_t* change) {
     size_t native;
     if (!llg_index(index, queue->size, 1, &native)) {
         llg_invalid_queue_index("queue insert", "invalid recursive queue insert index", index, queue->size, 1);
@@ -206,11 +206,11 @@ static int llg_queue_value_insert_source(llg_queue_value_array_t* queue,
     return 1;
 }
 
-int llg_queue_value_insert(llg_queue_value_array_t* queue, sv4_t index,
+int32_t llg_queue_value_insert(llg_queue_value_array_t* queue, sv4_t index,
                            sv4_t value) {
-    int change = 0;
+    int32_t change = 0;
     llg_value_t source = llg_value_from_packed(queue->element, value);
-    int result = llg_queue_value_insert_source(queue, index, &source, &change);
+    int32_t result = llg_queue_value_insert_source(queue, index, &source, &change);
     llg_value_drop(&source);
     /* No temporary owner may remain live across the callback. */
     llg_notify(queue->notify, queue->contents_dependency,
@@ -218,11 +218,11 @@ int llg_queue_value_insert(llg_queue_value_array_t* queue, sv4_t index,
     return result;
 }
 
-int llg_queue_value_insert_real(llg_queue_value_array_t* queue, sv4_t index,
+int32_t llg_queue_value_insert_real(llg_queue_value_array_t* queue, sv4_t index,
                                 double value) {
-    int change = 0;
+    int32_t change = 0;
     llg_value_t source = llg_value_from_real(queue->element, value);
-    int result = llg_queue_value_insert_source(queue, index, &source, &change);
+    int32_t result = llg_queue_value_insert_source(queue, index, &source, &change);
     llg_value_drop(&source);
     /* No temporary owner may remain live across the callback. */
     llg_notify(queue->notify, queue->contents_dependency,
@@ -230,11 +230,11 @@ int llg_queue_value_insert_real(llg_queue_value_array_t* queue, sv4_t index,
     return result;
 }
 
-int llg_queue_value_insert_string(llg_queue_value_array_t* queue, sv4_t index,
+int32_t llg_queue_value_insert_string(llg_queue_value_array_t* queue, sv4_t index,
                                   llg_string_t value) {
-    int change = 0;
+    int32_t change = 0;
     llg_value_t source = llg_value_from_string(queue->element, value);
-    int result = llg_queue_value_insert_source(queue, index, &source, &change);
+    int32_t result = llg_queue_value_insert_source(queue, index, &source, &change);
     llg_value_drop(&source);
     /* No temporary owner may remain live across the callback. */
     llg_notify(queue->notify, queue->contents_dependency,
@@ -242,11 +242,11 @@ int llg_queue_value_insert_string(llg_queue_value_array_t* queue, sv4_t index,
     return result;
 }
 
-int llg_queue_value_insert_chandle(llg_queue_value_array_t* queue,
+int32_t llg_queue_value_insert_chandle(llg_queue_value_array_t* queue,
                                    sv4_t index, void* value) {
-    int change = 0;
+    int32_t change = 0;
     llg_value_t source = llg_value_from_chandle(queue->element, value);
-    int result = llg_queue_value_insert_source(queue, index, &source, &change);
+    int32_t result = llg_queue_value_insert_source(queue, index, &source, &change);
     llg_value_drop(&source);
     /* No temporary owner may remain live across the callback. */
     llg_notify(queue->notify, queue->contents_dependency,
@@ -254,12 +254,12 @@ int llg_queue_value_insert_chandle(llg_queue_value_array_t* queue,
     return result;
 }
 
-int llg_queue_value_insert_container(llg_queue_value_array_t* queue,
+int32_t llg_queue_value_insert_container(llg_queue_value_array_t* queue,
                                      sv4_t index,
                                      const llg_dyn_value_array_t* source) {
-    int change = 0;
+    int32_t change = 0;
     llg_value_t value = llg_value_from_container(queue->element, source);
-    int result = llg_queue_value_insert_source(queue, index, &value, &change);
+    int32_t result = llg_queue_value_insert_source(queue, index, &value, &change);
     llg_value_drop(&value);
     /* No temporary owner may remain live across the callback. */
     llg_notify(queue->notify, queue->contents_dependency,
@@ -267,11 +267,11 @@ int llg_queue_value_insert_container(llg_queue_value_array_t* queue,
     return result;
 }
 
-int llg_queue_value_insert_container_from_packed(
+int32_t llg_queue_value_insert_container_from_packed(
     llg_queue_value_array_t* queue, sv4_t index, const llg_dyn_array_t* source) {
-    int change = 0;
+    int32_t change = 0;
     llg_value_t value = llg_value_from_packed_container(queue->element, source);
-    int result = llg_queue_value_insert_source(queue, index, &value, &change);
+    int32_t result = llg_queue_value_insert_source(queue, index, &value, &change);
     llg_value_drop(&value);
     /* No temporary owner may remain live across the callback. */
     llg_notify(queue->notify, queue->contents_dependency,
@@ -279,7 +279,7 @@ int llg_queue_value_insert_container_from_packed(
     return result;
 }
 
-int llg_queue_value_delete_index(llg_queue_value_array_t* queue, sv4_t index) {
+int32_t llg_queue_value_delete_index(llg_queue_value_array_t* queue, sv4_t index) {
     size_t native;
     if (!llg_index(index, queue->size, 0, &native)) {
         llg_invalid_queue_index("queue delete", NULL, index, queue->size, 0);
@@ -303,7 +303,7 @@ int llg_queue_value_delete_index(llg_queue_value_array_t* queue, sv4_t index) {
 /* Remove one endpoint element (SV 7.10.2.4-5) and transfer its value to
  * `removed`, which must be empty. Returns 0 and leaves `removed` empty for an
  * empty queue. The caller publishes the result before notifying readers. */
-static int llg_queue_value_take(llg_queue_value_array_t* queue, int back,
+static int32_t llg_queue_value_take(llg_queue_value_array_t* queue, int32_t back,
                                 llg_value_t* removed) {
     if (!queue) llg_container_fatal("null queue pop target");
     if (!queue->size) return 0;
@@ -326,7 +326,7 @@ static void llg_queue_value_pop_notify(llg_queue_value_array_t* queue) {
                LLG_CONTAINER_CHANGED_CONTENTS | LLG_CONTAINER_CHANGED_SHAPE);
 }
 
-double llg_queue_value_pop_real(llg_queue_value_array_t* queue, int back) {
+double llg_queue_value_pop_real(llg_queue_value_array_t* queue, int32_t back) {
     llg_value_t removed = {0};
     if (!llg_queue_value_take(queue, back, &removed)) return 0.0;
     double result = removed.desc && removed.desc->kind == LLG_VALUE_REAL
@@ -338,7 +338,7 @@ double llg_queue_value_pop_real(llg_queue_value_array_t* queue, int back) {
 }
 
 void llg_queue_value_pop_string_to(llg_string_t* dst,
-                                   llg_queue_value_array_t* queue, int back) {
+                                   llg_queue_value_array_t* queue, int32_t back) {
     if (!dst) llg_container_fatal("queue pop requires output storage");
     llg_value_t removed = {0};
     llg_string_destroy(dst);
@@ -351,7 +351,7 @@ void llg_queue_value_pop_string_to(llg_string_t* dst,
     llg_queue_value_pop_notify(queue);
 }
 
-void* llg_queue_value_pop_chandle(llg_queue_value_array_t* queue, int back) {
+void* llg_queue_value_pop_chandle(llg_queue_value_array_t* queue, int32_t back) {
     if (queue && queue->element && queue->element->kind == LLG_VALUE_PROCESS)
         llg_container_fatal("process queue pop requires a reference destination");
     llg_value_t removed = {0};
@@ -365,14 +365,14 @@ void* llg_queue_value_pop_chandle(llg_queue_value_array_t* queue, int back) {
 }
 
 void llg_queue_value_pop_process_to(void** dst, llg_queue_value_array_t* queue,
-                                    int back) {
+                                    int32_t back) {
     if (!dst) llg_container_fatal("queue pop requires output storage");
     if (!queue || !queue->element || queue->element->kind != LLG_VALUE_PROCESS)
         llg_container_fatal("process pop used with a non-process queue");
     llg_value_t removed = {0};
     void* previous = *dst;
     *dst = NULL;
-    int taken = llg_queue_value_take(queue, back, &removed);
+    int32_t taken = llg_queue_value_take(queue, back, &removed);
     if (taken) {
         *dst = removed.value.handle; // the element's reference moves to dst
         removed.value.handle = NULL;

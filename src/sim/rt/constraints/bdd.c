@@ -24,7 +24,7 @@ typedef struct {
     uint32_t levels;
     uint64_t limit;
     uint64_t steps;      /* recursive apply steps, bounded by 32 * limit */
-    int overflow;        /* 0, or the first bound exceeded (CR_BDD_OVER_*) */
+    int32_t overflow;        /* 0, or the first bound exceeded (CR_BDD_OVER_*) */
 } cr_bdd_t;
 
 /* Which bound a build exceeded first: the node bound depends only on the
@@ -199,7 +199,7 @@ static uint64_t cr_bdd_key(uint32_t op, uint32_t a, uint32_t b) {
     return ((uint64_t)op << 62) | ((uint64_t)a << 31) | (uint64_t)b;
 }
 
-static int cr_bdd_lookup(cr_bdd_t* m, uint64_t key, uint32_t* out) {
+static int32_t cr_bdd_lookup(cr_bdd_t* m, uint64_t key, uint32_t* out) {
     size_t slot = (size_t)((key * UINT64_C(0x9e3779b97f4a7c15)) >> 20) & (m->cache_cap - 1u);
     if (m->cache_key[slot] == key) {
         *out = m->cache_val[slot];
@@ -217,7 +217,7 @@ static void cr_bdd_store(cr_bdd_t* m, uint64_t key, uint32_t value) {
 /* The node limit bounds memory; the step limit bounds time when the
  * computed table cannot hold the working set. Both report the same
  * tunable. */
-static int cr_bdd_step(cr_bdd_t* m) {
+static int32_t cr_bdd_step(cr_bdd_t* m) {
     if (++m->steps > m->limit * 32u && !m->overflow) m->overflow = CR_BDD_OVER_STEPS;
     return !m->overflow;
 }
@@ -365,7 +365,7 @@ static void bn_sub(uint64_t* d, const uint64_t* a, uint32_t limbs) {
     }
 }
 
-static int bn_cmp(const uint64_t* a, const uint64_t* b, uint32_t limbs) {
+static int32_t bn_cmp(const uint64_t* a, const uint64_t* b, uint32_t limbs) {
     for (uint32_t i = limbs; i-- > 0;)
         if (a[i] != b[i]) return a[i] < b[i] ? -1 : 1;
     return 0;
@@ -473,7 +473,7 @@ static void cr_exact_build(cr_exact_t* e, const cr_bdd_t* m, const uint32_t* roo
         e->hi[c] = map[m->hi[n]];
         uint64_t* dst = e->count + (size_t)c * e->limbs;
         uint32_t kids[2] = {e->lo[c], e->hi[c]};
-        for (int k = 0; k < 2; ++k) {
+        for (int32_t k = 0; k < 2; ++k) {
             uint32_t child = kids[k];
             bn_shl(tmp, e->count + (size_t)child * e->limbs,
                    e->level[child] - e->level[c] - 1u, e->limbs);
