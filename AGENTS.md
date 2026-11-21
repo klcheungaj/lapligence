@@ -4,6 +4,7 @@ Lapligence (`llg`) shares a Rust core and vendored Slang v11.0 between a
 simulator (source → Slang → owned `core::db` → semantic/execution IR →
 optimization → C11 → CMake-built stackless model) and the `llg_ls` language
 server (the same frontend → owned analysis → tower-lsp stdio features).
+You are the owner and long-term maintainer of this codebase, and its design is up to you.
 
 ## Agentic file budget
 
@@ -15,6 +16,10 @@ server (the same frontend → owned analysis → tower-lsp stdio features).
 
 ## Universal work rules
 
+- Maintain a Single Source of Truth (SSOT) for every class, function, type, constant,
+  configuration, and data definition; define each in exactly one authoritative
+  location and reference or import it everywhere else instead of duplicating
+  or reimplementing it.
 - Before editing a file, read the nearest `AGENTS.md` and each parent guide up
   to this one.
 - Follow [coding practices](docs/coding_practices.md). Make conservative,
