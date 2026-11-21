@@ -6,7 +6,10 @@ libraries. `top.sv` supplies the ordinary design unit and `config.sv` selects
 the library definitions for the two instances while the default liblist picks
 the third definition.
 
-`incdir.map` uses both `-incdir` token spellings. The RTL cell sees value 17
+`incdir_top.sv` has a `timescale, so `incdir_rtl.sv` and `incdir_gate.sv` start
+with `` `timescale 1ns/1ps `` (the default they took before): a design in which
+only some elements have a time scale is an error (IEEE 1800-2009 3.14.2.3,
+decision F2-D4). `incdir.map` uses both `-incdir` token spellings. The RTL cell sees value 17
 from its first directory rather than 99 from its second; the gate cell sees
 23 from its own same-named header. `incdir_wildcard.map` expands matching
 directories in sorted order and selects the same first match. The top displays
