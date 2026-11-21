@@ -697,7 +697,7 @@ static int llg_scan_format(llg_scan_input_t* input, const char* format,
 int llg_file_scanf_scoped(uint32_t descriptor, const char* format,
                           const llg_file_input_target_t* targets, int target_count,
                           const char* scope, uint64_t time_unit_fs) {
-    llg_file_slot_t* slot;
+    llg_file_slot_t* slot = NULL;
     // An invalid, closed or multichannel descriptor names no input to end,
     // so nothing is matched or assigned and the call returns 0 (S26-D2,
     // industry-standard behaviour). A file open only for writing does have
@@ -979,7 +979,7 @@ static int llg_file_read_resizable(uint32_t descriptor, sv4_t* values, size_t si
     }
     if (size == 0) {
         // An empty destination still requires an open file (S26-D2).
-        llg_file_slot_t* slot;
+        llg_file_slot_t* slot = NULL;
         (void)llg_file_read_source(descriptor, &slot);
         return 0;
     }

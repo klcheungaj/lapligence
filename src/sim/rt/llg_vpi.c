@@ -1289,7 +1289,10 @@ static int value_type_of(const llg_vpi_model_object_t* object, uint64_t element)
 /* Index range `[left:right]` of the outermost unpacked dimension. */
 static int array_dim(const llg_vpi_model_object_t* object, uint32_t dim,
                      int64_t* left, int64_t* right) {
-    if (dim >= object->dim_count) return 0;
+    if (dim >= object->dim_count) {
+        *left = *right = 0;
+        return 0;
+    }
     *left = object->dims[2 * dim];
     *right = object->dims[2 * dim + 1];
     return 1;
@@ -8004,7 +8007,7 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
             if (slot->kind == SLOT_SELECT && slot->span == 1)
                 return make_constant(slot->left, vpiDecConst, constant_scope(slot));
             if (slot->kind == SLOT_ELEMENT && object->dim_count == 1) {
-                int64_t left, right;
+                int64_t left = 0, right = 0;
                 array_dim(object, 0, &left, &right);
                 int64_t value = left >= right ? left - (int64_t)slot->element
                                               : left + (int64_t)slot->element;
@@ -8019,7 +8022,7 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
                               "vpiIndex of an element of a multidimensional array");
                     return NULL;
                 }
-                int64_t left, right;
+                int64_t left = 0, right = 0;
                 array_dim(array, 0, &left, &right);
                 int64_t value = left >= right ? left - (int64_t)object->port_index
                                               : left + (int64_t)object->port_index;
@@ -12030,8 +12033,8 @@ void vpi_get_value_array(vpiHandle handle, p_vpi_arrayvalue arrayvalue_p, PLI_IN
         vpi_error("LLG_VPI_ARGUMENT", "vpiUserAllocFlag with a null value buffer");
         return;
     }
-    uint32_t row;
-    uint64_t first;
+    uint32_t row = 0;
+    uint64_t first = 0;
     if (!array_section(handle, arrayvalue_p, index_p, num, 0, &row, &first)) return;
     llg_vpi_model_object_t* object = row_object(row);
     PLI_UINT32 format = arrayvalue_p->format;
@@ -12240,8 +12243,8 @@ void vpi_put_value_array(vpiHandle handle, p_vpi_arrayvalue arrayvalue_p, PLI_IN
                        llg_region_name(llg_current_region()));
         return;
     }
-    uint32_t row;
-    uint64_t first;
+    uint32_t row = 0;
+    uint64_t first = 0;
     if (!array_section(handle, arrayvalue_p, index_p, num, 1, &row, &first)) return;
     llg_vpi_model_object_t* object = row_object(row);
     /* Decision A20-D8: as for vpi_put_value on a net array element. */

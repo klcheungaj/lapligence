@@ -322,7 +322,11 @@ DPI-C and VPI DLLs:
   brings those findings back on newer GCC, but not equally: under it GCC 13
   (Ubuntu 24.04 CI) reported two dozen sites that GCC 14 accepts. A GCC 14
   host does not reproduce CI; check runtime C that adds such locals with
-  GCC 13 (`LLG_CC=gcc-13`) when available.
+  GCC 13 (`LLG_CC=gcc-13`) when available. GCC 13 on AArch64 (Ubuntu 24.04
+  arm64) inlines differently and rejected `coverage/database.c:999 'types'`,
+  which x86_64 GCC 13 and 14 accept. On x86_64 GCC 14, adding more inlining
+  (`-finline-limit=20000`) or `-fno-tree-dominator-opts -fno-tree-vrp` to the
+  check's flags brings out such sites.
 
 ## arm64
 

@@ -225,10 +225,14 @@ static void sequence_scope_release(llg_sequence_scope_t* scope) {
     }
 }
 
+/* Its marks are built from an event that sequence_choose_event filled; a
+ * caller reads the event only after that helper reported success. */
+LLG_MAYBE_UNINIT_BEGIN
 static int sequence_mark_same(const llg_sequence_mark_t* a, const llg_sequence_mark_t* b) {
     return a->time == b->time && a->tick == b->tick && a->clock == b->clock &&
            a->edge == b->edge;
 }
+LLG_MAYBE_UNINIT_END
 
 /* A pending thread is dead when an enclosing first_match invocation has
  * closed, or when an enclosing join can no longer pair its endpoint: the
@@ -626,7 +630,10 @@ static int sequence_start(llg_sequence_attempt_t* attempt,
 /* Pending tokens own ONE outgoing edge. This prevents replaying an already
  * consumed cross-clock boundary just because a sibling edge remains pending.
  * Zero-delay closure consumes no tick and first_match cancellation is scoped
- * to the dynamic invocation, leaving tied endpoints and outer alternatives. */
+ * to the dynamic invocation, leaving tied endpoints and outer alternatives.
+ * `event` is read only after sequence_choose_event reported success; this is
+ * the per-token loop of every clocked sequence, so it is not initialized. */
+LLG_MAYBE_UNINIT_BEGIN
 static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
                                   const llg_concurrent_assertion_t* assertion,
                                   uint64_t cycle, sv4_t* event_clock, int event_edge,
@@ -828,6 +835,7 @@ static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
     *accepted = attempt->endpoints != NULL;
     return !g.finish && next != NULL;
 }
+LLG_MAYBE_UNINIT_END
 
 static void sequence_attempt_append(llg_sequence_attempt_t** head,
                                     llg_sequence_attempt_t** tail,

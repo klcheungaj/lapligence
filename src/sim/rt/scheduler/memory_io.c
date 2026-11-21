@@ -736,8 +736,8 @@ static uint64_t fixed_memory_read_view(llg_string_t path, llg_memory_storage_t* 
         free(filename);
         return 0;
     }
-    int64_t first, last;
-    uint64_t inner_total;
+    int64_t first = 0, last = 0;
+    uint64_t inner_total = 0;
     if (!llg_memory_storage_valid(filename, storage, total, elem_width) ||
         !llg_memory_bounds(filename, total, dims, n_dims, strides, origin,
                            view_total, start, finish, has_start, has_finish,
@@ -879,8 +879,8 @@ static void fixed_memory_write_view(llg_string_t path, const llg_memory_storage_
     free(requested);
     // Check the range before opening, so a rejected call leaves an existing
     // file untouched rather than truncating it.
-    int64_t first, last;
-    uint64_t inner_total;
+    int64_t first = 0, last = 0;
+    uint64_t inner_total = 0;
     if (!llg_memory_storage_valid(filename, storage, total, elem_width) ||
         !llg_memory_bounds(filename, total, dims, n_dims, strides, origin,
                            view_total, start, finish, has_start, has_finish,

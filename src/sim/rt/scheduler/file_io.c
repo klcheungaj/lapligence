@@ -98,6 +98,7 @@ static uint32_t llg_file_output_descriptor(uint32_t descriptor) {
 static int llg_file_single_ordinary(uint32_t descriptor, llg_file_slot_t** out) {
     if (!(descriptor & LLG_FILE_FD_TAG) || !llg_file_mask_valid(descriptor)) {
         llg_file_global_failure("file input/position operation requires an FD, not an MCD");
+        *out = NULL;
         return 0;
     }
     *out = &llg_file_slots[descriptor & ~LLG_FILE_FD_TAG];
@@ -355,7 +356,7 @@ int llg_file_flush(uint32_t descriptor, int all) {
 }
 
 void llg_file_rewind(uint32_t descriptor) {
-    llg_file_slot_t* slot;
+    llg_file_slot_t* slot = NULL;
     if (!llg_file_single_ordinary(descriptor, &slot)) return;
     rewind(slot->stream);
     slot->error = 0;
@@ -365,7 +366,7 @@ void llg_file_rewind(uint32_t descriptor) {
 }
 
 int64_t llg_file_tell(uint32_t descriptor) {
-    llg_file_slot_t* slot;
+    llg_file_slot_t* slot = NULL;
     if (!llg_file_single_ordinary(descriptor, &slot)) return -1;
     long position = ftell(slot->stream);
     if (position < 0) {
@@ -380,7 +381,7 @@ int64_t llg_file_tell(uint32_t descriptor) {
 }
 
 int llg_file_seek(uint32_t descriptor, sv4_t offset, sv4_t operation) {
-    llg_file_slot_t* slot;
+    llg_file_slot_t* slot = NULL;
     int64_t signed_offset;
     if (!llg_file_single_ordinary(descriptor, &slot) ||
         !sv4_to_index_i64(offset, &signed_offset) || sv4_is_unknown(operation) ||
@@ -445,7 +446,7 @@ int llg_file_error(uint32_t descriptor, llg_string_t* message) {
 }
 
 int llg_file_eof(uint32_t descriptor) {
-    llg_file_slot_t* slot;
+    llg_file_slot_t* slot = NULL;
     if (!llg_file_single_ordinary(descriptor, &slot)) return -1;
     return slot->eof != 0;
 }
@@ -487,13 +488,13 @@ static int llg_file_ungetc_slot(llg_file_slot_t* slot, int value) {
 }
 
 int llg_file_getc(uint32_t descriptor) {
-    llg_file_slot_t* slot;
+    llg_file_slot_t* slot = NULL;
     if (!llg_file_single_ordinary(descriptor, &slot)) return EOF;
     return llg_file_getc_slot(slot);
 }
 
 int llg_file_ungetc(uint32_t descriptor, sv4_t character) {
-    llg_file_slot_t* slot;
+    llg_file_slot_t* slot = NULL;
     int64_t value;
     if (!llg_file_single_ordinary(descriptor, &slot) ||
         !sv4_to_index_i64(character, &value) || value < 0 || value > UCHAR_MAX) {
@@ -506,7 +507,7 @@ int llg_file_ungetc(uint32_t descriptor, sv4_t character) {
 
 // Read one line, or at most `limit` characters, into a fresh string.
 static int llg_file_gets_bounded(uint32_t descriptor, llg_string_t* target, size_t limit) {
-    llg_file_slot_t* slot;
+    llg_file_slot_t* slot = NULL;
     if (!target || !llg_file_single_ordinary(descriptor, &slot)) return 0;
     if (limit == 0) return 0;
     size_t capacity = limit < 128u ? limit : 128u;

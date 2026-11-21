@@ -350,7 +350,12 @@ static int llg_cov_fail(llg_cov_reader_t* reader, const char* error) {
     return 0;
 }
 
+// Every reader writes its out-parameter on every path, zero (or NULL) on
+// failure: a local filled through an inlined reader is then never read
+// uninitialized, which GCC 11, and GCC 13 on AArch64, otherwise report under
+// -Wmaybe-uninitialized (docs/cross_platform.md, Compiler versions).
 static int llg_cov_get(llg_cov_reader_t* reader, void* out, size_t len) {
+    memset(out, 0, len);
     if (reader->error) return 0;
     if (len > reader->len - reader->pos) return llg_cov_fail(reader, "the file is truncated");
     memcpy(out, reader->data + reader->pos, len);
@@ -364,22 +369,23 @@ static int llg_cov_get_u8(llg_cov_reader_t* reader, uint8_t* out) {
 
 static int llg_cov_get_u32(llg_cov_reader_t* reader, uint32_t* out) {
     unsigned char bytes[4];
-    if (!llg_cov_get(reader, bytes, sizeof bytes)) return 0;
     *out = 0;
+    if (!llg_cov_get(reader, bytes, sizeof bytes)) return 0;
     for (int i = 0; i < 4; ++i) *out |= (uint32_t)bytes[i] << (8 * i);
     return 1;
 }
 
 static int llg_cov_get_u64(llg_cov_reader_t* reader, uint64_t* out) {
     unsigned char bytes[8];
-    if (!llg_cov_get(reader, bytes, sizeof bytes)) return 0;
     *out = 0;
+    if (!llg_cov_get(reader, bytes, sizeof bytes)) return 0;
     for (int i = 0; i < 8; ++i) *out |= (uint64_t)bytes[i] << (8 * i);
     return 1;
 }
 
 static int llg_cov_get_i64(llg_cov_reader_t* reader, int64_t* out) {
-    uint64_t raw;
+    uint64_t raw = 0;
+    *out = 0;
     if (!llg_cov_get_u64(reader, &raw)) return 0;
     *out = (int64_t)raw;
     return 1;
@@ -387,6 +393,7 @@ static int llg_cov_get_i64(llg_cov_reader_t* reader, int64_t* out) {
 
 // A borrowed text field: `*text` points into the buffer, `*len` bytes.
 static int llg_cov_get_text(llg_cov_reader_t* reader, const char** text, uint32_t* len) {
+    *text = NULL;
     if (!llg_cov_get_u32(reader, len)) return 0;
     if (*len > LLG_COV_DB_MAX_TEXT) return llg_cov_fail(reader, "a name or comment is too long");
     if (*len > reader->len - reader->pos) return llg_cov_fail(reader, "the file is truncated");
@@ -996,16 +1003,16 @@ static int llg_cov_db_record(llg_cov_reader_t* reader, const char* type_name,
 // none of them: the run keeps its own type options, declared or written
 // (19.9 is silent; industry-standard behaviour, decision S46-D15).
 LLG_OUTLYING static int llg_cov_db_type_options(llg_cov_reader_t* reader) {
-    uint32_t types;
+    uint32_t types = 0;
     if (!llg_cov_get_u32(reader, &types)) return 0;
     if (types != llg_cov_n_model_types)
         return llg_cov_fail(reader, "the type options do not match the model's covergroup types");
     for (uint32_t t = 0; t < types; ++t) {
         const llg_cov_type_t* type = llg_cov_model_types[t];
-        const char* text;
-        uint32_t name_len, text_len, items;
-        int64_t weight, goal;
-        uint8_t merge;
+        const char* text = NULL;
+        uint32_t name_len = 0, text_len = 0, items = 0;
+        int64_t weight = 0, goal = 0;
+        uint8_t merge = 0;
         if (!llg_cov_get_text(reader, &text, &name_len)) return 0;
         if (strlen(type->name) != name_len || memcmp(type->name, text, name_len) != 0)
             return llg_cov_fail(reader, "the type options do not match the model's covergroup types");
