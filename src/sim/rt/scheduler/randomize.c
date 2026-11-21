@@ -11,7 +11,7 @@ static uint32_t randomize_stream_next(void* stream) {
 
 /* Copy a packed value's known bits into `words` (CR_WORDS(width) words).
  * Returns LLG_CR_INPUT_XZ when any bit is X or Z. */
-static int randomize_words(sv4_t value, uint64_t* words, uint32_t width) {
+static int32_t randomize_words(sv4_t value, uint64_t* words, uint32_t width) {
     uint32_t count = width ? (width + 63u) / 64u : 1u;
     size_t available = llg_sv4_words(value);
     for (uint32_t i = 0; i < count; ++i)
@@ -38,23 +38,23 @@ static uint64_t* randomize_scratch(uint32_t width) {
 }
 
 void llg_cr_set_var_sv4(llg_cr_session_t* s, uint32_t var, sv4_t value, uint32_t width,
-                        int active) {
+                        int32_t active) {
     sv4_t sized = sv4_resize(value, width, 0);
     uint64_t* words = randomize_scratch(width);
-    int input = randomize_words(sized, words, width);
+    int32_t input = randomize_words(sized, words, width);
     llg_cr_set_var(s, var, words, active, input);
     sv4_destroy(&sized);
 }
 
 void llg_cr_set_leaf_sv4(llg_cr_session_t* s, uint32_t leaf, sv4_t value, uint32_t width,
-                         int null_dereference) {
+                         int32_t null_dereference) {
     if (null_dereference) {
         llg_cr_set_leaf(s, leaf, NULL, LLG_CR_INPUT_NULL);
         return;
     }
     sv4_t sized = sv4_resize(value, width, 0);
     uint64_t* words = randomize_scratch(width);
-    int input = randomize_words(sized, words, width);
+    int32_t input = randomize_words(sized, words, width);
     llg_cr_set_leaf(s, leaf, words, input);
     sv4_destroy(&sized);
 }
@@ -77,23 +77,23 @@ sv4_t llg_cr_cyclic_sv4(const llg_cr_session_t* s, uint32_t var, uint32_t width)
 }
 
 void llg_cr_iset_var_sv4(llg_cr_session_t* s, uint32_t inst, uint32_t var, sv4_t value,
-                         uint32_t width, int active) {
+                         uint32_t width, int32_t active) {
     sv4_t sized = sv4_resize(value, width, 0);
     uint64_t* words = randomize_scratch(width);
-    int input = randomize_words(sized, words, width);
+    int32_t input = randomize_words(sized, words, width);
     llg_cr_iset_var(s, inst, var, words, active, input);
     sv4_destroy(&sized);
 }
 
 void llg_cr_iset_leaf_sv4(llg_cr_session_t* s, uint32_t inst, uint32_t leaf, sv4_t value,
-                          uint32_t width, int null_dereference) {
+                          uint32_t width, int32_t null_dereference) {
     if (null_dereference) {
         llg_cr_iset_leaf(s, inst, leaf, NULL, LLG_CR_INPUT_NULL);
         return;
     }
     sv4_t sized = sv4_resize(value, width, 0);
     uint64_t* words = randomize_scratch(width);
-    int input = randomize_words(sized, words, width);
+    int32_t input = randomize_words(sized, words, width);
     llg_cr_iset_leaf(s, inst, leaf, words, input);
     sv4_destroy(&sized);
 }
@@ -111,7 +111,7 @@ void llg_cr_set_elem_sv4(llg_cr_session_t* s, uint32_t inst, uint32_t array, uin
                          sv4_t value, uint32_t width) {
     sv4_t sized = sv4_resize(value, width, 0);
     uint64_t* words = randomize_scratch(width);
-    int input = randomize_words(sized, words, width);
+    int32_t input = randomize_words(sized, words, width);
     llg_cr_set_elem(s, inst, array, index, words, input);
     sv4_destroy(&sized);
 }
@@ -140,7 +140,7 @@ sv4_t llg_cr_elem_value_sv4(const llg_cr_session_t* s, uint32_t inst, uint32_t a
     return sv4_from_limbs(llg_cr_elem_value(s, inst, array, index), NULL, NULL, width, is_signed);
 }
 
-static const char* randomize_reason_text(int reason) {
+static const char* randomize_reason_text(int32_t reason) {
     switch (reason) {
     case LLG_CR_REASON_NULL: return "null object handle in a constraint";
     case LLG_CR_REASON_XZ_LEAF: return "X or Z value in a constraint";
@@ -162,7 +162,7 @@ static const char* randomize_reason_text(int reason) {
  * are run-time errors that make the run exit with status 1 (S29-D5). An X or
  * Z state variable or inactive random variable ends the run at once, without
  * final procedures (S29-D1); the generated caller takes its exit check. */
-static int randomize_report(const llg_cr_problem_t* problem, llg_cr_status_t status,
+static int32_t randomize_report(const llg_cr_problem_t* problem, llg_cr_status_t status,
                             const llg_cr_report_t* report, const char* site) {
     switch (status) {
     case LLG_CR_OK:
@@ -197,7 +197,7 @@ static int randomize_report(const llg_cr_problem_t* problem, llg_cr_status_t sta
         default:
             break;
         }
-        int ends_run = report->reason == LLG_CR_REASON_XZ_LEAF ||
+        int32_t ends_run = report->reason == LLG_CR_REASON_XZ_LEAF ||
                        report->reason == LLG_CR_REASON_XZ_VAR;
         llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "%s: %s%s%s%s%s", site, randomize_reason_text(report->reason), name ? " (`" : "", name ? name : "", name ? "`)" : "", ends_run ? "" : "; randomize returns 0");
         llg_last_failure = 1;
@@ -230,7 +230,7 @@ int32_t llg_randomize_step(const llg_cr_problem_t* problem, llg_cr_session_t* s,
 void llg_cr_xcall_set_result_sv4(llg_cr_session_t* s, uint32_t x, sv4_t value, uint32_t width) {
     sv4_t sized = sv4_resize(value, width, 0);
     uint64_t* words = randomize_scratch(width);
-    int input = randomize_words(sized, words, width);
+    int32_t input = randomize_words(sized, words, width);
     llg_cr_xcall_set_result(s, x, words, input);
     sv4_destroy(&sized);
 }
@@ -244,7 +244,7 @@ void llg_cr_set_call_result_sv4(llg_cr_session_t* s, uint32_t call, sv4_t value,
                                 uint32_t width) {
     sv4_t sized = sv4_resize(value, width, 0);
     uint64_t* words = randomize_scratch(width);
-    int input = randomize_words(sized, words, width);
+    int32_t input = randomize_words(sized, words, width);
     llg_cr_set_call_result(s, call, words, input);
     sv4_destroy(&sized);
 }

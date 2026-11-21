@@ -4,20 +4,20 @@ const char* llg_region_name(llg_region_t region) {
     return llg_region_names[region];
 }
 
-static int region_valid(llg_region_t region) {
+static int32_t region_valid(llg_region_t region) {
     return region >= 0 && region < LLG_REGION_COUNT;
 }
 
-static int region_is_reactive(llg_region_t region) {
+static int32_t region_is_reactive(llg_region_t region) {
     return region >= LLG_REGION_REACTIVE && region <= LLG_REGION_POST_RE_NBA_PLI;
 }
 
-static int region_is_design(llg_region_t region) {
+static int32_t region_is_design(llg_region_t region) {
     return (region >= LLG_REGION_ACTIVE && region <= LLG_REGION_POST_NBA_PLI) ||
            region_is_reactive(region);
 }
 
-static int region_is_read_only_now(llg_region_t region) {
+static int32_t region_is_read_only_now(llg_region_t region) {
     if (!g.running) return 0;
     return region == LLG_REGION_PREPONED || region == LLG_REGION_PREPONED_PLI ||
            (region >= LLG_REGION_PRE_OBSERVED_PLI &&
@@ -25,7 +25,7 @@ static int region_is_read_only_now(llg_region_t region) {
            region == LLG_REGION_POSTPONED || region == LLG_REGION_POSTPONED_PLI;
 }
 
-int llg_region_is_read_only(void) {
+int32_t llg_region_is_read_only(void) {
     return region_is_read_only_now(g.current_region);
 }
 
@@ -40,13 +40,13 @@ static void region_violation(const char* action, llg_region_t region) {
 // A packed or real store in a read-only region: applied silently inside a
 // Postponed display evaluator's private evaluation (see `private_evaluation`),
 // otherwise reported. Returns whether the caller should store unpublished.
-static int region_private_store(const char* action) {
+static int32_t region_private_store(const char* action) {
     if (g.private_evaluation && g.current_region == LLG_REGION_POSTPONED) return 1;
     region_violation(action, g.current_region);
     return 0;
 }
 
-static int region_can_mutate(const char* action) {
+static int32_t region_can_mutate(const char* action) {
     if (region_is_read_only_now(g.current_region)) {
         region_violation(action, g.current_region);
         return 0;
@@ -54,9 +54,9 @@ static int region_can_mutate(const char* action) {
     return 1;
 }
 
-static int callback_region_allowed(llg_region_t region, uint64_t ticks) {
+static int32_t callback_region_allowed(llg_region_t region, uint64_t ticks) {
     if (!region_valid(region)) {
-        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid execution region %d for callback", (int)region);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid execution region %" PRId32 " for callback", (int32_t)region);
         llg_last_failure = 1;
         g.finish = 1;
         return 0;
@@ -79,10 +79,10 @@ static int callback_region_allowed(llg_region_t region, uint64_t ticks) {
     return 0;
 }
 
-static int parse_positive_u64(const char* text, uint64_t* value) {
+static int32_t parse_positive_u64(const char* text, uint64_t* value) {
     if (!text || text[0] == '\0') return 0;
     uint64_t parsed = 0;
-    for (const unsigned char* p = (const unsigned char*)text; *p; ++p) {
+    for (const uint8_t* p = (const uint8_t*)text; *p; ++p) {
         if (*p < '0' || *p > '9') return 0;
         uint64_t digit = (uint64_t)(*p - '0');
         if (parsed > (UINT64_MAX - digit) / 10u) return 0;
@@ -93,8 +93,8 @@ static int parse_positive_u64(const char* text, uint64_t* value) {
     return 1;
 }
 
-static int load_limit(const char* name, uint64_t fallback, uint64_t* value,
-                      int* present) {
+static int32_t load_limit(const char* name, uint64_t fallback, uint64_t* value,
+                      int32_t* present) {
     const char* text = getenv(name);
     *present = text != NULL;
     if (!text) {
@@ -112,13 +112,13 @@ static int load_limit(const char* name, uint64_t fallback, uint64_t* value,
     return 1;
 }
 
-static int configure_limits(void) {
-    int sequence_present = 0;
+static int32_t configure_limits(void) {
+    int32_t sequence_present = 0;
     if (!load_limit("LLG_SEQUENCE_THREAD_LIMIT", (uint64_t)LLG_SEQUENCE_THREAD_LIMIT,
                     &g.sequence_thread_limit, &sequence_present)) {
         return 0;
     }
-    int zero_present = 0;
+    int32_t zero_present = 0;
     if (!load_limit("LLG_ZERO_LOOP_LIMIT", (uint64_t)LLG_ZERO_LOOP_LIMIT,
                     &g.zero_loop_limit, &zero_present)) {
         return 0;
@@ -140,7 +140,7 @@ static int configure_limits(void) {
         // to tighten the guard; the dedicated process setting still wins.
         g.process_step_limit = g.zero_loop_limit;
     } else {
-        int process_present = 0;
+        int32_t process_present = 0;
         if (!load_limit("LLG_PROCESS_STEP_LIMIT",
                         (uint64_t)LLG_PROCESS_STEP_LIMIT,
                         &g.process_step_limit, &process_present)) {
@@ -150,7 +150,7 @@ static int configure_limits(void) {
     return 1;
 }
 
-static int configure_stop_policy(void) {
+static int32_t configure_stop_policy(void) {
     if (llg_stop_policy_override) {
         g.stop_policy = llg_configured_stop_policy;
         return 1;
@@ -168,7 +168,7 @@ static int configure_stop_policy(void) {
     return 0;
 }
 
-static int configure_index_checks(void) {
+static int32_t configure_index_checks(void) {
     const char* text = getenv("LLG_INDEX_CHECKS");
     if (!text || strcmp(text, "on") == 0) {
         g.index_checks = 1;
@@ -183,7 +183,7 @@ static int configure_index_checks(void) {
     return 0;
 }
 
-int llg_rt_index_checks(void) { return g.index_checks; }
+int32_t llg_rt_index_checks(void) { return g.index_checks; }
 
 static void llg_rt_report_summary(void); // simulation_control.c
 
@@ -209,7 +209,7 @@ void llg_rt_index_stop(const char* operation, const char* detail) {
     exit(1);
 }
 
-static int consume_limit(uint64_t* counter, uint64_t limit) {
+static int32_t consume_limit(uint64_t* counter, uint64_t limit) {
     if (*counter >= limit) return 0;
     *counter += 1;
     return 1;

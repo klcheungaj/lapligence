@@ -107,7 +107,7 @@ void llg_ref_scope_begin_owned(void) {
 // it when the call completes or is unwound.
 static llg_ref_t* reference_cell(uint32_t width, int8_t is_signed, uint8_t two_state,
                                  void* cell, sv4_t (*read)(const void*),
-                                 int (*write)(void*, sv4_t), void (*release)(void*)) {
+                                 int32_t (*write)(void*, sv4_t), void (*release)(void*)) {
     llg_proc_t* proc = llg_current();
     llg_ref_scope_t* scope = proc ? proc->reference_top : root_reference_top;
     if (!scope) {
@@ -210,7 +210,7 @@ void llg_activation_exit_terminal(llg_activation_t* activation) {
     llg_activation_exit(activation);
 }
 
-int llg_activation_cancelled(void) {
+int32_t llg_activation_cancelled(void) {
     llg_proc_t* proc = llg_current();
     for (llg_activation_t* activation = proc ? proc->activation_top : NULL;
          activation; activation = activation->proc_next) {
@@ -219,9 +219,9 @@ int llg_activation_cancelled(void) {
     return 0;
 }
 
-int llg_rt_failed(void) { return llg_last_failure != 0; }
+int32_t llg_rt_failed(void) { return llg_last_failure != 0; }
 
-int llg_rt_fatal_severity_ran(void) { return llg_fatal_severity_ran != 0; }
+int32_t llg_rt_fatal_severity_ran(void) { return llg_fatal_severity_ran != 0; }
 
 static void budget_abort(llg_proc_t* p, const char* location) {
     const char* where = location && location[0] != '\0'
@@ -233,17 +233,17 @@ static void budget_abort(llg_proc_t* p, const char* location) {
     if (p) p->chain.exiting = LLG_EXIT_ABANDON;
 }
 
-int llg_index_eq(sv4_t index, int64_t key) {
+int32_t llg_index_eq(sv4_t index, int64_t key) {
     int64_t value;
     return sv4_to_index_i64(index, &value) && value == key;
 }
 
-int llg_index_lt(sv4_t index, int64_t key) {
+int32_t llg_index_lt(sv4_t index, int64_t key) {
     int64_t value;
     return sv4_to_index_i64(index, &value) && value < key;
 }
 
-int llg_budget_point(const char* location) {
+int32_t llg_budget_point(const char* location) {
     llg_proc_t* p = llg_current();
     llg_runtime_service_enter(p, "budget point");
     if (!p || g.config_error) return 0;
@@ -258,7 +258,7 @@ int llg_budget_point(const char* location) {
     return 0;
 }
 
-void llg_unique_priority_check(int check, int matched, int has_default,
+void llg_unique_priority_check(int32_t check, int32_t matched, int32_t has_default,
                                const char* location) {
     if (check < 1 || check > 3) return;
     const char* qualifier = check == 1 ? "unique" : check == 2 ? "unique0" : "priority";

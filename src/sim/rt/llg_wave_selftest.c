@@ -1,5 +1,8 @@
 // llg_wave_selftest.c — bounded queue, flush barrier, VCD, and FST smoke test.
 #define LLG_WAVEFORM 1
+#define LLG_PLATFORM_POSIX_2008 1
+#define LLG_PLATFORM_FILE_POSITIONS 1
+#include "llg_platform.h"
 
 #include "llg_wave.h"
 #include "fstapi.h"
@@ -20,12 +23,12 @@ size_t value_test_bytes(void);
 // ERROR on stderr (located at its selftest line when it has one), the pass
 // an INFO on stdout.
 LLG_MSG_PRINTF(4, 5)
-static void selftest_report(FILE* stream, int severity, int line, const char* fmt, ...) {
+static void selftest_report(FILE* stream, int32_t severity, int32_t line, const char* fmt, ...) {
     char location[64];
     llg_report_t text;
     llg_report_t out;
     va_list args;
-    if (line > 0) snprintf(location, sizeof location, "llg_wave_selftest.c:%d", line);
+    if (line > 0) snprintf(location, sizeof location, "llg_wave_selftest.c:%" PRId32, line);
     llg_report_init(&text);
     llg_report_init(&out);
     va_start(args, fmt);
@@ -45,15 +48,15 @@ static void selftest_report(FILE* stream, int severity, int line, const char* fm
     } \
 } while (0)
 
-static int file_contains(const char* path, const char* needle) {
+static int32_t file_contains(const char* path, const char* needle) {
     FILE* file = fopen(path, "rb");
     if (!file) return 0;
-    if (fseek(file, 0, SEEK_END) != 0) {
+    if (llg_file_seek64(file, 0, SEEK_END) != 0) {
         fclose(file);
         return 0;
     }
-    long size = ftell(file);
-    if (size < 0 || fseek(file, 0, SEEK_SET) != 0) {
+    int64_t size = llg_file_tell64(file);
+    if (size < 0 || (uint64_t)size >= SIZE_MAX || llg_file_seek64(file, 0, SEEK_SET) != 0) {
         fclose(file);
         return 0;
     }
@@ -69,7 +72,7 @@ static int file_contains(const char* path, const char* needle) {
     }
     text[size] = 0;
     fclose(file);
-    int found = strstr(text, needle) != NULL;
+    int32_t found = strstr(text, needle) != NULL;
     free(text);
     return found;
 }
@@ -81,17 +84,17 @@ static int file_contains(const char* path, const char* needle) {
 // whatever the order of the writes (more than the insertion-sorted batch
 // size), and a value that ends its step where its last record left it
 // writes no record.
-static int restored_and_ordered(const char* path) {
+static int32_t restored_and_ordered(const char* path) {
     sv4_t values[ORDERED_COUNT];
     double real_value = 0.5;
     char name[32];
     char expected[ORDERED_COUNT * 16u + 8u];
     size_t used = 0;
-    int ok = 0;
+    int32_t ok = 0;
     for (uint32_t i = 0; i < ORDERED_COUNT; i++) values[i] = SV4_C(0, 8);
     if (llg_wave_model_init(1) != 0) goto done;
     for (uint32_t i = 0; i < ORDERED_COUNT; i++) {
-        snprintf(name, sizeof name, "top\037v%02u", (unsigned)i);
+        snprintf(name, sizeof name, "top\037v%02" PRIu32, (uint32_t)i);
         if (llg_wave_register_sv4(name, &values[i], 8) != 0) goto done;
     }
     if (llg_wave_register_real("top\037r", &real_value) != 0) goto done;
@@ -106,7 +109,7 @@ static int restored_and_ordered(const char* path) {
     for (uint32_t i = 0; i < ORDERED_COUNT; i++) {
         uint32_t v = i + 1u;
         used += (size_t)snprintf(expected + used, sizeof expected - used,
-                                 "b%u%u%u%u%u%u%u%u %c\n", (v >> 7) & 1u, (v >> 6) & 1u,
+                                 "b%" PRIu32 "%" PRIu32 "%" PRIu32 "%" PRIu32 "%" PRIu32 "%" PRIu32 "%" PRIu32 "%" PRIu32 " %c\n", (v >> 7) & 1u, (v >> 6) & 1u,
                                  (v >> 5) & 1u, (v >> 4) & 1u, (v >> 3) & 1u, (v >> 2) & 1u,
                                  (v >> 1) & 1u, v & 1u, (char)('!' + i));
     }
@@ -146,7 +149,7 @@ int main(void) {
     sv4_t mem_two = SV4_C(2, 8);
     sv4_t write_value = SV4_C(0x55, 8);
     void* reader = NULL;
-    int result = 1;
+    int32_t result = 1;
     double real_value = 1.25;
 
     llg_rt_init();

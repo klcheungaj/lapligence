@@ -38,7 +38,7 @@ uint32_t llg_rng_state_uniform(llg_rng_state_t* state,
 /* State strings are opaque to HDL.  The versioned text is intentionally
  * stable across model rebuilds and can be passed to set_randstate later. */
 llg_string_t llg_rng_state_get(const llg_rng_state_t* state);
-int llg_rng_state_set(llg_rng_state_t* state, const llg_string_t* encoded);
+int32_t llg_rng_state_set(llg_rng_state_t* state, const llg_string_t* encoded);
 
 #ifdef __cplusplus
 }

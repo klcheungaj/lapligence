@@ -17,8 +17,8 @@
 #ifndef LLG_MSG_H
 #define LLG_MSG_H
 
+#include <inttypes.h>
 #include <stdarg.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -75,11 +75,11 @@ LLG_MSG_API void llg_report_vprintf(llg_report_t* report, const char* fmt, va_li
 LLG_MSG_PRINTF(2, 3)
 LLG_MSG_API void llg_report_printf(llg_report_t* report, const char* fmt, ...);
 // The catalog severity of message `id`.
-LLG_MSG_API int llg_msg_default_severity(llg_msg_id_t id);
+LLG_MSG_API int32_t llg_msg_default_severity(llg_msg_id_t id);
 // Append message `id` with `severity` to `out` (newline included) and count
 // it. `location`, `scope`, `time` and `hint` may be NULL or empty. The hint
 // says how to turn the check off or change the limit that raised the message.
-LLG_MSG_API void llg_msg_append(llg_report_t* out, llg_msg_id_t id, int severity,
+LLG_MSG_API void llg_msg_append(llg_report_t* out, llg_msg_id_t id, int32_t severity,
                                 const char* location, const char* scope,
                                 const char* time, const char* text, size_t text_len,
                                 const char* hint);
@@ -134,7 +134,7 @@ LLG_MSG_API void llg_report_vprintf(llg_report_t* report, const char* fmt, va_li
     va_list again;
     va_copy(again, args);
     size_t room = report->cap - report->len;
-    int written = vsnprintf(report->data + report->len, room, fmt, args);
+    int32_t written = vsnprintf(report->data + report->len, room, fmt, args);
     if (written < 0) {
         va_end(again);
         return;
@@ -142,7 +142,7 @@ LLG_MSG_API void llg_report_vprintf(llg_report_t* report, const char* fmt, va_li
     if ((size_t)written >= room) {
         size_t fit = llg_report_reserve(report, (size_t)written);
         (void)vsnprintf(report->data + report->len, fit + 1u, fmt, again);
-        written = (int)fit;
+        written = (int32_t)fit;
     }
     va_end(again);
     report->len += (size_t)written;
@@ -222,7 +222,7 @@ static inline void llg_msg_render(llg_report_t* out, const char* tmpl,
         if (*p == '<') {
             const char* end = strchr(p, '>');
             if (!end) return;
-            int complete = 1;
+            int32_t complete = 1;
             const char* q = p + 1;
             while (q < end) {
                 if (*q == '{') {
@@ -272,7 +272,7 @@ static inline void llg_msg_render(llg_report_t* out, const char* tmpl,
     }
 }
 
-static inline const char* llg_msg_severity_word(int severity) {
+static inline const char* llg_msg_severity_word(int32_t severity) {
     switch (severity) {
         case LLG_SEVERITY_INFO: return LLG_MSG_LAYOUT_SEVERITY_INFO;
         case LLG_SEVERITY_WARNING: return LLG_MSG_LAYOUT_SEVERITY_WARNING;
@@ -281,18 +281,18 @@ static inline const char* llg_msg_severity_word(int severity) {
     }
 }
 
-LLG_MSG_API int llg_msg_default_severity(llg_msg_id_t id) {
-    static const unsigned char severities[] = {
-#define LLG_MSG_ID(name, tool, index, severity, meaning, disable) (unsigned char)(severity),
+LLG_MSG_API int32_t llg_msg_default_severity(llg_msg_id_t id) {
+    static const uint8_t severities[] = {
+#define LLG_MSG_ID(name, tool, index, severity, meaning, disable) (uint8_t)(severity),
 #include "llg_msg_ids.def"
 #undef LLG_MSG_ID
     };
-    return (unsigned)id < (unsigned)LLG_MSG_ID_COUNT ? severities[id] : LLG_SEVERITY_FATAL;
+    return (uint32_t)id < (uint32_t)LLG_MSG_ID_COUNT ? severities[id] : LLG_SEVERITY_FATAL;
 }
 
 // Append message `id` with `severity` to `out` (newline included) and count
 // it. `location`, `scope`, `time` and `hint` may be NULL or empty.
-LLG_MSG_API void llg_msg_append(llg_report_t* out, llg_msg_id_t id, int severity,
+LLG_MSG_API void llg_msg_append(llg_report_t* out, llg_msg_id_t id, int32_t severity,
                                   const char* location, const char* scope,
                                   const char* time, const char* text, size_t text_len,
                                   const char* hint) {
@@ -309,11 +309,11 @@ LLG_MSG_API void llg_msg_append(llg_report_t* out, llg_msg_id_t id, int severity
     char id_text[32];
     char context_inline[256];
     char* context = context_inline;
-    unsigned known = (unsigned)id < (unsigned)LLG_MSG_ID_COUNT;
-    snprintf(id_text, sizeof id_text, "%s%s%03u", known ? tools[id] : "SIM",
-             LLG_MSG_LAYOUT_ID_JOIN, known ? (unsigned)indices[id] : 999u);
-    int has_scope = scope && scope[0];
-    int has_time = time && time[0];
+    uint32_t known = (uint32_t)id < (uint32_t)LLG_MSG_ID_COUNT;
+    snprintf(id_text, sizeof id_text, "%s%s%03" PRIu32, known ? tools[id] : "SIM",
+             LLG_MSG_LAYOUT_ID_JOIN, known ? (uint32_t)indices[id] : 999u);
+    int32_t has_scope = scope && scope[0];
+    int32_t has_time = time && time[0];
     size_t context_len = (has_scope ? strlen(scope) : 0) + (has_time ? strlen(time) : 0) +
                          strlen(LLG_MSG_LAYOUT_CONTEXT_JOIN) + 1u;
     if (context_len > sizeof context_inline) {
@@ -379,7 +379,7 @@ LLG_MSG_API _Noreturn void llg_msg_abort(llg_msg_id_t id, const char* fmt, ...) 
 LLG_MSG_API void llg_msg_summary_text(llg_report_t* out, const uint64_t counts[4]) {
     char numbers[4][24];
     const char* names[4] = {"info", "warning", "error", "fatal"};
-    int i;
+    int32_t i;
     for (i = 0; i < 4; i++)
         snprintf(numbers[i], sizeof numbers[i], "%llu", (unsigned long long)counts[i]);
     const char* p = LLG_MSG_LAYOUT_SUMMARY;
@@ -387,7 +387,7 @@ LLG_MSG_API void llg_msg_summary_text(llg_report_t* out, const uint64_t counts[4
         if (*p == '<') {
             const char* end = strchr(p, '>');
             const char* q;
-            int complete = 1;
+            int32_t complete = 1;
             if (!end) return;
             for (q = p + 1; q < end; q++) {
                 if (*q != '{') continue;
@@ -404,7 +404,7 @@ LLG_MSG_API void llg_msg_summary_text(llg_report_t* out, const uint64_t counts[4
             }
             p++;
             while (p < end) {
-                int matched = 0;
+                int32_t matched = 0;
                 if (*p == '{') {
                     for (i = 0; i < 4; i++) {
                         size_t n = strlen(names[i]);
@@ -425,7 +425,7 @@ LLG_MSG_API void llg_msg_summary_text(llg_report_t* out, const uint64_t counts[4
             continue;
         }
         if (*p == '{') {
-            int matched = 0;
+            int32_t matched = 0;
             for (i = 0; i < 4; i++) {
                 size_t n = strlen(names[i]);
                 if (strncmp(p + 1, names[i], n) == 0 && p[n + 1] == '}') {

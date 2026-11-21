@@ -7,8 +7,8 @@ sv4_t sv4_udp_eval(const uint8_t* rows, size_t row_count, size_t input_count,
         size_t input = 0;
         for (; input < input_count; ++input) {
             const sv4_t* value = inputs[input];
-            unsigned state = ((value->x[0] | value->z[0]) & 1u) ? 2u
-                             : (unsigned)(value->bits[0] & 1u);
+            uint32_t state = ((value->x[0] | value->z[0]) & 1u) ? 2u
+                             : (uint32_t)(value->bits[0] & 1u);
             if (!(fields[input] & (1u << state))) break;
         }
         if (input == input_count) return sv4_fill(fields[input_count], 1, 0);

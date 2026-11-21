@@ -71,13 +71,13 @@ LLG_SV4_TO_UNARY(reduce_xnor)
 LLG_SV4_TO_UNARY(clog2)
 LLG_SV4_TO_UNARY(countones)
 LLG_SV4_TO_UNARY(repeat_count)
-void sv4_onehot_to(sv4_t* dst, const sv4_t* v, int allow_zero) {
+void sv4_onehot_to(sv4_t* dst, const sv4_t* v, int32_t allow_zero) {
     sv4_replace(dst, sv4_onehot(*v, allow_zero));
 }
 void sv4_repeat_to(sv4_t* dst, const sv4_t* pattern, uint64_t n) {
     sv4_replace(dst, sv4_repeat(*pattern, n));
 }
-void sv4_stream_to(sv4_t* dst, const sv4_t* v, uint32_t slice, int right_to_left) {
+void sv4_stream_to(sv4_t* dst, const sv4_t* v, uint32_t slice, int32_t right_to_left) {
     sv4_replace(dst, sv4_stream(*v, slice, right_to_left));
 }
 
@@ -88,11 +88,11 @@ void sv4_bit_select_to(sv4_t* dst, const sv4_t* v, uint64_t index) {
     sv4_replace(dst, sv4_bit_select(*v, index));
 }
 void sv4_idx_part_select_to(sv4_t* dst, const sv4_t* v, uint64_t base,
-                            uint32_t width, int neg) {
+                            uint32_t width, int32_t neg) {
     sv4_replace(dst, sv4_idx_part_select(*v, base, width, neg));
 }
 void sv4_idx_part_select_value_to(sv4_t* dst, const sv4_t* v, const sv4_t* base,
-                                  uint32_t width, int neg) {
+                                  uint32_t width, int32_t neg) {
     sv4_replace(dst, sv4_idx_part_select_value(*v, *base, width, neg));
 }
 void sv4_select_plan_read_to(sv4_t* dst, const sv4_t* source,
@@ -100,7 +100,7 @@ void sv4_select_plan_read_to(sv4_t* dst, const sv4_t* source,
     sv4_replace(dst, sv4_select_plan_read(*source, plan));
 }
 void sv4_select_plan_slice_to(sv4_t* dst, const sv4_t* source,
-                              const sv4_select_plan_t* plan, int reverse) {
+                              const sv4_select_plan_t* plan, int32_t reverse) {
     sv4_replace(dst, sv4_select_plan_slice(*source, plan, reverse));
 }
 
@@ -165,7 +165,7 @@ void sv4_array_conditional_merge_to(sv4_t* dst, const sv4_t* a, const sv4_t* b,
 }
 void sv4_enum_navigate_to(sv4_t* dst, const sv4_t* current, const sv4_t* step,
                           const sv4_t* values, uint32_t count,
-                          const sv4_t* default_value, int direction) {
+                          const sv4_t* default_value, int32_t direction) {
     sv4_replace(dst, sv4_enum_navigate(*current, *step, values, count,
                                        *default_value, direction));
 }

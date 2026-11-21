@@ -1,9 +1,9 @@
 
-int llg_assoc_value_exists_integral(const llg_assoc_value_t* array, sv4_t key) {
+int32_t llg_assoc_value_exists_integral(const llg_assoc_value_t* array, sv4_t key) {
     sv4_t normalized = SV4_EMPTY;
-    int result_value;
+    int32_t result_value;
 
-    int found = 0;
+    int32_t found = 0;
     if (!llg_assoc_value_normalize_key(array, key, &normalized)) do { result_value = 0; goto cleanup_key; } while (0);
     (void)llg_assoc_value_integral_position(array, normalized, &found);
     do { result_value = found; goto cleanup_key; } while (0);
@@ -12,12 +12,12 @@ cleanup_key:
     return result_value;
 }
 
-int llg_assoc_value_delete_integral(llg_assoc_value_t* array, sv4_t key) {
-    int change = 0;
+int32_t llg_assoc_value_delete_integral(llg_assoc_value_t* array, sv4_t key) {
+    int32_t change = 0;
     sv4_t normalized = SV4_EMPTY;
-    int result_value;
+    int32_t result_value;
 
-    int found = 0;
+    int32_t found = 0;
     if (!llg_assoc_value_normalize_key(array, key, &normalized)) do { result_value = 0; goto cleanup_key; } while (0);
     size_t position = llg_assoc_value_integral_position(array, normalized, &found);
     if (!found) do { result_value = 0; goto cleanup_key; } while (0);
@@ -41,8 +41,8 @@ cleanup_key:
 }
 
 static void llg_assoc_value_set_default_source(llg_assoc_value_t* array,
-                                               const llg_value_t* source, int* change) {
-    int changed = !array->has_default_value ||
+                                               const llg_value_t* source, int32_t* change) {
+    int32_t changed = !array->has_default_value ||
                   !llg_value_equal(&array->default_value, source);
     if (changed)
         llg_value_copy(&array->default_value, array->element, source);
@@ -51,7 +51,7 @@ static void llg_assoc_value_set_default_source(llg_assoc_value_t* array,
 }
 
 void llg_assoc_value_set_default(llg_assoc_value_t* array, sv4_t value) {
-    int change = 0;
+    int32_t change = 0;
     llg_value_t source = llg_assoc_value_packed_source(array, value);
     llg_assoc_value_set_default_source(array, &source, &change);
     llg_value_drop(&source);
@@ -61,7 +61,7 @@ void llg_assoc_value_set_default(llg_assoc_value_t* array, sv4_t value) {
 }
 
 void llg_assoc_value_set_default_real(llg_assoc_value_t* array, double value) {
-    int change = 0;
+    int32_t change = 0;
     llg_value_t source = llg_value_from_real(array->element, value);
     llg_assoc_value_set_default_source(array, &source, &change);
     llg_value_drop(&source);
@@ -72,7 +72,7 @@ void llg_assoc_value_set_default_real(llg_assoc_value_t* array, double value) {
 
 void llg_assoc_value_set_default_string(llg_assoc_value_t* array,
                                         llg_string_t value) {
-    int change = 0;
+    int32_t change = 0;
     llg_value_t source = llg_value_from_string(array->element, value);
     llg_assoc_value_set_default_source(array, &source, &change);
     llg_value_drop(&source);
@@ -82,7 +82,7 @@ void llg_assoc_value_set_default_string(llg_assoc_value_t* array,
 }
 
 void llg_assoc_value_set_default_chandle(llg_assoc_value_t* array, void* value) {
-    int change = 0;
+    int32_t change = 0;
     llg_value_t source = llg_value_from_chandle(array->element, value);
     llg_assoc_value_set_default_source(array, &source, &change);
     llg_value_drop(&source);
@@ -94,7 +94,7 @@ void llg_assoc_value_set_default_chandle(llg_assoc_value_t* array, void* value) 
 void llg_assoc_value_reset_default(llg_assoc_value_t* array) {
     llg_value_t source = {0};
     llg_value_default(&source, array->element);
-    int changed = array->has_default_value ||
+    int32_t changed = array->has_default_value ||
                   !llg_value_equal(&array->default_value, &source);
     if (changed) llg_value_copy(&array->default_value, array->element, &source);
     array->has_default_value = 0;
@@ -104,10 +104,10 @@ void llg_assoc_value_reset_default(llg_assoc_value_t* array) {
                changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0);
 }
 
-static int llg_assoc_value_integral_traversal(
-    const llg_assoc_value_t* array, sv4_t* key, int direction, int endpoint) {
+static int32_t llg_assoc_value_integral_traversal(
+    const llg_assoc_value_t* array, sv4_t* key, int32_t direction, int32_t endpoint) {
     sv4_t normalized = SV4_EMPTY;
-    int result_value;
+    int32_t result_value;
 
     llg_assoc_value_check_kind(array, LLG_ASSOC_INTEGRAL);
     if (!array->key_width)
@@ -118,7 +118,7 @@ static int llg_assoc_value_integral_traversal(
         do { result_value = 1; goto cleanup_key; } while (0);
     }
     if (!llg_assoc_value_normalize_key(array, *key, &normalized)) do { result_value = 0; goto cleanup_key; } while (0);
-    int found;
+    int32_t found;
     size_t position = llg_assoc_value_integral_position(array, normalized, &found);
     if (direction > 0) {
         if (found) ++position;
@@ -134,26 +134,26 @@ cleanup_key:
     return result_value;
 }
 
-int llg_assoc_value_first_integral(const llg_assoc_value_t* a, sv4_t* key) {
+int32_t llg_assoc_value_first_integral(const llg_assoc_value_t* a, sv4_t* key) {
     return llg_assoc_value_integral_traversal(a, key, 1, 1);
 }
-int llg_assoc_value_last_integral(const llg_assoc_value_t* a, sv4_t* key) {
+int32_t llg_assoc_value_last_integral(const llg_assoc_value_t* a, sv4_t* key) {
     return llg_assoc_value_integral_traversal(a, key, -1, 1);
 }
-int llg_assoc_value_next_integral(const llg_assoc_value_t* a, sv4_t* key) {
+int32_t llg_assoc_value_next_integral(const llg_assoc_value_t* a, sv4_t* key) {
     return llg_assoc_value_integral_traversal(a, key, 1, 0);
 }
-int llg_assoc_value_prev_integral(const llg_assoc_value_t* a, sv4_t* key) {
+int32_t llg_assoc_value_prev_integral(const llg_assoc_value_t* a, sv4_t* key) {
     return llg_assoc_value_integral_traversal(a, key, -1, 0);
 }
 
 static size_t llg_assoc_value_string_position(const llg_assoc_value_t* array,
                                               const void* key,
-                                              size_t key_length, int* found) {
+                                              size_t key_length, int32_t* found) {
     size_t low = 0, high = array->size;
     while (low < high) {
         size_t mid = low + (high - low) / 2;
-        int cmp = llg_assoc_string_compare(array->entries[mid].string_key,
+        int32_t cmp = llg_assoc_string_compare(array->entries[mid].string_key,
                                            array->entries[mid].string_length,
                                            key, key_length);
         if (cmp < 0)
@@ -179,7 +179,7 @@ static void llg_assoc_value_check_string_key(const llg_assoc_value_t* array,
 llg_string_t llg_assoc_value_get_string(const llg_assoc_value_t* array,
                                         const void* key, size_t key_length) {
     llg_assoc_value_check_string_key(array, key, key_length);
-    int found;
+    int32_t found;
     size_t position = llg_assoc_value_string_position(array, key, key_length,
                                                       &found);
     if (found && array->entries[position].value.desc->kind == LLG_VALUE_STRING)
@@ -194,7 +194,7 @@ llg_string_t llg_assoc_value_get_string(const llg_assoc_value_t* array,
 double llg_assoc_value_get_string_real(const llg_assoc_value_t* array,
                                        const void* key, size_t key_length) {
     llg_assoc_value_check_string_key(array, key, key_length);
-    int found;
+    int32_t found;
     size_t position = llg_assoc_value_string_position(array, key, key_length,
                                                       &found);
     if (found && array->entries[position].value.desc->kind == LLG_VALUE_REAL)
@@ -215,7 +215,7 @@ llg_string_t llg_assoc_value_get_string_string(const llg_assoc_value_t* array,
 void* llg_assoc_value_get_string_chandle(const llg_assoc_value_t* array,
                                          const void* key, size_t key_length) {
     llg_assoc_value_check_string_key(array, key, key_length);
-    int found;
+    int32_t found;
     size_t position = llg_assoc_value_string_position(array, key, key_length,
                                                       &found);
     if (found && llg_value_is_handle_kind(array->entries[position].value.desc))
@@ -227,12 +227,12 @@ void* llg_assoc_value_get_string_chandle(const llg_assoc_value_t* array,
         : NULL;
 }
 
-int llg_assoc_value_set_string(llg_assoc_value_t* array, const void* key,
+int32_t llg_assoc_value_set_string(llg_assoc_value_t* array, const void* key,
                                size_t key_length, sv4_t value) {
-    int change = 0;
+    int32_t change = 0;
     llg_assoc_value_check_string_key(array, key, key_length);
     llg_value_t source = llg_assoc_value_packed_source(array, value);
-    int result = llg_assoc_value_set_source(array, NULL, key, key_length, &source, &change);
+    int32_t result = llg_assoc_value_set_source(array, NULL, key, key_length, &source, &change);
     llg_value_drop(&source);
     /* No temporary owner may remain live across the callback. */
     llg_notify(array->notify, array->contents_dependency,
@@ -240,12 +240,12 @@ int llg_assoc_value_set_string(llg_assoc_value_t* array, const void* key,
     return result;
 }
 
-int llg_assoc_value_set_string_real(llg_assoc_value_t* array, const void* key,
+int32_t llg_assoc_value_set_string_real(llg_assoc_value_t* array, const void* key,
                                     size_t key_length, double value) {
-    int change = 0;
+    int32_t change = 0;
     llg_assoc_value_check_string_key(array, key, key_length);
     llg_value_t source = llg_value_from_real(array->element, value);
-    int result = llg_assoc_value_set_source(array, NULL, key, key_length, &source, &change);
+    int32_t result = llg_assoc_value_set_source(array, NULL, key, key_length, &source, &change);
     llg_value_drop(&source);
     /* No temporary owner may remain live across the callback. */
     llg_notify(array->notify, array->contents_dependency,
@@ -253,12 +253,12 @@ int llg_assoc_value_set_string_real(llg_assoc_value_t* array, const void* key,
     return result;
 }
 
-int llg_assoc_value_set_string_string(llg_assoc_value_t* array, const void* key,
+int32_t llg_assoc_value_set_string_string(llg_assoc_value_t* array, const void* key,
                                       size_t key_length, llg_string_t value) {
-    int change = 0;
+    int32_t change = 0;
     llg_assoc_value_check_string_key(array, key, key_length);
     llg_value_t source = llg_value_from_string(array->element, value);
-    int result = llg_assoc_value_set_source(array, NULL, key, key_length, &source, &change);
+    int32_t result = llg_assoc_value_set_source(array, NULL, key, key_length, &source, &change);
     llg_value_drop(&source);
     /* No temporary owner may remain live across the callback. */
     llg_notify(array->notify, array->contents_dependency,
@@ -266,12 +266,12 @@ int llg_assoc_value_set_string_string(llg_assoc_value_t* array, const void* key,
     return result;
 }
 
-int llg_assoc_value_set_string_chandle(llg_assoc_value_t* array, const void* key,
+int32_t llg_assoc_value_set_string_chandle(llg_assoc_value_t* array, const void* key,
                                        size_t key_length, void* value) {
-    int change = 0;
+    int32_t change = 0;
     llg_assoc_value_check_string_key(array, key, key_length);
     llg_value_t source = llg_value_from_chandle(array->element, value);
-    int result = llg_assoc_value_set_source(array, NULL, key, key_length, &source, &change);
+    int32_t result = llg_assoc_value_set_source(array, NULL, key, key_length, &source, &change);
     llg_value_drop(&source);
     /* No temporary owner may remain live across the callback. */
     llg_notify(array->notify, array->contents_dependency,
@@ -279,18 +279,18 @@ int llg_assoc_value_set_string_chandle(llg_assoc_value_t* array, const void* key
     return result;
 }
 
-int llg_assoc_value_exists_string(const llg_assoc_value_t* array,
+int32_t llg_assoc_value_exists_string(const llg_assoc_value_t* array,
                                   const void* key, size_t key_length) {
     llg_assoc_value_check_string_key(array, key, key_length);
-    int found;
+    int32_t found;
     (void)llg_assoc_value_string_position(array, key, key_length, &found);
     return found;
 }
 
-int llg_assoc_value_delete_string(llg_assoc_value_t* array, const void* key,
+int32_t llg_assoc_value_delete_string(llg_assoc_value_t* array, const void* key,
                                   size_t key_length) {
     llg_assoc_value_check_string_key(array, key, key_length);
-    int found;
+    int32_t found;
     size_t position = llg_assoc_value_string_position(array, key, key_length,
                                                       &found);
     if (!found) return 0;
@@ -310,9 +310,9 @@ int llg_assoc_value_delete_string(llg_assoc_value_t* array, const void* key,
     return 1;
 }
 
-static int llg_assoc_value_string_endpoint(const llg_assoc_value_t* array,
-                                           int last,
-                                           const unsigned char** key,
+static int32_t llg_assoc_value_string_endpoint(const llg_assoc_value_t* array,
+                                           int32_t last,
+                                           const uint8_t** key,
                                            size_t* key_length) {
     llg_assoc_value_check_kind(array, LLG_ASSOC_STRING);
     if (!array->size) return 0;
@@ -322,19 +322,19 @@ static int llg_assoc_value_string_endpoint(const llg_assoc_value_t* array,
     return 1;
 }
 
-int llg_assoc_value_first_string(const llg_assoc_value_t* array,
-                                 const unsigned char** key, size_t* key_length) {
+int32_t llg_assoc_value_first_string(const llg_assoc_value_t* array,
+                                 const uint8_t** key, size_t* key_length) {
     return llg_assoc_value_string_endpoint(array, 0, key, key_length);
 }
-int llg_assoc_value_last_string(const llg_assoc_value_t* array,
-                                const unsigned char** key, size_t* key_length) {
+int32_t llg_assoc_value_last_string(const llg_assoc_value_t* array,
+                                const uint8_t** key, size_t* key_length) {
     return llg_assoc_value_string_endpoint(array, 1, key, key_length);
 }
-int llg_assoc_value_next_string(const llg_assoc_value_t* array,
+int32_t llg_assoc_value_next_string(const llg_assoc_value_t* array,
                                 const void* current, size_t current_length,
-                                const unsigned char** key, size_t* key_length) {
+                                const uint8_t** key, size_t* key_length) {
     llg_assoc_value_check_string_key(array, current, current_length);
-    int found;
+    int32_t found;
     size_t position = llg_assoc_value_string_position(array, current,
                                                       current_length, &found);
     if (found) ++position;
@@ -343,11 +343,11 @@ int llg_assoc_value_next_string(const llg_assoc_value_t* array,
     *key_length = array->entries[position].string_length;
     return 1;
 }
-int llg_assoc_value_prev_string(const llg_assoc_value_t* array,
+int32_t llg_assoc_value_prev_string(const llg_assoc_value_t* array,
                                 const void* current, size_t current_length,
-                                const unsigned char** key, size_t* key_length) {
+                                const uint8_t** key, size_t* key_length) {
     llg_assoc_value_check_string_key(array, current, current_length);
-    int found;
+    int32_t found;
     size_t position = llg_assoc_value_string_position(array, current,
                                                       current_length, &found);
     if (position == 0) return 0;
@@ -365,14 +365,14 @@ void llg_assoc_value_copy(llg_assoc_value_t* dst,
         dst->key_signed != src->key_signed ||
         dst->key_two_state != src->key_two_state)
         llg_container_fatal("incompatible recursive associative-array types");
-    int shape_changed = dst->size != src->size;
-    int contents_changed = shape_changed ||
+    int32_t shape_changed = dst->size != src->size;
+    int32_t contents_changed = shape_changed ||
         dst->has_default_value != src->has_default_value ||
         !llg_value_equal_after_conversion(&dst->default_value, dst->element,
                                           &src->default_value);
     if (!contents_changed) {
         for (size_t i = 0; i < src->size; ++i) {
-            int key_changed;
+            int32_t key_changed;
             if (src->key_kind == LLG_ASSOC_INTEGRAL) {
                 key_changed = !sv4_same(dst->entries[i].integral_key,
                                         src->entries[i].integral_key);
@@ -428,7 +428,7 @@ void llg_assoc_value_copy(llg_assoc_value_t* dst,
                    (shape_changed ? LLG_CONTAINER_CHANGED_SHAPE : 0));
 }
 
-static int llg_assoc_value_same_index_type(const llg_assoc_value_t* a,
+static int32_t llg_assoc_value_same_index_type(const llg_assoc_value_t* a,
                                            const llg_assoc_value_t* b) {
     return llg_value_desc_compatible(a->element, b->element) &&
            a->key_kind == b->key_kind && a->key_width == b->key_width &&
@@ -459,7 +459,7 @@ void llg_assoc_value_merge(llg_assoc_value_t* dst, const llg_assoc_value_t* a,
             i < a->size ? &a->entries[i] : NULL;
         const llg_assoc_value_entry_t* right =
             j < b->size ? &b->entries[j] : NULL;
-        int cmp = !left ? 1
+        int32_t cmp = !left ? 1
             : !right ? -1
             : llg_assoc_entry_compare(dst->key_kind, dst->key_class, left->integral_key,
                                       left->string_key, left->string_length,

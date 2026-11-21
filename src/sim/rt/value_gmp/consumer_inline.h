@@ -32,8 +32,8 @@ static inline void llg_gmp_sv4_two_state_inplace(g4_t* value) {
     value->data.small.a &= ~value->data.small.b;
     value->data.small.b = 0;
 }
-static inline void llg_gmp_sv4_append_digit(g4_t* value, unsigned count, unsigned state,
-                                            unsigned digit) {
+static inline void llg_gmp_sv4_append_digit(g4_t* value, uint32_t count, uint32_t state,
+                                            uint32_t digit) {
     if (value->width > 64) {
         llg_gmp_sv4_append_digit_wide(value, count, state, digit);
         return;

@@ -24,7 +24,7 @@ static void llg_fork_group_child_done(llg_fork_group_t* grp) {
     if (!grp || grp->terminal || grp->remaining <= 0) return;
     llg_proc_t* parent = grp->parent;
     grp->remaining--;
-    int wake = 0;
+    int32_t wake = 0;
     if (grp->join_kind == LLG_JOIN) {
         if (grp->remaining == 0) wake = 1;
     } else if (grp->join_kind == LLG_JOIN_ANY) {
@@ -61,8 +61,8 @@ static void llg_fork_group_child_done(llg_fork_group_t* grp) {
     }
 }
 
-static llg_fork_group_t* llg_fork_group_new_impl(int join_kind,
-                                                  int has_target,
+static llg_fork_group_t* llg_fork_group_new_impl(int32_t join_kind,
+                                                  int32_t has_target,
                                                   uint32_t declaration,
                                                   uint32_t instance) {
     llg_proc_t* parent = llg_current();
@@ -106,11 +106,11 @@ static void start_pending_fork_children(llg_proc_t* parent) {
     }
 }
 
-llg_fork_group_t* llg_fork_group_new(int join_kind) {
+llg_fork_group_t* llg_fork_group_new(int32_t join_kind) {
     return llg_fork_group_new_impl(join_kind, 0, 0, 0);
 }
 
-llg_fork_group_t* llg_fork_group_new_target(int join_kind,
+llg_fork_group_t* llg_fork_group_new_target(int32_t join_kind,
                                              uint32_t declaration,
                                              uint32_t instance) {
     return llg_fork_group_new_impl(join_kind, 1, declaration, instance);
@@ -297,7 +297,7 @@ void llg_program_exit(llg_proc_t* self) {
     origin->closed = 1;
     for (;;) {
         llg_proc_t* victim = NULL;
-        for (int i = 0; i < g.n_procs; i++) {
+        for (int32_t i = 0; i < g.n_procs; i++) {
             llg_proc_t* proc = g.all_procs[i];
             if (proc && proc->program == origin && !proc->killed &&
                 !proc->completed) {
@@ -314,7 +314,7 @@ void llg_program_exit(llg_proc_t* self) {
     self->chain.exiting = LLG_EXIT_ABANDON;
 }
 
-static int activation_has_disabled_ancestor(llg_activation_t* activation) {
+static int32_t activation_has_disabled_ancestor(llg_activation_t* activation) {
     for (; activation; activation = activation->parent) {
         if (activation->disabled) return 1;
     }
@@ -357,7 +357,7 @@ void llg_disable_target(llg_proc_t* self, uint32_t declaration,
                         uint32_t instance) {
     llg_runtime_service_enter(self, "disable");
     if (!region_can_mutate("named activation scheduling")) return;
-    int matched = 0;
+    int32_t matched = 0;
     for (llg_activation_t* activation = g.activations; activation;
          activation = activation->all_next) {
         if (activation->declaration == declaration &&
@@ -371,7 +371,7 @@ void llg_disable_target(llg_proc_t* self, uint32_t declaration,
     // and processes from the registry, including the caller's ancestors.
     for (;;) {
         llg_fork_group_t* target = NULL;
-        for (int i = 0; i < g.n_procs && !target; i++) {
+        for (int32_t i = 0; i < g.n_procs && !target; i++) {
             llg_proc_t* proc = g.all_procs[i];
             if (!proc) continue;
             for (llg_fork_group_t* group = proc->fork_groups; group;
@@ -423,7 +423,7 @@ static void process_zombie_groups(void) {
     g.zombie_groups = NULL;
     while (grp) {
         llg_fork_group_t* next_g = grp->next_g;
-        int deferred = 0;
+        int32_t deferred = 0;
         for (llg_fork_child_t* c = grp->children; c; c = c->next) {
             if (!c->proc) continue;
             // A completed child can still own live join_none descendants.

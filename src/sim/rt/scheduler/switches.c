@@ -109,7 +109,7 @@ static struct {
     llg_net_t** publish;
     uint32_t publish_head;
     uint32_t n_publish;
-    int solving;
+    int32_t solving;
     // Direct controls sorted by signal, bit and switch; one watch per signal.
     llg_switch_control_t* controls;
     uint32_t n_controls;
@@ -118,7 +118,7 @@ static struct {
     // Set by llg_switches_start: the first solve waits for the first drain of
     // a region queue, so its time-zero changes reach the procedures that are
     // already waiting (decision T0-D2).
-    int held;
+    int32_t held;
 } g_sw;
 
 static void switch_controls_release(void) {
@@ -167,13 +167,13 @@ static void switches_release(void) {
 }
 
 // Table 28-8 for resistive devices; otherwise supply becomes strong (28.13).
-static int switch_reduce(int level, uint8_t flags) {
+static int32_t switch_reduce(int32_t level, uint8_t flags) {
     static const int8_t resistive[LLG_STRENGTH_SUPPLY + 1] = {0, 1, 1, 2, 2, 3, 5, 5};
     if (flags & LLG_SWITCH_RESISTIVE) return resistive[level];
     return level == LLG_STRENGTH_SUPPLY ? LLG_STRENGTH_STRONG : level;
 }
 
-static void switch_raise(int8_t* entry, int level) {
+static void switch_raise(int8_t* entry, int32_t level) {
     if (level > *entry) *entry = (int8_t)level;
 }
 
@@ -185,7 +185,7 @@ static void switch_own_levels(uint32_t node) {
     llg_net_t* net = entry->net;
     uint32_t bit = entry->bit;
     int8_t* level = &g_sw.level[(size_t)node * LLG_SWITCH_ENTRIES];
-    for (unsigned i = 0; i < LLG_SWITCH_ENTRIES; i++) level[i] = -1;
+    for (uint32_t i = 0; i < LLG_SWITCH_ENTRIES; i++) level[i] = -1;
     g_sw.fixed[node] = 0;
     if (llg_is_forced(&net->resolved) &&
         (force_mask_word(&net->resolved, bit / 64u) >> (bit % 64u) & 1u)) {
@@ -205,19 +205,19 @@ static void switch_own_levels(uint32_t node) {
     case LLG_RESOLVE_SUPPLY1: level[1] = level[3] = LLG_STRENGTH_SUPPLY; break;
     default: break;
     }
-    int count = net->n_drivers;
-    const int* drivers = NULL;
+    int32_t count = net->n_drivers;
+    const int32_t* drivers = NULL;
     if (llg_net_has_index(net)) {
         count = 0;
         llg_net_index_collect(net, net->index_root, bit, bit, &count);
         drivers = net->overlap_scratch;
     }
-    for (int i = 0; i < count; i++) {
-        int d = drivers ? drivers[i] : i;
+    for (int32_t i = 0; i < count; i++) {
+        int32_t d = drivers ? drivers[i] : i;
         const sv4_t* v = net->drivers[d];
         if (!v || bit >= llg_sv4_width(*v)) continue;
-        int s0 = net->strength0 ? net->strength0[d] : LLG_STRENGTH_STRONG;
-        int s1 = net->strength1 ? net->strength1[d] : LLG_STRENGTH_STRONG;
+        int32_t s0 = net->strength0 ? net->strength0[d] : LLG_STRENGTH_STRONG;
+        int32_t s1 = net->strength1 ? net->strength1[d] : LLG_STRENGTH_STRONG;
         switch (llg_sv4_state(*v, bit)) {
         case 0:
             if (s0 != LLG_STRENGTH_HIGHZ) {
@@ -244,7 +244,7 @@ static void switch_own_levels(uint32_t node) {
     }
 }
 
-static void switch_push(uint32_t node, unsigned entry, int level) {
+static void switch_push(uint32_t node, uint32_t entry, int32_t level) {
     if (g_sw.n_items >= (size_t)g_sw.n_nodes * LLG_SWITCH_ITEMS_PER_NODE) {
         llg_msg(LLG_MSG_INTERNAL, NULL, "switch network item bound exceeded");
         abort();
@@ -259,7 +259,7 @@ static void switch_push(uint32_t node, unsigned entry, int level) {
 }
 
 // Offer level `level` of value side `side` (known or possible) to `node`.
-static void switch_offer(uint32_t node, unsigned side, int known, int level) {
+static void switch_offer(uint32_t node, uint32_t side, int32_t known, int32_t level) {
     if (g_sw.fixed[node] || level < 1) return;
     int8_t* entries = &g_sw.level[(size_t)node * LLG_SWITCH_ENTRIES];
     if (known) {
@@ -295,7 +295,7 @@ static void switch_wired_groups(void) {
         uint32_t size = 0;
         g_sw.component[size++] = root;
         g_sw.dominant[root] = -1;
-        int wired = -1;
+        int32_t wired = -1;
         for (uint32_t k = 0; k < size; k++) {
             uint32_t node = g_sw.component[k];
             switch (g_sw.nodes[node].net->resolution) {
@@ -350,17 +350,17 @@ static void switch_solve(uint32_t start) {
         }
     }
     g_sw.n_items = 0;
-    for (int level = 0; level <= LLG_STRENGTH_SUPPLY; level++)
+    for (int32_t level = 0; level <= LLG_STRENGTH_SUPPLY; level++)
         g_sw.head[level] = g_sw.tail[level] = LLG_SWITCH_NO_ITEM;
     for (uint32_t i = 0; i < count; i++) {
         uint32_t node = g_sw.component[i];
         g_sw.dirty[node] = 0;
         switch_own_levels(node);
         const int8_t* entries = &g_sw.level[(size_t)node * LLG_SWITCH_ENTRIES];
-        for (unsigned entry = 0; entry < LLG_SWITCH_ENTRIES; entry++)
+        for (uint32_t entry = 0; entry < LLG_SWITCH_ENTRIES; entry++)
             if (entries[entry] >= 1) switch_push(node, entry, entries[entry]);
     }
-    for (int level = LLG_STRENGTH_SUPPLY; level >= 1; level--) {
+    for (int32_t level = LLG_STRENGTH_SUPPLY; level >= 1; level--) {
         // A node of a wired group resolves its drivers and what arrives
         // through the switches with the wired function (28.12.4): among
         // equal strengths 0 wins in a wired-AND group and 1 in a wired-OR
@@ -377,15 +377,15 @@ static void switch_solve(uint32_t start) {
                 llg_switch_item_t item = g_sw.items[index];
                 g_sw.head[level] = item.next;
                 const int8_t* entries = &g_sw.level[(size_t)item.node * LLG_SWITCH_ENTRIES];
-                unsigned entry = item.entry & 3u;
-                unsigned side = entry & 1u;
-                int known = entry < 2u;
+                uint32_t entry = item.entry & 3u;
+                uint32_t side = entry & 1u;
+                int32_t known = entry < 2u;
                 // Stale: the entry rose after this item was queued.
                 if (entries[entry] != level) continue;
                 // Blocked: a stronger known opposite value wins at this node.
                 if (entries[1u - side] > level) continue;
-                int dominant = g_sw.dominant ? g_sw.dominant[item.node] : -1;
-                if (dominant >= 0 && side != (unsigned)dominant) {
+                int32_t dominant = g_sw.dominant ? g_sw.dominant[item.node] : -1;
+                if (dominant >= 0 && side != (uint32_t)dominant) {
                     if (!(item.entry & LLG_SWITCH_ITEM_DEFERRED)) {
                         g_sw.items[index].next = LLG_SWITCH_NO_ITEM;
                         g_sw.items[index].entry = (uint8_t)(entry | LLG_SWITCH_ITEM_DEFERRED);
@@ -419,13 +419,13 @@ static void switch_solve(uint32_t start) {
         if (g_sw.fixed[node]) continue;
         const int8_t* e = &g_sw.level[(size_t)node * LLG_SWITCH_ENTRIES];
         llg_net_t* net = g_sw.nodes[node].net;
-        int dominant = g_sw.dominant ? g_sw.dominant[node] : -1;
-        int mode = dominant == 0   ? LLG_RESOLVE_WAND
+        int32_t dominant = g_sw.dominant ? g_sw.dominant[node] : -1;
+        int32_t mode = dominant == 0   ? LLG_RESOLVE_WAND
                    : dominant == 1 ? LLG_RESOLVE_WOR
                                    : net->resolution;
         uint8_t code = llg_net_strength_hull(mode, e[0], e[1], e[2], e[3]);
-        int lo = (int)(code & 15u) - 7;
-        int hi = (int)(code >> 4) - 7;
+        int32_t lo = (int32_t)(code & 15u) - 7;
+        int32_t hi = (int32_t)(code >> 4) - 7;
         uint8_t value = lo == 0 && hi == 0 ? 3u : hi < 0 ? 0u : lo > 0 ? 1u : 2u;
         if (value == g_sw.value[node] && code == g_sw.code[node]) continue;
         g_sw.value[node] = value;
@@ -446,7 +446,7 @@ static void switches_abandon(void) {
 
 // Solve every dirty component and republish the queued nets until nothing is
 // left; a callback reached from a publication only queues more work.
-static int switches_flush(void) {
+static int32_t switches_flush(void) {
     if (g_sw.solving || (!g_sw.n_dirty && g_sw.publish_head == g_sw.n_publish)) return 0;
     // The first solve waits for the first region that may update nets (the
     // time-0 Preponed region drains before any process ran).
@@ -456,7 +456,7 @@ static int switches_flush(void) {
         switch_controls_refresh();
     }
     g_sw.solving = 1;
-    int round = 0;
+    int32_t round = 0;
     while (g_sw.n_dirty || g_sw.publish_head < g_sw.n_publish) {
         // A publication that changes a control re-dirties the network; a
         // network that keeps turning its own switches over in zero time is a
@@ -511,13 +511,13 @@ static void llg_switch_net_changed(llg_net_t* net) {
 
 // Move switch `s` across the active boundary of the adjacency of its `end`
 // (0: a, 1: b) node: to the active part when `active`, out of it otherwise.
-static void switch_adjacency_move(uint32_t s, unsigned end, int active) {
+static void switch_adjacency_move(uint32_t s, uint32_t end, int32_t active) {
     uint32_t node = end ? g_sw.switches[s].b : g_sw.switches[s].a;
     uint32_t target = g_sw.adj_start[node] +
         (active ? g_sw.n_active[node]++ : --g_sw.n_active[node]);
     uint32_t from = g_sw.adj_pos[2u * s + end];
     uint32_t other = g_sw.adj[target];
-    unsigned other_end = g_sw.switches[other].a == node ? 0u : 1u;
+    uint32_t other_end = g_sw.switches[other].a == node ? 0u : 1u;
     g_sw.adj[from] = other;
     g_sw.adj_pos[2u * other + other_end] = from;
     g_sw.adj[target] = s;
@@ -546,7 +546,7 @@ void llg_switch_control(uint32_t index, sv4_t state) {
     if (!region_can_mutate("switch control")) return;
     uint8_t next = LLG_SWITCH_UNKNOWN;
     if (llg_sv4_width(state)) {
-        unsigned bit = llg_sv4_state(state, 0);
+        uint32_t bit = llg_sv4_state(state, 0);
         if (bit == 0) next = LLG_SWITCH_OFF;
         if (bit == 1) next = LLG_SWITCH_ON;
     }
@@ -558,7 +558,7 @@ void llg_switch_control(uint32_t index, sv4_t state) {
 // ── Direct controls ──────────────────────────────────────────────────────────
 
 static uint8_t switch_control_state(const llg_switch_control_t* control) {
-    unsigned bit = llg_sv4_state(*control->signal, control->bit);
+    uint32_t bit = llg_sv4_state(*control->signal, control->bit);
     if (bit > 1u) return LLG_SWITCH_UNKNOWN;
     return (bit ^ control->invert) & 1u ? LLG_SWITCH_ON : LLG_SWITCH_OFF;
 }
@@ -626,7 +626,7 @@ static void switch_controls_refresh(void) {
     }
 }
 
-static int switch_control_order(const void* left, const void* right) {
+static int32_t switch_control_order(const void* left, const void* right) {
     const llg_switch_control_t* a = (const llg_switch_control_t*)left;
     const llg_switch_control_t* b = (const llg_switch_control_t*)right;
     uintptr_t sa = (uintptr_t)a->signal;
@@ -688,7 +688,7 @@ void llg_switch_controls_start(const llg_switch_control_t* controls, uint32_t co
     }
 }
 
-static int switch_member_order(const void* left, const void* right) {
+static int32_t switch_member_order(const void* left, const void* right) {
     const llg_switch_member_t* a = (const llg_switch_member_t*)left;
     const llg_switch_member_t* b = (const llg_switch_member_t*)right;
     return a->bit < b->bit ? -1 : a->bit > b->bit;
@@ -730,7 +730,7 @@ void llg_switches_start(const llg_switch_node_t* nodes, uint32_t n_nodes,
         (size_t)n_nodes * LLG_SWITCH_ITEMS_PER_NODE, sizeof(llg_switch_item_t),
         "switch solve queue");
     for (uint32_t n = 0; n < n_nodes; n++) {
-        int resolution = nodes[n].net->resolution;
+        int32_t resolution = nodes[n].net->resolution;
         if (resolution == LLG_RESOLVE_WAND || resolution == LLG_RESOLVE_WOR) {
             g_sw.dominant = (int8_t*)llg_checked_calloc(n_nodes, 1, "switch wired groups");
             break;
@@ -820,7 +820,7 @@ static void switch_overlay_value(const llg_net_t* net, sv4_t* value, uint32_t lo
 // The member bits of `net` take their network's strengths, except forced bits.
 static void switch_overlay_strength(llg_net_t* net, uint64_t* out) {
     const struct llg_switch_net* members = net->switch_net;
-    int forced = llg_is_forced(&net->resolved);
+    int32_t forced = llg_is_forced(&net->resolved);
     for (uint32_t i = 0; i < members->count; i++) {
         uint32_t bit = members->members[i].bit;
         if (forced && (force_mask_word(&net->resolved, bit / 64u) >> (bit % 64u) & 1u))

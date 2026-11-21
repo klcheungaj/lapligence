@@ -131,32 +131,32 @@ void llg_fixed_array_init(llg_fixed_array_t*, uint64_t, sv4_t, sv4_t*);
 /* Start every cell of a freshly initialized array from the consumed `image`,
  * first cell most significant. Nothing observes the array yet, so nothing is
  * published. */
-void llg_fixed_array_initial_cells(llg_fixed_array_t* array, sv4_t image, int is_signed,
-                                   int two_state);
+void llg_fixed_array_initial_cells(llg_fixed_array_t* array, sv4_t image, int32_t is_signed,
+                                   int32_t two_state);
 /* Nothing in the model names this array's contents marker: writes skip it. */
 void llg_fixed_array_unobserved(llg_fixed_array_t*);
 /* Keep the Preponed value of each cell for llg_fixed_array_sampled_peek. */
 void llg_fixed_array_sampled(llg_fixed_array_t*);
 const sv4_t* llg_fixed_array_sampled_peek(const llg_fixed_array_t*, uint64_t);
 void llg_fixed_array_reset(llg_fixed_array_t*, sv4_t);
-void llg_fixed_array_view_init(llg_fixed_array_t*, llg_fixed_array_t*, uint64_t, uint64_t, int);
-void llg_fixed_array_stream_segments(llg_fixed_array_t*, const llg_fixed_array_t* const*, size_t, int, int, uint32_t);
-void llg_fixed_array_merge(llg_fixed_array_t*, const llg_fixed_array_t*, const llg_fixed_array_t*, const sv4_t*, const sv4_t*, int);
+void llg_fixed_array_view_init(llg_fixed_array_t*, llg_fixed_array_t*, uint64_t, uint64_t, int32_t);
+void llg_fixed_array_stream_segments(llg_fixed_array_t*, const llg_fixed_array_t* const*, size_t, int32_t, int32_t, uint32_t);
+void llg_fixed_array_merge(llg_fixed_array_t*, const llg_fixed_array_t*, const llg_fixed_array_t*, const sv4_t*, const sv4_t*, int32_t);
 const sv4_t* llg_fixed_array_peek(const llg_fixed_array_t*, uint64_t);
 sv4_t* llg_fixed_array_cell(llg_fixed_array_t*, uint64_t);
 void llg_fixed_array_destroy(void*);
-void llg_fixed_array_copy(llg_fixed_array_t*, const llg_fixed_array_t*, int, int);
-void llg_fixed_array_fill(llg_fixed_array_t*, sv4_t, int, int);
-void llg_fixed_array_stream_copy(llg_fixed_array_t*, const llg_fixed_array_t*, int, int, uint32_t);
-sv4_t llg_fixed_array_compare(const llg_fixed_array_t*, const llg_fixed_array_t*, int, int);
+void llg_fixed_array_copy(llg_fixed_array_t*, const llg_fixed_array_t*, int32_t, int32_t);
+void llg_fixed_array_fill(llg_fixed_array_t*, sv4_t, int32_t, int32_t);
+void llg_fixed_array_stream_copy(llg_fixed_array_t*, const llg_fixed_array_t*, int32_t, int32_t, uint32_t);
+sv4_t llg_fixed_array_compare(const llg_fixed_array_t*, const llg_fixed_array_t*, int32_t, int32_t);
 /* Blocking copy of a whole real column: a cell of equal bits is no write. */
 void llg_real_column_assign(double* target, const double* source, uint64_t count);
 /* One-bit equality of two columns of `count` doubles, or its negation; case
  * equality compares the bit patterns. */
-sv4_t llg_real_column_compare(const double* left, const double* right, uint64_t count, int case_eq, int negate);
+sv4_t llg_real_column_compare(const double* left, const double* right, uint64_t count, int32_t case_eq, int32_t negate);
 /* Pack a runtime `with` selection of a one-dimensional descriptor array in
  * stream order; indices outside the bounds stream `fallback` (borrowed). */
-sv4_t llg_fixed_array_stream_source(const llg_fixed_array_t*, int64_t, int64_t, uint32_t, sv4_t, int, sv4_t, sv4_t);
+sv4_t llg_fixed_array_stream_source(const llg_fixed_array_t*, int64_t, int64_t, uint32_t, sv4_t, int32_t, sv4_t, sv4_t);
 /* Descriptor stream operands (SV 11.4.14). Each initializes a zeroed
  * scratch array and returns 0, leaving it zeroed, when the operand has no
  * bits. packed_source splits a borrowed packed value into `cell_width`-bit
@@ -164,9 +164,9 @@ sv4_t llg_fixed_array_stream_source(const llg_fixed_array_t*, int64_t, int64_t, 
  * a one-dimensional descriptor array in storage order; indices outside the
  * bounds read the borrowed `fallback`, and no owner cell is materialized.
  * stream_value lazily images a nested stream of `count` sources. */
-int llg_fixed_array_packed_source(llg_fixed_array_t*, sv4_t, uint32_t);
-int llg_fixed_array_with_source(llg_fixed_array_t*, const llg_fixed_array_t*, int64_t, int64_t, sv4_t, int, sv4_t, sv4_t);
-int llg_fixed_array_stream_value(llg_fixed_array_t*, const llg_fixed_array_t* const*, size_t, uint32_t);
+int32_t llg_fixed_array_packed_source(llg_fixed_array_t*, sv4_t, uint32_t);
+int32_t llg_fixed_array_with_source(llg_fixed_array_t*, const llg_fixed_array_t*, int64_t, int64_t, sv4_t, int32_t, sv4_t, sv4_t);
+int32_t llg_fixed_array_stream_value(llg_fixed_array_t*, const llg_fixed_array_t* const*, size_t, uint32_t);
 /* Copy `total` dense cells from `origin` into a zeroed scratch array; an
  * invalid view (`origin` UINT64_MAX) reads the borrowed `fallback`. */
 void llg_fixed_array_dense_source(llg_fixed_array_t*, const sv4_t*, uint64_t, uint64_t, sv4_t);
@@ -176,7 +176,7 @@ void llg_fixed_array_items_source(llg_fixed_array_t*, const llg_value_t*, sv4_t)
 void llg_fixed_array_items_store(llg_value_t*, const llg_fixed_array_t*);
 /* A descriptor stream operand holding the `cell_width`-bit cells of a
  * runtime-sized bit stream, left cell first; returns 0 for an empty stream. */
-int llg_fixed_array_bitstream_source(llg_fixed_array_t*, const llg_bitstream_t*, uint32_t);
+int32_t llg_fixed_array_bitstream_source(llg_fixed_array_t*, const llg_bitstream_t*, uint32_t);
 /* Append every cell in storage order to a runtime-sized bit stream. */
 void llg_bitstream_append_fixed_array(llg_bitstream_t*, const llg_fixed_array_t*);
 /* Whole-value access to `count` consecutive cells of dense array storage, so
@@ -189,8 +189,8 @@ void llg_bitstream_append_fixed_array(llg_bitstream_t*, const llg_fixed_array_t*
  * or zero-delay nonblocking (`llg_nba_after`), in cell order. */
 sv4_t llg_dense_cells_image(const sv4_t* cells, uint64_t count);
 void llg_dense_cells_store(sv4_t* cells, uint64_t count, const sv4_t* image, int64_t left,
-                           uint32_t width, int is_signed, int two_state, int nba);
-void llg_dense_cells_fill(sv4_t* cells, uint64_t count, const sv4_t* value, int nba);
+                           uint32_t width, int32_t is_signed, int32_t two_state, int32_t nba);
+void llg_dense_cells_fill(sv4_t* cells, uint64_t count, const sv4_t* value, int32_t nba);
 /* The same three operations on `count` consecutive cells of a descriptor
  * array from linear cell `first`. Reads peek (unwritten cells read the
  * array's initial value and stay unmaterialized); writes materialize. */
@@ -198,9 +198,9 @@ sv4_t llg_fixed_array_cells_image(const llg_fixed_array_t* array, uint64_t first
                                   uint64_t count);
 void llg_fixed_array_cells_store(llg_fixed_array_t* array, uint64_t first, uint64_t count,
                                  const sv4_t* image, int64_t left, uint32_t width,
-                                 int is_signed, int two_state, int nba);
+                                 int32_t is_signed, int32_t two_state, int32_t nba);
 void llg_fixed_array_cells_fill(llg_fixed_array_t* array, uint64_t first, uint64_t count,
-                                const sv4_t* value, int nba);
+                                const sv4_t* value, int32_t nba);
 
 // Keep the library and every model translation unit on the host contract:
 // llg_co.h then declares the chunk-allocation and report hooks this runtime
@@ -322,7 +322,7 @@ void llg_gc_order_objects(void);
 // header is initialized with `type`. Allocation failure is fatal.
 void* llg_gc_alloc(size_t size, const llg_gc_type_t* type);
 // Whether `handle` is the exact address of a live collected object.
-int llg_gc_is_object(const void* handle);
+int32_t llg_gc_is_object(const void* handle);
 // Tracer callbacks, valid only inside trace/root/interior callbacks.
 void llg_gc_visit(llg_gc_tracer_t* tracer, const void* handle);
 void llg_gc_visit_interior(llg_gc_tracer_t* tracer, const void* address);
@@ -331,13 +331,13 @@ void llg_gc_visit_value(llg_gc_tracer_t* tracer, const llg_value_t* value);
 // payloads without one hold no handles).
 void llg_gc_visit_payload(llg_gc_tracer_t* tracer, void (*drop)(void*),
                           const void* payload);
-int llg_gc_interior_hit(const llg_gc_tracer_t* tracer, const void* address);
+int32_t llg_gc_interior_hit(const llg_gc_tracer_t* tracer, const void* address);
 // Root producers and tracers register after runtime initialization and stay
 // registered until the next initialization. Return 0 on allocation failure.
-int llg_gc_register_roots(llg_gc_root_fn fn, void* context);
-int llg_gc_register_payload_tracer(void (*drop)(void*),
+int32_t llg_gc_register_roots(llg_gc_root_fn fn, void* context);
+int32_t llg_gc_register_payload_tracer(void (*drop)(void*),
                                    llg_gc_payload_trace_fn trace);
-int llg_gc_register_frame_map(const llg_co_desc_t* desc,
+int32_t llg_gc_register_frame_map(const llg_co_desc_t* desc,
                               const llg_gc_frame_map_t* map);
 // Destructor tag of registered automatic handle cells (`void*` payloads).
 void llg_gc_handle_cell_drop(void* cell);
@@ -350,8 +350,8 @@ void llg_gc_trace_assoc_values(const void* payload, llg_gc_tracer_t* tracer);
 void llg_gc_trace_assoc(const void* payload, llg_gc_tracer_t* tracer);
 // Foreign retention: a pinned object is a root. Pin/unpin of a non-object
 // returns 0 and changes nothing; an unbalanced unpin is fatal.
-int llg_gc_pin(void* handle);
-int llg_gc_unpin(void* handle);
+int32_t llg_gc_pin(void* handle);
+int32_t llg_gc_unpin(void* handle);
 // Reclamation hook (VPI cbReclaimObj, IEEE 1800-2009 38.36.1): called once
 // per collection with every object found unreachable, before any of them is
 // finalized; `objects` is borrowed for the call. The hook must not allocate
@@ -464,7 +464,7 @@ typedef struct {
 } llg_pattern_class_t;
 // The model's view of a live object: its class id and property count, or 0
 // for a reclaimed object; and the storage of property `index`.
-typedef int (*llg_pattern_object_fn)(void* handle, uint32_t* class_id,
+typedef int32_t (*llg_pattern_object_fn)(void* handle, uint32_t* class_id,
                                      size_t* count);
 typedef const void* (*llg_pattern_field_fn)(void* handle, size_t index);
 void llg_pattern_set_classes(const llg_pattern_class_t* classes, uint32_t count,
@@ -474,7 +474,7 @@ void llg_pattern_set_classes(const llg_pattern_class_t* classes, uint32_t count,
 llg_string_t llg_pattern_format(const llg_pattern_type_t* types,
                                 uint32_t type_count, uint32_t type,
                                 uint8_t storage, const void* source,
-                                int abbreviated);
+                                int32_t abbreviated);
 
 // LLG_SEVERITY_INFO .. LLG_SEVERITY_FATAL are defined in llg_msg.h.
 
@@ -511,7 +511,7 @@ enum {
 #define LLG_IMMEDIATE_FAIL_ACTION 4
 
 typedef struct {
-    int kind;
+    int32_t kind;
     // Physical unit of a packed/real `%t` argument in femtoseconds.  Zero
     // keeps the legacy ABI's design-precision fallback for hand-written
     // runtime callers; generated display evaluators always set it.
@@ -524,7 +524,7 @@ typedef struct {
 } llg_fmt_arg_t;
 
 typedef struct {
-    int kind;
+    int32_t kind;
     void* ptr;
 } llg_display_read_t;
 
@@ -575,8 +575,8 @@ struct llg_net_driver_index {
     uint32_t high;
     uint32_t max_high;
     uint32_t priority;
-    int left;
-    int right;
+    int32_t left;
+    int32_t right;
     uint8_t active;
 };
 
@@ -585,13 +585,13 @@ struct llg_net {
     uint32_t width;
     int8_t is_signed;
     int8_t resolution;
-    int n_drivers;
+    int32_t n_drivers;
     sv4_t* const* drivers;                /* per-driver contribution cells */
     const uint8_t* strength0;             /* per-driver source drive levels */
     const uint8_t* strength1;
     llg_net_driver_index_t* driver_index; /* exact-size interval-tree nodes */
-    int* overlap_scratch;                 /* exact-size query output */
-    int index_root;
+    int32_t* overlap_scratch;                 /* exact-size query output */
+    int32_t index_root;
     int8_t propagation_enabled;
     llg_inertial_t* propagation;
     uint64_t propagation_rise;
@@ -615,16 +615,16 @@ struct llg_net {
     int8_t net_delayed;
     /* The alias parts this net publishes into, grouped by alias (see
      * llg_net_alias_ref); runtime-owned, rebuilt by llg_net_alias_bind. */
-    int n_aliases;
-    int alias_capacity;
+    int32_t n_aliases;
+    int32_t alias_capacity;
     llg_net_alias_ref_t* aliases;
     /* The group bits each alias entry reads, ordered for ranged
      * publication (llg_net_alias_span); runtime-owned, built on demand and
      * invalidated by every bind. `alias_spans_busy` counts the ranged
      * refreshes walking it. */
     llg_net_alias_span_t* alias_spans;
-    int alias_spans_valid;
-    int alias_spans_busy;
+    int32_t alias_spans_valid;
+    int32_t alias_spans_busy;
     /* Optional strength view, emitted only for nets with a strength consumer
      * (`%v`). Each net bit owns one two-state byte: the high nibble is
      * hi + 7 and the low nibble lo + 7, where [lo, hi] is the resolved
@@ -650,7 +650,7 @@ struct llg_net {
      * the source's own net did, instead of deferring like a multi-driver
      * net. A write to one of them sets it to 0. llg_net_layout clears it;
      * the model then sets it from its `llg_net_silent` table. */
-    int silent_slots;
+    int32_t silent_slots;
     /* For a net with several drivers, one bit per net bit that still holds
      * its start X because no driver covering it has written yet. NULL once
      * every such bit is written, and for every other net. */
@@ -666,7 +666,7 @@ struct llg_net {
  * declared-view metadata proportional to connected ranges, not bits. */
 struct llg_net_alias_part {
     llg_net_t* net;
-    int slot;
+    int32_t slot;
     uint32_t signal_bit;
     uint32_t group_bit;
     uint32_t bit_count;
@@ -706,7 +706,7 @@ struct llg_net_alias_span {
     uint32_t low;
     uint32_t high;
     uint32_t reach;
-    int ref;
+    int32_t ref;
 };
 
 void llg_net_resolve(llg_net_t* net); /* strength-aware resolution, per limb */
@@ -715,7 +715,7 @@ void llg_net_resolve(llg_net_t* net); /* strength-aware resolution, per limb */
  * its resolved drivers propagate through its delay, so a driver that never
  * changes still reaches the net (decision S2-D10). A runtime-valued net
  * delay resolves once its updater stored the delay. */
-void llg_net_start_unknown(llg_net_t* net, int resolve);
+void llg_net_start_unknown(llg_net_t* net, int32_t resolve);
 /* Startup of an undelayed net with drivers: the `n_runs` pairs
  * (low bit, bit count) in `runs` are the bits its drivers write. Each holds X
  * (strength StX), the output of drivers that have not evaluated yet (6.7),
@@ -746,7 +746,7 @@ typedef struct llg_net_shape {
     int8_t net_delayed;
     uint8_t fill;
     uint8_t path_destination; /* one path-stage record per bit */
-    int n_drivers;
+    int32_t n_drivers;
     const uint8_t* strength0;
     const uint8_t* strength1;
     uint64_t propagation_rise;
@@ -762,27 +762,27 @@ typedef struct llg_net_pools {
     sv4_t* cells;                         /* one contribution cell per driver */
     sv4_t** driver_slots;                 /* one pointer per driver */
     llg_net_driver_index_t* index_nodes;  /* one node per driver */
-    int* overlap_scratch;                 /* one entry per driver */
+    int32_t* overlap_scratch;                 /* one entry per driver */
     llg_inertial_t** path_bits;           /* one per path destination bit */
     llg_inertial_t** segment_records;     /* one per delayed net part */
 } llg_net_pools_t;
 
 void llg_net_layout(llg_net_t* net, const llg_net_shape_t* shape,
                     llg_net_pools_t* pools);
-void llg_net_write(llg_net_t* net, int idx, sv4_t value);
+void llg_net_write(llg_net_t* net, int32_t idx, sv4_t value);
 /* A whole-slot write whose driver drives only the bits `value` does not
  * leave Z: a startup fill of a collapsed-net member or a delayed driver's
  * start value. Other drivers' bits keep their start X (T0-D3). */
-void llg_net_write_driven(llg_net_t* net, int idx, sv4_t value);
+void llg_net_write_driven(llg_net_t* net, int32_t idx, sv4_t value);
 /* The same start for a driver of bits [lsb, lsb + width of value) only (a
  * narrow delayed contribution to a wider shared group): every bit of `value`
  * is driven, and the slot's other bits stay Z. */
-void llg_net_write_driven_part(llg_net_t* net, int idx, sv4_t value, uint32_t lsb);
+void llg_net_write_driven_part(llg_net_t* net, int32_t idx, sv4_t value, uint32_t lsb);
 // Selected writes replace the driver's previous range, so a moving selector
 // releases its old contribution to Z. `value` has plan.width bits; reverse is
 // true for ascending ordinary part-selects.
-void llg_net_write_selected(llg_net_t* net, int idx, sv4_t value,
-                            sv4_select_plan_t plan, int reverse);
+void llg_net_write_selected(llg_net_t* net, int32_t idx, sv4_t value,
+                            sv4_select_plan_t plan, int32_t reverse);
 void llg_net_index_reset(llg_net_t* net);
 void llg_net_strength_reset(llg_net_t* net); /* startup view, no wakeups */
 /* VPI vpiStrengthVal (IEEE 1800-2009 38.15, 38.36.1): the net's strength
@@ -793,7 +793,7 @@ void llg_net_strength_reset(llg_net_t* net); /* startup view, no wakeups */
  * changes publish; it returns 0 when the net already has a view.
  * llg_net_strength_detach takes such a view back. */
 void llg_net_strength_snapshot(llg_net_t* net, sv4_t* out);
-int llg_net_strength_attach(llg_net_t* net, sv4_t* view);
+int32_t llg_net_strength_attach(llg_net_t* net, sv4_t* view);
 void llg_net_strength_detach(llg_net_t* net, sv4_t* view);
 void llg_net_alias_bind(llg_net_alias_t* alias);
 /* One storage-less view that reads `part.bit_count` consecutive bits of one
@@ -871,31 +871,31 @@ void llg_switch_controls_start(const llg_switch_control_t* controls, uint32_t co
 void llg_inertial_assign(llg_inertial_t** handle, sv4_t* target,
                          sv4_t value, uint64_t rise, uint64_t fall,
                          uint64_t turn_off);
-void llg_inertial_net(llg_inertial_t** handle, llg_net_t* net, int slot,
+void llg_inertial_net(llg_inertial_t** handle, llg_net_t* net, int32_t slot,
                       sv4_t value, uint64_t rise, uint64_t fall,
                       uint64_t turn_off);
 void llg_inertial_selected_assign(llg_inertial_t** handle, sv4_t* target,
                                   sv4_t value, sv4_t mask, uint64_t rise,
                                   uint64_t fall, uint64_t turn_off);
 void llg_inertial_selected_net(llg_inertial_t** handle, llg_net_t* net,
-                               int slot, sv4_t value, sv4_t mask,
+                               int32_t slot, sv4_t value, sv4_t mask,
                                uint64_t rise, uint64_t fall,
                                uint64_t turn_off);
 // A delayed driver of the contiguous bits `plan` selects of net slot `slot`
 // (a narrow contribution to a wider shared group). The record keeps only
 // those bits, so scheduling and committing cost the part's width, not the
 // group's. Same transition rules as llg_inertial_selected_net.
-void llg_inertial_part_net(llg_inertial_t** handle, llg_net_t* net, int slot,
-                           sv4_t value, sv4_select_plan_t plan, int reverse,
+void llg_inertial_part_net(llg_inertial_t** handle, llg_net_t* net, int32_t slot,
+                           sv4_t value, sv4_select_plan_t plan, int32_t reverse,
                            uint64_t rise, uint64_t fall, uint64_t turn_off);
 // The output of a delayed enable gate: `zero` for strength0-only slot
 // `zero_slot` and `one` for strength1-only slot `one_slot`, over the bits
 // `plan` selects. One driver schedules both, with the delay of the combined
 // output: 0 falls, 1 rises, Z turns off, and X, L and H take the smallest
 // delay, whatever the old output was. The net publishes them as one update.
-void llg_inertial_enable_net(llg_inertial_t** handle, llg_net_t* net, int zero_slot,
-                             int one_slot, sv4_t zero, sv4_t one,
-                             sv4_select_plan_t plan, int reverse, uint64_t rise,
+void llg_inertial_enable_net(llg_inertial_t** handle, llg_net_t* net, int32_t zero_slot,
+                             int32_t one_slot, sv4_t zero, sv4_t one,
+                             sv4_select_plan_t plan, int32_t reverse, uint64_t rise,
                              uint64_t fall, uint64_t turn_off);
 // Drop the pending update of the driver behind `handle`, and move a
 // pending update due later to the current time (no driver or none pending:
@@ -1034,7 +1034,7 @@ void llg_module_paths_layout(llg_module_path_set_t* set, const char* scope,
  * replace every specify-block declaration; -1 keeps the declarations.
  * Called before llg_module_paths_start when a model sets an option. */
 void llg_module_paths_configure(uint32_t reject_percent, uint32_t error_percent,
-                                int style, int show_cancelled);
+                                int32_t style, int32_t show_cancelled);
 /* Bind the set's destination nets and take the current source values as the
  * reference for change detection. Called once per set during model
  * initialization, after net and signal storage exist; the runtime releases
@@ -1273,7 +1273,7 @@ void llg_timing_checks_layout(llg_timing_check_set_t* set, const char* scope,
 
 /* Turn violation reports on or off (default on); called before
  * llg_timing_checks_start when a model turns them off. */
-void llg_timing_checks_configure(int messages);
+void llg_timing_checks_configure(int32_t messages);
 /* The one-bit two-state variable whose change wakes the generated process
  * that calls llg_timing_checks_run; called before the sets start. */
 void llg_timing_checks_doorbell(sv4_t* doorbell);
@@ -1386,14 +1386,14 @@ void llg_module_path_pulse_limits(const llg_module_path_t* path, uint32_t t,
                                   uint64_t* reject, uint64_t* error);
 /* 1 when bit `bit` of a path destination has a scheduled update; then its
  * absolute time and four-state value (0, 1, 2 = x, 3 = z) are stored. */
-int llg_net_path_pending(const llg_net_t* net, uint32_t bit, uint64_t* time,
-                         int* state);
+int32_t llg_net_path_pending(const llg_net_t* net, uint32_t bit, uint64_t* time,
+                         int32_t* state);
 /* Scheduled updates of bit `bit` of a path destination in time order: 1 when
  * update `index` exists (0 is the one llg_net_path_pending reports; later
  * ones exist while a pulse passes or is filtered to x), then its absolute
  * time and four-state value are stored. */
-int llg_net_path_event(const llg_net_t* net, uint32_t bit, uint32_t index,
-                       uint64_t* time, int* state);
+int32_t llg_net_path_event(const llg_net_t* net, uint32_t bit, uint32_t index,
+                       uint64_t* time, int32_t* state);
 
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 
@@ -1409,8 +1409,8 @@ typedef struct llg_value_scope {
     struct llg_value_scope* all_next;
     struct llg_value_scope* all_prev;
     size_t references;
-    int active;
-    int intrusive;
+    int32_t active;
+    int32_t intrusive;
     llg_proc_t* owner;
     size_t count;
     sv4_t* values;
@@ -1451,7 +1451,7 @@ typedef struct llg_semaphore llg_semaphore_t;
 typedef struct llg_frame llg_frame_t;
 typedef struct llg_activation llg_activation_t;
 typedef struct llg_mailbox llg_mailbox_t;
-typedef struct { sv4_t* sig; int kind; } llg_event_spec_t;
+typedef struct { sv4_t* sig; int32_t kind; } llg_event_spec_t;
 // One typed storage dependency. Exactly one pointer is non-null; real
 // dependencies point directly at the generated double companion. Real
 // equality follows the write path's bitwise comparison and never converts
@@ -1482,7 +1482,7 @@ enum {
 };
 
 typedef struct {
-    int kind;
+    int32_t kind;
     // Zero: structural scalar. Otherwise the canonical nominal type (enums,
     // classes) or, for LLG_MAILBOX_VALUE, the model's equivalence class of
     // the aggregate type (SV 6.22.2), decided when the model was generated.
@@ -1501,7 +1501,7 @@ typedef struct {
 } llg_mailbox_value_t;
 
 typedef struct {
-    int kind;
+    int32_t kind;
     uint64_t type_id; // as llg_mailbox_value_t.type_id
     uint32_t width;
     int8_t is_signed;
@@ -1535,13 +1535,13 @@ llg_mailbox_target_t llg_mailbox_published_target(llg_mailbox_target_t target,
                                                   sv4_t* changed);
 llg_mailbox_target_t llg_mailbox_target_ref(llg_ref_t* target);
 llg_mailbox_value_t llg_mailbox_value_packed(sv4_t value, uint32_t width,
-                                              int is_signed, int two_state);
-llg_mailbox_value_t llg_mailbox_value_real(double value, int shortreal);
+                                              int32_t is_signed, int32_t two_state);
+llg_mailbox_value_t llg_mailbox_value_real(double value, int32_t shortreal);
 llg_mailbox_value_t llg_mailbox_value_string(llg_string_t value);
 llg_mailbox_value_t llg_mailbox_value_handle(void* value);
 llg_mailbox_target_t llg_mailbox_target_packed(sv4_t* target, uint32_t width,
-                                                int is_signed, int two_state);
-llg_mailbox_target_t llg_mailbox_target_real(double* target, int shortreal);
+                                                int32_t is_signed, int32_t two_state);
+llg_mailbox_target_t llg_mailbox_target_real(double* target, int32_t shortreal);
 llg_mailbox_target_t llg_mailbox_target_string(llg_string_t* target);
 llg_mailbox_target_t llg_mailbox_target_handle(void** target);
 // Deep copy of `value` (borrowed) as a message of aggregate type `type_id`.
@@ -1549,8 +1549,8 @@ llg_mailbox_value_t llg_mailbox_value_native(const llg_value_t* value,
                                              uint64_t type_id);
 llg_mailbox_target_t llg_mailbox_target_native(llg_value_t* target,
                                                uint64_t type_id);
-llg_mailbox_t* llg_mailbox_new(sv4_t bound, int kind, uint32_t width,
-                               int is_signed, int two_state, int shortreal);
+llg_mailbox_t* llg_mailbox_new(sv4_t bound, int32_t kind, uint32_t width,
+                               int32_t is_signed, int32_t two_state, int32_t shortreal);
 // A typed mailbox of an aggregate message type (LLG_MAILBOX_VALUE).
 llg_mailbox_t* llg_mailbox_new_value(sv4_t bound, uint64_t type_id);
 uint64_t llg_mailbox_num(const llg_mailbox_t* mailbox);
@@ -1577,13 +1577,13 @@ sv4_t* llg_mailbox_dependency(llg_mailbox_t* mailbox);
 llg_co_arm_t llg_arm_mailbox_put_value(llg_proc_t* self,
                                        llg_mailbox_t* mailbox,
                                        llg_mailbox_value_t value);
-int llg_mailbox_try_put_value(llg_mailbox_t* mailbox,
+int32_t llg_mailbox_try_put_value(llg_mailbox_t* mailbox,
                               llg_mailbox_value_t value);
 llg_co_arm_t llg_arm_mailbox_get_value(llg_proc_t* self,
                                        llg_mailbox_t* mailbox,
-                                       llg_mailbox_target_t target, int peek);
-int llg_mailbox_try_get_value(llg_mailbox_t* mailbox,
-                              llg_mailbox_target_t target, int peek);
+                                       llg_mailbox_target_t target, int32_t peek);
+int32_t llg_mailbox_try_get_value(llg_mailbox_t* mailbox,
+                              llg_mailbox_target_t target, int32_t peek);
 // Called after a blocking get/peek arm: writes a pending delivery (if the
 // arm suspended) into `target`. A no-op when the arm completed synchronously.
 void llg_mailbox_delivery_take(llg_proc_t* self, llg_mailbox_target_t target);
@@ -1657,7 +1657,7 @@ void llg_rt_init(void);
 // Initialize the runtime and retain the generated model's argv view for
 // `$test$plusargs`/`$value$plusargs`. The runtime never takes ownership of
 // `argv`; callers keep it valid for the duration of the simulation.
-void llg_rt_init_with_args(int argc, char** argv);
+void llg_rt_init_with_args(int32_t argc, char** argv);
 // Initialize a runtime whose scheduler ticks represent `precision_fs`
 // femtoseconds. Generated models use this entry point so the default
 // `$timeformat` unit is the design precision, while standalone callers retain
@@ -1665,12 +1665,12 @@ void llg_rt_init_with_args(int argc, char** argv);
 void llg_rt_init_with_precision(uint64_t precision_fs);
 // Combine the generated model's command-line view with its scheduler tick
 // precision. The runtime borrows `argv` for the duration of the simulation.
-void llg_rt_init_with_args_and_precision(int argc, char** argv,
+void llg_rt_init_with_args_and_precision(int32_t argc, char** argv,
                                          uint64_t precision_fs);
 // Request a scheduler stop after the current process turn returns. Generated
 // functions and VPI vpiStop use this deferred form because they cannot suspend
 // a stackless coroutine at their own call depth.
-void llg_rt_request_stop(int verbosity, const char* location);
+void llg_rt_request_stop(int32_t verbosity, const char* location);
 // Release all runtime-owned scheduler, coroutine, fork-group, monitor and
 // strobe allocations. Call only when no runtime coroutine is executing; init
 // and run invoke it automatically. Repeated calls are safe.
@@ -1684,18 +1684,18 @@ void llg_rt_cleanup(void);
 void llg_rt_run(void);
 // True when the runtime stopped because of a configuration, nonconvergence,
 // or other controlled simulation failure.  The result survives cleanup.
-int llg_rt_failed(void);
+int32_t llg_rt_failed(void);
 // True when a `$fatal` severity task ran in the last run (IEEE 1800-2009
 // 20.9: the run ends with an error code). Unlike llg_rt_failed it does not
 // mark the run as a simulator failure; a generated model's exit status is
 // nonzero when either holds. The result survives cleanup.
-int llg_rt_fatal_severity_ran(void);
+int32_t llg_rt_fatal_severity_ran(void);
 // Region currently being drained. During initialization this is PREPONED.
 llg_region_t llg_current_region(void);
 // Return a stable printable name for diagnostics and callback traces.
 const char* llg_region_name(llg_region_t region);
 // True for sampling/observation/output regions while the scheduler is running.
-int llg_region_is_read_only(void);
+int32_t llg_region_is_read_only(void);
 // Request scheduler termination from a native callback and return through the
 // foreign frame. When a process is current (for example during VPI calltf),
 // also set its chain to LLG_EXIT_COMPLETE; the generated native-call boundary
@@ -1717,7 +1717,7 @@ void llg_rt_static_effect(const char* what, const char* location,
 // IEEE 1800 gives a result, stops it instead: llg_rt_index_stop reports the
 // operation, the current process and `detail`, then ends the run at once
 // with status 1, without finals.
-int llg_rt_index_checks(void);
+int32_t llg_rt_index_checks(void);
 void llg_rt_index_stop(const char* operation, const char* detail);
 // Make the run that a following fatal severity task ends skip its final
 // procedures: some simulator-generated errors stop the run at once, without
@@ -1728,13 +1728,13 @@ void llg_rt_skip_finals(void);
 // must immediately use LLG_CO_EXIT_CHECK; plain functions must immediately
 // test llg_rt_exiting() and branch to their unwind return label.
 void llg_rt_finish(void);
-void llg_rt_finish_with_level(int verbosity, const char* location);
+void llg_rt_finish_with_level(int32_t verbosity, const char* location);
 // True only while the current process or transient final record has a pending
 // COMPLETE/ABANDON exit, or, during static initialization (no current
 // process), once the run is finishing. This out-of-line query is for plain
 // generated functions and the initialization frame; coroutine code reads its
 // chain with LLG_CO_EXIT_CHECK.
-int llg_rt_exiting(void);
+int32_t llg_rt_exiting(void);
 // Deferred stop for generated functions and vpi_control(vpiStop). Reports the
 // stop now and, when called during a scheduler process turn, records a request
 // that the scheduler observes immediately after llg_co_run returns and before
@@ -1745,28 +1745,28 @@ int llg_rt_exiting(void);
 // outside a process turn (finals, idle embeddings, a suspended scheduler) the
 // reported request is ignored with a warning. Coroutine-body `$stop` uses
 // llg_arm_stop so it can preserve its exact continuation.
-void llg_rt_request_stop(int verbosity, const char* location);
+void llg_rt_request_stop(int32_t verbosity, const char* location);
 // `$stop` as a deferred assertion action (SV 16.4), which runs as a Reactive
 // callback rather than a process turn. Reports the stop and suspends the
 // scheduler after the action returns; the remaining matured reports run when
 // it resumes. During $finish/final draining it only reports.
-void llg_rt_action_stop(int verbosity, const char* location);
+void llg_rt_action_stop(int32_t verbosity, const char* location);
 // vpi_control(vpiStop/vpiFinish) from any VPI context (SV 38.4: the task runs
 // "upon return of the application routine"). A stop inside a process turn is
 // the deferred llg_rt_request_stop; inside a region callback it is
 // llg_rt_action_stop. Both return 0, reporting nothing, when no running and
 // unfinished scheduler can take the request. `verbosity` must be 0..2.
-int llg_rt_control_stop(int verbosity);
+int32_t llg_rt_control_stop(int32_t verbosity);
 // vpi_control(vpiStop) from cbEndOfCompile/cbStartOfSimulation, before the
 // first llg_rt_run: reports `$stop` at time 0 and, under the EXIT policy,
 // suspends so that llg_rt_run returns before any process runs (the RESUME
 // policy continues at once). Returns 0 when the scheduler is not initialized
 // or is already running, finishing or suspended. `verbosity` must be 0..2.
-int llg_rt_control_stop_before_run(int verbosity);
+int32_t llg_rt_control_stop_before_run(int32_t verbosity);
 // Report the `$finish` message for `verbosity` (0..2) once and request
 // termination like llg_rt_request_finish. Returns 0 when a finish is already
 // pending.
-int llg_rt_control_finish(int verbosity);
+int32_t llg_rt_control_finish(int32_t verbosity);
 // The time at which the last run ended (the time final procedures see), or
 // the current time while the scheduler state is live (running or suspended).
 uint64_t llg_rt_end_time(void);
@@ -1780,7 +1780,7 @@ uint64_t llg_rt_end_time(void);
 typedef void (*llg_value_watch_fn)(const void* key);
 // True while llg_rt_run drains the scheduler (not during startup, after the
 // run ended, while suspended or in final procedures).
-int llg_rt_running(void);
+int32_t llg_rt_running(void);
 // Hook called at the start of every Pre-Active PLI pass (each scheduler
 // iteration of a time slot, SV 4.10), with the current region set to
 // LLG_REGION_PRE_ACTIVE_PLI so it may queue zero-delay callbacks there.
@@ -1790,9 +1790,9 @@ void llg_value_watch_hook(llg_value_watch_fn hook);
 // runtime's coverage and disable consumers. A watch at the check sees one
 // change per check (T1-D11) and calls the hook then, or at once for a write
 // outside a process turn. Add returns 0 for a NULL key.
-int llg_value_watch_add(const void* key);
+int32_t llg_value_watch_add(const void* key);
 void llg_value_watch_remove(const void* key);
-int llg_value_watch_add_at_check(const void* key);
+int32_t llg_value_watch_add_at_check(const void* key);
 void llg_value_watch_remove_at_check(const void* key);
 
 enum {
@@ -1804,16 +1804,16 @@ enum {
 // may be called before `llg_rt_init` or while the runtime is suspended. It
 // returns zero for an invalid policy or a running scheduler and one on
 // success. `LLG_STOP_POLICY_RESUME` is the default.
-int llg_rt_set_stop_policy(int policy);
-int llg_rt_stop_policy(void);
+int32_t llg_rt_set_stop_policy(int32_t policy);
+int32_t llg_rt_stop_policy(void);
 // True after a stop with the EXIT policy suspended scheduling. An arm stop
 // also retains a process continuation; a deferred stop has no continuation.
 // Scheduler state remains live until `llg_rt_resume` or cleanup.
-int llg_rt_is_suspended(void);
+int32_t llg_rt_is_suspended(void);
 // Continue after a stopped scheduler. An arm stop queues its continuation at
 // the same simulation time; a deferred stop simply resumes scheduler work.
 // Returns one when a stop was resumed and zero when none is pending.
-int llg_rt_resume(void);
+int32_t llg_rt_resume(void);
 uint64_t llg_time(void);              // current tick count
 // Current time rounded to the nearest local unit; exact half units round up.
 // The caller applies any result-width conversion (for example, $stime's
@@ -1828,7 +1828,7 @@ void llg_timeformat(sv4_t units, sv4_t precision, llg_string_t suffix,
                     sv4_t minimum_field_width);
 // Diagnostic count of allocated process objects, including completed fork
 // parents retained while detached descendants are still live.
-int llg_rt_process_count(void);
+int32_t llg_rt_process_count(void);
 
 // ── IEEE stochastic analysis queues ─────────────────────────────────────────
 //
@@ -1877,7 +1877,7 @@ sv4_t llg_urandom_seed(sv4_t seed);
 // the upper bits kept.
 int32_t llg_random_seed_read(sv4_t seed);
 sv4_t llg_random_seed_merge(sv4_t old, int32_t seed);
-sv4_t llg_urandom_range(sv4_t max, sv4_t min, int has_min);
+sv4_t llg_urandom_range(sv4_t max, sv4_t min, int32_t has_min);
 // `randcase` (IEEE 1800-2009 18.16): picks the index of the item whose share
 // of the exact weight sum contains one draw from the calling process stream,
 // or -1 (after a warning naming `location`) when every weight is zero. A
@@ -1900,7 +1900,7 @@ int32_t llg_randsequence_join_pick(const sv4_t* const* remaining, size_t count,
                                    double ratio);
 void llg_process_srandom(sv4_t seed);
 llg_string_t llg_process_get_randstate(void);
-int llg_process_set_randstate(llg_string_t state);
+int32_t llg_process_set_randstate(llg_string_t state);
 // Class-object streams. A generated class layout owns the state when the
 // model inspects object streams; `llg_object_rng_create` seeds it from the
 // creating thread (or only consumes that draw when `object` is NULL). The
@@ -1925,9 +1925,9 @@ void llg_object_set_randstate(llg_rng_state_t* object, llg_string_t state);
 // an X/Z bit marks the input LLG_CR_INPUT_XZ (S29-D1). A leaf whose
 // evaluation met a null handle passes `null_dereference` (18.5.12 E).
 void llg_cr_set_var_sv4(llg_cr_session_t* s, uint32_t var, sv4_t value, uint32_t width,
-                        int active);
+                        int32_t active);
 void llg_cr_set_leaf_sv4(llg_cr_session_t* s, uint32_t leaf, sv4_t value, uint32_t width,
-                         int null_dereference);
+                         int32_t null_dereference);
 // The solved value of an active variable as an independent owner.
 sv4_t llg_cr_value_sv4(const llg_cr_session_t* s, uint32_t var, uint32_t width,
                        int8_t is_signed);
@@ -1937,9 +1937,9 @@ void llg_cr_set_cyclic_sv4(llg_cr_session_t* s, uint32_t var, sv4_t state, uint3
 sv4_t llg_cr_cyclic_sv4(const llg_cr_session_t* s, uint32_t var, uint32_t width);
 /* Problems with units (SIM-030): the instance forms of the above. */
 void llg_cr_iset_var_sv4(llg_cr_session_t* s, uint32_t inst, uint32_t var, sv4_t value,
-                         uint32_t width, int active);
+                         uint32_t width, int32_t active);
 void llg_cr_iset_leaf_sv4(llg_cr_session_t* s, uint32_t inst, uint32_t leaf, sv4_t value,
-                          uint32_t width, int null_dereference);
+                          uint32_t width, int32_t null_dereference);
 void llg_cr_iset_cyclic_sv4(llg_cr_session_t* s, uint32_t inst, uint32_t var, sv4_t state,
                             uint32_t width);
 void llg_cr_set_elem_sv4(llg_cr_session_t* s, uint32_t inst, uint32_t array, uint32_t index,
@@ -1990,46 +1990,46 @@ void llg_record_changed(sv4_t* dependency);
 // `dependency`, or a marker that is never written when it is NULL (an
 // activation container no other process can change).
 sv4_t* llg_dependency_or_never(sv4_t* dependency);
-void llg_dependency_notify(sv4_t* contents, sv4_t* shape, int change);
+void llg_dependency_notify(sv4_t* contents, sv4_t* shape, int32_t change);
 
 void llg_display(const char* fmt, ...);  // formatted output followed by a newline
 void llg_write(const char* fmt, ...);    // formatted output without a newline
 // Typed formatting calls consume packed/string members, but not the argument
 // array allocation. Initialize each member as an independent owner.
-void llg_display_typed(const char* fmt, llg_fmt_arg_t* args, int n,
+void llg_display_typed(const char* fmt, llg_fmt_arg_t* args, int32_t n,
                        const char* scope);
-void llg_write_typed(const char* fmt, llg_fmt_arg_t* args, int n,
+void llg_write_typed(const char* fmt, llg_fmt_arg_t* args, int32_t n,
                      const char* scope);
 // Format into a newly-owned string. The format value and argument array are
 // consumed exactly once, including destruction of every owned packed/string member.
 llg_string_t llg_string_format_typed(llg_string_t format, llg_fmt_arg_t* args,
-                                     int n, const char* scope);
+                                     int32_t n, const char* scope);
 // A format known only at run time: `binding` is the caller's `%l` text
 // (`library.cell`). Literal formats have `%l` expanded during lowering.
 llg_string_t llg_string_format_bound(llg_string_t format, llg_fmt_arg_t* args,
-                                     int n, const char* scope, const char* binding);
+                                     int32_t n, const char* scope, const char* binding);
 // Runtime severity tasks use the same typed formatter as display tasks and
 // write one source-context diagnostic to stderr. The argument array is
 // consumed exactly once, including destruction of owned packed values and strings.
-void llg_rt_severity_typed(int severity, const char* fmt, llg_fmt_arg_t* args,
-                           int n, const char* scope, const char* location);
+void llg_rt_severity_typed(int32_t severity, const char* fmt, llg_fmt_arg_t* args,
+                           int32_t n, const char* scope, const char* location);
 // Formats and consumes `args`, requests LLG_EXIT_COMPLETE, and returns. The
 // caller must perform the same immediate exit check as after llg_rt_finish.
-void llg_rt_fatal_typed(int finish_number, const char* fmt,
-                        llg_fmt_arg_t* args, int n,
+void llg_rt_fatal_typed(int32_t finish_number, const char* fmt,
+                        llg_fmt_arg_t* args, int32_t n,
                         const char* scope, const char* location);
 // Counts reset at llg_rt_init and remain available through final-block
 // execution. Invalid levels return zero.
-uint64_t llg_rt_severity_count(int severity);
+uint64_t llg_rt_severity_count(int32_t severity);
 // Observer of run-time errors (VPI cbError, IEEE 1800-2009 38.36.3): runs
 // after each run-time error or fatal error was reported, before a fatal one
 // ends the run. Reports are `$error`/`$fatal` (20.10), failing assertions
 // without an action block and the errors the runtime detects itself;
 // `message` is the reported text and `location` the source location or
 // NULL. Without a hook each report pays one branch.
-typedef void (*llg_rt_error_fn)(int fatal, const char* message, const char* location);
+typedef void (*llg_rt_error_fn)(int32_t fatal, const char* message, const char* location);
 void llg_rt_error_hook(llg_rt_error_fn hook);
-void llg_rt_note_error(int fatal, const char* message, const char* location);
+void llg_rt_note_error(int32_t fatal, const char* message, const char* location);
 // A null class handle access (SV 8.4) at `site`: what the check guards, then
 // optionally the unit separator and the framed site (scope, separator,
 // `file:line:col`) the error and the fatal end are located at. Reports the
@@ -2037,33 +2037,33 @@ void llg_rt_note_error(int fatal, const char* message, const char* location);
 void llg_rt_null_handle(const char* site);
 // Immediate assertion default-failure and successful-cover callbacks. The
 // identity is retained at the call boundary for future per-assertion APIs.
-void llg_assertion_failure(int kind, uint64_t identity, const char* label,
+void llg_assertion_failure(int32_t kind, uint64_t identity, const char* label,
                            const char* location);
 void llg_assertion_cover(uint64_t identity, const char* label, const char* location);
-uint64_t llg_assertion_count(int kind);
+uint64_t llg_assertion_count(int32_t kind);
 uint64_t llg_assertion_vacuous_count(void);
 // Records a failure of an immediate assertion whose fail action is
 // suppressed by $assertfailoff: the counter changes, nothing is reported.
-void llg_assertion_failure_quiet(int kind);
+void llg_assertion_failure_quiet(int32_t kind);
 // The control state (LLG_IMMEDIATE_* bits) of a simple immediate assertion
 // in `scope`. Emitted only in designs that call an assertion control task.
-int llg_immediate_assertion_controls(int kind, const char* label, const char* scope);
+int32_t llg_immediate_assertion_controls(int32_t kind, const char* label, const char* scope);
 // KILL may cancel the current assertion-action process. In that case it sets
 // ABANDON, or COMPLETE when program-completion bookkeeping requests finish,
 // before returning; generated callers perform an immediate Terminate check.
-int llg_assertion_control(int kind, const sv4_t* args, int n_args,
-                          const char* const* scopes, int n_scopes);
+int32_t llg_assertion_control(int32_t kind, const sv4_t* args, int32_t n_args,
+                          const char* const* scopes, int32_t n_scopes);
 // Arm a procedural expect (16.18). The caller runs the action block itself
 // after it resumes: `has_fail_action` is whether an else arm exists, which
 // replaces the default failure report. llg_assertion_expect_outcome then
 // returns 0 (ended without a result), 1 (success) or 2 (failure).
-int llg_assertion_expect_start(uint64_t identity, int has_fail_action);
-int llg_assertion_expect_outcome(uint64_t identity);
+int32_t llg_assertion_expect_start(uint64_t identity, int32_t has_fail_action);
+int32_t llg_assertion_expect_outcome(uint64_t identity);
 
 // Concurrent assertion callbacks are generated as side-effect-free sampled
 // predicates and Reactive-region action processes. The runtime owns the
 // attempt queues and never evaluates a property against live NBA state.
-typedef int (*llg_concurrent_assertion_predicate_fn)(void* data);
+typedef int32_t (*llg_concurrent_assertion_predicate_fn)(void* data);
 /* Each present action is spawned as a Reactive process through its descriptor.
  * A descriptor is NULL when that action arm is absent. */
 
@@ -2073,7 +2073,7 @@ typedef int (*llg_concurrent_assertion_predicate_fn)(void* data);
 // unbounded upper endpoint and UINT32_MAX denotes an epsilon transition.
 #define LLG_SEQUENCE_UNBOUNDED UINT64_MAX
 #define LLG_SEQUENCE_EPSILON UINT32_MAX
-typedef int (*llg_sequence_atom_fn)(uint32_t atom, void* data);
+typedef int32_t (*llg_sequence_atom_fn)(uint32_t atom, void* data);
 typedef void (*llg_sequence_init_fn)(void* data);
 typedef void (*llg_sequence_match_fn)(uint32_t item, void* data);
 typedef struct {
@@ -2085,7 +2085,7 @@ typedef struct {
      * assertion clock; a present pointer identifies this segment's direct
      * sampled clock and `edge`. */
     sv4_t* clock;
-    int edge;
+    int32_t edge;
     uint32_t atom;
     uint32_t match_start;
     uint32_t match_count;
@@ -2119,14 +2119,14 @@ typedef struct {
     llg_sequence_atom_fn atom;
     void* data;
     llg_sequence_init_fn init;
-    int first_match;
+    int32_t first_match;
     uint32_t local_count;
     const struct llg_sequence_local* locals;
     uint32_t match_item_count;
     llg_sequence_match_fn match;
-    int admits_empty;
+    int32_t admits_empty;
     sv4_t* leading_clock;
-    int leading_edge;
+    int32_t leading_edge;
     uint32_t join_count;
     const llg_sequence_join_t* joins;
 } llg_sequence_graph_t;
@@ -2140,38 +2140,38 @@ typedef struct llg_sequence_local {
  * current sequence attempt. The runtime validates the opaque attempt/slot
  * pair before returning a pointer, so generated callbacks cannot escape the
  * attempt's lifetime. */
-int llg_sequence_local_inherited(void* attempt, uint32_t slot);
+int32_t llg_sequence_local_inherited(void* attempt, uint32_t slot);
 sv4_t* llg_sequence_local_addr(void* attempt, uint32_t slot);
 sv4_t llg_sequence_local_read(void* attempt, uint32_t slot);
 void llg_sequence_local_write(sv4_t* target, sv4_t value);
-int llg_assertion_register(
-    sv4_t* clock, int edge, sv4_t* disable,
+int32_t llg_assertion_register(
+    sv4_t* clock, int32_t edge, sv4_t* disable,
     llg_concurrent_assertion_predicate_fn antecedent,
     llg_concurrent_assertion_predicate_fn consequent,
     const llg_co_desc_t* pass_desc,
-    const llg_co_desc_t* fail_desc, void* data, int kind,
-    int overlapped, uint64_t identity, const char* label, const char* location,
+    const llg_co_desc_t* fail_desc, void* data, int32_t kind,
+    int32_t overlapped, uint64_t identity, const char* label, const char* location,
     const char* scope);
 /* Extended concurrent-assertion registration with bounded accept_on /
  * reject_on controls. `abort_condition` is evaluated from the live value
  * domain for asynchronous controls and from the immutable sampled domain for
  * synchronous controls. The legacy registration entry point above remains a
  * source-compatible wrapper with no abort control. */
-int llg_assertion_register_control(
-    sv4_t* clock, int edge, sv4_t* disable,
+int32_t llg_assertion_register_control(
+    sv4_t* clock, int32_t edge, sv4_t* disable,
     llg_concurrent_assertion_predicate_fn antecedent,
     llg_concurrent_assertion_predicate_fn consequent,
     llg_concurrent_assertion_predicate_fn abort_condition,
     const llg_co_desc_t* pass_desc,
-    const llg_co_desc_t* fail_desc, void* data, int kind,
-    int overlapped, int abort_reject, int abort_sync, uint64_t identity,
+    const llg_co_desc_t* fail_desc, void* data, int32_t kind,
+    int32_t overlapped, int32_t abort_reject, int32_t abort_sync, uint64_t identity,
     const char* label, const char* location, const char* scope);
 // Queue one deferred immediate-assertion result. The condition result and
 // selected action are fixed at statement execution; the runtime matures the
 // report in Reactive and owns `frame` until the callback (or teardown).
 typedef void (*llg_deferred_assertion_fn)(llg_frame_t* frame);
-int llg_deferred_assertion_enabled(int kind, const char* label, const char* scope);
-void llg_deferred_assertion_scoped(int kind, int passed, uint64_t identity,
+int32_t llg_deferred_assertion_enabled(int32_t kind, const char* label, const char* scope);
+void llg_deferred_assertion_scoped(int32_t kind, int32_t passed, uint64_t identity,
     const char* label, const char* location, const char* scope,
     llg_deferred_assertion_fn action, llg_frame_t* frame);
 // `disable` of a deferred assertion cancels its pending reports; `disable`
@@ -2184,26 +2184,26 @@ void llg_deferred_assertion_cancel(uint64_t identity);
 // Takes ownership of `frame`.
 void llg_sequence_match_call(llg_deferred_assertion_fn call, llg_frame_t* frame);
 void llg_deferred_assertion_flush_scope(uint32_t declaration, uint32_t instance);
-void llg_deferred_assertion(int kind, int passed, uint64_t identity,
+void llg_deferred_assertion(int32_t kind, int32_t passed, uint64_t identity,
                             const char* label, const char* location,
                             llg_deferred_assertion_fn action,
                             llg_frame_t* frame);
-int llg_assertion_register_sequence(
-    sv4_t* clock, int edge, sv4_t* disable,
+int32_t llg_assertion_register_sequence(
+    sv4_t* clock, int32_t edge, sv4_t* disable,
     const llg_sequence_graph_t* antecedent,
     const llg_sequence_graph_t* consequent,
     const llg_co_desc_t* pass_desc,
-    const llg_co_desc_t* fail_desc, void* data, int kind,
-    int overlapped, uint64_t identity, const char* label, const char* location,
+    const llg_co_desc_t* fail_desc, void* data, int32_t kind,
+    int32_t overlapped, uint64_t identity, const char* label, const char* location,
     const char* scope);
-int llg_assertion_register_sequence_control(
-    sv4_t* clock, int edge, sv4_t* disable,
+int32_t llg_assertion_register_sequence_control(
+    sv4_t* clock, int32_t edge, sv4_t* disable,
     const llg_sequence_graph_t* antecedent,
     const llg_sequence_graph_t* consequent,
     llg_concurrent_assertion_predicate_fn abort_condition,
     const llg_co_desc_t* pass_desc,
-    const llg_co_desc_t* fail_desc, void* data, int kind,
-    int overlapped, int abort_reject, int abort_sync, uint64_t identity,
+    const llg_co_desc_t* fail_desc, void* data, int32_t kind,
+    int32_t overlapped, int32_t abort_reject, int32_t abort_sync, uint64_t identity,
     const char* label, const char* location, const char* scope);
 
 /* A property program (IEEE 1800-2009 16.12-16.14) is a static node table
@@ -2255,7 +2255,7 @@ int llg_assertion_register_sequence_control(
 #define LLG_PROPERTY_SYNC 8u
 #define LLG_PROPERTY_LOCALS 16u
 #define LLG_PROPERTY_NONE UINT32_MAX
-typedef int (*llg_property_atom_fn)(uint32_t atom, void* data);
+typedef int32_t (*llg_property_atom_fn)(uint32_t atom, void* data);
 typedef struct {
     uint32_t kind;
     uint32_t flags;
@@ -2269,7 +2269,7 @@ typedef struct {
 /* One clock of a multiclocked property program: a signal edge. */
 typedef struct {
     sv4_t* signal;
-    int edge;
+    int32_t edge;
 } llg_property_clock_t;
 typedef struct {
     uint32_t node_count;
@@ -2284,10 +2284,10 @@ typedef struct {
     uint32_t clock_count;
     const llg_property_clock_t* clocks;
 } llg_property_program_t;
-int llg_assertion_register_property(
-    sv4_t* clock, int edge, sv4_t* disable, const llg_property_program_t* program,
+int32_t llg_assertion_register_property(
+    sv4_t* clock, int32_t edge, sv4_t* disable, const llg_property_program_t* program,
     const llg_co_desc_t* pass_desc, const llg_co_desc_t* fail_desc, void* data,
-    int kind, uint64_t identity, const char* label, const char* location,
+    int32_t kind, uint64_t identity, const char* label, const char* location,
     const char* scope);
 
 // ── Command-line plusargs ───────────────────────────────────────────────────
@@ -2296,11 +2296,11 @@ int llg_assertion_register_property(
 // prefix matching after the leading '+'. Value queries accept the standard
 // %d/%o/%h/%x/%b/%e/%f/%g/%s conversions (including uppercase and leading-0
 // forms); an unmatched query returns zero and leaves its destination unchanged.
-int llg_test_plusargs(const char* pattern);
-int llg_value_plusargs_packed(const char* format, sv4_t* out, uint32_t width,
-                              int is_signed, int two_state);
-int llg_value_plusargs_real(const char* format, double* out);
-int llg_value_plusargs_string(const char* format, llg_string_t* out);
+int32_t llg_test_plusargs(const char* pattern);
+int32_t llg_value_plusargs_packed(const char* format, sv4_t* out, uint32_t width,
+                              int32_t is_signed, int32_t two_state);
+int32_t llg_value_plusargs_real(const char* format, double* out);
+int32_t llg_value_plusargs_string(const char* format, llg_string_t* out);
 // Execute one `$system` command in the generated simulator process. This
 // host boundary is disabled unless LLG_ALLOW_SYSTEM is set to 1, true, yes,
 // or on. When disabled, the runtime diagnoses the attempted command, marks
@@ -2311,7 +2311,7 @@ int llg_value_plusargs_string(const char* format, llg_string_t* out);
 // 32-bit signed value is the host C `system()` status; its nonzero encoding is
 // platform-specific and is not normalized here. `command` is consumed
 // regardless of whether execution is permitted.
-sv4_t llg_system(llg_string_t command, int has_command);
+sv4_t llg_system(llg_string_t command, int32_t has_command);
 
 // ── Fixed-array streaming selectors ─────────────────────────────────────────
 // A runtime `with` selector on a fixed unpacked destination array is resolved
@@ -2320,13 +2320,13 @@ sv4_t llg_system(llg_string_t command, int has_command);
 // container header. `first`/`second` carry the selector's source-language
 // bounds; the returned bit width is the actual selected extent, never the
 // index expression's storage width.
-void llg_fixed_stream_bounds(int selector_kind, sv4_t first, sv4_t second,
+void llg_fixed_stream_bounds(int32_t selector_kind, sv4_t first, sv4_t second,
                              int64_t declaration_left, int64_t declaration_right,
                              int64_t* left, int64_t* right, size_t* count);
-uint32_t llg_fixed_stream_width(int selector_kind, sv4_t first, sv4_t second,
+uint32_t llg_fixed_stream_width(int32_t selector_kind, sv4_t first, sv4_t second,
                                 uint32_t element_width);
 void llg_stream_require_bits(int64_t available, uint32_t required);
-int llg_fixed_stream_target_in_bounds(int64_t declaration_left,
+int32_t llg_fixed_stream_target_in_bounds(int64_t declaration_left,
                                       int64_t declaration_right,
                                       int64_t left, int64_t right, size_t count);
 int64_t llg_fixed_stream_index_at(int64_t left, int64_t right, size_t offset);
@@ -2335,7 +2335,7 @@ int64_t llg_fixed_stream_index_at(int64_t left, int64_t right, size_t offset);
  * default-uninitialized value) for logical indices outside the bounds. */
 sv4_t llg_fixed_stream_source(const sv4_t* values, int64_t declaration_left,
                               int64_t declaration_right, uint32_t element_width,
-                              sv4_t fallback, int selector_kind,
+                              sv4_t fallback, int32_t selector_kind,
                               sv4_t first, sv4_t second);
 /* Fixed-array `with` helpers for arrays without model storage, represented
  * by their whole declaration-order image (left declared element in the MSBs).
@@ -2348,14 +2348,14 @@ sv4_t llg_fixed_stream_source(const sv4_t* values, int64_t declaration_left,
  * stream operator. A wider source keeps its leftmost bits (SV 11.4.14.3);
  * a narrower one is a fatal error. Borrows `value`. */
 sv4_t llg_stream_unpack_source(sv4_t value, uint64_t bits, uint32_t slice,
-                               int right_to_left);
+                               int32_t right_to_left);
 int64_t llg_fixed_stream_storage_offset(int64_t declaration_left,
                                         int64_t declaration_right,
                                         int64_t logical);
 sv4_t llg_fixed_image_stream_source(sv4_t image, int64_t declaration_left,
                                     int64_t declaration_right,
                                     uint32_t element_width, sv4_t fallback,
-                                    int selector_kind, sv4_t first,
+                                    int32_t selector_kind, sv4_t first,
                                     sv4_t second);
 void llg_fixed_image_stream_scatter(sv4_t* image, sv4_t segment,
                                     int64_t declaration_left,
@@ -2367,10 +2367,10 @@ int64_t llg_fixed_image_element_lsb(int64_t declaration_left,
                                     uint32_t element_width);
 /* Left-align a runtime-sized stream in a fixed-size bit-stream target; an
  * oversize stream is an error (IEEE 1800-2009 11.4.14). Borrows `value`. */
-sv4_t llg_stream_to_fixed(sv4_t value, uint32_t width, int is_signed);
+sv4_t llg_stream_to_fixed(sv4_t value, uint32_t width, int32_t is_signed);
 /* Bit-stream cast of a dynamically sized source to a fixed-size type: the
  * sizes must match (IEEE 1800-2009 6.24.3). Borrows `value`. */
-sv4_t llg_stream_cast_fixed(sv4_t value, uint32_t width, int is_signed);
+sv4_t llg_stream_cast_fixed(sv4_t value, uint32_t width, int32_t is_signed);
 
 // ── File descriptors and output ─────────────────────────────────────────────
 // A mode-string fopen returns a bit-31-tagged FD. Preopened FDs 0x80000000,
@@ -2380,17 +2380,17 @@ sv4_t llg_stream_cast_fixed(sv4_t value, uint32_t width, int is_signed);
 // Runtime-owned FILE objects close at cleanup; host standard streams are borrowed.
 uint32_t llg_file_descriptor(sv4_t value);
 // Consumes the owned path/mode strings; an omitted mode selects write mode.
-uint32_t llg_file_open(llg_string_t path, llg_string_t mode, int has_mode);
+uint32_t llg_file_open(llg_string_t path, llg_string_t mode, int32_t has_mode);
 void llg_file_close(uint32_t descriptor);
-int llg_file_flush(uint32_t descriptor, int all);
+int32_t llg_file_flush(uint32_t descriptor, int32_t all);
 void llg_file_rewind(uint32_t descriptor);
 int64_t llg_file_tell(uint32_t descriptor);
-int llg_file_seek(uint32_t descriptor, sv4_t offset, sv4_t operation);
-int llg_file_error(uint32_t descriptor, llg_string_t* message);
-int llg_file_eof(uint32_t descriptor);
+int32_t llg_file_seek(uint32_t descriptor, sv4_t offset, sv4_t operation);
+int32_t llg_file_error(uint32_t descriptor, llg_string_t* message);
+int32_t llg_file_eof(uint32_t descriptor);
 void llg_file_display_typed(uint32_t descriptor, const char* fmt,
-                            llg_fmt_arg_t* args, int n, const char* scope,
-                            int newline);
+                            llg_fmt_arg_t* args, int32_t n, const char* scope,
+                            int32_t newline);
 // VPI multichannel-descriptor services (IEEE 1800-2009 38.24-38.29) over the
 // same table, for `llg_vpi.c`. Channel masks select bit 0 (stdout) and the
 // `$fopen` MCD channels; a descriptor with bit 31 set is an FD, which only
@@ -2437,42 +2437,42 @@ void llg_memory_text_begin(const char* data, size_t length);
 void llg_memory_text_end(void);
 void llg_memory_read(llg_string_t path, sv4_t* memory, uint64_t total,
                      uint32_t elem_width, int8_t elem_signed, int8_t two_state,
-                     const int32_t* dims, int n_dims, sv4_t start, sv4_t finish,
-                     int has_start, int has_finish, int addressing_policy,
-                     int radix);
+                     const int32_t* dims, int32_t n_dims, sv4_t start, sv4_t finish,
+                     int32_t has_start, int32_t has_finish, int32_t addressing_policy,
+                     int32_t radix);
 void llg_memory_write(llg_string_t path, sv4_t* memory, uint64_t total,
                       uint32_t elem_width, int8_t elem_signed, int8_t two_state,
-                      const int32_t* dims, int n_dims, sv4_t start, sv4_t finish,
-                      int has_start, int has_finish, int addressing_policy,
-                      int radix);
+                      const int32_t* dims, int32_t n_dims, sv4_t start, sv4_t finish,
+                      int32_t has_start, int32_t has_finish, int32_t addressing_policy,
+                      int32_t radix);
 void llg_memory_read_view(llg_string_t path, sv4_t* memory, uint64_t total,
                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
-                          const int32_t* dims, int n_dims,
+                          const int32_t* dims, int32_t n_dims,
                           const uint64_t* strides, uint64_t origin,
                           uint64_t view_total, sv4_t start, sv4_t finish,
-                          int has_start, int has_finish, int addressing_policy,
-                          int radix);
+                          int32_t has_start, int32_t has_finish, int32_t addressing_policy,
+                          int32_t radix);
 void llg_fixed_memory_read_view(llg_string_t path, llg_fixed_array_t* memory, uint64_t total,
                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
-                          const int32_t* dims, int n_dims,
+                          const int32_t* dims, int32_t n_dims,
                           const uint64_t* strides, uint64_t origin,
                           uint64_t view_total, sv4_t start, sv4_t finish,
-                          int has_start, int has_finish, int addressing_policy,
-                          int radix);
+                          int32_t has_start, int32_t has_finish, int32_t addressing_policy,
+                          int32_t radix);
 void llg_memory_write_view(llg_string_t path, sv4_t* memory, uint64_t total,
                            uint32_t elem_width, int8_t elem_signed, int8_t two_state,
-                           const int32_t* dims, int n_dims,
+                           const int32_t* dims, int32_t n_dims,
                            const uint64_t* strides, uint64_t origin,
                            uint64_t view_total, sv4_t start, sv4_t finish,
-                           int has_start, int has_finish, int addressing_policy,
-                           int radix);
+                           int32_t has_start, int32_t has_finish, int32_t addressing_policy,
+                           int32_t radix);
 void llg_fixed_memory_write_view(llg_string_t path, llg_fixed_array_t* memory, uint64_t total,
                            uint32_t elem_width, int8_t elem_signed, int8_t two_state,
-                           const int32_t* dims, int n_dims,
+                           const int32_t* dims, int32_t n_dims,
                            const uint64_t* strides, uint64_t origin,
                            uint64_t view_total, sv4_t start, sv4_t finish,
-                           int has_start, int has_finish, int addressing_policy,
-                           int radix);
+                           int32_t has_start, int32_t has_finish, int32_t addressing_policy,
+                           int32_t radix);
 
 // Image entry points address the packed image of a fixed array without model
 // storage: `width` = `total` * `elem_width` bits of `*storage` starting at bit
@@ -2490,19 +2490,19 @@ typedef struct {
 void llg_image_memory_read_view(llg_string_t path, const llg_memory_image_t* memory,
                           uint64_t total,
                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
-                          const int32_t* dims, int n_dims,
+                          const int32_t* dims, int32_t n_dims,
                           const uint64_t* strides, uint64_t origin,
                           uint64_t view_total, sv4_t start, sv4_t finish,
-                          int has_start, int has_finish, int addressing_policy,
-                          int radix);
+                          int32_t has_start, int32_t has_finish, int32_t addressing_policy,
+                          int32_t radix);
 void llg_image_memory_write_view(llg_string_t path, const llg_memory_image_t* memory,
                            uint64_t total,
                            uint32_t elem_width, int8_t elem_signed, int8_t two_state,
-                           const int32_t* dims, int n_dims,
+                           const int32_t* dims, int32_t n_dims,
                            const uint64_t* strides, uint64_t origin,
                            uint64_t view_total, sv4_t start, sv4_t finish,
-                           int has_start, int has_finish, int addressing_policy,
-                           int radix);
+                           int32_t has_start, int32_t has_finish, int32_t addressing_policy,
+                           int32_t radix);
 
 // Container entry points address a dynamic array, queue or fixed-size class
 // property in place. With `n_dims` 0 the view is `[0:size-1]` of the current
@@ -2511,11 +2511,11 @@ void llg_image_memory_write_view(llg_string_t path, const llg_memory_image_t* me
 // must contain it.
 #define LLG_CONTAINER_MEMORY_DECL(name, type)                                        \
     void name(llg_string_t path, type* memory, uint64_t total, uint32_t elem_width,  \
-              int8_t elem_signed, int8_t two_state, const int32_t* dims, int n_dims, \
+              int8_t elem_signed, int8_t two_state, const int32_t* dims, int32_t n_dims, \
               const uint64_t* strides, uint64_t origin, uint64_t view_total,         \
-              sv4_t start, sv4_t finish, int has_start, int has_finish,              \
-              int addressing_policy, \
-              int radix);
+              sv4_t start, sv4_t finish, int32_t has_start, int32_t has_finish,              \
+              int32_t addressing_policy, \
+              int32_t radix);
 LLG_CONTAINER_MEMORY_DECL(llg_dyn_memory_read_view, struct llg_dyn_array_t)
 LLG_CONTAINER_MEMORY_DECL(llg_dyn_memory_write_view, struct llg_dyn_array_t)
 LLG_CONTAINER_MEMORY_DECL(llg_queue_memory_read_view, struct llg_queue_t)
@@ -2537,9 +2537,9 @@ LLG_CONTAINER_MEMORY_DECL(llg_assoc_memory_write_view, struct llg_assoc_t)
 #define LLG_ROWS_MEMORY_DECL(name, type)                                                 \
     void name(llg_string_t path, type* memory, sv4_t row, uint64_t row_cells,            \
               uint32_t elem_width, int8_t elem_signed, int8_t two_state,                 \
-              const int32_t* dims, int n_dims, const uint64_t* strides, uint64_t origin, \
-              uint64_t view_total, sv4_t start, sv4_t finish, int has_start,             \
-              int has_finish, int addressing_policy, int radix);
+              const int32_t* dims, int32_t n_dims, const uint64_t* strides, uint64_t origin, \
+              uint64_t view_total, sv4_t start, sv4_t finish, int32_t has_start,             \
+              int32_t has_finish, int32_t addressing_policy, int32_t radix);
 LLG_ROWS_MEMORY_DECL(llg_dyn_rows_memory_read_view, struct llg_dyn_value_array_t)
 LLG_ROWS_MEMORY_DECL(llg_dyn_rows_memory_write_view, struct llg_dyn_value_array_t)
 LLG_ROWS_MEMORY_DECL(llg_queue_rows_memory_read_view, struct llg_queue_value_array_t)
@@ -2560,50 +2560,50 @@ enum {
 };
 
 typedef struct {
-    int kind;
+    int32_t kind;
     llg_ref_t* packed;
     double* real;
     llg_string_t* string;
-    int shortreal;
+    int32_t shortreal;
 } llg_file_input_target_t;
 
-int llg_file_getc(uint32_t descriptor);
-int llg_file_ungetc(uint32_t descriptor, sv4_t character);
-int llg_file_gets(uint32_t descriptor, llg_string_t* target);
-int llg_file_gets_packed(uint32_t descriptor, llg_ref_t* target);
-int llg_file_scanf(uint32_t descriptor, const char* format,
-                   const llg_file_input_target_t* targets, int target_count);
-int llg_string_scanf(const char* source, size_t source_length,
+int32_t llg_file_getc(uint32_t descriptor);
+int32_t llg_file_ungetc(uint32_t descriptor, sv4_t character);
+int32_t llg_file_gets(uint32_t descriptor, llg_string_t* target);
+int32_t llg_file_gets_packed(uint32_t descriptor, llg_ref_t* target);
+int32_t llg_file_scanf(uint32_t descriptor, const char* format,
+                   const llg_file_input_target_t* targets, int32_t target_count);
+int32_t llg_string_scanf(const char* source, size_t source_length,
                      const char* format,
-                     const llg_file_input_target_t* targets, int target_count);
+                     const llg_file_input_target_t* targets, int32_t target_count);
 // Scoped forms used by generated models: `scope` is the `%m` text and
 // `time_unit_fs` the calling scope's unit for `%t` (21.3.4.3).
-int llg_file_scanf_scoped(uint32_t descriptor, const char* format,
-                          const llg_file_input_target_t* targets, int target_count,
+int32_t llg_file_scanf_scoped(uint32_t descriptor, const char* format,
+                          const llg_file_input_target_t* targets, int32_t target_count,
                           const char* scope, uint64_t time_unit_fs);
-int llg_string_scanf_scoped(const char* source, size_t source_length,
+int32_t llg_string_scanf_scoped(const char* source, size_t source_length,
                             const char* format,
-                            const llg_file_input_target_t* targets, int target_count,
+                            const llg_file_input_target_t* targets, int32_t target_count,
                             const char* scope, uint64_t time_unit_fs);
 // The bytes of a borrowed packed scan source or format, leading zero bytes
 // dropped; `*unknown` reports X/Z bits, which make the scan return EOF.
-llg_string_t llg_scan_text_from_packed(sv4_t value, int* unknown);
-int llg_file_read_packed(uint32_t descriptor, llg_ref_t* target);
-int llg_file_read_array(uint32_t descriptor, sv4_t* values, uint32_t elem_width,
-                        int elem_signed, int elem_two_state, uint64_t total,
-                        const int32_t* dimensions, int dimension_count,
-                        int has_start, sv4_t start, int has_count, sv4_t count);
-int llg_fixed_file_read_array(uint32_t descriptor, llg_fixed_array_t* values, uint32_t elem_width,
-                        int elem_signed, int elem_two_state, uint64_t total,
-                        const int32_t* dimensions, int dimension_count,
-                        int has_start, sv4_t start, int has_count, sv4_t count);
+llg_string_t llg_scan_text_from_packed(sv4_t value, int32_t* unknown);
+int32_t llg_file_read_packed(uint32_t descriptor, llg_ref_t* target);
+int32_t llg_file_read_array(uint32_t descriptor, sv4_t* values, uint32_t elem_width,
+                        int32_t elem_signed, int32_t elem_two_state, uint64_t total,
+                        const int32_t* dimensions, int32_t dimension_count,
+                        int32_t has_start, sv4_t start, int32_t has_count, sv4_t count);
+int32_t llg_fixed_file_read_array(uint32_t descriptor, llg_fixed_array_t* values, uint32_t elem_width,
+                        int32_t elem_signed, int32_t elem_two_state, uint64_t total,
+                        const int32_t* dimensions, int32_t dimension_count,
+                        int32_t has_start, sv4_t start, int32_t has_count, sv4_t count);
 // `$fread` into a whole packed dynamic array or queue: addresses 0..size-1.
 struct llg_dyn_array_t;
 struct llg_queue_t;
-int llg_dyn_file_read(uint32_t descriptor, struct llg_dyn_array_t* array,
-                      int has_start, sv4_t start, int has_count, sv4_t count);
-int llg_queue_file_read(uint32_t descriptor, struct llg_queue_t* queue,
-                        int has_start, sv4_t start, int has_count, sv4_t count);
+int32_t llg_dyn_file_read(uint32_t descriptor, struct llg_dyn_array_t* array,
+                      int32_t has_start, sv4_t start, int32_t has_count, sv4_t count);
+int32_t llg_queue_file_read(uint32_t descriptor, struct llg_queue_t* queue,
+                        int32_t has_start, sv4_t start, int32_t has_count, sv4_t count);
 
 // ── $monitor / $strobe ────────────────────────────────────────────────────────
 //
@@ -2627,19 +2627,19 @@ typedef void (*llg_display_eval_fn)(llg_fmt_arg_t* out, void* context);
 // removes a list when its last channel closes.  An invalid or closed
 // descriptor registers nothing and sets the $ferror status.  Reports of one
 // slot print in registration order, after that slot's strobes.
-void llg_monitor_with_reads(const char* fmt, int n, llg_mon_eval_fn eval,
-                            sv4_t* const* reads, int n_reads);
+void llg_monitor_with_reads(const char* fmt, int32_t n, llg_mon_eval_fn eval,
+                            sv4_t* const* reads, int32_t n_reads);
 // Compatibility entry point for callers without an explicit trigger set.
-void llg_monitor(const char* fmt, int n, llg_mon_eval_fn eval);
+void llg_monitor(const char* fmt, int32_t n, llg_mon_eval_fn eval);
 // Queue a $strobe: prints `fmt` once with the argument values read after the
 // NBA region of the current time step commits (unlike $display, which reads
 // them when the statement executes). Printing waits for active/inactive/NBA
 // iteration to settle, including driver updates triggered by NBAs.
-void llg_strobe(const char* fmt, int n, llg_mon_eval_fn eval);
-void llg_monitor_with_typed_reads(const char* fmt, int n,
+void llg_strobe(const char* fmt, int32_t n, llg_mon_eval_fn eval);
+void llg_monitor_with_typed_reads(const char* fmt, int32_t n,
                                   llg_display_eval_fn eval, const char* scope,
-                                  const llg_display_read_t* reads, int n_reads);
-void llg_strobe_typed(const char* fmt, int n, llg_display_eval_fn eval,
+                                  const llg_display_read_t* reads, int32_t n_reads);
+void llg_strobe_typed(const char* fmt, int32_t n, llg_display_eval_fn eval,
                       const char* scope);
 // Writes the storage each resolved trigger of a monitor selects now, one entry
 // per trigger. Runs after every evaluation, so a rebound handle moves the
@@ -2648,33 +2648,33 @@ typedef void (*llg_monitor_reads_fn)(llg_display_read_t* out, void* context);
 // llg_monitor_with_typed_reads with `n_resolved` triggers `resolve` names and
 // the class-method receiver `context`, which the monitor hands to `eval` and
 // `resolve` and keeps reachable until it is replaced. `resolve` may be NULL.
-void llg_monitor_with_dynamic_reads(const char* fmt, int n,
+void llg_monitor_with_dynamic_reads(const char* fmt, int32_t n,
                                     llg_display_eval_fn eval, const char* scope,
-                                    const llg_display_read_t* reads, int n_reads,
-                                    llg_monitor_reads_fn resolve, int n_resolved,
+                                    const llg_display_read_t* reads, int32_t n_reads,
+                                    llg_monitor_reads_fn resolve, int32_t n_resolved,
                                     void* context);
 void llg_file_monitor_with_dynamic_reads(
-    uint32_t descriptor, const char* fmt, int n, llg_display_eval_fn eval,
-    const char* scope, const llg_display_read_t* reads, int n_reads,
-    llg_monitor_reads_fn resolve, int n_resolved, void* context);
+    uint32_t descriptor, const char* fmt, int32_t n, llg_display_eval_fn eval,
+    const char* scope, const llg_display_read_t* reads, int32_t n_reads,
+    llg_monitor_reads_fn resolve, int32_t n_resolved, void* context);
 // llg_strobe_typed with the class-method receiver `context`, which the strobe
 // hands to `eval` and keeps reachable until it reports.
-void llg_strobe_with_context(const char* fmt, int n, llg_display_eval_fn eval,
+void llg_strobe_with_context(const char* fmt, int32_t n, llg_display_eval_fn eval,
                              const char* scope, void* context);
-void llg_file_strobe_with_context(uint32_t descriptor, const char* fmt, int n,
+void llg_file_strobe_with_context(uint32_t descriptor, const char* fmt, int32_t n,
                                   llg_display_eval_fn eval, const char* scope,
                                   void* context);
 void llg_file_monitor_with_typed_reads(
-    uint32_t descriptor, const char* fmt, int n, llg_display_eval_fn eval,
-    const char* scope, const llg_display_read_t* reads, int n_reads);
-void llg_file_strobe_typed(uint32_t descriptor, const char* fmt, int n,
+    uint32_t descriptor, const char* fmt, int32_t n, llg_display_eval_fn eval,
+    const char* scope, const llg_display_read_t* reads, int32_t n_reads);
+void llg_file_strobe_typed(uint32_t descriptor, const char* fmt, int32_t n,
                            llg_display_eval_fn eval, const char* scope);
 // $monitoron / $monitoroff: set / clear the monitor flag, which only the
 // $monitor list observes.  The flag outlives the list (a $monitor issued
 // while it is clear stays silent), the last-printed snapshot is kept, and
 // enabling queues one report at the next settled observation point even when
 // values are unchanged.
-void llg_monitor_set(int on);
+void llg_monitor_set(int32_t on);
 
 // Spawn one process. `desc` and its `fn` remain immutable for the process
 // lifetime. The runtime co-allocates desc->frame_size bytes immediately after
@@ -2714,14 +2714,14 @@ llg_proc_t* llg_spawn_in_region(const llg_co_desc_t* desc,
 // inherit the origin but never extend the lifetime of their program.
 llg_proc_t* llg_spawn_program_in_region(const llg_co_desc_t* desc,
                                          const char* name, llg_region_t region,
-                                         uint64_t instance, int is_initial);
+                                         uint64_t instance, int32_t is_initial);
 // Shared bodies borrow an immutable model-lifetime instance record. Initialize
 // its pointer in the root payload before the queued process can run. The offset
 // is generated with offsetof and must describe one complete pointer field.
 llg_proc_t* llg_spawn_instance_in_region(const llg_co_desc_t* desc,
     const char* name, llg_region_t region, const void* record, size_t record_offset);
 llg_proc_t* llg_spawn_program_instance_in_region(const llg_co_desc_t* desc,
-    const char* name, llg_region_t region, uint64_t instance, int is_initial,
+    const char* name, llg_region_t region, uint64_t instance, int32_t is_initial,
     const void* record, size_t record_offset);
 // Current process while the scheduler is inside one llg_co_run call or a
 // plain final call; NULL during initialization, scheduler bookkeeping, and
@@ -2733,13 +2733,13 @@ llg_proc_t* llg_current(void);
 // `unwind` is 1 for a killed process, whose suspended DPI chains are
 // unwound through the disable protocol, and 0 for one that completed,
 // finished the simulation or is torn down, whose chains never resume.
-void llg_rt_set_process_end_hook(void (*hook)(llg_proc_t* proc, int unwind));
+void llg_rt_set_process_end_hook(void (*hook)(llg_proc_t* proc, int32_t unwind));
 // VPI time queue (IEEE 1800-2009 37.76): the distinct times after the
 // current time at which events are pending, ascending, as a malloc'd array
 // the caller frees (NULL when there are none or on allocation failure, with
 // `*count` 0). `*current` is set when events of the current time slot
 // precede the read-only synchronization point.
-uint64_t* llg_rt_pending_times(size_t* count, int* current);
+uint64_t* llg_rt_pending_times(size_t* count, int32_t* current);
 // VPI threads (IEEE 1800-2009 37.40, 38.36.1). A thread is named by its
 // registry slot and its per-run process identity, so a stale name never
 // reaches a reused slot; nothing pins the process. The hook, set by the VPI
@@ -2749,26 +2749,26 @@ uint64_t* llg_rt_pending_times(size_t* count, int* current);
 // and LLG_RT_THREAD_ENTER before a turn of a process marked with
 // llg_rt_thread_watch_enter.
 enum { LLG_RT_THREAD_START = 0, LLG_RT_THREAD_END = 1, LLG_RT_THREAD_ENTER = 2 };
-void llg_rt_set_thread_hook(void (*hook)(int slot, uint64_t identity, int event));
+void llg_rt_set_thread_hook(void (*hook)(int32_t slot, uint64_t identity, int32_t event));
 // The running process (-1 outside a process turn) and its identity.
-int llg_rt_current_thread(uint64_t* identity);
+int32_t llg_rt_current_thread(uint64_t* identity);
 // 1 when (slot, identity) names a live process (registered, neither
 // completed nor killed), 2 when that process is also a procedural root.
-int llg_rt_thread_live(int slot, uint64_t identity);
+int32_t llg_rt_thread_live(int32_t slot, uint64_t identity);
 // The live fork parent of a live thread; 0 when it has none.
-int llg_rt_thread_parent(int slot, uint64_t identity, int* parent_slot,
+int32_t llg_rt_thread_parent(int32_t slot, uint64_t identity, int32_t* parent_slot,
                          uint64_t* parent_identity);
 // The live procedural threads (children of (parent_slot, parent_identity)
 // when parent_slot >= 0) in creation order, as malloc'd slot and identity
 // arrays the caller frees; returns the count, 0 with NULL arrays when none.
-size_t llg_rt_threads(int parent_slot, uint64_t parent_identity, int** slots,
+size_t llg_rt_threads(int32_t parent_slot, uint64_t parent_identity, int32_t** slots,
                       uint64_t** identities);
 // Mark or clear LLG_RT_THREAD_ENTER delivery for a live thread.
-void llg_rt_thread_watch_enter(int slot, uint64_t identity, int on);
+void llg_rt_thread_watch_enter(int32_t slot, uint64_t identity, int32_t on);
 // Call `visit` with the registry slot, identity, root descriptor and root
 // frame of each live process, in registry order. Only the VPI bridge calls
 // it, on demand; the frame is borrowed for the call.
-void llg_rt_visit_processes(void (*visit)(void* context, int slot, uint64_t identity,
+void llg_rt_visit_processes(void (*visit)(void* context, int32_t slot, uint64_t identity,
                                           const llg_co_desc_t* desc, const void* root),
                             void* context);
 // Wake the live process (slot, identity) from its wait, as a change of a
@@ -2776,7 +2776,7 @@ void llg_rt_visit_processes(void (*visit)(void* context, int slot, uint64_t iden
 // to run (or is held suspended), 0 when no such process lives. A VPI put to
 // a sequential UDP wakes the instance's gate process this way, so the
 // process publishes the new state with no extra wait dependency.
-int llg_rt_thread_wake(int slot, uint64_t identity);
+int32_t llg_rt_thread_wake(int32_t slot, uint64_t identity);
 // Return the activation frame retained by a process, or NULL for ordinary
 // static-storage processes. The returned pointer is borrowed from `self`.
 llg_frame_t* llg_proc_frame(llg_proc_t* self);
@@ -2793,7 +2793,7 @@ void llg_program_exit(llg_proc_t* self);
 // HDL references and outstanding await registrations release it. `self` is a
 // borrowed handle; assignment/capture operations retain the value explicitly.
 llg_process_handle_t* llg_process_self(llg_proc_t* self);
-int llg_process_status(const llg_process_handle_t* handle);
+int32_t llg_process_status(const llg_process_handle_t* handle);
 void llg_process_retain(llg_process_handle_t* handle);
 void llg_process_release(llg_process_handle_t* handle);
 void llg_process_assign(llg_process_handle_t** target,
@@ -2818,7 +2818,7 @@ llg_process_handle_t* llg_process_pin(llg_process_handle_t* handle);
 // terminated target reports an error and the call has no effect.
 void llg_process_handle_srandom(llg_process_handle_t* handle, sv4_t seed);
 llg_string_t llg_process_handle_get_randstate(llg_process_handle_t* handle);
-int llg_process_handle_set_randstate(llg_process_handle_t* handle,
+int32_t llg_process_handle_set_randstate(llg_process_handle_t* handle,
                                      llg_string_t state);
 // Kill the target and every descendant, including those whose parent has
 // finished (SV 9.7). A finished target stays FINISHED; its live descendants
@@ -2833,25 +2833,25 @@ void llg_process_resume(llg_proc_t* self, llg_process_handle_t* handle);
 // four-state value so invalid/unknown counts are diagnosed at the boundary.
 llg_semaphore_t* llg_semaphore_new(sv4_t key_count);
 void llg_semaphore_put(llg_semaphore_t* semaphore, sv4_t key_count);
-int llg_semaphore_try_get(llg_semaphore_t* semaphore, sv4_t key_count);
+int32_t llg_semaphore_try_get(llg_semaphore_t* semaphore, sv4_t key_count);
 
 // Tests of a run-time member select's decision tree: whether `index` is known
 // and equals (is below) the declared index `key`. Out of line because a select
 // site holds one test per element.
-int llg_index_eq(sv4_t index, int64_t key);
-int llg_index_lt(sv4_t index, int64_t key);
+int32_t llg_index_eq(sv4_t index, int64_t key);
+int32_t llg_index_lt(sv4_t index, int64_t key);
 
 // Cooperative generated-loop interruption point. Zero means the loop may
 // continue. Nonzero means the process budget was exhausted: the diagnostic
 // and failure bookkeeping are complete and chain.exiting is ABANDON. A
 // coroutine returns EXIT; a plain function branches to its unwind label.
-int llg_budget_point(const char* location);
+int32_t llg_budget_point(const char* location);
 // Report a SystemVerilog unique/unique0/priority branch check. `check` is
 // 1=unique, 2=unique0, 3=priority; `matched` counts matching case groups (or
 // is zero/one for a conditional); `has_default` suppresses no-match reports.
 // Diagnostics are warnings and do not stop simulation; `location`
 // (`file:line:col`, or NULL) is their location field.
-void llg_unique_priority_check(int check, int matched, int has_default,
+void llg_unique_priority_check(int32_t check, int32_t matched, int32_t has_default,
                                const char* location);
 
 // ── final blocks ──────────────────────────────────────────────────────────────
@@ -2911,11 +2911,11 @@ enum {
 
 // Create a fork group owned by the current process (registers it on the
 // process's live-group list).
-llg_fork_group_t* llg_fork_group_new(int join_kind);
+llg_fork_group_t* llg_fork_group_new(int32_t join_kind);
 // Create a named fork group whose resolved target can be disabled from any
 // process in the same elaborated instance. Anonymous groups use the function
 // above and carry no disable target.
-llg_fork_group_t* llg_fork_group_new_target(int join_kind,
+llg_fork_group_t* llg_fork_group_new_target(int32_t join_kind,
                                             uint32_t declaration,
                                             uint32_t instance);
 // Spawn desc->fn as a child of `grp`; the runtime borrows the immutable
@@ -2995,7 +2995,7 @@ void** llg_frame_opaque_address(llg_frame_t* frame, size_t slot);
 // aliases): allocated by the first call with `allocate` set (a fork-shared
 // handle that a wait can observe) and released with the frame; NULL while
 // none was allocated, so stores through other aliases publish nothing.
-sv4_t* llg_frame_opaque_marker(llg_frame_t* frame, size_t slot, int allocate);
+sv4_t* llg_frame_opaque_marker(llg_frame_t* frame, size_t slot, int32_t allocate);
 // The frame that owns a slot's storage (following frame-to-frame aliases), so
 // a branch can reach the other slots of a shared environment frame.
 llg_frame_t* llg_frame_slot_frame(llg_frame_t* frame, size_t slot);
@@ -3026,7 +3026,7 @@ void llg_activation_exit(llg_activation_t* activation);
 // Exit of the named block that is a fork branch's whole body: when a disable
 // ended it, the branch process terminates KILLED rather than FINISHED (SV 9.7).
 void llg_activation_exit_terminal(llg_activation_t* activation);
-int llg_activation_cancelled(void);
+int32_t llg_activation_cancelled(void);
 // Disabling an activation that reaches `self` completes cancellation
 // bookkeeping, sets LLG_EXIT_ABANDON, and returns for immediate propagation.
 // This is the only setter of an activation's `disabled` flag: generated code
@@ -3059,30 +3059,30 @@ void llg_wait_resume_in_region(llg_region_t region);
 // and llg_arm_any_events copies `specs`; none keeps a pointer into them, so
 // generated coroutines pass each as a compound literal in the arm call and the
 // array need not outlive it. Keep that true when changing these arms.
-llg_co_arm_t llg_arm_edge(llg_proc_t* self, sv4_t* sig, int posedge);
+llg_co_arm_t llg_arm_edge(llg_proc_t* self, sv4_t* sig, int32_t posedge);
 // Signal/real dependency wakes preserve reverse wait-registration order within
 // each resume region, whose process queue is FIFO. Duplicate addresses retain
 // all descriptor checks but create one scheduler membership per waiter/source.
-llg_co_arm_t llg_arm_any(llg_proc_t* self, sv4_t** sigs, int n);
+llg_co_arm_t llg_arm_any(llg_proc_t* self, sv4_t** sigs, int32_t n);
 llg_co_arm_t llg_arm_any_dependencies(llg_proc_t* self,
                                       const llg_wait_dependency_t* deps,
-                                      int n);
+                                      int32_t n);
 llg_co_arm_t llg_arm_any_events(llg_proc_t* self,
-                                const llg_event_spec_t* specs, int n);
+                                const llg_event_spec_t* specs, int32_t n);
 // An implicit or process-evaluated event control's dependency wait: unlike
 // llg_arm_any_dependencies (a wait condition's), an occurrence while the
 // process is suspended is withheld and resume() resensitizes it (SV 9.7).
 llg_co_arm_t llg_arm_event_dependencies(llg_proc_t* self,
                                         const llg_wait_dependency_t* deps,
-                                        int n);
+                                        int32_t n);
 // llg_arm_any_dependencies (llg_arm_event_dependencies when `event`) over
 // `deps` plus every storage the `ref` descriptors in `refs` name (several for
 // an unpacked aggregate or a view into one). Both arrays are copied as for
 // llg_arm_any_dependencies.
 llg_co_arm_t llg_arm_ref_dependencies(llg_proc_t* self,
-                                      const llg_wait_dependency_t* deps, int n,
-                                      const llg_ref_t* const* refs, int n_refs,
-                                      int event);
+                                      const llg_wait_dependency_t* deps, int32_t n,
+                                      const llg_ref_t* const* refs, int32_t n_refs,
+                                      int32_t event);
 // The dependencies of `self`'s last dependency wait in the order they
 // changed since it was armed: those whose change woke it, then each other
 // one the first time it changed before the process ran. An entry names the
@@ -3103,7 +3103,7 @@ typedef struct {
 } llg_wait_changes_t;
 // Whether `change` covers the one-bit input `input` (offset `bit` of `key`,
 // LLG_WAIT_CHANGE_WHOLE for the whole storage).
-static inline int llg_wait_change_is(llg_wait_change_t change,
+static inline int32_t llg_wait_change_is(llg_wait_change_t change,
                                      llg_wait_change_t input) {
     return change.key == input.key &&
            (change.bit == input.bit || change.bit == LLG_WAIT_CHANGE_WHOLE ||
@@ -3119,7 +3119,7 @@ void llg_wait_refresh_on_resume(llg_proc_t* self);
 // produced its event, not at the check that publishes the change (T1-D11,
 // AA-D6): an event-list sampled-value clock's gate.
 void llg_wait_gate_at_write(llg_proc_t* self);
-int llg_wait_refreshed(const llg_proc_t* self);
+int32_t llg_wait_refreshed(const llg_proc_t* self);
 llg_co_arm_t llg_arm_level(llg_proc_t* self, sv4_t* sig, sv4_t value);
 
 // Synchronization and process-control arms deliver before wake and therefore
@@ -3137,7 +3137,7 @@ llg_co_arm_t llg_arm_semaphore_get(llg_proc_t* self,
                                    sv4_t key_count);
 // Coroutine-body `$stop` only. SUSPEND preserves the exact chain continuation
 // and queues. Functions and VPI use the non-suspending deferred request.
-llg_co_arm_t llg_arm_stop(llg_proc_t* self, int verbosity,
+llg_co_arm_t llg_arm_stop(llg_proc_t* self, int32_t verbosity,
                           const char* location);
 
 // ── Named events ──────────────────────────────────────────────────────────────
@@ -3162,10 +3162,10 @@ llg_co_arm_t llg_arm_stop(llg_proc_t* self, int verbosity,
 
 typedef struct {
     llg_proc_t** waiters;
-    int n_waiters;
+    int32_t n_waiters;
     size_t waiters_capacity;
     llg_proc_t** triggered_waiters;
-    int n_triggered_waiters;
+    int32_t n_triggered_waiters;
     size_t triggered_waiters_capacity;
     uint64_t triggered_time;
     uint64_t triggered_generation;
@@ -3173,7 +3173,7 @@ typedef struct {
     // own event control compares counts to learn that the event fired while
     // it was parked on a list that also names value sources.
     uint64_t trigger_count;
-    int triggered;
+    int32_t triggered;
     // VPI cbValueChange watches on this object (llg_event_watch_add). The
     // VPI layer owns the count, so llg_event_object_reset keeps it.
     uint32_t vpi_watches;
@@ -3208,10 +3208,10 @@ typedef struct {
 
 // The live procedural threads suspended on the object named event `event`
 // currently refers to, as llg_rt_threads lists them (37.25 detail 1).
-size_t llg_rt_event_waiters(const llg_event_t* event, int** slots, uint64_t** identities);
+size_t llg_rt_event_waiters(const llg_event_t* event, int32_t** slots, uint64_t** identities);
 // The live procedural threads suspended in a get, peek or put of the mailbox
 // `resource`, or in a get of the semaphore `resource` (37.29 detail 3).
-size_t llg_rt_resource_waiters(const void* resource, int** slots, uint64_t** identities);
+size_t llg_rt_resource_waiters(const void* resource, int32_t** slots, uint64_t** identities);
 
 // Resolve a fixed unpacked event-array select using declaration-order
 // flattening. Unknown/out-of-range indices resolve to a null handle, which
@@ -3221,7 +3221,7 @@ llg_event_t* llg_event_array_select(llg_event_t* const* elements,
                                      const int32_t* left,
                                      const int32_t* right,
                                      const sv4_t* indices,
-                                     int n);
+                                     int32_t n);
 
 // Assigning a handle changes only the future object resolved by the target;
 // waiter registrations already attached to the previous object are retained.
@@ -3230,11 +3230,11 @@ void llg_event_assign_null(llg_event_t* target);
 
 // Wake every current waiter of `ev` and clear its waiter list.
 /* Internal clocking-block publication, not an ordinary HDL trigger. */
-int llg_clocking_event_observed(llg_event_t* event);
+int32_t llg_clocking_event_observed(llg_event_t* event);
 void llg_event_trigger(llg_event_t* ev);
 // Return whether the synchronization object was triggered in the current
 // simulation time slot. A null handle is never triggered.
-int llg_event_triggered(const llg_event_t* ev);
+int32_t llg_event_triggered(const llg_event_t* ev);
 // Number of triggers of the object `ev` currently names since the runtime was
 // initialized. A null handle reports zero. Read-only and allocation-free.
 uint64_t llg_event_trigger_count(const llg_event_t* ev);
@@ -3244,14 +3244,14 @@ uint64_t llg_event_trigger_count(const llg_event_t* ev);
  * match triggers `event` in the Observed region and latches the `.matched`
  * status of each destination clock in `clocks`/`edges` (copied). Endpoints
  * have no counters or actions and ignore assertion control tasks. */
-int llg_assertion_endpoint(uint64_t identity, uint32_t index, llg_event_t* event,
-                           uint32_t slot_count, sv4_t* const* clocks, const int* edges);
+int32_t llg_assertion_endpoint(uint64_t identity, uint32_t index, llg_event_t* event,
+                           uint32_t slot_count, sv4_t* const* clocks, const int32_t* edges);
 /* `.matched` of endpoint `endpoint` at a tick of its destination clock
  * `slot`: a match since the previous tick of that clock. */
-int llg_sequence_matched(uint32_t endpoint, uint32_t slot);
+int32_t llg_sequence_matched(uint32_t endpoint, uint32_t slot);
 /* `.triggered` of endpoint `endpoint` inside an assertion: it matched in the
  * current time step. */
-int llg_sequence_triggered(uint32_t endpoint);
+int32_t llg_sequence_triggered(uint32_t endpoint);
 // Queue a nonblocking event trigger for the NBA region. The event pointer is
 // copied into runtime-owned queue state, so the issuing process may finish
 // before the trigger commits.
@@ -3269,20 +3269,20 @@ void llg_nba_event_after(llg_event_t* ev, uint64_t ticks);
 // list as a compound literal; `result` is kept and must stay a frame field.
 llg_co_arm_t llg_arm_event(llg_proc_t* self, llg_event_t* ev);
 llg_co_arm_t llg_arm_events(llg_proc_t* self,
-                            const llg_event_t* const* evs, int n);
+                            const llg_event_t* const* evs, int32_t n);
 llg_co_arm_t llg_arm_event_triggered(llg_proc_t* self,
                                      const llg_event_t* ev);
 llg_co_arm_t llg_arm_assertion(llg_proc_t* self, uint64_t identity);
 llg_co_arm_t llg_arm_order(llg_proc_t* self,
-                           const llg_event_t* const* evs, int n,
-                           int* result);
+                           const llg_event_t* const* evs, int32_t n,
+                           int32_t* result);
 
 // One source of a mixed signal/event or-list (`@(posedge a or ev)`): exactly
 // one of `sig`/`ev` is set.  Exactly one such wait covers ALL entries, so a
 // trigger arriving while the process is parked on the signal half is not lost.
 typedef struct {
     sv4_t* sig;               // signal entry (NULL for an event entry)
-    int kind;                 // LLG_EV_* edge kind for signal entries
+    int32_t kind;                 // LLG_EV_* edge kind for signal entries
     const llg_event_t* ev;   // event entry (NULL for a signal entry)
 } llg_wait_src_t;
 
@@ -3291,7 +3291,7 @@ typedef struct {
 // keep it or any pointer into it (the signals and event objects it names are
 // model storage), so `srcs` need not outlive the call.
 llg_co_arm_t llg_arm_mixed(llg_proc_t* self,
-                           const llg_wait_src_t* srcs, int n);
+                           const llg_wait_src_t* srcs, int32_t n);
 
 // One clocking-cycle arm. When `accept_current` is nonzero it returns READY if
 // a source already fired in this slot (the ##0 rule); otherwise it registers
@@ -3301,8 +3301,8 @@ llg_co_arm_t llg_arm_mixed(llg_proc_t* self,
 // is copied (via llg_arm_mixed) and need not outlive the call, so generated
 // code passes it as a compound literal at each arm site.
 llg_co_arm_t llg_arm_clocking_cycle(llg_proc_t* self,
-                                    const llg_wait_src_t* srcs, int n,
-                                    int accept_current);
+                                    const llg_wait_src_t* srcs, int32_t n,
+                                    int32_t accept_current);
 
 // Evaluators and dependencies refer to model storage. The runtime copies
 // every descriptor and dependency array before suspending the caller, so
@@ -3324,39 +3324,39 @@ typedef struct {
     // move or suppress this expression waiter.
     llg_event_object_t* event_object;
     sv4_t** reads;
-    int n_reads;
-    int kind;
+    int32_t n_reads;
+    int32_t kind;
     double* real_sig;
     llg_real_eval_fn real_eval;
     llg_wait_dependency_t* dependencies;
-    int n_dependencies;
-    int real;
+    int32_t n_dependencies;
+    int32_t real;
     void* eval_context;
     void* condition_context;
 } llg_expr_event_spec_t;
 llg_co_arm_t llg_arm_expressions(llg_proc_t* self,
-                                 const llg_expr_event_spec_t* specs, int n);
+                                 const llg_expr_event_spec_t* specs, int32_t n);
 // An llg_arm_expressions source for a plain or edge control (`kind`) on the
 // value `ref` names. A whole descriptor waits on its variable itself; any
 // other descriptor waits on every storage it names and compares the value it
 // reads, through a new context reference the wait releases (see
 // llg_expr_event_spec_t).
-llg_expr_event_spec_t llg_ref_wait_spec(const llg_ref_t* ref, int kind);
+llg_expr_event_spec_t llg_ref_wait_spec(const llg_ref_t* ref, int32_t kind);
 /* Whether a `ref` descriptor names an element that exists (see
  * reference_writes.c); generated calls test it for a formal a task waits on. */
-int llg_ref_selected(const llg_ref_t* ref);
+int32_t llg_ref_selected(const llg_ref_t* ref);
 // Register a nonblocking trigger whose source control is evaluated at issue
 // time. The copied descriptors remain live until one source matches; the
 // target event is then submitted to the ordinary NBA queue. `repeat` is zero
 // for a no-op request and otherwise the number of matches required.
-void llg_nba_event_when(const llg_expr_event_spec_t* specs, int n,
+void llg_nba_event_when(const llg_expr_event_spec_t* specs, int32_t n,
                         llg_event_t* target, uint64_t repeat);
 // Register a nonblocking assignment whose source control is evaluated at
 // issue time. The runtime owns `frame` until the source matches or teardown;
 // `action` submits the detached NBA using the captured frame values. A zero
 // repeat count invokes `action` immediately, without registering a waiter.
 typedef void (*llg_event_assignment_fn)(llg_frame_t* frame);
-void llg_nba_event_assign_when(const llg_expr_event_spec_t* specs, int n,
+void llg_nba_event_assign_when(const llg_expr_event_spec_t* specs, int32_t n,
                                uint64_t repeat,
                                llg_event_assignment_fn action,
                                llg_frame_t* frame);
@@ -3369,14 +3369,14 @@ uint64_t llg_repeat_count(sv4_t value);
 // may re-enter design/reactive work; read-only phases reject current-slot
 // scheduling except for the Observed-to-Reactive assertion handoff.
 typedef void (*llg_region_callback_fn)(void* data);
-int llg_schedule_region_callback(llg_region_t region,
+int32_t llg_schedule_region_callback(llg_region_t region,
                                  llg_region_callback_fn callback, void* data);
-int llg_schedule_region_callback_after(llg_region_t region,
+int32_t llg_schedule_region_callback_after(llg_region_t region,
                                        llg_region_callback_fn callback,
                                        void* data, uint64_t ticks);
 // Explicit name for PLI users; currently one-shot and otherwise identical to
 // llg_schedule_region_callback.
-int llg_register_pli_callback(llg_region_t region,
+int32_t llg_register_pli_callback(llg_region_t region,
                               llg_region_callback_fn callback, void* data);
 // Identity of one queued callback: the runtime lifetime (bumped by every
 // llg_rt_cleanup) and the issue sequence within it. Callers may keep it
@@ -3387,14 +3387,14 @@ typedef struct {
 } llg_region_callback_id_t;
 // llg_schedule_region_callback_after that also reports the callback's
 // identity in `*id` (which may be NULL) for llg_cancel_region_callback.
-int llg_schedule_region_callback_id(llg_region_t region,
+int32_t llg_schedule_region_callback_id(llg_region_t region,
                                     llg_region_callback_fn callback,
                                     void* data, uint64_t ticks,
                                     llg_region_callback_id_t* id);
 // Remove a still-queued callback without calling it. Returns 1 when removed;
 // 0 when it already ran or was cancelled, or when `id` belongs to an earlier
 // runtime lifetime. `data` stays caller-owned either way.
-int llg_cancel_region_callback(llg_region_callback_id_t id);
+int32_t llg_cancel_region_callback(llg_region_callback_id_t id);
 
 // Delayed Active-region calls (VPI delayed puts, 38.34). Each pending call is
 // carried by a runtime-owned carrier process whose coroutine is
@@ -3414,14 +3414,14 @@ typedef struct {
     uint64_t generation;
     llg_proc_t* carrier;
 } llg_delayed_call_id_t;
-int llg_schedule_delayed_call(const char* name, llg_region_callback_fn callback,
+int32_t llg_schedule_delayed_call(const char* name, llg_region_callback_fn callback,
                               void* data, uint64_t ticks,
                               llg_delayed_call_id_t* id);
 // Discard a carrier whose callback has not started. Returns 1 when
 // discarded, 0 when its callback has started or `id` belongs to an earlier
 // runtime lifetime. Within one lifetime an id must not be cancelled after its
 // callback returned (the carrier is then reclaimed).
-int llg_cancel_delayed_call(llg_delayed_call_id_t id);
+int32_t llg_cancel_delayed_call(llg_delayed_call_id_t id);
 
 // Register a signal for a copied, immutable value sampled at the beginning of
 // each time slot. The returned pointer is runtime-owned and valid until the
@@ -3437,7 +3437,7 @@ void llg_sampled_register_history(sv4_t* signal, uint64_t ticks);
 // constant. A later history registration promotes it.
 void llg_sampled_register_value(sv4_t* signal);
 const sv4_t* llg_sampled_value(const sv4_t* signal);
-int llg_sampled_copy(const sv4_t* signal, sv4_t* out);
+int32_t llg_sampled_copy(const sv4_t* signal, sv4_t* out);
 // Real variables keep their own numeric Preponed snapshot. Reading an
 // unregistered real reports the same controlled diagnostic and yields 0.0.
 void llg_sampled_register_real(double* signal);
@@ -3461,8 +3461,8 @@ const double* llg_sampled_real_cells(const double* cells, uint64_t count);
 /// lists, `edge`, value changes, named and clocking-block events, expression
 /// edges); its `gate` is evaluated when the tick is reported. Repeated ticks
 /// in one time step count once.
-typedef int (*llg_sampled_gate_fn)(void* data);
-int llg_sampled_clock_register_edge(uint64_t clock, sv4_t* signal, int edge,
+typedef int32_t (*llg_sampled_gate_fn)(void* data);
+int32_t llg_sampled_clock_register_edge(uint64_t clock, sv4_t* signal, int32_t edge,
                                     llg_sampled_gate_fn gate, void* data);
 /* Gate the leading clock of the concurrent assertion just registered with
  * `identity`: its clocking event `@(edge clk iff cond)` occurs only when
@@ -3471,7 +3471,7 @@ int llg_sampled_clock_register_edge(uint64_t clock, sv4_t* signal, int edge,
 // Restrict a registered assertion to one evaluation attempt, begun at its
 // first leading clock event (an assertion that is the whole body of an
 // initial procedure, IEEE 1800-2009 16.15.6).
-int llg_assertion_single_attempt(uint64_t identity);
+int32_t llg_assertion_single_attempt(uint64_t identity);
 /* Global clocking future sampled value functions (IEEE 1800-2009 16.9.4).
  * Make the last registered assertion `identity` one whose evaluation needs
  * sampled values of the next tick of sampled clock `global_clock` (the
@@ -3486,7 +3486,7 @@ int llg_assertion_single_attempt(uint64_t identity);
  * global clock tick are never evaluated. The queue counts against
  * LLG_SEQUENCE_THREAD_LIMIT. Call after the registration, before run. */
 typedef void (*llg_assertion_capture_fn)(void* data, sv4_t* slots);
-int llg_assertion_future(uint64_t identity, uint64_t global_clock, uint32_t slots,
+int32_t llg_assertion_future(uint64_t identity, uint64_t global_clock, uint32_t slots,
                          llg_assertion_capture_fn capture);
 /* Captured operand `slot` of the queued events being evaluated (a fresh
  * owner), or a run-stopping error outside such an evaluation. */
@@ -3494,12 +3494,12 @@ sv4_t llg_assertion_captured(uint32_t slot);
 /* $rising_gclk (0), $falling_gclk (1), $steady_gclk (2) or $changing_gclk
  * (3) of the operand captured in `slot` at the evaluated event, whose
  * sampled value at the next global clock tick is `future` (Annex F.3.4.4). */
-int llg_assertion_future_status(int kind, uint32_t slot, const sv4_t* future);
+int32_t llg_assertion_future_status(int32_t kind, uint32_t slot, const sv4_t* future);
 // Make the last registered assertion `identity` procedural concurrent
 // assertion `index` (dense from 0 in registration order, IEEE 1800-2009
 // 16.15.6): a leading clock event begins one attempt per matured instance of
 // it, never one on its own. Call after the registration, before run.
-int llg_assertion_procedural(uint64_t identity, uint32_t index);
+int32_t llg_assertion_procedural(uint64_t identity, uint32_t index);
 /* Free checker variables (IEEE 1800-2009 17.7.2). `solve` assigns the active
  * free variables of one checker instance; the runtime calls it with a NULL
  * frame just before the Observed region, once per time step when `count` is
@@ -3509,12 +3509,12 @@ int llg_assertion_procedural(uint64_t identity, uint32_t index);
  * checker instance and selects the instance stream the set draws from.
  * Register after the assertions, before run. */
 typedef void (*llg_free_solve_fn)(llg_frame_t* frame);
-int llg_checker_free_set(llg_free_solve_fn solve, const uint64_t* assumes, uint32_t count,
+int32_t llg_checker_free_set(llg_free_solve_fn solve, const uint64_t* assumes, uint32_t count,
                          const char* label);
 /* While `solve` runs: whether assume `assume` of the set (its index in
  * `assumes`) has a clock event in this pass (`due` 0), or also owes the
  * consequent of a pending `|=>` attempt at it (`due` 1). 0 otherwise. */
-int llg_checker_assume_flag(uint32_t assume, int due);
+int32_t llg_checker_assume_flag(uint32_t assume, int32_t due);
 // Queue one pending instance of procedural assertion `index` on the current
 // process. Flush points and `disable` clear pending instances like pending
 // deferred assertion reports (16.15.6.2, 16.15.6.4); the Observed region
@@ -3533,8 +3533,8 @@ void llg_assertion_expect_values(uint64_t identity, llg_frame_t* frame);
 // being evaluated, or whose action block the current process runs (a fresh
 // owner); a run-stopping error anywhere else.
 sv4_t llg_assertion_instance_value(uint32_t slot);
-int llg_assertion_gate_clock(uint64_t identity, llg_sampled_gate_fn gate);
-int llg_sampled_clock_register_event(uint64_t clock, llg_sampled_gate_fn gate,
+int32_t llg_assertion_gate_clock(uint64_t identity, llg_sampled_gate_fn gate);
+int32_t llg_sampled_clock_register_event(uint64_t clock, llg_sampled_gate_fn gate,
                                      void* data);
 void llg_sampled_clock_tick(uint64_t clock);
 /* One tick of a planned assertion clock: a clocking event other than one
@@ -3553,7 +3553,7 @@ void llg_assertion_clock_pulse(sv4_t* signal);
 /// that grows only up to that bound, so recording a tick never allocates
 /// once the ring is full and memory never grows with simulated time.
 typedef void (*llg_sampled_domain_eval_fn)(void* data, sv4_t* out);
-int llg_sampled_domain_register(uint64_t identity, uint64_t clock,
+int32_t llg_sampled_domain_register(uint64_t identity, uint64_t clock,
                                 llg_sampled_domain_eval_fn value, void* data,
                                 uint64_t history_ticks);
 sv4_t llg_sampled_domain_past(uint64_t identity, uint64_t ticks);
@@ -3561,22 +3561,22 @@ sv4_t llg_sampled_domain_past(uint64_t identity, uint64_t ticks);
 /// most recent strictly earlier tick (or the initial value). `kind`: 0 rose,
 /// 1 fell, 2 stable, 3 changed. A real argument's history holds its 64-bit
 /// IEEE image, so stable and changed compare reals bit for bit.
-int llg_sampled_domain_status(uint64_t identity, int kind);
+int32_t llg_sampled_domain_status(uint64_t identity, int32_t kind);
 // Clocking input copies. Each publishes a changed sample to its waiters.
 // llg_clocking_sample copies the Preponed (#1step) value; observed copies are
 // queued into the current time slot's observed region; history copies read the
 // preponed sample at or before `ticks` simulation ticks in the past, where
 // `ticks` must not exceed the source's llg_sampled_register_history depth.
-int llg_clocking_sample(const sv4_t* source, sv4_t* sample);
-int llg_clocking_sample_observed(sv4_t* source, sv4_t* sample);
-int llg_clocking_sample_history(sv4_t* source, sv4_t* sample,
+int32_t llg_clocking_sample(const sv4_t* source, sv4_t* sample);
+int32_t llg_clocking_sample_observed(sv4_t* source, sv4_t* sample);
+int32_t llg_clocking_sample_history(sv4_t* source, sv4_t* sample,
                                 uint64_t ticks);
 // Real clockvar samples: `source` is the packed 64-bit `$realtobits` image
 // of the clocking expression, registered like a packed source; the selected
 // image is decoded into the real sample.
-int llg_clocking_sample_real(const sv4_t* source, double* sample);
-int llg_clocking_sample_observed_real(sv4_t* source, double* sample);
-int llg_clocking_sample_history_real(sv4_t* source, double* sample,
+int32_t llg_clocking_sample_real(const sv4_t* source, double* sample);
+int32_t llg_clocking_sample_observed_real(sv4_t* source, double* sample);
+int32_t llg_clocking_sample_history_real(sv4_t* source, double* sample,
                                      uint64_t ticks);
 
 // Forget clocking history before freeing/reusing an externally owned packed
@@ -3608,11 +3608,11 @@ void llg_nba(sv4_t* target, sv4_t value);
 // A zero tick delay stays in the current time slot's NBA region.
 void llg_nba_after(sv4_t* target, sv4_t value, uint64_t ticks);
 /* Model-owned net/driver descriptors outlive all queued writes. */
-void llg_nba_net_after(llg_net_t* net, int slot, sv4_t value, uint64_t ticks);
-void llg_nba_net_masked_after(llg_net_t* net, int slot, sv4_t value,
+void llg_nba_net_after(llg_net_t* net, int32_t slot, sv4_t value, uint64_t ticks);
+void llg_nba_net_masked_after(llg_net_t* net, int32_t slot, sv4_t value,
                               sv4_t mask, uint64_t ticks);
-void llg_nba_net_selected_after(llg_net_t* net, int slot, sv4_t value,
-                                sv4_select_plan_t plan, int reverse,
+void llg_nba_net_selected_after(llg_net_t* net, int32_t slot, sv4_t value,
+                                sv4_select_plan_t plan, int32_t reverse,
                                 uint64_t ticks);
 // Synchronous drives use the target clocking event. If the event has not
 // occurred in the current time slot, the runtime retains the captured value
@@ -3621,14 +3621,14 @@ void llg_nba_net_selected_after(llg_net_t* net, int slot, sv4_t value,
 // later, an off-event drive at the `max(n, 1)`-th following event.
 void llg_clocking_nba_sync_after(sv4_t* target, sv4_t value, uint64_t ticks,
                                  uint64_t cycles,
-                                 const llg_wait_src_t* specs, int n_specs);
-void llg_clocking_nba_net_sync_after(llg_net_t* net, int slot, sv4_t value,
+                                 const llg_wait_src_t* specs, int32_t n_specs);
+void llg_clocking_nba_net_sync_after(llg_net_t* net, int32_t slot, sv4_t value,
                                      uint64_t ticks, uint64_t cycles,
-                                     const llg_wait_src_t* specs, int n_specs);
+                                     const llg_wait_src_t* specs, int32_t n_specs);
 void llg_nba_d_after(double* target, double value, uint64_t ticks);
 void llg_clocking_nba_d_sync_after(double* target, double value, uint64_t ticks,
                                    uint64_t cycles,
-                                   const llg_wait_src_t* specs, int n_specs);
+                                   const llg_wait_src_t* specs, int32_t n_specs);
 // Native NBAs to persistent storage. The string value is consumed; the
 // chandle or class handle value is stored as-is at commit, which toggles
 // `dependency` (the handle's change marker, or NULL) when the value changes.
@@ -3654,7 +3654,7 @@ enum {
     LLG_NBA_CONTAINER_QUEUE_VALUE = 4,
     LLG_NBA_CONTAINER_ASSOC_VALUE = 5,
 };
-void llg_container_nba_after(int kind, void* target, const void* src, uint64_t ticks);
+void llg_container_nba_after(int32_t kind, void* target, const void* src, uint64_t ticks);
 // A write that takes its value and selectors now and is queued later
 // (`t <= @(e) v`, SV 9.4.5). Between `open` and `close` every nonblocking
 // write builds its update into the hold, which owns it for the GC and for
@@ -3679,18 +3679,18 @@ void llg_nba_locate_marker(sv4_t* marker);
 void llg_nba_locate_end(void);
 void llg_dyn_value_nba(struct llg_dyn_value_array_t* target, sv4_t dst_start,
                        const struct llg_dyn_value_array_t* src, sv4_t src_start,
-                       uint64_t count, int whole);
+                       uint64_t count, int32_t whole);
 // The same write committed in the NBA region `ticks` after issue (an
 // intra-assignment delay, SV 10.4.2).
 void llg_dyn_value_nba_after(struct llg_dyn_value_array_t* target,
                              sv4_t dst_start,
                              const struct llg_dyn_value_array_t* src,
-                             sv4_t src_start, uint64_t count, int whole,
+                             sv4_t src_start, uint64_t count, int32_t whole,
                              uint64_t ticks);
 // Selected writes retain only the plan's valid contiguous slice. Ascending
 // declared part-selects set reverse so queued bits remain in storage order.
 void llg_nba_selected_after(sv4_t* target, sv4_t value,
-                            sv4_select_plan_t plan, int reverse,
+                            sv4_select_plan_t plan, int32_t reverse,
                             uint64_t ticks);
 // A tagged-member NBA (SV 11.9): the target and value are fixed at issue,
 // and the commit repeats each borrowed active-tag check against the target's
@@ -3699,7 +3699,7 @@ void llg_nba_selected_after(sv4_t* target, sv4_t value,
 // leave a payload of another member's type. `checks` and `location` are
 // copied/borrowed static literals; `checks` itself need not outlive the call.
 void llg_nba_tagged_selected_after(sv4_t* target, sv4_t value,
-                                   sv4_select_plan_t plan, int reverse,
+                                   sv4_select_plan_t plan, int32_t reverse,
                                    uint64_t ticks,
                                    const llg_ref_tag_check_t* checks,
                                    size_t check_count, const char* location);
@@ -3708,16 +3708,16 @@ void llg_nba_tagged_selected_after(sv4_t* target, sv4_t value,
 void llg_nba_masked(sv4_t* target, sv4_t value, sv4_t mask, uint64_t ticks);
 void llg_clocking_nba_sync_masked_after(
     sv4_t* target, sv4_t value, sv4_t mask, uint64_t ticks, uint64_t cycles,
-    const llg_wait_src_t* specs, int n_specs);
+    const llg_wait_src_t* specs, int32_t n_specs);
 void llg_clocking_nba_net_sync_masked_after(
-    llg_net_t* net, int slot, sv4_t value, sv4_t mask, uint64_t ticks,
-    uint64_t cycles, const llg_wait_src_t* specs, int n_specs);
+    llg_net_t* net, int32_t slot, sv4_t value, sv4_t mask, uint64_t ticks,
+    uint64_t cycles, const llg_wait_src_t* specs, int32_t n_specs);
 void llg_clocking_nba_sync_selected_after(
-    sv4_t* target, sv4_t value, sv4_select_plan_t plan, int reverse,
-    uint64_t ticks, uint64_t cycles, const llg_wait_src_t* specs, int n_specs);
+    sv4_t* target, sv4_t value, sv4_select_plan_t plan, int32_t reverse,
+    uint64_t ticks, uint64_t cycles, const llg_wait_src_t* specs, int32_t n_specs);
 void llg_clocking_nba_net_sync_selected_after(
-    llg_net_t* net, int slot, sv4_t value, sv4_select_plan_t plan, int reverse,
-    uint64_t ticks, uint64_t cycles, const llg_wait_src_t* specs, int n_specs);
+    llg_net_t* net, int32_t slot, sv4_t value, sv4_select_plan_t plan, int32_t reverse,
+    uint64_t ticks, uint64_t cycles, const llg_wait_src_t* specs, int32_t n_specs);
 void llg_ba(sv4_t* target, sv4_t value);
 // llg_ba borrowing `value` by address. Generated stores use it so that
 // unoptimized AArch64 (and other ABIs passing large structs through a
@@ -3764,7 +3764,7 @@ void llg_store_unpublished_d(double* target, double value);
 // Keys compare numerically and NaN keys keep their positions. The new order is
 // snapshotted first, then every cell publishes through llg_ba_d.
 void llg_real_cells_order(double* cells, uint64_t count, uint64_t element_cells,
-                          int method);
+                          int32_t method);
 
 // ── force / release ───────────────────────────────────────────────────────────
 //
@@ -3784,13 +3784,13 @@ typedef struct {
     int64_t right;
     uint32_t width;
     uint32_t value_lsb;
-    int two_state;
+    int32_t two_state;
 } llg_force_part_t;
 
 typedef struct {
     sv4_t* sig;
     double* real;
-    int is_real;
+    int32_t is_real;
 } llg_force_read_t;
 
 typedef void (*llg_force_eval_fn)(sv4_t* out);
@@ -3802,26 +3802,26 @@ typedef void (*llg_force_real_eval_fn)(double* out);
 // skipped, and a statement left without parts does nothing. A part may cover
 // only some bits of a variable (a member of an element held as one packed
 // image); writes then change only the uncovered bits.
-void llg_force_expr_parts(const llg_force_part_t* parts, int n_parts,
-                          uint32_t stream_slice, int stream_right_to_left,
+void llg_force_expr_parts(const llg_force_part_t* parts, int32_t n_parts,
+                          uint32_t stream_slice, int32_t stream_right_to_left,
                           llg_force_eval_fn eval,
-                          const llg_force_read_t* reads, int n_reads);
-void llg_release_parts(const llg_force_part_t* parts, int n_parts,
-                       uint32_t stream_slice, int stream_right_to_left);
+                          const llg_force_read_t* reads, int32_t n_reads);
+void llg_release_parts(const llg_force_part_t* parts, int32_t n_parts,
+                       uint32_t stream_slice, int32_t stream_right_to_left);
 void llg_force_real(double* target, llg_force_real_eval_fn eval,
-                    const llg_force_read_t* reads, int n_reads);
+                    const llg_force_read_t* reads, int32_t n_reads);
 // Whether a live force binding still reads `sig` (packed) or `real`. Exactly
 // one pointer is non-null. An effectful force site evaluates its RHS into a
 // hidden source in its guard process only while this holds, so the helper's
 // effects never run after release or replacement. Read-only.
-int llg_force_source_active(const sv4_t* sig, const double* real);
+int32_t llg_force_source_active(const sv4_t* sig, const double* real);
 // Live force bindings, for VPI driver and load queries (IEEE 1800-2009 37.16
 // details 11-12): entry `index` of the live-entry table. Returns 0 past the
 // last entry, else 1 with the borrowed parts of a live packed entry, the
 // target of a live real one, or neither for an unused entry or one that
 // vpi_put_value installed (not a force statement). Read-only; the
 // borrowed parts stay valid until the next force or release statement.
-int llg_force_entry_view(int index, const llg_force_part_t** parts, int* n_parts,
+int32_t llg_force_entry_view(int32_t index, const llg_force_part_t** parts, int32_t* n_parts,
                          double** real);
 void llg_release_real(double* target);
 
@@ -3832,7 +3832,7 @@ void llg_force(sv4_t* sig, sv4_t value);
 void llg_release(sv4_t* sig);
 // Constant-value forces used by vpi_put_value(vpiForceFlag). `value` is
 // borrowed and copied into the live entry.
-void llg_force_value_parts(const llg_force_part_t* parts, int n_parts, sv4_t value);
+void llg_force_value_parts(const llg_force_part_t* parts, int32_t n_parts, sv4_t value);
 void llg_force_real_value(double* target, double value);
 // Observer of force and release statements (VPI cbForce/cbRelease). It runs
 // after each statement took effect: `release` is 0 for a force and 1 for a
@@ -3840,20 +3840,20 @@ void llg_force_real_value(double* target, double value);
 // one its target (`parts` NULL, `n_parts` 0). The constant-value VPI entry
 // points above do not report. Without a hook each statement pays one
 // predictable branch.
-typedef void (*llg_force_watch_fn)(int release, const llg_force_part_t* parts, int n_parts,
+typedef void (*llg_force_watch_fn)(int32_t release, const llg_force_part_t* parts, int32_t n_parts,
                                    double* real);
 void llg_force_watch_hook(llg_force_watch_fn hook);
 
 // Borrowed command line of the run (argc; argv through `argv`).
-int llg_rt_command_line(char*** argv);
+int32_t llg_rt_command_line(char*** argv);
 
 /* Destination-passing forms of the packed-returning calls above, used by
  * generated code (see value/destinations.h). `X_to(dst, ...)` replaces the
  * initialized owner at dst with exactly the result `X(...)` would return. Packed
  * arguments are borrowed by address; string arguments are consumed through
  * their address and left empty, like the returning forms' by-value strings. */
-void llg_fixed_array_compare_to(sv4_t* dst, const llg_fixed_array_t* p0, const llg_fixed_array_t* p1, int p2, int p3);
-void llg_real_column_compare_to(sv4_t* dst, const double* left, const double* right, uint64_t count, int case_eq, int negate);
+void llg_fixed_array_compare_to(sv4_t* dst, const llg_fixed_array_t* p0, const llg_fixed_array_t* p1, int32_t p2, int32_t p3);
+void llg_real_column_compare_to(sv4_t* dst, const double* left, const double* right, uint64_t count, int32_t case_eq, int32_t negate);
 void llg_dense_cells_image_to(sv4_t* dst, const sv4_t* cells, uint64_t count);
 /* Writes to `dst` the image of a record's `count` columns, whole: the first
  * column is the most significant, each in `llg_fixed_array_cells_image` order.
@@ -3862,14 +3862,14 @@ void llg_fixed_array_columns_image_to(sv4_t* dst, const llg_fixed_array_t* const
                                       size_t count);
 void llg_fixed_array_cells_image_to(sv4_t* dst, const llg_fixed_array_t* array, uint64_t first,
                                   uint64_t count);
-void llg_fixed_array_stream_source_to(sv4_t* dst, const llg_fixed_array_t* array, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int selector_kind, const sv4_t* first, const sv4_t* second);
+void llg_fixed_array_stream_source_to(sv4_t* dst, const llg_fixed_array_t* array, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int32_t selector_kind, const sv4_t* first, const sv4_t* second);
 void llg_net_alias_read_to(sv4_t* dst, llg_net_alias_t* alias);
 void llg_q_full_to(sv4_t* dst, const sv4_t* q_id, sv4_t* status);
 void llg_urandom_to(sv4_t* dst);
 void llg_urandom_seed_to(sv4_t* dst, const sv4_t* seed);
-void llg_urandom_range_to(sv4_t* dst, const sv4_t* max, const sv4_t* min, int has_min);
+void llg_urandom_range_to(sv4_t* dst, const sv4_t* max, const sv4_t* min, int32_t has_min);
 void llg_sequence_local_read_to(sv4_t* dst, void* attempt, uint32_t slot);
-void llg_system_to(sv4_t* dst, llg_string_t* command, int has_command);
+void llg_system_to(sv4_t* dst, llg_string_t* command, int32_t has_command);
 void llg_frame_read_value_to(sv4_t* dst, const llg_frame_t* frame, size_t slot);
 void llg_sampled_domain_past_to(sv4_t* dst, uint64_t identity, uint64_t ticks);
 void llg_assertion_captured_to(sv4_t* dst, uint32_t slot);
@@ -3880,14 +3880,14 @@ void llg_rt_ref_read_to(sv4_t* dst, const llg_ref_t* ref);
  * `X(...)` would return. Argument conventions match the packed forms above. */
 void llg_process_get_randstate_to(llg_string_t* dst);
 void llg_process_handle_get_randstate_to(llg_string_t* dst, llg_process_handle_t* handle);
-void llg_string_format_typed_to(llg_string_t* dst, llg_string_t* format, llg_fmt_arg_t* args, int n, const char* scope);
-void llg_string_format_bound_to(llg_string_t* dst, llg_string_t* format, llg_fmt_arg_t* args, int n, const char* scope, const char* binding);
+void llg_string_format_typed_to(llg_string_t* dst, llg_string_t* format, llg_fmt_arg_t* args, int32_t n, const char* scope);
+void llg_string_format_bound_to(llg_string_t* dst, llg_string_t* format, llg_fmt_arg_t* args, int32_t n, const char* scope, const char* binding);
 /* Implemented with the container runtime; declared in both headers. */
-void llg_fixed_stream_source_to(sv4_t* dst, const sv4_t* values, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int selector_kind, const sv4_t* first, const sv4_t* second);
-void llg_stream_unpack_source_to(sv4_t* dst, const sv4_t* value, uint64_t bits, uint32_t slice, int right_to_left);
-void llg_fixed_image_stream_source_to(sv4_t* dst, const sv4_t* image, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int selector_kind, const sv4_t* first, const sv4_t* second);
-void llg_stream_to_fixed_to(sv4_t* dst, const sv4_t* value, uint32_t width, int is_signed);
-void llg_stream_cast_fixed_to(sv4_t* dst, const sv4_t* value, uint32_t width, int is_signed);
+void llg_fixed_stream_source_to(sv4_t* dst, const sv4_t* values, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int32_t selector_kind, const sv4_t* first, const sv4_t* second);
+void llg_stream_unpack_source_to(sv4_t* dst, const sv4_t* value, uint64_t bits, uint32_t slice, int32_t right_to_left);
+void llg_fixed_image_stream_source_to(sv4_t* dst, const sv4_t* image, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int32_t selector_kind, const sv4_t* first, const sv4_t* second);
+void llg_stream_to_fixed_to(sv4_t* dst, const sv4_t* value, uint32_t width, int32_t is_signed);
+void llg_stream_cast_fixed_to(sv4_t* dst, const sv4_t* value, uint32_t width, int32_t is_signed);
 
 /* ── Functional coverage (IEEE 1800-2009 19, coverage/coverage.c) ─────────────
  * A coverpoint with more bins than this keeps its counters in a sparse table
@@ -4201,13 +4201,13 @@ void llg_cov_sample_begin(void* inst);
 /* Count the products of the bins the crossed coverpoints counted in this
  * sample (19.6); call after every llg_cov_hit of the sample. */
 void llg_cov_cross_hit(void* inst, uint32_t cross, const uint8_t* guards);
-void llg_cov_control(void* inst, int32_t point, int start);
+void llg_cov_control(void* inst, int32_t point, int32_t start);
 /* Objects sampled by the group's coverage event, pinned for the run. */
 void llg_cov_register(llg_cov_group_t* group, void* object);
 size_t llg_cov_registered(const llg_cov_group_t* group);
 /* Whether an event-driven sample of the instance can count anything: false
  * while the whole instance is stopped, so its waiter skips the sample. */
-int llg_cov_sampling(const void* inst);
+int32_t llg_cov_sampling(const void* inst);
 /* type_option.strobe (19.7.1): queue one sample of `object` (whose record
  * is `inst`), or one pass over the group's registered objects, for the
  * Postponed region of the current time slot. Further requests in the same
@@ -4317,13 +4317,13 @@ enum {
 void llg_acov_model(llg_acov_item_t* items, size_t n_items, const llg_acov_instance_t* instances,
                     size_t n_instances);
 /* One enabled check of an immediate assertion: `passed` is its outcome. */
-void llg_acov_check(llg_acov_item_t* item, int passed);
+void llg_acov_check(llg_acov_item_t* item, int32_t passed);
 /* $coverage_control/_get_max/_get/_merge/_save. `args` holds the integral
  * arguments; `instance` names the scope (an instance index, -1 $root, -2 the
  * definition named by `text`); merge and save name the database in `text`.
  * Returns the SV_COV_* status or the coverage count. */
-int32_t llg_coverage_call(int function, const sv4_t* args, int n_args, int32_t instance,
-                          llg_string_t text, int has_text, const char* site);
+int32_t llg_coverage_call(int32_t function, const sv4_t* args, int32_t n_args, int32_t instance,
+                          llg_string_t text, int32_t has_text, const char* site);
 
 /* The assertion coverage tables for the VPI bridge (llg_vpi.c, 39.3,
  * 40.5): NULL beyond the bound tables. */
@@ -4339,9 +4339,9 @@ size_t llg_acov_covered_in(int32_t instance);
 /* vpi_control coverage operations (40.5.4, S46-D10): `control` and `type`
  * are the SV_COV_* values of 40.3.1. `item` >= 0 selects one item;
  * otherwise `instance` (MODULE semantics). Returns the SV_COV_* status. */
-int32_t llg_coverage_control_vpi(int control, int type, int32_t instance, int64_t item);
+int32_t llg_coverage_control_vpi(int32_t control, int32_t type, int32_t instance, int64_t item);
 /* vpiCoverageSave (`merge` 0) and vpiCoverageMerge (`merge` 1). */
-int32_t llg_coverage_file_vpi(int merge, int type, const char* name);
+int32_t llg_coverage_file_vpi(int32_t merge, int32_t type, const char* name);
 
 /* ── FSM coverage (IEEE 1800-2009 40.4, 40.5.3) ──
  *
@@ -4458,8 +4458,8 @@ typedef struct llg_tcov_signal {
 /* `counters` holds `n_items` counters (the runtime zeroes them: a model
  * started again restarts at 0); `items` describes them. */
 void llg_scov_model(uint64_t* counters, size_t n_items, const llg_scov_packed_t* items,
-                    int started);
-void llg_tcov_model(const llg_tcov_signal_t* signals, size_t n_signals, int started);
+                    int32_t started);
+void llg_tcov_model(const llg_tcov_signal_t* signals, size_t n_signals, int32_t started);
 /* The VPI bridge (llg_vpi.c, 40.5.3). Statement entities: the entity a VPI
  * statement object (code row) stands for, or -1; its execution count while
  * collecting. Toggle signals: the signal of a catalog row, or -1; the
@@ -4495,11 +4495,11 @@ enum {
     LLG_ACOV_EVENT_CONTROL_OFF = 6,
     LLG_ACOV_EVENT_CONTROL_ON = 7,
 };
-typedef void (*llg_assertion_watch_fn)(const llg_acov_item_t* item, int event, uint64_t cb_time,
+typedef void (*llg_assertion_watch_fn)(const llg_acov_item_t* item, int32_t event, uint64_t cb_time,
                                        uint64_t start);
 void llg_assertion_watch_hook(llg_assertion_watch_fn hook);
 /* Add (`delta` 1) or remove (-1) one watch of item `index`. */
-void llg_acov_watch(size_t index, int delta);
+void llg_acov_watch(size_t index, int32_t delta);
 
 /* Control bits of an immediate or deferred item (llg_acov_item_t.control). */
 enum {
@@ -4528,11 +4528,11 @@ enum {
 };
 /* Apply `operation` to item `index`. Returns 0 for an index out of range or
  * an unknown operation. */
-int llg_acov_control(size_t index, int operation, uint64_t start);
+int32_t llg_acov_control(size_t index, int32_t operation, uint64_t start);
 /* Whether item `index` has an attempt in progress that began at `start`
  * (vpiAssertionKill). Attempts of an assertion with global clocking future
  * sampled value functions that are still queued count as present. */
-int llg_acov_attempt_at(size_t index, uint64_t start);
+int32_t llg_acov_attempt_at(size_t index, uint64_t start);
 /* vpiAssertionSysEnd (39.5.1): from now on no control task or VPI control
  * enables an assertion again. */
 void llg_assertions_end(void);

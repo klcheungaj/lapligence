@@ -416,7 +416,7 @@ LLG_CO_INLINE llg_co_status_t llg_co_run(llg_co_chain_t* ch) {
  * static callees (following the descriptors' site tables). Returns the
  * number of frames visited. */
 typedef void (*llg_co_visit_fn)(void* user, const llg_co_desc_t* desc,
-                                const llg_co_frame_t* frame, unsigned depth);
+                                const llg_co_frame_t* frame, uint32_t depth);
 size_t llg_co_backtrace(const llg_co_chain_t* ch, llg_co_visit_fn visit,
                         void* user);
 

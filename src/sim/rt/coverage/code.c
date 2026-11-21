@@ -44,7 +44,7 @@ typedef struct {
 static uint64_t* llg_scov_counts;
 static size_t llg_scov_n;
 static const llg_scov_packed_t* llg_scov_packed;
-static int llg_scov_started;
+static int32_t llg_scov_started;
 // Per-entity offsets, NULL until the first control or merge.
 static llg_scov_state_t* llg_scov_states;
 // Decoded entities and their file names, NULL until first needed.
@@ -53,10 +53,10 @@ static char* llg_scov_pool;
 // (code row, entity) pairs sorted by code row, built on the first VPI query.
 static uint64_t* llg_scov_by_code;
 static size_t llg_scov_n_by_code;
-static int llg_scov_indexed;
+static int32_t llg_scov_indexed;
 
 void llg_scov_model(uint64_t* counters, size_t n_items, const llg_scov_packed_t* items,
-                    int started) {
+                    int32_t started) {
     free(llg_scov_states);
     free(llg_scov_items);
     free(llg_scov_pool);
@@ -94,20 +94,20 @@ typedef struct {
     const char* chunks;
     size_t pos;   // payload position
     size_t end;   // payload position the stream ends at
-    int bad;
+    int32_t bad;
 } llg_scov_reader_t;
 
 #define LLG_SCOV_PAYLOAD (LLG_SCOV_PACK_ROW - 1u)
 
 static uint64_t llg_scov_get_uint(llg_scov_reader_t* r) {
     uint64_t value = 0;
-    for (unsigned shift = 0; shift < 64u && r->pos < r->end; shift += 5u) {
+    for (uint32_t shift = 0; shift < 64u && r->pos < r->end; shift += 5u) {
         size_t row = r->pos / LLG_SCOV_PAYLOAD;
-        unsigned char c = (unsigned char)
+        uint8_t c = (uint8_t)
             r->chunks[row * LLG_SCOV_PACK_ROW + (r->pos - row * LLG_SCOV_PAYLOAD)];
         ++r->pos;
         // The alphabet of src/sim/emit_c/model/vpi/pack.rs.
-        int digit = c >= 'A' && c <= 'Z'   ? c - 'A'
+        int32_t digit = c >= 'A' && c <= 'Z'   ? c - 'A'
                     : c >= 'a' && c <= 'z' ? c - 'a' + 26
                     : c >= '0' && c <= '9' ? c - '0' + 52
                     : c == '+'             ? 62
@@ -136,7 +136,7 @@ static const llg_scov_item_t* llg_scov_unpack(void) {
     if (llg_scov_items || !llg_scov_n) return llg_scov_items;
     const llg_scov_packed_t* packed = llg_scov_packed;
     uint64_t total = packed->pool_bytes + packed->item_bytes;
-    int bad = total < packed->pool_bytes || (packed->chunk_count && !packed->chunks) ||
+    int32_t bad = total < packed->pool_bytes || (packed->chunk_count && !packed->chunks) ||
               total > (uint64_t)packed->chunk_count * LLG_SCOV_PAYLOAD ||
               packed->pool_bytes >= SIZE_MAX;
     if (!bad) {
@@ -207,7 +207,7 @@ static void llg_scov_control(size_t entity, uint32_t operation) {
 
 // Visit the statement entities in scope (llg_acov_in_scope); `operation` is
 // START, STOP or RESET, or UINT32_MAX to only tally them.
-static llg_ccov_tally_t llg_scov_scope(int hier, int32_t scope, const char* definition,
+static llg_ccov_tally_t llg_scov_scope(int32_t hier, int32_t scope, const char* definition,
                                        uint32_t operation) {
     llg_ccov_tally_t tally = {0, 0};
     const llg_scov_item_t* items = llg_scov_unpack();
@@ -224,7 +224,7 @@ size_t llg_scov_covered_in(int32_t instance) {
     return llg_scov_scope(0, instance, NULL, UINT32_MAX).covered;
 }
 
-static int llg_scov_code_compare(const void* left, const void* right) {
+static int32_t llg_scov_code_compare(const void* left, const void* right) {
     uint64_t a = *(const uint64_t*)left, b = *(const uint64_t*)right;
     return a < b ? -1 : a > b ? 1 : 0;
 }
@@ -258,7 +258,7 @@ int64_t llg_scov_at_code(uint32_t code_row) {
 
 // ── Statement coverage database section ─────────────────────────────────────
 
-static int llg_scov_available(void) { return llg_scov_n != 0; }
+static int32_t llg_scov_available(void) { return llg_scov_n != 0; }
 
 static const char* llg_ccov_instance_path(int32_t instance) {
     return instance >= 0 && (size_t)instance < llg_acov_n_instances
@@ -330,7 +330,7 @@ typedef struct {
 static const llg_tcov_signal_t* llg_tcov_signals;
 static size_t llg_tcov_n;
 // The runtime ended: its watches are gone and none may be added.
-static int llg_tcov_ended;
+static int32_t llg_tcov_ended;
 static llg_tcov_state_t* llg_tcov_states;
 static uint64_t* llg_tcov_arena;
 
@@ -345,7 +345,7 @@ static size_t llg_tcov_n_watches;
 // (catalog row, signal) pairs sorted by row, built on the first VPI query.
 static uint64_t* llg_tcov_by_object;
 static size_t llg_tcov_n_by_object;
-static int llg_tcov_indexed;
+static int32_t llg_tcov_indexed;
 
 static size_t llg_tcov_words(const llg_tcov_signal_t* signal) {
     return ((size_t)signal->width + 63u) / 64u;
@@ -357,11 +357,11 @@ static size_t llg_tcov_words(const llg_tcov_signal_t* signal) {
 #define LLG_TCOV_SEEN1(data, words) ((data) + 3u * (words))
 #define LLG_TCOV_RISES(data, words) ((data) + 4u * (words))
 
-static unsigned llg_tcov_lowest_bit(uint64_t value) {
+static uint32_t llg_tcov_lowest_bit(uint64_t value) {
 #if defined(__GNUC__) || defined(__clang__)
-    return (unsigned)__builtin_ctzll(value);
+    return (uint32_t)__builtin_ctzll(value);
 #else
-    unsigned bit = 0;
+    uint32_t bit = 0;
     while (!(value & 1u)) {
         value >>= 1;
         ++bit;
@@ -373,7 +373,7 @@ static unsigned llg_tcov_lowest_bit(uint64_t value) {
 // Take the storage's value. Without `count_changes` (a start) every known
 // bit counts as seen at its value; otherwise only a bit whose known value
 // changed (or that has none yet) does, and a change between 0 and 1 counts.
-static void llg_tcov_sample(size_t index, int count_changes) {
+static void llg_tcov_sample(size_t index, int32_t count_changes) {
     const llg_tcov_signal_t* signal = &llg_tcov_signals[index];
     uint64_t* data = llg_tcov_states[index].data;
     size_t words = llg_tcov_words(signal);
@@ -385,7 +385,7 @@ static void llg_tcov_sample(size_t index, int count_changes) {
     uint64_t* falls = rises + signal->width;
     sv4_t value = *signal->storage;
     for (size_t w = 0; w < words; ++w) {
-        unsigned tail = (unsigned)(signal->width - 64u * w);
+        uint32_t tail = (uint32_t)(signal->width - 64u * w);
         uint64_t mask = tail < 64u ? (UINT64_C(1) << tail) - 1u : UINT64_MAX;
         uint64_t unknown =
             llg_sv4_word(value, w, LLG_SV4_X) | llg_sv4_word(value, w, LLG_SV4_Z);
@@ -438,7 +438,7 @@ static void llg_tcov_reset(size_t index) {
            (2u * words + 2u * (size_t)signal->width) * sizeof(uint64_t));
 }
 
-static int llg_tcov_watch_compare(const void* left, const void* right) {
+static int32_t llg_tcov_watch_compare(const void* left, const void* right) {
     const llg_tcov_watch_t* a = (const llg_tcov_watch_t*)left;
     const llg_tcov_watch_t* b = (const llg_tcov_watch_t*)right;
     uintptr_t ka = (uintptr_t)a->key, kb = (uintptr_t)b->key;
@@ -448,7 +448,7 @@ static int llg_tcov_watch_compare(const void* left, const void* right) {
 
 static void llg_tcov_release(void);
 
-void llg_tcov_model(const llg_tcov_signal_t* signals, size_t n_signals, int started) {
+void llg_tcov_model(const llg_tcov_signal_t* signals, size_t n_signals, int32_t started) {
     llg_tcov_release();
     llg_tcov_ended = 0;
     llg_tcov_signals = signals;
@@ -542,7 +542,7 @@ void llg_tcov_bits(size_t signal, uint32_t lsb, uint32_t n, uint64_t* covered, u
 uint32_t llg_tcov_width(size_t signal) { return signal < llg_tcov_n ? llg_tcov_signals[signal].width : 0u; }
 
 // Visit the toggle signals in scope; the tally counts their bits.
-static llg_ccov_tally_t llg_tcov_scope(int hier, int32_t scope, const char* definition,
+static llg_ccov_tally_t llg_tcov_scope(int32_t hier, int32_t scope, const char* definition,
                                        uint32_t operation) {
     llg_ccov_tally_t tally = {0, 0};
     for (size_t i = 0; i < llg_tcov_n; ++i) {
@@ -592,7 +592,7 @@ int64_t llg_tcov_at_object(int32_t row) {
 
 // ── Toggle coverage database section ────────────────────────────────────────
 
-static int llg_tcov_available(void) { return llg_tcov_n != 0; }
+static int32_t llg_tcov_available(void) { return llg_tcov_n != 0; }
 
 // Identity of the toggle table: per signal its name and width.
 static uint64_t llg_tcov_schema_hash(void) {
@@ -619,8 +619,8 @@ static void llg_tcov_put_section(llg_cov_buf_t* buf) {
         llg_cov_put_u32(buf, signal->width);
         for (uint32_t bit = 0; bit < signal->width; ++bit) {
             uint64_t mask = UINT64_C(1) << (bit % 64u);
-            unsigned char seen =
-                (unsigned char)(((LLG_TCOV_SEEN0(data, words)[bit / 64u] & mask) != 0) |
+            uint8_t seen =
+                (uint8_t)(((LLG_TCOV_SEEN0(data, words)[bit / 64u] & mask) != 0) |
                                 ((LLG_TCOV_SEEN1(data, words)[bit / 64u] & mask) != 0) << 1);
             llg_cov_put(buf, &seen, 1);
             llg_cov_put_u64(buf, rises[bit]);
@@ -640,7 +640,7 @@ static const char* llg_tcov_merge_section(const llg_cov_db_file_t* db) {
     if (hash != llg_tcov_schema_hash() || (size_t)n != llg_tcov_n)
         return "it was saved by a model with different signals";
     size_t start = reader.pos;
-    for (int pass = 0; pass < 2; ++pass) {
+    for (int32_t pass = 0; pass < 2; ++pass) {
         reader.pos = start;
         for (size_t i = 0; i < llg_tcov_n; ++i) {
             const llg_tcov_signal_t* signal = &llg_tcov_signals[i];
@@ -651,7 +651,7 @@ static const char* llg_tcov_merge_section(const llg_cov_db_file_t* db) {
             if (!llg_cov_get_u32(&reader, &width) || width != signal->width)
                 return "the toggle section does not match its signal table";
             for (uint32_t bit = 0; bit < width; ++bit) {
-                unsigned char seen = 0;
+                uint8_t seen = 0;
                 uint64_t up, down;
                 if (!llg_cov_get(&reader, &seen, 1) || seen > 3u || !llg_cov_get_u64(&reader, &up) ||
                     !llg_cov_get_u64(&reader, &down))

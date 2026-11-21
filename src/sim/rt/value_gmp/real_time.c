@@ -9,7 +9,7 @@ uint64_t llg_gmp_sv4_delay_ticks(g4_t value, uint64_t unit_ticks) {
     if (llg_gmp_sv4_is_unknown(value))
         return 0;
     const uint64_t* a = g4_a(&value);
-    int negative = value.is_signed && value.width &&
+    int32_t negative = value.is_signed && value.width &&
                    ((a[(value.width - 1u) / 64u] >> ((value.width - 1u) % 64u)) & 1u);
     uint64_t raw = llg_gmp_sv4_to_u64(value);
     if (negative && value.width < 64)
@@ -50,7 +50,7 @@ double llg_gmp_sv4_to_real_wide(g4_t value) {
     const uint64_t *a = g4_a(&value), *b = g4_b(&value);
     size_t n = llg_gmp_sv4_words(value);
     uint64_t sign = UINT64_C(1) << ((value.width - 1u) % 64u);
-    int negative = value.is_signed && (a[n - 1u] & ~(b ? b[n - 1u] : 0) & sign);
+    int32_t negative = value.is_signed && (a[n - 1u] & ~(b ? b[n - 1u] : 0) & sign);
     size_t first = 0;
     if (negative)
         while (first < n && !(a[first] & ~(b ? b[first] : 0)))
@@ -71,17 +71,17 @@ g4_t llg_gmp_sv4_from_real_wide(double rounded, uint32_t width, int8_t sign) {
     double magnitude = fabs(rounded);
     if (magnitude == 0.0)
         return out;
-    int exponent;
+    int32_t exponent;
     double fraction = frexp(magnitude, &exponent);
     uint64_t significand = (uint64_t)ldexp(fraction, 53);
-    int shift = exponent - 53;
+    int32_t shift = exponent - 53;
     if (shift < 0) {
-        significand >>= (unsigned)-shift;
+        significand >>= (uint32_t)-shift;
         shift = 0;
     }
     uint64_t* a = g4_mut_a(&out);
-    size_t n = llg_gmp_sv4_words(out), word = (unsigned)shift / 64u;
-    unsigned bit = (unsigned)shift % 64u;
+    size_t n = llg_gmp_sv4_words(out), word = (uint32_t)shift / 64u;
+    uint32_t bit = (uint32_t)shift % 64u;
     if (word < n) {
         a[word] = significand << bit;
         if (bit && word + 1u < n)

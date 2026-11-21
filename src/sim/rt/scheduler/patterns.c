@@ -35,8 +35,8 @@ typedef struct {
     char* data;
     size_t len;
     size_t cap;
-    int truncated;
-    int abbreviated;
+    int32_t truncated;
+    int32_t abbreviated;
     size_t depth;
     const void* chain[LLG_PATTERN_MAX_DEPTH];
 } llg_pattern_out_t;
@@ -94,9 +94,9 @@ static void llg_pattern_scalar(llg_pattern_out_t* out, sv4_t value) {
     if (text != inline_text) free(text);
 }
 
-static int llg_pattern_enum_match(const llg_pattern_enum_t* member, sv4_t value) {
-    int limbs = llg_sv4_nlimbs(llg_sv4_width(value));
-    for (int i = 0; i < limbs; ++i) {
+static int32_t llg_pattern_enum_match(const llg_pattern_enum_t* member, sv4_t value) {
+    int32_t limbs = llg_sv4_nlimbs(llg_sv4_width(value));
+    for (int32_t i = 0; i < limbs; ++i) {
         uint64_t mask = llg_sv4_limb_mask(llg_sv4_width(value), i);
         if (((llg_sv4_word(value, i, LLG_SV4_BITS) ^ member->words[i]) & mask) ||
             ((llg_sv4_word(value, i, LLG_SV4_X) ^ member->words[limbs + i]) & mask) ||
@@ -158,7 +158,7 @@ static void llg_pattern_container(llg_pattern_out_t* out,
 
 // A real leaf of a flattened aggregate is its IEEE image (64 bits, or 32 bits
 // for shortreal), as packed aggregate transport stores it.
-static double llg_pattern_flat_real(sv4_t bits, int shortreal) {
+static double llg_pattern_flat_real(sv4_t bits, int32_t shortreal) {
     uint64_t word = llg_sv4_word(bits, 0, LLG_SV4_BITS);
     if (shortreal) {
         uint32_t image = (uint32_t)word;
@@ -174,7 +174,7 @@ static double llg_pattern_flat_real(sv4_t bits, int shortreal) {
 // One element of a flattened value: bits [lsb + width - 1 : lsb] of `whole`,
 // carrying the element's own signedness.
 static sv4_t llg_pattern_slice(sv4_t whole, uint32_t lsb, uint32_t width,
-                               int is_signed) {
+                               int32_t is_signed) {
     sv4_t slice = sv4_part_select(whole, (int64_t)lsb + width - 1, (int64_t)lsb);
     if (!is_signed) return slice;
     sv4_t result = sv4_resize(slice, width, 1);
@@ -252,7 +252,7 @@ static void llg_pattern_flat(llg_pattern_out_t* out,
     }
     default: {
         if (lsb == 0 && type->flat_width == llg_sv4_width(whole) &&
-            (int)llg_sv4_signed(whole) == (int)type->signed_flag) {
+            (int32_t)llg_sv4_signed(whole) == (int32_t)type->signed_flag) {
             llg_pattern_packed_leaf(out, type, whole);
             return;
         }
@@ -339,7 +339,7 @@ static void llg_pattern_value(llg_pattern_out_t* out,
         llg_pattern_string(out, value->value.string.data, value->value.string.len);
         return;
     case LLG_VALUE_AGGREGATE: {
-        int named = type && (type->kind == LLG_PATTERN_STRUCT ||
+        int32_t named = type && (type->kind == LLG_PATTERN_STRUCT ||
                              type->kind == LLG_PATTERN_UNION) &&
                     type->count == desc->member_count;
         if (named && type->kind == LLG_PATTERN_UNION) {
@@ -425,7 +425,7 @@ static void llg_pattern_value(llg_pattern_out_t* out,
 
 static void llg_pattern_assoc_key(llg_pattern_out_t* out, uint8_t key_kind,
                                   uint8_t key_class, const sv4_t* integral,
-                                  const unsigned char* text, size_t length) {
+                                  const uint8_t* text, size_t length) {
     if (key_kind == LLG_ASSOC_STRING)
         llg_pattern_string(out, (const char*)text, length);
     else if (key_class) {
@@ -442,8 +442,8 @@ static void llg_pattern_container(llg_pattern_out_t* out,
                                   const llg_pattern_type_t* type,
                                   uint8_t storage, const void* container) {
     const llg_pattern_type_t* element = llg_pattern_member_type(out, type, 0);
-    int assoc = type && type->kind == LLG_PATTERN_ASSOC;
-    int queue = type && type->kind == LLG_PATTERN_QUEUE;
+    int32_t assoc = type && type->kind == LLG_PATTERN_ASSOC;
+    int32_t queue = type && type->kind == LLG_PATTERN_QUEUE;
     if (container && storage != LLG_PATTERN_FROM_PACKED_CONTAINER && !assoc &&
         type && type->kind == LLG_PATTERN_FIXED_ARRAY) {
         // A fixed array of native elements uses dynamic-array storage.
@@ -568,7 +568,7 @@ static void llg_pattern_object(llg_pattern_out_t* out, void* handle) {
     if (layout->count < count) count = layout->count;
     out->chain[out->depth++] = handle;
     llg_pattern_put(out, "'{", 2);
-    int first = 1;
+    int32_t first = 1;
     for (size_t i = 0; i < count && !out->truncated; ++i) {
         /* Hidden members (randomization mode bits) have no name. */
         if (!layout->fields[i].name) continue;
@@ -609,7 +609,7 @@ static void llg_pattern_handle(llg_pattern_out_t* out,
 llg_string_t llg_pattern_format(const llg_pattern_type_t* types,
                                 uint32_t type_count, uint32_t type,
                                 uint8_t storage, const void* source,
-                                int abbreviated) {
+                                int32_t abbreviated) {
     llg_pattern_out_t out;
     memset(&out, 0, sizeof(out));
     out.types = types;
@@ -618,7 +618,7 @@ llg_string_t llg_pattern_format(const llg_pattern_type_t* types,
     llg_pattern_field_t root = {NULL, type, storage};
     llg_pattern_field(&out, &root, source);
     if (out.truncated)
-        llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "%%p output truncated at %u characters", (unsigned)LLG_PATTERN_OUTPUT_LIMIT);
+        llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "%%p output truncated at %" PRIu32 " characters", (uint32_t)LLG_PATTERN_OUTPUT_LIMIT);
     llg_string_t result = llg_string_bytes(out.data, out.len);
     free(out.data);
     return result;

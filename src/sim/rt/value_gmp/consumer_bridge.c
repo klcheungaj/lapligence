@@ -2,7 +2,7 @@
 
 /* Capture aliases before promotion: realloc may move the mask's borrowed A
  * plane. No snapshots are needed because each mask word is read before writing. */
-static void masked_write(g4_t* target, g4_t source, g4_t mask, int clipped) {
+static void masked_write(g4_t* target, g4_t source, g4_t mask, int32_t clipped) {
     if (g4_alias(*target, source))
         return;
     uint32_t width = target->width;
@@ -14,7 +14,7 @@ static void masked_write(g4_t* target, g4_t source, g4_t mask, int clipped) {
         n = sn;
     if (n > mn)
         n = mn;
-    int mask_alias = g4_alias(*target, mask);
+    int32_t mask_alias = g4_alias(*target, mask);
     const uint64_t *sa = g4_a(&source), *sb = g4_b(&source);
     const uint64_t *ma = g4_a(&mask), *mb = g4_b(&mask);
     if (target->width > 64 && !target->data.wide.b && sb) {
@@ -49,7 +49,7 @@ void llg_gmp_sv4_masked_merge(g4_t* target, g4_t source, g4_t mask) {
 void llg_gmp_sv4_masked_copy(g4_t* target, g4_t source, g4_t mask) {
     masked_write(target, source, mask, 1);
 }
-int llg_gmp_sv4_masked_same(g4_t a, g4_t b, const g4_t* mask) {
+int32_t llg_gmp_sv4_masked_same(g4_t a, g4_t b, const g4_t* mask) {
     uint32_t width = a.width < b.width ? a.width : b.width;
     size_t n = ((size_t)width + 63u) / 64u;
     const uint64_t *aa = g4_a(&a), *ab = g4_b(&a), *ba = g4_a(&b), *bb = g4_b(&b);
@@ -64,11 +64,11 @@ int llg_gmp_sv4_masked_same(g4_t a, g4_t b, const g4_t* mask) {
     }
     return 1;
 }
-int llg_gmp_sv4_range_same(g4_t target, uint32_t offset, g4_t source) {
+int32_t llg_gmp_sv4_range_same(g4_t target, uint32_t offset, g4_t source) {
     const uint64_t *ta = g4_a(&target), *tb = g4_b(&target);
     const uint64_t *sa = g4_a(&source), *sb = g4_b(&source);
     for (uint32_t bit = 0; bit < source.width;) {
-        unsigned take = source.width - bit < 64 ? source.width - bit : 64;
+        uint32_t take = source.width - bit < 64 ? source.width - bit : 64;
         if (g4_range_word(ta, offset + bit, take) != sa[bit / 64] ||
             g4_range_word(tb, offset + bit, take) != (sb ? sb[bit / 64] : 0))
             return 0;
@@ -82,12 +82,12 @@ void llg_gmp_sv4_range_copy(g4_t* target, uint32_t offset, g4_t source) {
     g4_copy_bits(target, offset, source, 0, source.width);
     llg_gmp_sv4_finish(target);
 }
-void llg_gmp_sv4_range_fill(g4_t* target, uint32_t low, uint32_t count, unsigned state) {
+void llg_gmp_sv4_range_fill(g4_t* target, uint32_t low, uint32_t count, uint32_t state) {
     if (low >= target->width || !count)
         return;
     if (count > target->width - low)
         count = target->width - low;
-    g4_fill_bits(target, low, count, state <= 3 ? (int)state : 0);
+    g4_fill_bits(target, low, count, state <= 3 ? (int32_t)state : 0);
     llg_gmp_sv4_finish(target);
 }
 void llg_gmp_sv4_mask_remove(g4_t* target, g4_t removed) {
@@ -131,7 +131,7 @@ void llg_gmp_sv4_two_state_inplace_wide(g4_t* value) {
     }
     llg_gmp_sv4_finish(value);
 }
-void llg_gmp_sv4_append_digit_wide(g4_t* value, unsigned count, unsigned state, unsigned digit) {
+void llg_gmp_sv4_append_digit_wide(g4_t* value, uint32_t count, uint32_t state, uint32_t digit) {
     if (!value->width)
         return;
     uint64_t low_mask = g4_mask(count);
@@ -152,10 +152,10 @@ void llg_gmp_sv4_append_digit_wide(g4_t* value, unsigned count, unsigned state, 
 }
 void llg_gmp_sv4_export_vpi32(g4_t value, void* output, size_t count, size_t stride) {
     const uint64_t *a = g4_a(&value), *b = g4_b(&value);
-    unsigned char* bytes = (unsigned char*)output;
+    uint8_t* bytes = (uint8_t*)output;
     size_t n = llg_gmp_sv4_words(value);
     for (size_t i = 0; i < count; ++i) {
-        unsigned shift = (unsigned)(i % 2) * 32;
+        uint32_t shift = (uint32_t)(i % 2) * 32;
         uint32_t aval = i / 2 < n ? (uint32_t)(a[i / 2] >> shift) : 0;
         uint32_t bval = i / 2 < n && b ? (uint32_t)(b[i / 2] >> shift) : 0;
         memcpy(bytes + i * stride, &aval, sizeof(aval));
@@ -168,7 +168,7 @@ void llg_gmp_sv4_import_vpi32(g4_t* value, const void* input, size_t count, size
         count = available;
     if (!count)
         return;
-    const unsigned char* bytes = (const unsigned char*)input;
+    const uint8_t* bytes = (const uint8_t*)input;
     if (value->width > 64 && !value->data.wide.b) {
         for (size_t i = 0; i < count; ++i) {
             uint32_t bval;
@@ -185,7 +185,7 @@ void llg_gmp_sv4_import_vpi32(g4_t* value, const void* input, size_t count, size
         uint32_t aval, bval;
         memcpy(&aval, bytes + i * stride, sizeof(aval));
         memcpy(&bval, bytes + i * stride + 4, sizeof(bval));
-        unsigned shift = (unsigned)(i % 2) * 32;
+        uint32_t shift = (uint32_t)(i % 2) * 32;
         uint64_t mask = (uint64_t)UINT32_MAX << shift;
         a[i / 2] = (a[i / 2] & ~mask) | ((uint64_t)aval << shift);
         if (b)
@@ -193,7 +193,7 @@ void llg_gmp_sv4_import_vpi32(g4_t* value, const void* input, size_t count, size
     }
     llg_gmp_sv4_finish(value);
 }
-int llg_gmp_sv4_same_vpi_words(g4_t value, const llg_gmp_sv4_vpi_word_t* words, size_t count) {
+int32_t llg_gmp_sv4_same_vpi_words(g4_t value, const llg_gmp_sv4_vpi_word_t* words, size_t count) {
     size_t n = llg_gmp_sv4_words(value), scan = count > n ? count : n;
     const uint64_t *a = g4_a(&value), *b = g4_b(&value);
     for (size_t i = 0; i < scan; ++i) {
@@ -208,10 +208,10 @@ void llg_gmp_sv4_export_text(g4_t value, uint32_t width, char* output) {
     size_t n = llg_gmp_sv4_words(value);
     for (size_t i = 0; i < ((size_t)width + 63u) / 64u; ++i) {
         uint64_t wa = i < n ? a[i] : 0, wb = i < n && b ? b[i] : 0;
-        unsigned take = width - (uint32_t)(i * 64u);
+        uint32_t take = width - (uint32_t)(i * 64u);
         if (take > 64)
             take = 64;
-        for (unsigned bit = 0; bit < take; ++bit) {
+        for (uint32_t bit = 0; bit < take; ++bit) {
             output[width - 1u - (uint32_t)(i * 64u) - bit] =
                 "01zx"[((wa >> bit) & 1u) | (((wb >> bit) & 1u) << 1)];
         }

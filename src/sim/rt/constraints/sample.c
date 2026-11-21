@@ -96,7 +96,7 @@ typedef struct {
     uint64_t* t2;
 } cr_wcount_t;
 
-static int cr_level_counted(const cr_wcount_t* c, uint32_t level) {
+static int32_t cr_level_counted(const cr_wcount_t* c, uint32_t level) {
     return c->l->layer[level] == c->layer && c->fixed[level] < 0;
 }
 
@@ -122,7 +122,7 @@ static void cr_gap(cr_wcount_t* c, uint64_t* out, uint32_t from, uint32_t to) {
 }
 
 /* Weight of taking `bit` at node n: w_bit * gap * count(child). */
-static void cr_branch_weight(cr_wcount_t* c, uint64_t* out, uint32_t n, int bit) {
+static void cr_branch_weight(cr_wcount_t* c, uint64_t* out, uint32_t n, int32_t bit) {
     const cr_exact_t* e = c->e;
     uint32_t limbs = c->l->limbs;
     uint32_t child = bit ? e->hi[n] : e->lo[n];
@@ -149,8 +149,8 @@ static void cr_wcount_prepare(cr_wcount_t* c) {
     uint64_t* w = (uint64_t*)cr_alloc(limbs, sizeof(uint64_t));
     for (uint32_t n = 2; n < e->nodes; ++n) {
         uint64_t* d = c->cnt + (size_t)n * limbs;
-        int fixed = c->fixed[e->level[n]];
-        for (int bit = 0; bit < 2; ++bit) {
+        int32_t fixed = c->fixed[e->level[n]];
+        for (int32_t bit = 0; bit < 2; ++bit) {
             if (fixed >= 0 && fixed != bit) continue;
             cr_branch_weight(c, w, n, bit);
             bn_add(d, w, limbs);
@@ -160,7 +160,7 @@ static void cr_wcount_prepare(cr_wcount_t* c) {
 }
 
 /* Draw the counted levels of the current layer below `root` into bits[]. */
-static int cr_wcount_draw(cr_wcount_t* c, uint32_t root, const llg_cr_rng_t* rng, uint8_t* bits) {
+static int32_t cr_wcount_draw(cr_wcount_t* c, uint32_t root, const llg_cr_rng_t* rng, uint8_t* bits) {
     const cr_exact_t* e = c->e;
     uint32_t limbs = c->l->limbs;
     uint64_t* total = (uint64_t*)cr_alloc(limbs, sizeof(uint64_t));
@@ -168,7 +168,7 @@ static int cr_wcount_draw(cr_wcount_t* c, uint32_t root, const llg_cr_rng_t* rng
     uint64_t* r = (uint64_t*)cr_alloc(limbs, sizeof(uint64_t));
     cr_gap(c, total, 0u, e->level[root]);
     bn_mul(w0, total, c->cnt + (size_t)root * limbs, limbs);
-    int ok = bn_bits(w0, limbs) != 0;
+    int32_t ok = bn_bits(w0, limbs) != 0;
     uint32_t level = 0;
     uint32_t n = root;
     while (ok) {
@@ -178,7 +178,7 @@ static int cr_wcount_draw(cr_wcount_t* c, uint32_t root, const llg_cr_rng_t* rng
             bits[level] = (uint8_t)(rng->next(rng->stream) & 1u);
         }
         if (n < 2u) break;
-        int fixed = c->fixed[level];
+        int32_t fixed = c->fixed[level];
         if (fixed >= 0) {
             n = fixed ? e->hi[n] : e->lo[n];
             ++level;
@@ -187,7 +187,7 @@ static int cr_wcount_draw(cr_wcount_t* c, uint32_t root, const llg_cr_rng_t* rng
         cr_branch_weight(c, w0, n, 0);
         memcpy(total, c->cnt + (size_t)n * limbs, limbs * sizeof(uint64_t));
         bn_uniform(rng, r, total, limbs);
-        int bit = bn_cmp(r, w0, limbs) >= 0;
+        int32_t bit = bn_cmp(r, w0, limbs) >= 0;
         bits[level++] = (uint8_t)bit;
         n = bit ? e->hi[n] : e->lo[n];
     }
@@ -211,7 +211,7 @@ static void cr_enum_values(const cr_wcount_t* c, uint32_t n, uint32_t level, uin
     }
     uint64_t bit = UINT64_C(1) << level_bit[level];
     if (n >= 2u && e->level[n] == level) {
-        int fixed = c->fixed[level];
+        int32_t fixed = c->fixed[level];
         if (fixed >= 0) {
             cr_enum_values(c, fixed ? e->hi[n] : e->lo[n], level + 1u, value, level_bit, out);
             return;
@@ -245,8 +245,8 @@ static uint64_t* cr_cyc_state(llg_cr_session_t* s, uint32_t var) {
     return s->cyc + s->cyc_off[var];
 }
 
-static int cr_cyc_used(llg_cr_session_t* s, uint32_t var, uint64_t value) {
-    return (int)((cr_cyc_state(s, var)[value / 64u] >> (value % 64u)) & 1u);
+static int32_t cr_cyc_used(llg_cr_session_t* s, uint32_t var, uint64_t value) {
+    return (int32_t)((cr_cyc_state(s, var)[value / 64u] >> (value % 64u)) & 1u);
 }
 
 /* Start a new cycle when the signature differs (S30-D3). */
@@ -305,7 +305,7 @@ typedef struct {
     uint64_t inv[3];
 } cr_cycw_t;
 
-static int cr_cyc_wide(const llg_cr_session_t* s, uint32_t var) {
+static int32_t cr_cyc_wide(const llg_cr_session_t* s, uint32_t var) {
     return s->p->vars[var].bit_width > LLG_CR_CYCLIC_BITMAP_WIDTH;
 }
 
@@ -313,7 +313,7 @@ static int cr_cyc_wide(const llg_cr_session_t* s, uint32_t var) {
  * that are right, and a * a = 1 modulo 8). */
 static uint64_t cr_cycw_inverse_odd(uint64_t a) {
     uint64_t inv = a;
-    for (int i = 0; i < 5; ++i) inv *= 2u - a * inv;
+    for (int32_t i = 0; i < 5; ++i) inv *= 2u - a * inv;
     return inv;
 }
 
@@ -325,13 +325,13 @@ static void cr_cycw_init(cr_cycw_t* c, uint32_t w, uint64_t key) {
     c->mul[0] = (key >> 32) | 1u;
     c->mul[1] = UINT64_C(0x9e3779b1);
     c->mul[2] = (cr_mix(key) >> 32) | 1u;
-    for (int i = 0; i < 3; ++i) c->inv[i] = cr_cycw_inverse_odd(c->mul[i]);
+    for (int32_t i = 0; i < 3; ++i) c->inv[i] = cr_cycw_inverse_odd(c->mul[i]);
 }
 
 /* The value at position `x` of the permutation. */
 static uint64_t cr_cycw_value(const cr_cycw_t* c, uint64_t x) {
     x = (x + c->add) & c->mask;
-    for (int i = 0; i < 3; ++i) {
+    for (int32_t i = 0; i < 3; ++i) {
         x ^= x >> c->shift;
         x = (x * c->mul[i]) & c->mask;
     }
@@ -348,7 +348,7 @@ static uint64_t cr_cycw_unshift(const cr_cycw_t* c, uint64_t y) {
 /* The position of value `y`. */
 static uint64_t cr_cycw_position(const cr_cycw_t* c, uint64_t y) {
     y = cr_cycw_unshift(c, y);
-    for (int i = 2; i >= 0; --i) {
+    for (int32_t i = 2; i >= 0; --i) {
         y = (y * c->inv[i]) & c->mask;
         y = cr_cycw_unshift(c, y);
     }
@@ -392,16 +392,16 @@ static void cr_cycw_free_draw(llg_cr_session_t* s, uint32_t var, const llg_cr_rn
 
 /* Whether `value` of the cyclic variable drawn in the current layer has a
  * path to true below `root` with the fixed bits. */
-static int cr_cycw_legal(const cr_wcount_t* c, uint32_t root, uint64_t value,
+static int32_t cr_cycw_legal(const cr_wcount_t* c, uint32_t root, uint64_t value,
                          const uint32_t* level_bit) {
     const cr_exact_t* e = c->e;
     uint32_t n = root;
     while (n >= 2u) {
         uint32_t level = e->level[n];
-        int bit = c->fixed[level];
+        int32_t bit = c->fixed[level];
         if (bit < 0) {
             if (!cr_level_counted(c, level)) cr_fatal("randc layer reads a later layer");
-            bit = (int)((value >> level_bit[level]) & 1u);
+            bit = (int32_t)((value >> level_bit[level]) & 1u);
         }
         n = bit ? e->hi[n] : e->lo[n];
     }
@@ -444,7 +444,7 @@ static llg_cr_status_t cr_cycw_draw(cr_wcount_t* c, llg_cr_session_t* s, uint32_
         cr_u64vec_t values = {0, 0, 0};
         cr_enum_values(c, root, 0u, 0u, level_bit, &values);
         if (!values.len) cr_fatal("randc layer lists no legal value");
-        for (int pass = 0; pass < 2; ++pass) {
+        for (int32_t pass = 0; pass < 2; ++pass) {
             uint64_t best = UINT64_MAX;
             for (size_t i = 0; i < values.len; ++i) {
                 uint64_t at = cr_cycw_position(&perm, values.data[i]);

@@ -1,7 +1,7 @@
 
 static void enqueue_region(llg_proc_t* p, llg_region_t region) {
     if (!region_valid(region)) {
-        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid execution region %d for process", (int)region);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid execution region %" PRId32 " for process", (int32_t)region);
         llg_last_failure = 1;
         g.finish = 1;
         return;
@@ -170,14 +170,14 @@ void llg_value_watch_hook(llg_value_watch_fn hook) { value_watch_hook = hook; }
 
 // FSM coverage (coverage/fsm.c) watches its state signals through the same
 // rows; the flag is set while a model has FSMs.
-static int value_watch_fsm;
+static int32_t value_watch_fsm;
 static void llg_fcov_changed(const void* key);
 // So does toggle coverage (coverage/code.c) with its started signals.
-static int value_watch_toggle;
+static int32_t value_watch_toggle;
 static void llg_tcov_changed(const void* key);
 // And concurrent assertions with the hidden signals that hold their
 // `disable iff` conditions (concurrent_assertions.c).
-static int value_watch_disable;
+static int32_t value_watch_disable;
 
 // A watch's subscription, with how many of its watches see one change per
 // check (VPI cbValueChange, llg_value_watch_add_at_check); `watchers` counts
@@ -208,7 +208,7 @@ static LLG_OUTLYING void value_watch_checked(const llg_wait_source_t* source, co
         value_watch_hook(key);
 }
 
-static int value_watch_insert(const void* key, int at_check) {
+static int32_t value_watch_insert(const void* key, int32_t at_check) {
     if (!key) return 0;
     llg_wait_source_t* source = wait_source_get(key);
     if (!source->watch) {
@@ -228,9 +228,9 @@ static int value_watch_insert(const void* key, int at_check) {
     return 1;
 }
 
-int llg_value_watch_add(const void* key) { return value_watch_insert(key, 0); }
+int32_t llg_value_watch_add(const void* key) { return value_watch_insert(key, 0); }
 
-int llg_value_watch_add_at_check(const void* key) { return value_watch_insert(key, 1); }
+int32_t llg_value_watch_add_at_check(const void* key) { return value_watch_insert(key, 1); }
 
 static void value_watch_drop(llg_wait_source_t* source) {
     llg_value_watch_node_t* node = (llg_value_watch_node_t*)source->watch;
@@ -242,7 +242,7 @@ static void value_watch_drop(llg_wait_source_t* source) {
     free(node);
 }
 
-static void value_watch_erase(const void* key, int at_check) {
+static void value_watch_erase(const void* key, int32_t at_check) {
     // A watch from an earlier runtime lifetime is already gone.
     llg_wait_source_t* source = wait_source_find(key);
     if (!source || !source->watchers) return;
@@ -296,13 +296,13 @@ static void wait_dependency_key_add(llg_wait_keys_t* keys,
                                        : (const void*)dependency->real);
 }
 
-static int wait_key_compare(const void* left, const void* right) {
+static int32_t wait_key_compare(const void* left, const void* right) {
     uintptr_t a = (uintptr_t)*(const void* const*)left;
     uintptr_t b = (uintptr_t)*(const void* const*)right;
     return (a > b) - (a < b);
 }
 
-static int wait_inline_fits(const sv4_t* value) {
+static int32_t wait_inline_fits(const sv4_t* value) {
     return llg_sv4_width(*value) <= 64u * LLG_WAIT_INLINE_LIMBS;
 }
 
@@ -313,7 +313,7 @@ static void wait_inline_copy(llg_wait_t* wait, const sv4_t* value) {
     llg_sv4_export_vpi_words(*value, 0, single->words, LLG_WAIT_INLINE_LIMBS);
 }
 
-static int wait_inline_same(llg_wait_t* wait, sv4_t value) {
+static int32_t wait_inline_same(llg_wait_t* wait, sv4_t value) {
     return llg_sv4_same_vpi_words(value, wait->payload.single.words,
                                  LLG_WAIT_INLINE_LIMBS);
 }
@@ -390,29 +390,29 @@ static void wait_subscriptions_register(llg_wait_t* wait) {
     }
     llg_wait_keys_t keys = {0};
     if (wait->kind == W_EVENTS) {
-        for (int i = 0; i < wait->payload.expression.n; i++)
+        for (int32_t i = 0; i < wait->payload.expression.n; i++)
             wait_key_add(&keys, wait->payload.expression.specs[i].sig);
     } else if (wait->kind == W_DEPS) {
-        for (int i = 0; i < wait->payload.expression.n; i++)
+        for (int32_t i = 0; i < wait->payload.expression.n; i++)
             wait_dependency_key_add(&keys, &wait->payload.expression.dependencies[i]);
     } else if (wait->kind == W_MIXED) {
-        for (int i = 0; i < wait->payload.rare->mixed.n; i++)
+        for (int32_t i = 0; i < wait->payload.rare->mixed.n; i++)
             wait_key_add(&keys, wait->payload.rare->mixed.specs[i].sig);
     } else if (wait->kind == W_PROCESS) {
         wait_key_add(&keys, wait->payload.rare->process.target);
     } else if (wait->kind == W_LEVEL) {
         wait_key_add(&keys, wait->payload.rare->level.sig);
     } else if (wait->kind == W_EXPR) {
-        for (int i = 0; i < wait->payload.expression.n; i++) {
+        for (int32_t i = 0; i < wait->payload.expression.n; i++) {
             const llg_expr_event_spec_t* spec = &wait->payload.expression.expressions[i];
             if (spec->event) continue;
             wait_key_add(&keys, spec->sig);
             wait_key_add(&keys, spec->real_sig);
             if (spec->n_dependencies > 0) {
-                for (int j = 0; j < spec->n_dependencies; j++)
+                for (int32_t j = 0; j < spec->n_dependencies; j++)
                     wait_dependency_key_add(&keys, &spec->dependencies[j]);
             } else {
-                for (int j = 0; j < spec->n_reads; j++)
+                for (int32_t j = 0; j < spec->n_reads; j++)
                     wait_key_add(&keys, spec->reads[j]);
             }
         }
@@ -426,7 +426,7 @@ static void wait_subscriptions_register(llg_wait_t* wait) {
     wait->subscriptions = (llg_wait_subscription_t*)llg_checked_calloc(
         unique, sizeof(*wait->subscriptions), "wait subscriptions");
     wait->n_subscriptions = unique;
-    int write_walker = wait->kind == W_EXPR && wait->proc && (wait->proc->wait_gate & LLG_WAIT_GATE_ARMED);
+    int32_t write_walker = wait->kind == W_EXPR && wait->proc && (wait->proc->wait_gate & LLG_WAIT_GATE_ARMED);
     for (size_t i = 0; i < unique; i++) {
         llg_wait_subscription_t* node = &wait->subscriptions[i];
         node->source = wait_source_get(keys.keys[i]);
@@ -484,7 +484,7 @@ static void remove_waiters_entry(llg_wait_t* w) {
         w->n_subscriptions = 0;
         return;
     }
-    int write_walker = w->kind == W_EXPR && w->proc && (w->proc->wait_gate & LLG_WAIT_GATE_ARMED);
+    int32_t write_walker = w->kind == W_EXPR && w->proc && (w->proc->wait_gate & LLG_WAIT_GATE_ARMED);
     for (size_t i = 0; i < w->n_subscriptions; i++) {
         if (write_walker) w->subscriptions[i].source->write_walkers--;
         wait_subscription_unlink(&w->subscriptions[i]);
@@ -516,7 +516,7 @@ static llg_wait_rare_t* wait_rare_allocate(llg_wait_t* wait,
 
 static void insert_zero_wait(llg_wait_t* w, llg_region_t region) {
     if (!region_valid(region)) {
-        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid execution region %d for zero-delay wait", (int)region);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid execution region %" PRId32 " for zero-delay wait", (int32_t)region);
         llg_last_failure = 1;
         g.finish = 1;
         return;
@@ -533,7 +533,7 @@ static void insert_zero_wait(llg_wait_t* w, llg_region_t region) {
 }
 
 static void remove_zero_wait_entry(llg_wait_t* w) {
-    for (int i = 0; i < LLG_REGION_COUNT; i++) {
+    for (int32_t i = 0; i < LLG_REGION_COUNT; i++) {
         llg_wait_queue_t* queue = &g.zero_waits[i];
         llg_wait_t** pp = &queue->head;
         while (*pp) {
@@ -564,7 +564,7 @@ static llg_proc_t* dequeue_region(llg_region_t region) {
 }
 
 static void remove_region_entry(llg_proc_t* p) {
-    for (int i = 0; i < LLG_REGION_COUNT; i++) {
+    for (int32_t i = 0; i < LLG_REGION_COUNT; i++) {
         llg_proc_queue_t* queue = &g.process_queues[i];
         llg_proc_t** pp = &queue->head;
         while (*pp) {
@@ -588,7 +588,7 @@ static void remove_inactive_entry(llg_wait_t* w) {
     remove_zero_wait_entry(w);
 }
 
-static int semaphore_key_count(sv4_t value, uint64_t* result) {
+static int32_t semaphore_key_count(sv4_t value, uint64_t* result) {
     int64_t signed_value = 0;
     if (!result || !sv4_to_index_i64(value, &signed_value) || signed_value < 0) {
         llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "semaphore key count must be a known nonnegative integral value");
@@ -600,7 +600,7 @@ static int semaphore_key_count(sv4_t value, uint64_t* result) {
     return 1;
 }
 
-static int semaphore_valid(llg_semaphore_t* semaphore, const char* action) {
+static int32_t semaphore_valid(llg_semaphore_t* semaphore, const char* action) {
     if (semaphore) return 1;
     llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "semaphore %s requires a live semaphore handle", action);
     llg_last_failure = 1;
@@ -652,7 +652,7 @@ static void semaphore_wake_available(llg_semaphore_t* semaphore) {
         llg_semaphore_wait_t* next = node->next;
         llg_proc_t* proc = node->proc;
         llg_wait_t* wait = proc ? &proc->wait : NULL;
-        int stale = !proc || !wait || wait->kind != W_SEMAPHORE ||
+        int32_t stale = !proc || !wait || wait->kind != W_SEMAPHORE ||
                     !wait->payload.rare || wait->payload.rare->semaphore.waiter != node;
         if (!stale && node->keys > semaphore->available) {
             previous = node;
@@ -691,7 +691,7 @@ static void insert_timed(llg_wait_t* w) {
 static void free_expression_wait(llg_wait_t* w) {
     llg_wait_expression_payload_t* payload = &w->payload.expression;
     if (!payload->expressions) return;
-    for (int i = 0; i < payload->n; i++) {
+    for (int32_t i = 0; i < payload->n; i++) {
         llg_frame_release((llg_frame_t*)payload->expressions[i].eval_context);
         llg_frame_release((llg_frame_t*)payload->expressions[i].condition_context);
         free(payload->expressions[i].reads);
@@ -782,9 +782,9 @@ static void wait_payload_release(llg_wait_t* wait) {
     if (process_target) llg_process_release(process_target);
 }
 
-static void release_expression_contexts(const llg_expr_event_spec_t* specs, int n) {
+static void release_expression_contexts(const llg_expr_event_spec_t* specs, int32_t n) {
     if (!specs) return;
-    for (int i = 0; i < n; i++) {
+    for (int32_t i = 0; i < n; i++) {
         llg_frame_release((llg_frame_t*)specs[i].eval_context);
         llg_frame_release((llg_frame_t*)specs[i].condition_context);
     }
@@ -792,7 +792,7 @@ static void release_expression_contexts(const llg_expr_event_spec_t* specs, int 
 
 static void free_deferred_trigger(llg_deferred_trigger_t* trigger) {
     if (!trigger) return;
-    for (int i = 0; i < trigger->n; i++) {
+    for (int32_t i = 0; i < trigger->n; i++) {
         llg_frame_release((llg_frame_t*)trigger->specs[i].eval_context);
         llg_frame_release((llg_frame_t*)trigger->specs[i].condition_context);
         free(trigger->specs[i].reads);

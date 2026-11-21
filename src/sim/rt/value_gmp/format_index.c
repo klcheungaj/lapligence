@@ -1,6 +1,6 @@
 #include "internal.h"
 
-int llg_gmp_sv4_fits_i64_wide(g4_t value) {
+int32_t llg_gmp_sv4_fits_i64_wide(g4_t value) {
     if (llg_gmp_sv4_is_unknown(value))
         return 0;
     const uint64_t* a = g4_a(&value);
@@ -34,7 +34,7 @@ void llg_gmp_sv4_to_dec_string_wide(g4_t value, char* buf, size_t cap) {
     const uint64_t* a = g4_a(&value);
     if (llg_gmp_sv4_is_unknown(value)) {
         const uint64_t* b = g4_b(&value);
-        int any_x = 0, all_x = 1, all_z = 1;
+        int32_t any_x = 0, all_x = 1, all_z = 1;
         for (size_t i = 0; i < n; ++i) {
             uint64_t full = i + 1u == n ? g4_topmask(value.width) : UINT64_MAX;
             uint64_t xm = a[i] & b[i], zm = b[i] & ~a[i];
@@ -47,7 +47,7 @@ void llg_gmp_sv4_to_dec_string_wide(g4_t value, char* buf, size_t cap) {
             buf[1] = 0;
         return;
     }
-    int negative = value.is_signed && ((a[n - 1u] >> ((value.width - 1u) % 64u)) & 1u);
+    int32_t negative = value.is_signed && ((a[n - 1u] >> ((value.width - 1u) % 64u)) & 1u);
     uint64_t* magnitude = llg_gmp_sv4_alloc(n);
     uint64_t carry = 1;
     for (size_t i = 0; i < n; ++i) {
@@ -58,7 +58,7 @@ void llg_gmp_sv4_to_dec_string_wide(g4_t value, char* buf, size_t cap) {
     while (n && !magnitude[n - 1u])
         --n;
     size_t capacity = ((size_t)value.width * 30103u) / 100000u + 2u;
-    unsigned char* digits = (unsigned char*)malloc(capacity);
+    uint8_t* digits = (uint8_t*)malloc(capacity);
     if (!digits)
         llg_gmp_sv4_fail("value-format allocation failed");
     size_t count = n ? llg_gmp_sv4_kernel_decimal(digits, magnitude, n) : 0;
@@ -79,7 +79,7 @@ static uint64_t group(const uint64_t* p, uint32_t width, uint32_t bit) {
     if (!p || bit >= width)
         return 0;
     size_t word = bit / 64u;
-    unsigned shift = bit % 64u;
+    uint32_t shift = bit % 64u;
     uint64_t out = p[word] >> shift;
     if (shift && word + 1u < ((size_t)width + 63u) / 64u)
         out |= p[word + 1u] << (64u - shift);
@@ -92,7 +92,7 @@ void llg_gmp_sv4_format(char fmt, g4_t value, char* buf, size_t cap) {
         llg_gmp_sv4_to_dec_string(value, buf, cap);
         return;
     }
-    unsigned size = fmt == 'b' ? 1u : fmt == 'h' ? 4u : fmt == 'o' ? 3u : 0;
+    uint32_t size = fmt == 'b' ? 1u : fmt == 'h' ? 4u : fmt == 'o' ? 3u : 0;
     if (!size) {
         buf[0] = cap > 1 ? '?' : 0;
         if (cap > 1)
@@ -105,18 +105,18 @@ void llg_gmp_sv4_format(char fmt, g4_t value, char* buf, size_t cap) {
         size_t n = llg_gmp_sv4_words(value);
         while (n && len + 1u < cap) {
             --n;
-            unsigned remaining = n + 1u == llg_gmp_sv4_words(value) && value.width % 64u
+            uint32_t remaining = n + 1u == llg_gmp_sv4_words(value) && value.width % 64u
                                      ? value.width % 64u : 64u;
-            unsigned take = cap - len - 1u < remaining ? (unsigned)(cap - len - 1u) : remaining;
+            uint32_t take = cap - len - 1u < remaining ? (uint32_t)(cap - len - 1u) : remaining;
             uint64_t aa = a[n], bb = b ? b[n] : 0;
             if (!bb) {
-                for (unsigned i = 0; i < take; ++i)
+                for (uint32_t i = 0; i < take; ++i)
                     buf[len++] = (char)('0' + ((aa >> --remaining) & 1u));
             } else {
-                for (unsigned i = 0; i < take; ++i) {
+                for (uint32_t i = 0; i < take; ++i) {
                     --remaining;
-                    unsigned state = (unsigned)((aa >> remaining) & 1u) |
-                                     (unsigned)(((bb >> remaining) & 1u) << 1);
+                    uint32_t state = (uint32_t)((aa >> remaining) & 1u) |
+                                     (uint32_t)(((bb >> remaining) & 1u) << 1);
                     buf[len++] = "01zx"[state];
                 }
             }

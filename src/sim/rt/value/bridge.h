@@ -22,15 +22,15 @@ extern "C" {
 #include "consumer_bridge.h"
 #endif
 void llg_value_require_abi(void);
-int llg_ref_view_valid(const llg_ref_view_t*, const sv4_t*, size_t*);
+int32_t llg_ref_view_valid(const llg_ref_view_t*, const sv4_t*, size_t*);
 sv4_t llg_ref_read(const llg_ref_t*);
 #if !LLG_SV4_USE_GMP
 static inline void llg_sv4_export_vpi32(sv4_t value, void* output,
                                        size_t count, size_t stride) {
-    unsigned char* bytes = (unsigned char*)output;
+    uint8_t* bytes = (uint8_t*)output;
     for (size_t i = 0; i < count;) {
         llg_sv4_vpi_word_t word = llg_sv4_vpi_word(value, i / 2u);
-        for (unsigned shift = 0; shift < 64u && i < count; shift += 32u, ++i) {
+        for (uint32_t shift = 0; shift < 64u && i < count; shift += 32u, ++i) {
             uint32_t aval = (uint32_t)(word.aval >> shift);
             uint32_t bval = (uint32_t)(word.bval >> shift);
             memcpy(bytes + i * stride, &aval, sizeof(aval));
@@ -40,14 +40,14 @@ static inline void llg_sv4_export_vpi32(sv4_t value, void* output,
 }
 static inline void llg_sv4_import_vpi32(sv4_t* value, const void* input,
                                        size_t count, size_t stride) {
-    const unsigned char* bytes = (const unsigned char*)input;
+    const uint8_t* bytes = (const uint8_t*)input;
     size_t available = (llg_sv4_width(*value) + 31u) / 32u;
     if (count > available) count = available;
     for (size_t i = 0; i < count;) {
         size_t word_index = i / 2u;
         llg_sv4_vpi_word_t word = {0, 0};
         if (count - i == 1u) word = llg_sv4_vpi_word(*value, word_index);
-        for (unsigned shift = 0; shift < 64u && i < count; shift += 32u, ++i) {
+        for (uint32_t shift = 0; shift < 64u && i < count; shift += 32u, ++i) {
             uint32_t aval, bval;
             memcpy(&aval, bytes + i * stride, sizeof(aval));
             memcpy(&bval, bytes + i * stride + sizeof(aval), sizeof(bval));
@@ -58,7 +58,7 @@ static inline void llg_sv4_import_vpi32(sv4_t* value, const void* input,
         llg_sv4_set_vpi_word(value, word_index, word);
     }
 }
-static inline int llg_sv4_same_vpi_words(sv4_t value,
+static inline int32_t llg_sv4_same_vpi_words(sv4_t value,
                                         const llg_sv4_vpi_word_t* words, size_t count) {
     size_t n = llg_sv4_words(value);
     if (n < count) n = count;
@@ -73,11 +73,11 @@ static inline int llg_sv4_same_vpi_words(sv4_t value,
 static inline void llg_sv4_export_text(sv4_t value, uint32_t width, char* output) {
     for (size_t i = 0; i < ((size_t)width + 63u) / 64u; ++i) {
         llg_sv4_vpi_word_t word = llg_sv4_vpi_word(value, i);
-        unsigned count = width - (uint32_t)(i * 64u);
+        uint32_t count = width - (uint32_t)(i * 64u);
         if (count > 64u) count = 64u;
-        for (unsigned bit = 0; bit < count; ++bit) {
-            unsigned a = (unsigned)((word.aval >> bit) & 1u);
-            unsigned b = (unsigned)((word.bval >> bit) & 1u);
+        for (uint32_t bit = 0; bit < count; ++bit) {
+            uint32_t a = (uint32_t)((word.aval >> bit) & 1u);
+            uint32_t b = (uint32_t)((word.bval >> bit) & 1u);
             output[width - 1u - (uint32_t)(i * 64u) - bit] = b ? (a ? 'x' : 'z') : (a ? '1' : '0');
         }
     }

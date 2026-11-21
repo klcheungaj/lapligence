@@ -38,7 +38,7 @@ typedef struct llg_fcov_transition {
 // a lookup is a binary search; an FSM has few distinct transitions, and a
 // new one is rare after the first cycles.
 static llg_fcov_transition_t* llg_fcov_transition(llg_fcov_fsm_t* fsm, uint32_t from,
-                                                  uint32_t to, int insert) {
+                                                  uint32_t to, int32_t insert) {
     uint64_t key = ((uint64_t)from << 32) | to;
     uint32_t lo = 0, hi = fsm->n_transitions;
     while (lo < hi) {
@@ -89,9 +89,9 @@ static size_t llg_fcov_n_watches;
 static size_t llg_fcov_watch_capacity;
 
 // Bits [lsb, lsb + size) of one plane of `value`, size 1 to 64.
-static uint64_t llg_fcov_bits(sv4_t value, uint32_t lsb, uint32_t size, unsigned plane) {
+static uint64_t llg_fcov_bits(sv4_t value, uint32_t lsb, uint32_t size, uint32_t plane) {
     size_t word = lsb / 64u;
-    unsigned offset = lsb % 64u;
+    uint32_t offset = lsb % 64u;
     uint64_t bits = llg_sv4_word(value, word, plane) >> offset;
     if (offset && offset + size > 64u) bits |= llg_sv4_word(value, word + 1u, plane) << (64u - offset);
     return size < 64u ? bits & ((UINT64_C(1) << size) - 1u) : bits;
@@ -99,7 +99,7 @@ static uint64_t llg_fcov_bits(sv4_t value, uint32_t lsb, uint32_t size, unsigned
 
 // The state expression of `fsm`, or 0 with `*known` cleared when a bit is X
 // or Z. Reads the parts' storage words in place: no value is built.
-static uint64_t llg_fcov_read(const llg_fcov_fsm_t* fsm, int* known) {
+static uint64_t llg_fcov_read(const llg_fcov_fsm_t* fsm, int32_t* known) {
     uint64_t value = 0;
     *known = 1;
     for (uint32_t i = 0; i < fsm->n_parts; ++i) {
@@ -125,10 +125,10 @@ static int32_t llg_fcov_state_of(const llg_fcov_fsm_t* fsm, uint64_t value) {
 // Take the state expression's value now and remember where the FSM is.
 // Being in a state counts one visit, except that with `only_changes` an
 // unchanged value counts nothing.
-static void llg_fcov_sample(llg_fcov_fsm_t* fsm, int only_changes) {
-    int known;
+static void llg_fcov_sample(llg_fcov_fsm_t* fsm, int32_t only_changes) {
+    int32_t known;
     uint64_t value = llg_fcov_read(fsm, &known);
-    if (only_changes && known == (int)fsm->known && (!known || value == fsm->value)) return;
+    if (only_changes && known == (int32_t)fsm->known && (!known || value == fsm->value)) return;
     int32_t previous = only_changes ? fsm->current : -1;
     fsm->known = (uint8_t)known;
     fsm->value = value;
@@ -142,7 +142,7 @@ static void llg_fcov_sample(llg_fcov_fsm_t* fsm, int only_changes) {
     }
 }
 
-static int llg_fcov_watch_compare(const void* left, const void* right) {
+static int32_t llg_fcov_watch_compare(const void* left, const void* right) {
     const llg_fcov_watch_t* a = (const llg_fcov_watch_t*)left;
     const llg_fcov_watch_t* b = (const llg_fcov_watch_t*)right;
     uintptr_t ka = (uintptr_t)a->key, kb = (uintptr_t)b->key;
@@ -152,11 +152,11 @@ static int llg_fcov_watch_compare(const void* left, const void* right) {
 
 // Watch (`on`) or stop watching the parts of FSM `index`. Two parts of one
 // signal share one watch.
-static void llg_fcov_watch(size_t index, int on) {
+static void llg_fcov_watch(size_t index, int32_t on) {
     llg_fcov_fsm_t* fsm = &llg_fcov_fsms[index];
     for (uint32_t i = 0; i < fsm->n_parts; ++i) {
         const void* key = fsm->parts[i].storage;
-        int repeated = 0;
+        int32_t repeated = 0;
         for (uint32_t j = 0; j < i; ++j) repeated |= fsm->parts[j].storage == fsm->parts[i].storage;
         if (repeated) continue;
         if (on) (void)llg_value_watch_add(key);
@@ -250,7 +250,7 @@ static uint32_t llg_fcov_reached(const llg_fcov_fsm_t* fsm) {
 
 // Visit the FSMs in scope (llg_acov_in_scope); `operation` is START, STOP or
 // RESET, or UINT32_MAX to only tally them.
-static llg_fcov_tally_t llg_fcov_scope(int hier, int32_t scope, const char* definition,
+static llg_fcov_tally_t llg_fcov_scope(int32_t hier, int32_t scope, const char* definition,
                                        uint32_t operation) {
     llg_fcov_tally_t tally = {0, 0, 0};
     for (size_t i = 0; i < llg_fcov_n_fsms; ++i) {
@@ -268,7 +268,7 @@ static llg_fcov_tally_t llg_fcov_scope(int hier, int32_t scope, const char* defi
 
 // ── Database section ────────────────────────────────────────────────────────
 
-static int llg_fcov_available(void) { return llg_fcov_n_fsms != 0; }
+static int32_t llg_fcov_available(void) { return llg_fcov_n_fsms != 0; }
 
 // Identity of the FSM table: per FSM its name, instance, width and states.
 static uint64_t llg_fcov_schema_hash(void) {

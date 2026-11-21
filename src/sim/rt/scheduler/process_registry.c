@@ -7,9 +7,9 @@ typedef struct {
     const char* name;
 } llg_final_registration_t;
 static llg_final_registration_t* llg_finals;
-static int llg_n_finals;
-static int llg_finals_capacity;
-static int llg_in_finals;
+static int32_t llg_n_finals;
+static int32_t llg_finals_capacity;
+static int32_t llg_in_finals;
 // Scheduler time when `llg_rt_run` exited; `$time` inside finals reports it.
 static uint64_t llg_final_time;
 
@@ -19,8 +19,8 @@ static uint64_t llg_final_time;
 // bounded by the `int` index type; overflow aborts explicitly. Every grown
 // table is fully populated before it replaces the live one, so an allocation
 // failure aborts without a partially rebound registry.
-static int llg_registry_capacity(int current, int needed) {
-    int capacity = current > 0 ? current : LLG_REGISTRY_INITIAL;
+static int32_t llg_registry_capacity(int32_t current, int32_t needed) {
+    int32_t capacity = current > 0 ? current : LLG_REGISTRY_INITIAL;
     while (capacity < needed) {
         if (capacity > INT_MAX / 2) {
             llg_msg(LLG_MSG_INTERNAL, NULL, "registry capacity overflow");
@@ -34,9 +34,9 @@ static int llg_registry_capacity(int current, int needed) {
 // A set bit denotes a hole below n_procs; upper levels summarize nonempty
 // words. Lowest-hole reuse preserves cancellation traversal order. At most
 // six words are visited for any int-sized registry, independent of population.
-static void proc_free_set(int slot, int available) {
+static void proc_free_set(int32_t slot, int32_t available) {
     size_t index = (size_t)slot;
-    for (int level = 0; level < g.proc_free_levels; level++) {
+    for (int32_t level = 0; level < g.proc_free_levels; level++) {
         size_t word = index / 64;
         uint64_t mask = UINT64_C(1) << (index % 64);
         uint64_t before = g.proc_free_bits[level][word];
@@ -49,8 +49,8 @@ static void proc_free_set(int slot, int available) {
     }
 }
 
-static unsigned proc_first_bit(uint64_t bits) {
-    unsigned index = 0;
+static uint32_t proc_first_bit(uint64_t bits) {
+    uint32_t index = 0;
     // Portable C11 bounded binary search; callers supply a nonzero word.
     if (!(bits & UINT64_C(0xffffffff))) { bits >>= 32; index += 32; }
     if (!(bits & UINT64_C(0xffff))) { bits >>= 16; index += 16; }
@@ -61,44 +61,44 @@ static unsigned proc_first_bit(uint64_t bits) {
     return index;
 }
 
-static int proc_first_free(void) {
+static int32_t proc_first_free(void) {
     if (!g.proc_free_levels ||
         !g.proc_free_bits[g.proc_free_levels - 1][0]) return g.n_procs;
     size_t index = 0;
-    for (int level = g.proc_free_levels - 1; level >= 0; level--)
+    for (int32_t level = g.proc_free_levels - 1; level >= 0; level--)
         index = index * 64 + proc_first_bit(g.proc_free_bits[level][index]);
-    return (int)index;
+    return (int32_t)index;
 }
 
-static void all_procs_reserve(int needed) {
+static void all_procs_reserve(int32_t needed) {
     if (needed <= g.all_procs_capacity) return;
-    int capacity = llg_registry_capacity(g.all_procs_capacity, needed);
+    int32_t capacity = llg_registry_capacity(g.all_procs_capacity, needed);
     llg_proc_t** grown = (llg_proc_t**)llg_checked_calloc(
         (size_t)capacity, sizeof(*grown), "process registry");
     if (g.all_procs)
         memcpy(grown, g.all_procs, (size_t)g.n_procs * sizeof(*grown));
     uint64_t* bits[6] = {0};
     size_t count = (size_t)capacity;
-    int levels = 0;
+    int32_t levels = 0;
     do {
         count = (count + 63) / 64;
         bits[levels++] = (uint64_t*)llg_checked_calloc(
             count, sizeof(uint64_t), "process free slots");
     } while (count > 1);
-    for (int level = 0; level < g.proc_free_levels; level++)
+    for (int32_t level = 0; level < g.proc_free_levels; level++)
         free(g.proc_free_bits[level]);
     memcpy(g.proc_free_bits, bits, sizeof(bits));
     g.proc_free_levels = levels;
     free(g.all_procs);
     g.all_procs = grown;
     g.all_procs_capacity = capacity;
-    for (int i = 0; i < g.n_procs; i++)
+    for (int32_t i = 0; i < g.n_procs; i++)
         if (!grown[i]) proc_free_set(i, 1);
 }
 
-static void finals_reserve(int needed) {
+static void finals_reserve(int32_t needed) {
     if (needed <= llg_finals_capacity) return;
-    int capacity = llg_registry_capacity(llg_finals_capacity, needed);
+    int32_t capacity = llg_registry_capacity(llg_finals_capacity, needed);
     llg_final_registration_t* grown = (llg_final_registration_t*)llg_checked_malloc(
         (size_t)capacity, sizeof(*grown), "final block registry");
     if (llg_finals)
@@ -120,7 +120,7 @@ static void register_proc(llg_proc_t* p) {
         abort();
     }
     p->assertion_owner = ++g.next_process_identity;
-    int slot = proc_first_free();
+    int32_t slot = proc_first_free();
     if (slot == INT_MAX) {
         llg_msg(LLG_MSG_INTERNAL, NULL, "process registry size overflow");
         abort();
@@ -139,7 +139,7 @@ static void register_proc(llg_proc_t* p) {
 static void unregister_proc(llg_proc_t* p) {
     if (!p || p->registry_slot < 0 || p->registry_slot >= g.n_procs ||
         g.all_procs[p->registry_slot] != p) return;
-    int slot = p->registry_slot;
+    int32_t slot = p->registry_slot;
     p->registry_slot = -1;
     g.all_procs[slot] = NULL;
     proc_free_set(slot, 1);
@@ -185,7 +185,7 @@ static void service_program_completions(void) {
         // Restart after cancellation: it changes the process and group lists.
         for (;;) {
             llg_proc_t* victim = NULL;
-            for (int i = 0; i < g.n_procs; i++) {
+            for (int32_t i = 0; i < g.n_procs; i++) {
                 llg_proc_t* proc = g.all_procs[i];
                 if (proc && proc->program == program && !proc->completed &&
                     !proc->killed) {
@@ -265,7 +265,7 @@ static size_t rng_scope_length(const char* name) {
 static uint64_t rng_scope_hash(const char* scope, size_t length) {
     uint64_t hash = UINT64_C(0xcbf29ce484222325);
     for (size_t index = 0; index < length; ++index) {
-        hash ^= (unsigned char)scope[index];
+        hash ^= (uint8_t)scope[index];
         hash *= UINT64_C(0x100000001b3);
     }
     return hash;
@@ -430,7 +430,7 @@ sv4_t llg_random_seed_merge(sv4_t old, int32_t seed) {
     return merged;
 }
 
-sv4_t llg_urandom_range(sv4_t max, sv4_t min, int has_min) {
+sv4_t llg_urandom_range(sv4_t max, sv4_t min, int32_t has_min) {
     uint32_t high = llg_rng_argument(max);
     uint32_t low = has_min ? llg_rng_argument(min) : 0;
     return sv4_from_u64(
@@ -451,10 +451,10 @@ static const char* randcase_where(const char* location) {
     return location && location[0] != '\0' ? location : "<unknown>";
 }
 
-static int random_weight_negative(const sv4_t* weight) {
+static int32_t random_weight_negative(const sv4_t* weight) {
     if (!llg_sv4_signed(*weight) || llg_sv4_width(*weight) == 0) return 0;
     sv4_t sign = sv4_bit_select(*weight, (uint64_t)llg_sv4_width(*weight) - 1u);
-    int negative = sv4_to_bool(sign);
+    int32_t negative = sv4_to_bool(sign);
     sv4_destroy(&sign);
     return negative;
 }
@@ -467,7 +467,7 @@ static void random_weight_fatal(const char* message, const char* location) {
     llg_rt_fatal_typed(0, message, NULL, 0, "", randcase_where(location));
 }
 
-static int randcase_negative_weight(const sv4_t* const* weights, size_t count,
+static int32_t randcase_negative_weight(const sv4_t* const* weights, size_t count,
                                     const char* location) {
     for (size_t index = 0; index < count; ++index) {
         if (!random_weight_negative(weights[index])) continue;
@@ -528,9 +528,9 @@ static sv4_t randcase_weight_wide(const sv4_t* weight, uint32_t sum_width) {
     return wide;
 }
 
-static int randcase_less(sv4_t left, sv4_t right) {
+static int32_t randcase_less(sv4_t left, sv4_t right) {
     sv4_t less = sv4_lt(left, right);
-    int result = sv4_to_bool(less);
+    int32_t result = sv4_to_bool(less);
     sv4_destroy(&less);
     return result;
 }
@@ -606,7 +606,7 @@ int32_t llg_randsequence_select(const sv4_t* const* weights, size_t count,
         random_weight_fatal("randsequence weight is negative", location);
         return -1;
     }
-    int any = 0;
+    int32_t any = 0;
     for (size_t index = 0; index < count && !any; ++index) {
         if (llg_sv4_width(*weights[index]) == 0) continue;
         sv4_t known = sv4_to_two_state(*weights[index]);
@@ -653,7 +653,7 @@ int32_t llg_randsequence_join_pick(const sv4_t* const* remaining, size_t count,
         double scaled = p * 4294967296.0 + 0.5;
         uint64_t threshold = scaled >= 4294967296.0 ? UINT64_C(4294967296)
                                                     : (uint64_t)scaled;
-        int restrict_length = 0;
+        int32_t restrict_length = 0;
         if (threshold >= UINT64_C(4294967296))
             restrict_length = 1;
         else if (threshold != 0)
@@ -689,8 +689,8 @@ llg_string_t llg_process_get_randstate(void) {
     return llg_rng_state_get(llg_process_rng());
 }
 
-int llg_process_set_randstate(llg_string_t state) {
-    int ok = llg_rng_state_set(llg_process_rng(), &state);
+int32_t llg_process_set_randstate(llg_string_t state) {
+    int32_t ok = llg_rng_state_set(llg_process_rng(), &state);
     if (!ok) {
         llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "random runtime: invalid randstate string");
         llg_last_failure = 1;

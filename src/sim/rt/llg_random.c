@@ -53,7 +53,7 @@ static int32_t clamp_interval_i32(int64_t value) {
     return (int32_t)value;
 }
 
-static int valid_seed(int32_t *seed) {
+static int32_t valid_seed(int32_t *seed) {
     if (seed != NULL) return 1;
     llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "seed must be a writable 32-bit value");
     return 0;

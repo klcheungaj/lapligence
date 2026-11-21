@@ -4,10 +4,10 @@
 
 
 
-static LLG_OUTLYING void force_dependency_changed(sv4_t* sig, double* real, int is_real);
+static LLG_OUTLYING void force_dependency_changed(sv4_t* sig, double* real, int32_t is_real);
 static void sig_write(sv4_t* target, sv4_t value);
 static void sig_write_now(sv4_t* target, sv4_t value);
-static int marker_flip(sv4_t* marker, int rowless);
+static int32_t marker_flip(sv4_t* marker, int32_t rowless);
 // Passed as the row of a publication whose caller has just found that its
 // storage has no row: the publication skips its own lookup. Never read.
 static llg_wait_source_t wait_source_absent;
@@ -21,13 +21,13 @@ static void fixed_dense_written(const void* target);
 static sv4_t* fixed_block_contents(const struct llg_fixed_block* block);
 static void fixed_block_sampled_changed(struct llg_fixed_block* block,
                                         sv4_t* target, sv4_t old);
-static int fixed_array_contents_waited(const sv4_t* target);
+static int32_t fixed_array_contents_waited(const sv4_t* target);
 static sv4_t* fixed_array_contents_marker(const sv4_t* target);
 static void change_forget(const void* key);
 static void change_forget_history(llg_clocking_edge_t* edge);
 static llg_change_t* change_find_unrowed(const void* target);
 // Set while a check settles deferred changes (change_flush).
-static int change_settling;
+static int32_t change_settling;
 
 enum { LLG_DEPENDENCY_INITIAL_BUCKETS = 64u };
 
@@ -133,7 +133,7 @@ void llg_dependency_changed(sv4_t* dependency) {
     uint64_t bit = llg_sv4_word(*dependency, 0, LLG_SV4_BITS) & 1u;
     /* A reference marker keeps its width: the value already stored through
      * the reference reaches its element before readers wake. */
-    int reference = llg_sv4_width(*dependency) == LLG_NATIVE_REF_MARKER_WIDTH;
+    int32_t reference = llg_sv4_width(*dependency) == LLG_NATIVE_REF_MARKER_WIDTH;
     if (LLG_CO_UNLIKELY(reference)) llg_native_ref_stored(dependency);
     /* Native strings and containers publish through this marker. A subscriber
      * may terminate the writer without returning through this function. */
@@ -146,7 +146,7 @@ void llg_dependency_changed(sv4_t* dependency) {
     llg_value_scope_end(scope);
 }
 
-void llg_dependency_notify(sv4_t* contents, sv4_t* shape, int change) {
+void llg_dependency_notify(sv4_t* contents, sv4_t* shape, int32_t change) {
     if (change & 1)
         llg_dependency_changed(contents);
     if (change & 2)
@@ -156,27 +156,27 @@ void llg_dependency_notify(sv4_t* contents, sv4_t* shape, int change) {
 // Always inlined into clocking_edge_note, which every publication of a
 // signal with clocking history runs: left to GCC's unit-growth limits, the
 // out-of-line call there cost the clocking-block row about 5%.
-LLG_CO_INLINE int ev_matches_inline(sv4_t old, sv4_t new, int kind) {
+LLG_CO_INLINE int32_t ev_matches_inline(sv4_t old, sv4_t new, int32_t kind) {
     if (kind == LLG_EV_ANY) return !sv4_same(old, new);
     // Edge controls use only the LSB. Read without allocating one-bit values.
-    unsigned a = llg_sv4_state(old, 0);
-    unsigned b = llg_sv4_state(new, 0);
+    uint32_t a = llg_sv4_state(old, 0);
+    uint32_t b = llg_sv4_state(new, 0);
     if (a == 3) a = 2;
     if (b == 3) b = 2;
     return kind == LLG_EV_POSEDGE ? (a == 0 && b != 0) || (a == 2 && b == 1)
                                   : (a == 1 && b != 1) || (a == 2 && b == 0);
 }
 
-static int ev_matches(sv4_t old, sv4_t new, int kind) {
+static int32_t ev_matches(sv4_t old, sv4_t new, int32_t kind) {
     return ev_matches_inline(old, new, kind);
 }
 
-static int ev_inline_matches(llg_wait_t* wait, sv4_t value, int kind) {
+static int32_t ev_inline_matches(llg_wait_t* wait, sv4_t value, int32_t kind) {
     if (kind == LLG_EV_ANY) return !wait_inline_same(wait, value);
     const llg_wait_inline_payload_t* single = &wait->payload.single;
-    unsigned a = !single->width || (single->words[0].bval & 1u)
-        ? 2u : (unsigned)(single->words[0].aval & 1u);
-    unsigned b = llg_sv4_state(value, 0);
+    uint32_t a = !single->width || (single->words[0].bval & 1u)
+        ? 2u : (uint32_t)(single->words[0].aval & 1u);
+    uint32_t b = llg_sv4_state(value, 0);
     if (b == 3) b = 2;
     return kind == LLG_EV_POSEDGE ? (a == 0 && b != 0) || (a == 2 && b == 1)
                                   : (a == 1 && b != 1) || (a == 2 && b == 0);
@@ -184,7 +184,7 @@ static int ev_inline_matches(llg_wait_t* wait, sv4_t value, int kind) {
 
 // Signal publication calls this only after establishing that some bit changed.
 // Directional controls still inspect the packed value's LSB.
-static int ev_matches_changed(sv4_t old, sv4_t new, int kind) {
+static int32_t ev_matches_changed(sv4_t old, sv4_t new, int32_t kind) {
     return kind == LLG_EV_ANY || ev_matches(old, new, kind);
 }
 
@@ -350,16 +350,16 @@ static void clocking_record_edge(sv4_t* signal, sv4_t old, sv4_t value) {
     if (edge) clocking_edge_note(edge, old, value);
 }
 
-static uint64_t assertion_clock_tick(sv4_t* signal, int edge_kind) {
+static uint64_t assertion_clock_tick(sv4_t* signal, int32_t edge_kind) {
     llg_clocking_edge_t* edge = find_clocking_edge(signal);
     if (!edge) return 0;
     return edge_kind == LLG_EV_POSEDGE ? edge->posedge_count
                                        : edge->negedge_count;
 }
 
-static int clocking_event_current(const llg_wait_src_t* srcs, int n) {
+static int32_t clocking_event_current(const llg_wait_src_t* srcs, int32_t n) {
     if (!srcs || n <= 0) return 0;
-    for (int i = 0; i < n; i++) {
+    for (int32_t i = 0; i < n; i++) {
         if (srcs[i].sig) {
             // A change this turn has not published yet (T1-D11) is the
             // clocking event of this time step: its check follows in the
@@ -377,7 +377,7 @@ static int clocking_event_current(const llg_wait_src_t* srcs, int n) {
                     return 1;
             }
             if (!edge) continue;
-            unsigned occurred = srcs[i].kind == LLG_EV_POSEDGE
+            uint32_t occurred = srcs[i].kind == LLG_EV_POSEDGE
                                     ? CLOCKING_POSEDGE
                                     : srcs[i].kind == LLG_EV_NEGEDGE
                                           ? CLOCKING_NEGEDGE : CLOCKING_ANY;
@@ -390,7 +390,7 @@ static int clocking_event_current(const llg_wait_src_t* srcs, int n) {
 }
 
 static void clocking_drive_sources_acquire(const llg_clocking_drive_t* drive) {
-    for (int i = 0; i < drive->n_specs; i++) {
+    for (int32_t i = 0; i < drive->n_specs; i++) {
         sv4_t* sig = drive->specs[i].sig;
         if (!sig) {
             g.clocking_drive_event_refs++;
@@ -420,7 +420,7 @@ static void clocking_drive_sources_acquire(const llg_clocking_drive_t* drive) {
 }
 
 static void clocking_drive_sources_release(const llg_clocking_drive_t* drive) {
-    for (int i = 0; i < drive->n_specs; i++) {
+    for (int32_t i = 0; i < drive->n_specs; i++) {
         sv4_t* sig = drive->specs[i].sig;
         if (!sig) {
             if (g.clocking_drive_event_refs) g.clocking_drive_event_refs--;
@@ -436,7 +436,7 @@ static void clocking_drive_sources_release(const llg_clocking_drive_t* drive) {
     }
 }
 
-static int clocking_drive_source_pending(const sv4_t* sig) {
+static int32_t clocking_drive_source_pending(const sv4_t* sig) {
     for (size_t at = 0; at < g.clocking_drive_source_count; at++)
         if (g.clocking_drive_sources[at].sig == sig) return 1;
     return 0;
@@ -470,9 +470,9 @@ static void clocking_drive_enqueue(const llg_clocking_drive_t* drive) {
     enqueue_nba(n);
 }
 
-static int clocking_drive_source_matches_signal(
+static int32_t clocking_drive_source_matches_signal(
     const llg_clocking_drive_t* drive, sv4_t* signal, sv4_t old, sv4_t value) {
-    for (int i = 0; i < drive->n_specs; i++) {
+    for (int32_t i = 0; i < drive->n_specs; i++) {
         const llg_wait_src_t* source = &drive->specs[i];
         if (source->sig == signal &&
             ev_matches_changed(old, value, source->kind)) return 1;
@@ -480,9 +480,9 @@ static int clocking_drive_source_matches_signal(
     return 0;
 }
 
-static int clocking_drive_source_matches_event(
+static int32_t clocking_drive_source_matches_event(
     const llg_clocking_drive_t* drive, llg_event_object_t* event) {
-    for (int i = 0; i < drive->n_specs; i++) {
+    for (int32_t i = 0; i < drive->n_specs; i++) {
         const llg_wait_src_t* source = &drive->specs[i];
         if (source->ev && source->ev->object == event) return 1;
     }
@@ -491,7 +491,7 @@ static int clocking_drive_source_matches_event(
 
 static void clocking_drive_signal_match(sv4_t* signal, sv4_t old, sv4_t value) {
     if (!g.clocking_drives || !clocking_drive_source_pending(signal)) return;
-    int removed = 0;
+    int32_t removed = 0;
     llg_clocking_drive_t** slot = &g.clocking_drives;
     while (*slot) {
         llg_clocking_drive_t* drive = *slot;
@@ -518,7 +518,7 @@ static void clocking_drive_signal_match(sv4_t* signal, sv4_t old, sv4_t value) {
 
 static void clocking_drive_event_match(llg_event_object_t* event) {
     if (!g.clocking_drive_event_refs) return;
-    int removed = 0;
+    int32_t removed = 0;
     llg_clocking_drive_t** slot = &g.clocking_drives;
     while (*slot) {
         llg_clocking_drive_t* drive = *slot;
@@ -543,7 +543,7 @@ static void clocking_drive_event_match(llg_event_object_t* event) {
         g.clocking_drives_tail = g.clocking_drives_tail->next;
 }
 
-static int real_same(double old, double new) {
+static int32_t real_same(double old, double new) {
     uint64_t old_bits;
     uint64_t new_bits;
     memcpy(&old_bits, &old, sizeof(old_bits));
@@ -551,36 +551,36 @@ static int real_same(double old, double new) {
     return old_bits == new_bits;
 }
 
-static int real_ev_matches(double old, double new, int kind) {
+static int32_t real_ev_matches(double old, double new, int32_t kind) {
     // Edge descriptors are rejected by lowering for real values. Keep the
     // runtime defensive: real event controls are any-change only.
     return kind == LLG_EV_ANY && !real_same(old, new);
 }
 
-static int dependency_matches(const llg_wait_dependency_t* dependency,
+static int32_t dependency_matches(const llg_wait_dependency_t* dependency,
                               sv4_t* sig, double* real) {
     return (dependency->sig && dependency->sig == sig) ||
            (dependency->real && dependency->real == real);
 }
 
-static int expression_dependency_changed(const llg_expr_event_spec_t* spec,
+static int32_t expression_dependency_changed(const llg_expr_event_spec_t* spec,
                                           sv4_t* sig, double* real) {
     if ((spec->sig && spec->sig == sig) ||
         (spec->real_sig && spec->real_sig == real))
         return 1;
     if (spec->n_dependencies > 0) {
-        for (int i = 0; i < spec->n_dependencies; i++) {
+        for (int32_t i = 0; i < spec->n_dependencies; i++) {
             if (dependency_matches(&spec->dependencies[i], sig, real)) return 1;
         }
     } else {
-        for (int i = 0; i < spec->n_reads; i++) {
+        for (int32_t i = 0; i < spec->n_reads; i++) {
             if (spec->reads[i] == sig) return 1;
         }
     }
     return 0;
 }
 
-static int expression_gate(const llg_wait_t* wait, int index) {
+static int32_t expression_gate(const llg_wait_t* wait, int32_t index) {
     const llg_wait_expression_payload_t* payload = &wait->payload.expression;
     if (change_settling && payload->gate_open && payload->expressions[index].condition &&
         (wait->proc->wait_gate & LLG_WAIT_GATE_ARMED))
@@ -588,7 +588,7 @@ static int expression_gate(const llg_wait_t* wait, int index) {
     return expression_qualifies(&payload->expressions[index]);
 }
 
-static int expression_update(llg_wait_t* wait, int index, sv4_t* sig,
+static int32_t expression_update(llg_wait_t* wait, int32_t index, sv4_t* sig,
                              double* real) {
     llg_wait_expression_payload_t* payload = &wait->payload.expression;
     llg_expr_event_spec_t* spec = &payload->expressions[index];
@@ -601,7 +601,7 @@ static int expression_update(llg_wait_t* wait, int index, sv4_t* sig,
         }
         else if (spec->real_sig) value = *spec->real_sig;
         else return 0;
-        int matched = real_ev_matches(payload->real_last[index], value, spec->kind);
+        int32_t matched = real_ev_matches(payload->real_last[index], value, spec->kind);
         payload->real_last[index] = value;
         return matched && expression_gate(wait, index);
     }
@@ -616,7 +616,7 @@ static int expression_update(llg_wait_t* wait, int index, sv4_t* sig,
         }
     }
     else sv4_copy(value, spec->sig);
-    int matched = ev_matches(payload->last[index], *value, spec->kind);
+    int32_t matched = ev_matches(payload->last[index], *value, spec->kind);
     sv4_move(&payload->last[index], value);
     llg_value_scope_end(scope);
     return matched && expression_gate(wait, index);
@@ -625,14 +625,14 @@ static int expression_update(llg_wait_t* wait, int index, sv4_t* sig,
 // A gate-at-write wait latches its qualifier at each write after which the
 // expression has its event against the value last seen (AA-D6); the check
 // then uses the latch of the last such write.
-static void expression_gate_latch(llg_wait_t* wait, int index, sv4_t* sig,
+static void expression_gate_latch(llg_wait_t* wait, int32_t index, sv4_t* sig,
                                   double* real) {
     llg_wait_expression_payload_t* payload = &wait->payload.expression;
     llg_expr_event_spec_t* spec = &payload->expressions[index];
     if (!payload->gate_open || !spec->condition || spec->event ||
         !expression_dependency_changed(spec, sig, real))
         return;
-    int matched;
+    int32_t matched;
     if (spec->real || spec->real_eval || spec->real_sig) {
         double value;
         if (spec->real_eval) {
@@ -658,8 +658,8 @@ static void expression_gate_latch(llg_wait_t* wait, int index, sv4_t* sig,
     if (matched) payload->gate_open[index] = (uint8_t)(expression_qualifies(spec) != 0);
 }
 
-static int deferred_expression_update(llg_deferred_trigger_t* trigger,
-                                      int index, sv4_t* sig, double* real) {
+static int32_t deferred_expression_update(llg_deferred_trigger_t* trigger,
+                                      int32_t index, sv4_t* sig, double* real) {
     llg_expr_event_spec_t* spec = &trigger->specs[index];
     if (spec->event || !expression_dependency_changed(spec, sig, real)) return 0;
     if (spec->real || spec->real_eval || spec->real_sig) {
@@ -670,7 +670,7 @@ static int deferred_expression_update(llg_deferred_trigger_t* trigger,
         }
         else if (spec->real_sig) value = *spec->real_sig;
         else return 0;
-        int matched = real_ev_matches(trigger->real_last[index], value, spec->kind);
+        int32_t matched = real_ev_matches(trigger->real_last[index], value, spec->kind);
         trigger->real_last[index] = value;
         return matched && expression_qualifies(spec);
     }
@@ -685,7 +685,7 @@ static int deferred_expression_update(llg_deferred_trigger_t* trigger,
         }
     }
     else sv4_copy(value, spec->sig);
-    int matched = ev_matches(trigger->last[index], *value, spec->kind);
+    int32_t matched = ev_matches(trigger->last[index], *value, spec->kind);
     sv4_move(&trigger->last[index], value);
     llg_value_scope_end(scope);
     return matched && expression_qualifies(spec);
@@ -697,7 +697,7 @@ static void invoke_deferred_action(llg_event_assignment_fn action,
         if (frame) llg_frame_release(frame);
         return;
     }
-    int was_in_deferred_action = g.in_deferred_action;
+    int32_t was_in_deferred_action = g.in_deferred_action;
     g.in_deferred_action = 1;
     action(frame);
     g.in_deferred_action = was_in_deferred_action;
@@ -725,8 +725,8 @@ static void deferred_trigger_source_change(sv4_t* sig, double* real) {
     llg_deferred_trigger_t** slot = &g.deferred_triggers;
     while (*slot) {
         llg_deferred_trigger_t* trigger = *slot;
-        int matched = 0;
-        for (int i = 0; i < trigger->n; i++) {
+        int32_t matched = 0;
+        for (int32_t i = 0; i < trigger->n; i++) {
             if (deferred_expression_update(trigger, i, sig, real)) {
                 matched = 1;
                 break;
@@ -758,8 +758,8 @@ static void deferred_trigger_event(llg_event_object_t* ev) {
     llg_deferred_trigger_t** slot = &g.deferred_triggers;
     while (*slot) {
         llg_deferred_trigger_t* trigger = *slot;
-        int matched = 0;
-        for (int i = 0; i < trigger->n; i++) {
+        int32_t matched = 0;
+        for (int32_t i = 0; i < trigger->n; i++) {
             llg_expr_event_spec_t* spec = &trigger->specs[i];
             if (spec->event_object == ev && expression_qualifies(spec)) {
                 matched = 1;
@@ -791,10 +791,10 @@ static void deferred_trigger_event(llg_event_object_t* ev) {
 // between wakes: like W_DEPS, a whole dependency changes on every
 // publication and a selected one only when its bits changed. Each changed
 // dependency is logged with its offset; returns whether any changed.
-static int wait_change_log_packed(llg_wait_change_log_t* log, sv4_t* target) {
+static int32_t wait_change_log_packed(llg_wait_change_log_t* log, sv4_t* target) {
     llg_wait_retained_t* retained = log->sink.proc->retained_wait;
-    int changed = 0;
-    for (int i = 0; i < retained->n; i++) {
+    int32_t changed = 0;
+    for (int32_t i = 0; i < retained->n; i++) {
         const llg_wait_dependency_t* dependency = &retained->dependencies[i];
         if (dependency->sig != target) continue;
         if (!dependency->width) {
@@ -833,9 +833,9 @@ static int wait_change_log_packed(llg_wait_change_log_t* log, sv4_t* target) {
 // pays the row lookup it always paid.
 
 // Set during a process turn and during an NBA region's commit.
-static int change_defer_active;
+static int32_t change_defer_active;
 
-static int wait_source_armed(const llg_wait_source_t* source) {
+static int32_t wait_source_armed(const llg_wait_source_t* source) {
     if (!source) return 0;
     for (const llg_wait_subscription_t* node = source->head; node; node = node->next)
         if (node->wait) return 1;
@@ -850,25 +850,25 @@ static int wait_source_armed(const llg_wait_source_t* source) {
 // for a write outside a turn, whose publication runs the watches itself
 // after its other consumers.
 static LLG_OUTLYING void check_consumers_changed(llg_wait_source_t* source, sv4_t* target,
-                                                 double* real, int checked) {
+                                                 double* real, int32_t checked) {
     if (source->force_reads) force_dependency_changed(target, real, real != NULL);
     if (source->switches) switch_controls_changed(source->switches);
     if (checked) value_watch_checked(source, real ? (const void*)real : (const void*)target);
 }
 
 // Whether a waiter or a consumer that runs at the check observes the row.
-static int wait_source_observed(const llg_wait_source_t* source) {
+static int32_t wait_source_observed(const llg_wait_source_t* source) {
     return wait_source_armed(source) || (source && source->checks);
 }
 
-static int change_marker_is_reference(const sv4_t* marker) {
+static int32_t change_marker_is_reference(const sv4_t* marker) {
     return llg_sv4_width(*marker) == LLG_NATIVE_REF_MARKER_WIDTH;
 }
 
 // A reference marker carries the stored value on to its element, so it runs at
 // the write. Other bound markers count when something waits on them now: a
 // waiter that arms later in this turn has no change to see.
-static int dependency_bindings_waited(const void* target, uint8_t kind) {
+static int32_t dependency_bindings_waited(const void* target, uint8_t kind) {
     for (llg_dependency_binding_t* binding = dependency_bucket_head(target);
          binding; binding = binding->bucket_next) {
         if (binding->key != target || binding->kind != kind ||
@@ -975,7 +975,7 @@ static void change_save_before(llg_change_t* change, const sv4_t* before) {
 
 // Whether packed markers are bound to the record's storage: looked up once
 // per record unless a binding was added since.
-static int change_bound(llg_change_t* change, const void* key) {
+static int32_t change_bound(llg_change_t* change, const void* key) {
     if (change->bind_epoch != dependency_bind_epoch) {
         change->bind_epoch = dependency_bind_epoch;
         change->bound = 0;
@@ -1025,7 +1025,7 @@ static llg_wait_source_t* change_open_packed(llg_wait_source_t* source,
 // the bindings instead of two). A storage that only clocking history observes
 // gets a history record, kept on its history entry: no row is created and
 // freed per write.
-static llg_wait_source_t* change_begin(sv4_t* target, const sv4_t* before, int eager) {
+static llg_wait_source_t* change_begin(sv4_t* target, const sv4_t* before, int32_t eager) {
     llg_wait_source_t* source = wait_source_find(target);
     if (source && source->change) return source;
     if (wait_source_observed(source) || g.deferred_triggers ||
@@ -1053,7 +1053,7 @@ static llg_wait_source_t* change_begin(sv4_t* target, const sv4_t* before, int e
 // `rowless`, when given, is set when the marker has no row, so that the
 // caller toggling it now skips a second lookup (marker_toggle).
 // `opened`, when given, is set when this call opened the record.
-static llg_change_t* change_marker_defer(sv4_t* marker, int* rowless, int* opened) {
+static llg_change_t* change_marker_defer(sv4_t* marker, int32_t* rowless, int32_t* opened) {
     llg_wait_source_t* source = wait_source_find(marker);
     if (rowless) *rowless = source == NULL;
     if (opened) *opened = 0;
@@ -1071,7 +1071,7 @@ static llg_change_t* change_marker_defer(sv4_t* marker, int* rowless, int* opene
 }
 
 // Toggles a marker now; `rowless` as for marker_flip.
-static void marker_toggle(sv4_t* marker, int rowless) {
+static void marker_toggle(sv4_t* marker, int32_t rowless) {
     if (!(rowless && marker_flip(marker, 1))) llg_dependency_changed(marker);
 }
 
@@ -1081,7 +1081,7 @@ static void defer_bound_markers(const void* target, uint8_t kind) {
     for (llg_dependency_binding_t* binding = dependency_bucket_head(target);
          binding; binding = binding->bucket_next) {
         if (binding->key != target || binding->kind != kind) continue;
-        int rowless;
+        int32_t rowless;
         if (!change_marker_defer(binding->dependency, &rowless, NULL))
             marker_toggle(binding->dependency, rowless);
     }
@@ -1130,7 +1130,7 @@ static void fire_marker(sv4_t* marker) {
         source->change->fire = 1;
 }
 
-static void fire_bound_markers(const void* target, uint8_t kind, int toggle_rest) {
+static void fire_bound_markers(const void* target, uint8_t kind, int32_t toggle_rest) {
     for (llg_dependency_binding_t* binding = dependency_bucket_head(target);
          binding; binding = binding->bucket_next) {
         if (binding->key != target || binding->kind != kind) continue;
@@ -1208,7 +1208,7 @@ static void wait_write_walk(llg_wait_source_t* source, sv4_t* sig, double* real)
         llg_wait_t* w = node->wait;
         if (!w) continue;
         if (w->kind == W_EXPR && (w->proc->wait_gate & LLG_WAIT_GATE_ARMED)) {
-            for (int i = 0; i < w->payload.expression.n; i++)
+            for (int32_t i = 0; i < w->payload.expression.n; i++)
                 expression_gate_latch(w, i, sig, real);
             continue;
         }
@@ -1217,7 +1217,7 @@ static void wait_write_walk(llg_wait_source_t* source, sv4_t* sig, double* real)
         else if (w->kind == W_DEPS && w->proc->wait_ordered)
             log = w->proc->retained_wait->changes;
         if (!log) continue;
-        int changed = 1;
+        int32_t changed = 1;
         if (sig) changed = wait_change_log_packed(log, sig);
         else wait_change_note(log, real, LLG_WAIT_CHANGE_WHOLE);
         if (changed && w->kind == W_DEPS && !wait_held_by_suspension(w)) wake_proc(w->proc);
@@ -1229,13 +1229,13 @@ static void wait_write_walk(llg_wait_source_t* source, sv4_t* sig, double* real)
 // snapshot that must grow to hold a wider value. Kept out of
 // publish_waiters_packed so that the common kinds stay on a few dense cache
 // lines. Returns whether `w` wakes.
-static LLG_OUTLYING int publish_waiter_rare(llg_wait_t* w, sv4_t* target) {
-    int wake = 0;
+static LLG_OUTLYING int32_t publish_waiter_rare(llg_wait_t* w, sv4_t* target) {
+    int32_t wake = 0;
     if (w->kind == W_EVENTS_INLINE) {
         wait_inline_promote(w, target);
     } else if (w->kind == W_MIXED) {
         llg_wait_mixed_payload_t* payload = &w->payload.rare->mixed;
-        for (int i = 0; i < payload->n; i++) {
+        for (int32_t i = 0; i < payload->n; i++) {
             if (payload->specs[i].sig == target) {
                 if (ev_matches(payload->last[i], *target,
                                payload->specs[i].kind))
@@ -1257,10 +1257,10 @@ static LLG_OUTLYING int publish_waiter_rare(llg_wait_t* w, sv4_t* target) {
 
 // An edge or change list over several signals: whether one of its entries
 // for `target` matched. Updates each entry's snapshot.
-static LLG_NOINLINE int publish_events_wake(llg_wait_expression_payload_t* payload,
+static LLG_NOINLINE int32_t publish_events_wake(llg_wait_expression_payload_t* payload,
                                             sv4_t* target) {
-    int wake = 0;
-    for (int i = 0; i < payload->n; i++) {
+    int32_t wake = 0;
+    for (int32_t i = 0; i < payload->n; i++) {
         if (payload->specs[i].sig == target) {
             if (ev_matches(payload->last[i], *target, payload->specs[i].kind)) wake = 1;
             sv4_copy(&payload->last[i], target);
@@ -1271,10 +1271,10 @@ static LLG_NOINLINE int publish_events_wake(llg_wait_expression_payload_t* paylo
 
 // A dependency list (`@*` and inferred sensitivity): a whole dependency
 // changes on every publication, a selected one when its bits changed.
-static LLG_NOINLINE int publish_deps_wake(llg_wait_expression_payload_t* payload,
+static LLG_NOINLINE int32_t publish_deps_wake(llg_wait_expression_payload_t* payload,
                                           sv4_t* target) {
-    int wake = 0;
-    for (int i = 0; i < payload->n; i++) {
+    int32_t wake = 0;
+    for (int32_t i = 0; i < payload->n; i++) {
         const llg_wait_dependency_t* dependency = &payload->dependencies[i];
         if (dependency->sig == target) {
             if (dependency->width) {
@@ -1296,7 +1296,7 @@ static LLG_NOINLINE void publish_waiters_packed(llg_wait_subscription_t* cursor,
                                                 sv4_t* target) {
     llg_wait_t* w;
     while ((w = wait_source_next(cursor)) != NULL) {
-        int wake = 0;
+        int32_t wake = 0;
         if (w->kind == W_EVENTS_INLINE) {
             llg_wait_inline_payload_t* single = &w->payload.single;
             if (single->specs[0].sig == target) {
@@ -1315,7 +1315,7 @@ static LLG_NOINLINE void publish_waiters_packed(llg_wait_subscription_t* cursor,
         } else if (w->kind == W_DEPS && LLG_CO_LIKELY(!w->proc->wait_ordered)) {
             wake = publish_deps_wake(&w->payload.expression, target);
         } else if (w->kind == W_EXPR) {
-            for (int i = 0; i < w->payload.expression.n; i++) {
+            for (int32_t i = 0; i < w->payload.expression.n; i++) {
                 if (expression_update(w, i, target, NULL)) wake = 1;
             }
         } else if (w->kind != W_MIXED || w->payload.rare) {
@@ -1338,7 +1338,7 @@ static void publish_bound_markers(const void* target, uint8_t kind) {
 // per call on the hottest path. The tests are predicted not taken so that
 // they sit together on the settle's hot path, with the calls behind it.
 LLG_CO_INLINE void clock_consumers_changed(sv4_t* target, sv4_t old, sv4_t value,
-                                          int deferred) {
+                                          int32_t deferred) {
     if (LLG_CO_UNLIKELY(g.clocking_drives != NULL) && clocking_drive_source_pending(target))
         clocking_drive_signal_match(target, old, value);
     if (LLG_CO_UNLIKELY(g.sampled_edge_clocks != NULL))
@@ -1366,7 +1366,7 @@ enum {
 // `contents` is the contents marker of the array holding the storage, or NULL.
 LLG_CO_INLINE void sig_settle(sv4_t* target, llg_wait_source_t* source,
                               llg_wait_subscription_t* cursor, sv4_t old, sv4_t value,
-                              int bound, sv4_t* contents) {
+                              int32_t bound, sv4_t* contents) {
     if (LLG_CO_UNLIKELY(g.clocking_count != 0)) clocking_record_edge(target, old, value);
     clock_consumers_changed(target, old, value, cursor != NULL);
     if (cursor) {
@@ -1413,12 +1413,12 @@ typedef struct {
     llg_change_t* fires[2];
     llg_change_t* opened[2];
     llg_change_t* found; // This storage's rowless record, from an earlier write.
-    int fired;
-    int n_opened;
+    int32_t fired;
+    int32_t n_opened;
 } llg_route_t;
 
 static void change_route_note(llg_route_t* route, const sv4_t* target,
-                              llg_change_t* marker, int opened) {
+                              llg_change_t* marker, int32_t opened) {
     if (opened) {
         if (route->n_opened < 2) route->opened[route->n_opened++] = marker;
     } else if (!route->found) {
@@ -1429,15 +1429,15 @@ static void change_route_note(llg_route_t* route, const sv4_t* target,
     ++route->fired;
 }
 
-static LLG_NOINLINE int change_route_markers(sv4_t* target, const sv4_t* before,
+static LLG_NOINLINE int32_t change_route_markers(sv4_t* target, const sv4_t* before,
                                              sv4_t* contents, llg_wait_source_t* row) {
     llg_route_t route = {{NULL, NULL}, {NULL, NULL}, NULL, 0, 0};
-    int bound = 0;
+    int32_t bound = 0;
     for (llg_dependency_binding_t* binding = dependency_bucket_head(target);
          binding; binding = binding->bucket_next) {
         if (binding->key != target || binding->kind != LLG_DEPENDENCY_BINDING_PACKED)
             continue;
-        int rowless, opened;
+        int32_t rowless, opened;
         llg_change_t* marker = change_marker_defer(binding->dependency, &rowless, &opened);
         if (marker) {
             bound = 1;
@@ -1447,7 +1447,7 @@ static LLG_NOINLINE int change_route_markers(sv4_t* target, const sv4_t* before,
         }
     }
     if (contents) {
-        int rowless, opened;
+        int32_t rowless, opened;
         llg_change_t* marker = change_marker_defer(contents, &rowless, &opened);
         if (marker) change_route_note(&route, target, marker, opened);
         else marker_toggle(contents, rowless);
@@ -1475,7 +1475,7 @@ static LLG_NOINLINE int change_route_markers(sv4_t* target, const sv4_t* before,
     } else {
         storage = change_open_packed(row, target, before)->change;
     }
-    for (int i = 0; i < route.n_opened; i++) {
+    for (int32_t i = 0; i < route.n_opened; i++) {
         route.opened[i]->owner = storage;
         route.opened[i]->owner_serial = storage->serial;
     }
@@ -1489,7 +1489,7 @@ static LLG_NOINLINE int change_route_markers(sv4_t* target, const sv4_t* before,
         // The check fires these records directly instead of looking the
         // markers up again.
         storage->fires_exact = 1;
-        for (int i = 0; i < 2; i++) {
+        for (int32_t i = 0; i < 2; i++) {
             storage->fires[i] = route.fires[i];
             storage->fires_serial[i] = route.fires[i] ? route.fires[i]->serial : 0;
         }
@@ -1503,7 +1503,7 @@ static LLG_NOINLINE int change_route_markers(sv4_t* target, const sv4_t* before,
 // `cursor`, for a marker's check (marker_settle), is its record's: the
 // publication then runs at once from that cursor.
 static void sig_publish(sv4_t* target, sv4_t old, sv4_t value,
-                        llg_wait_source_t* source, int deferred,
+                        llg_wait_source_t* source, int32_t deferred,
                         const sv4_t* before, llg_wait_subscription_t* cursor) {
     // Each per-write consumer below is predicted absent, so that a write
     // runs its tests on a few lines and the consumers sit behind them.
@@ -1531,7 +1531,7 @@ static void sig_publish(sv4_t* target, sv4_t old, sv4_t value,
     if (cursor) source = cursor->source;
     else if (source == &wait_source_absent) source = NULL;
     else if (!deferred || (source && !source->change)) source = wait_source_find(target);
-    int watched = source && source->watchers;
+    int32_t watched = source && source->watchers;
     llg_timing_watch_t* timing = source ? source->timing : NULL;
     if (cursor) {
         sig_settle(target, source, cursor, old, value,
@@ -1540,14 +1540,14 @@ static void sig_publish(sv4_t* target, sv4_t old, sv4_t value,
     } else if (!deferred) {
         sig_settle(target, source, NULL, old, value, LLG_BOUND_PUBLISH, contents);
     } else {
-        int noted = source && source->change;
+        int32_t noted = source && source->change;
         if (LLG_CO_UNLIKELY(source && source->write_walkers)) wait_write_walk(source, target, NULL);
         if (noted) {
             source->change->contents = contents;
             source->change->contents_known = 1;
             if (change_bound(source->change, target))
                 defer_bound_markers(target, LLG_DEPENDENCY_BINDING_PACKED);
-            int rowless;
+            int32_t rowless;
             if (contents && !change_marker_defer(contents, &rowless, NULL))
                 marker_toggle(contents, rowless);
         } else if (before) {
@@ -1575,7 +1575,7 @@ static void sig_publish(sv4_t* target, sv4_t old, sv4_t value,
 
 // `old` must be complete: the first write's record keeps it.
 static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value) {
-    int deferred = change_defer_active;
+    int32_t deferred = change_defer_active;
     llg_wait_source_t* source = deferred ? change_begin(target, &old, 0) : NULL;
     sig_publish(target, old, value, source, deferred, &old, NULL);
 }
@@ -1583,9 +1583,9 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value) {
 // Set while a clocking block publishes its own sampled clockvars. #0 inputs
 // update in the Observed region (IEEE 1800-2009 14.13), whose user code is
 // otherwise read-only, and `@(cb.x)` waiters must still see the change.
-static int clocking_sample_publication;
+static int32_t clocking_sample_publication;
 
-static void sig_write_as(sv4_t* target, sv4_t value, int deferred) {
+static void sig_write_as(sv4_t* target, sv4_t value, int32_t deferred) {
     if (region_is_read_only_now(g.current_region) && !clocking_sample_publication) {
         if (region_private_store("signal write")) {
             sv4_copy(target, &value);
@@ -1643,10 +1643,10 @@ static sv4_t marker_values[2];
 // `rowless` tells that the caller has just found no row for the marker:
 // nothing the publication runs before its walk arms a wait, so it skips the
 // lookup.
-static int marker_flip(sv4_t* marker, int rowless) {
+static int32_t marker_flip(sv4_t* marker, int32_t rowless) {
     if (llg_sv4_width(*marker) != 1 || region_is_read_only_now(g.current_region))
         return 0;
-    unsigned old = llg_sv4_state(*marker, 0);
+    uint32_t old = llg_sv4_state(*marker, 0);
     if (old > 1u) return 0;
     if (!llg_sv4_width(marker_values[0])) {
         marker_values[0] = sv4_from_u64(0u, 1, 0);
@@ -1660,7 +1660,7 @@ static int marker_flip(sv4_t* marker, int rowless) {
     return 1;
 }
 
-static int sig_range_same(const sv4_t* target, uint32_t offset,
+static int32_t sig_range_same(const sv4_t* target, uint32_t offset,
                           const sv4_t* value) {
     return llg_sv4_range_same(*target, offset, *value);
 }
@@ -1673,11 +1673,11 @@ static void sig_range_copy(sv4_t* target, uint32_t offset,
 // Publish a changed slice without cloning the full packed signal. Waiters
 // still subscribe to the canonical full-net address: full-value and selected
 // dependency checks below read the already-updated target exactly as before.
-static int sig_write_ranges(sv4_t* target,
+static int32_t sig_write_ranges(sv4_t* target,
                             uint32_t first_offset, sv4_t first,
                             uint32_t second_offset, sv4_t second,
-                            int has_second) {
-    int private_store = 0;
+                            int32_t has_second) {
+    int32_t private_store = 0;
     if (region_is_read_only_now(g.current_region)) {
         if (!region_private_store("signal write")) return 0;
         private_store = 1;
@@ -1690,8 +1690,8 @@ static int sig_write_ranges(sv4_t* target,
         llg_msg(LLG_MSG_INTERNAL, NULL, "invalid signal write range");
         abort();
     }
-    int first_changed = !sig_range_same(target, first_offset, &first);
-    int second_changed = has_second &&
+    int32_t first_changed = !sig_range_same(target, first_offset, &first);
+    int32_t second_changed = has_second &&
         !sig_range_same(target, second_offset, &second);
     if (!first_changed && !second_changed) return 0;
     if (private_store) {
@@ -1707,7 +1707,7 @@ static int sig_write_ranges(sv4_t* target,
     // has already established that some bit changed, so these stable one-bit
     // snapshots also preserve any-change behavior through nested callbacks.
     // A check compares whole values, so a record is opened before the store.
-    int deferred = change_defer_active;
+    int32_t deferred = change_defer_active;
     llg_wait_source_t* source = deferred ? change_begin(target, target, 1) : NULL;
     sv4_replace(&edges[0], sv4_bit_select(*target, 0));
     if (first_changed) sig_range_copy(target, first_offset, &first);
@@ -1719,24 +1719,24 @@ static int sig_write_ranges(sv4_t* target,
     return 1;
 }
 
-static int sig_write_range(sv4_t* target, uint32_t offset, sv4_t value) {
+static int32_t sig_write_range(sv4_t* target, uint32_t offset, sv4_t value) {
     return sig_write_ranges(target, offset, value, 0, (sv4_t)SV4_EMPTY, 0);
 }
 
 static void publish_waiters_real(llg_wait_subscription_t* cursor, double* target) {
     llg_wait_t* w;
     while ((w = wait_source_next(cursor)) != NULL) {
-        int wake = 0;
+        int32_t wake = 0;
         if (w->kind == W_DEPS) {
             llg_wait_expression_payload_t* payload = &w->payload.expression;
-            for (int i = 0; i < payload->n; i++) {
+            for (int32_t i = 0; i < payload->n; i++) {
                 if (payload->dependencies[i].real == target) {
                     wake = 1;
                     break;
                 }
             }
         } else if (w->kind == W_EXPR) {
-            for (int i = 0; i < w->payload.expression.n; i++) {
+            for (int32_t i = 0; i < w->payload.expression.n; i++) {
                 if (expression_update(w, i, NULL, target)) wake = 1;
             }
         } else if (w->kind == W_CHANGE_LOG) {
@@ -1787,7 +1787,7 @@ static void real_write(double* target, double value) {
     /* Real locals have stable native owner slots, just like packed descriptors.
      * Keep the slot alive if a callback cancels its receiving process. */
     llg_value_scope_t* target_pin = value_target_pin(target);
-    int deferred = change_defer_active;
+    int32_t deferred = change_defer_active;
     llg_wait_source_t* source = deferred ? change_begin_real(target, old) : NULL;
     *target = value;
     fixed_dense_written(target);
@@ -1796,11 +1796,11 @@ static void real_write(double* target, double value) {
     llg_wave_changed_real(target);
 #endif
     if (!deferred || (source && !source->change)) source = wait_source_find(target);
-    int watched = source && source->watchers;
+    int32_t watched = source && source->watchers;
     if (!deferred) {
         real_settle(target, source, NULL);
     } else {
-        int noted = source && source->change;
+        int32_t noted = source && source->change;
         if (LLG_CO_UNLIKELY(source && source->write_walkers)) wait_write_walk(source, NULL, target);
         if (noted) defer_bound_markers(target, LLG_DEPENDENCY_BINDING_REAL);
         else publish_bound_markers(target, LLG_DEPENDENCY_BINDING_REAL);
@@ -1815,7 +1815,7 @@ static void real_write(double* target, double value) {
 
 // A deferred marker toggles once, publishing from its record's cursor.
 static void marker_settle(sv4_t* marker, llg_wait_subscription_t* cursor) {
-    unsigned old = llg_sv4_state(*marker, 0);
+    uint32_t old = llg_sv4_state(*marker, 0);
     if (llg_sv4_width(*marker) != 1 || old > 1u) {
         // A marker not yet holding a known bit takes the general write.
         llg_dependency_changed(marker);
@@ -1838,7 +1838,7 @@ static void rowless_settle(llg_change_t* change, sv4_t* target) {
     clock_consumers_changed(target, old, *target, 1);
     if (LLG_CO_UNLIKELY(g.deferred_triggers)) deferred_trigger_source_change(target, NULL);
     if (change->fires_exact) {
-        for (int i = 0; i < 2; i++) {
+        for (int32_t i = 0; i < 2; i++) {
             llg_change_t* marker = change->fires[i];
             if (marker && marker->serial == change->fires_serial[i]) marker->fire = 1;
         }
@@ -1880,10 +1880,10 @@ static void change_settle(llg_change_t* change) {
     if (llg_sv4_width(change->before) == llg_sv4_width(*target) &&
         sv4_same(change->before, *target))
         return;
-    int bound = LLG_BOUND_NONE;
+    int32_t bound = LLG_BOUND_NONE;
     sv4_t* contents = NULL;
     if (change->fires_exact) {
-        for (int i = 0; i < 2; i++) {
+        for (int32_t i = 0; i < 2; i++) {
             llg_change_t* marker = change->fires[i];
             if (marker && marker->serial == change->fires_serial[i]) marker->fire = 1;
         }
@@ -1902,11 +1902,11 @@ static void change_settle(llg_change_t* change) {
 // array's contents marker is shared by its cells). A marker firing a further
 // marker whose record already settled toggles it at once (LLG_BOUND_SETTLE).
 static void change_flush(void) {
-    int deferred = change_defer_active;
-    int settling = change_settling;
+    int32_t deferred = change_defer_active;
+    int32_t settling = change_settling;
     change_defer_active = 0;
     change_settling = 1;
-    int markers_left = 0;
+    int32_t markers_left = 0;
     for (size_t i = 0; i < g.change_count; i++) {
         llg_change_t* change = g.changes[i];
         if (!change) continue;

@@ -14,7 +14,7 @@ static inline void llg_sv4_masked_merge(sv4_t* target, sv4_t source, sv4_t mask)
 }
 
 // Known-one masks and payload intervals are clipped to actual operand widths.
-static inline int llg_sv4_masked_same(sv4_t a, sv4_t b, const sv4_t* mask) {
+static inline int32_t llg_sv4_masked_same(sv4_t a, sv4_t b, const sv4_t* mask) {
     uint32_t width = llg_sv4_width(a) < llg_sv4_width(b) ? llg_sv4_width(a) : llg_sv4_width(b);
     size_t words = ((size_t)width + 63u) / 64u;
     for (size_t i = 0; i < words; ++i) {
@@ -44,9 +44,9 @@ static inline void llg_sv4_masked_copy(sv4_t* target, sv4_t source, sv4_t mask) 
 
 // Internal slice load, padded with zero; count is in 1..64.
 static inline uint64_t llg_sv4_plane_slice(sv4_t value, uint32_t low,
-                                          unsigned count, unsigned plane) {
+                                          uint32_t count, uint32_t plane) {
     size_t word = low / 64u;
-    unsigned shift = low % 64u;
+    uint32_t shift = low % 64u;
     uint64_t result = llg_sv4_word(value, word, plane) >> shift;
     if (shift && count > 64u - shift)
         result |= llg_sv4_word(value, word + 1u, plane) << (64u - shift);
@@ -54,10 +54,10 @@ static inline uint64_t llg_sv4_plane_slice(sv4_t value, uint32_t low,
 }
 
 // Ranges must fit. Inputs are independent owners, or an exact self-copy at offset zero.
-static inline int llg_sv4_range_same(sv4_t target, uint32_t offset, sv4_t source) {
+static inline int32_t llg_sv4_range_same(sv4_t target, uint32_t offset, sv4_t source) {
     for (uint32_t bit = 0; bit < llg_sv4_width(source);) {
-        unsigned count = llg_sv4_width(source) - bit < 64u ? llg_sv4_width(source) - bit : 64u;
-        for (unsigned plane = LLG_SV4_BITS; plane <= LLG_SV4_Z; ++plane)
+        uint32_t count = llg_sv4_width(source) - bit < 64u ? llg_sv4_width(source) - bit : 64u;
+        for (uint32_t plane = LLG_SV4_BITS; plane <= LLG_SV4_Z; ++plane)
             if (llg_sv4_plane_slice(target, offset + bit, count, plane) !=
                 llg_sv4_word(source, bit / 64u, plane)) return 0;
         bit += count;
@@ -67,7 +67,7 @@ static inline int llg_sv4_range_same(sv4_t target, uint32_t offset, sv4_t source
 static inline void llg_sv4_range_copy(sv4_t* target, uint32_t offset, sv4_t source) {
     for (uint32_t bit = 0; bit < llg_sv4_width(source);) {
         uint32_t low = offset + bit;
-        unsigned count = 64u - low % 64u;
+        uint32_t count = 64u - low % 64u;
         if (count > llg_sv4_width(source) - bit) count = llg_sv4_width(source) - bit;
         uint64_t selected = (UINT64_MAX >> (64u - count)) << (low % 64u);
         size_t word = low / 64u;
@@ -81,11 +81,11 @@ static inline void llg_sv4_range_copy(sv4_t* target, uint32_t offset, sv4_t sour
     }
 }
 static inline void llg_sv4_range_fill(sv4_t* target, uint32_t low,
-                                     uint32_t count, unsigned state) {
+                                     uint32_t count, uint32_t state) {
     if (low >= llg_sv4_width(*target)) return;
     if (count > llg_sv4_width(*target) - low) count = llg_sv4_width(*target) - low;
     while (count) {
-        unsigned chunk = 64u - low % 64u;
+        uint32_t chunk = 64u - low % 64u;
         if (chunk > count) chunk = count;
         uint64_t mask = (UINT64_MAX >> (64u - chunk)) << (low % 64u);
         size_t word = low / 64u;
@@ -134,8 +134,8 @@ static inline void llg_sv4_two_state_inplace(sv4_t* value) {
     }
 }
 // Append 1..4 low bits, with X/Z states 2/3, modulo the existing width.
-static inline void llg_sv4_append_digit(sv4_t* value, unsigned count,
-                                       unsigned state, unsigned digit) {
+static inline void llg_sv4_append_digit(sv4_t* value, uint32_t count,
+                                       uint32_t state, uint32_t digit) {
     uint64_t mask = (UINT64_C(1) << count) - 1u;
     uint64_t bits = state == 0 ? digit & mask : 0;
     uint64_t x = state == 2 ? mask : 0, z = state == 3 ? mask : 0;

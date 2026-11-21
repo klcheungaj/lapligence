@@ -1,5 +1,5 @@
 
-static int llg_fmt_arg_same(const llg_fmt_arg_t* a, const llg_fmt_arg_t* b) {
+static int32_t llg_fmt_arg_same(const llg_fmt_arg_t* a, const llg_fmt_arg_t* b) {
     if (a->kind != b->kind) return 0;
     if (a->kind == LLG_FMT_PACKED || a->kind == LLG_FMT_STRENGTH)
         return sv4_same(a->value.packed, b->value.packed);
@@ -70,8 +70,8 @@ static void llg_monitors_free_all(void) {
 // SV 21.3.1: "Active $fmonitor and/or $fstrobe operations on a file
 // descriptor or multichannel descriptor are implicitly cancelled by an
 // $fclose operation." Entries stay in the list until it is safe to free them.
-static void llg_monitors_cancel_slot(unsigned slot) {
-    int any_dead = 0;
+static void llg_monitors_cancel_slot(uint32_t slot) {
+    int32_t any_dead = 0;
     for (llg_monitor_state_t* m = g.monitors; m; m = m->next) {
         if (m->primary || !m->descriptor) continue;
         m->descriptor = llg_file_without_slot(m->descriptor, slot);
@@ -85,11 +85,11 @@ static void llg_monitors_cancel_slot(unsigned slot) {
 
 // Called for every published write while a monitor is registered. Entries
 // already dirty are skipped, so a hot signal costs one pass per slot.
-static void llg_monitor_target_changed(const void* target, int kind) {
+static void llg_monitor_target_changed(const void* target, int32_t kind) {
     for (llg_monitor_state_t* m = g.monitors; m; m = m->next) {
         if (m->dirty) continue;
         if (kind == LLG_FMT_PACKED) {
-            for (int i = 0; i < m->n_reads; i++) {
+            for (int32_t i = 0; i < m->n_reads; i++) {
                 if (m->reads[i] == target) {
                     m->dirty = 1;
                     break;
@@ -97,7 +97,7 @@ static void llg_monitor_target_changed(const void* target, int kind) {
             }
         }
         if (m->dirty) continue;
-        for (int i = 0; i < m->n_typed_reads; i++) {
+        for (int32_t i = 0; i < m->n_typed_reads; i++) {
             if (m->typed_reads[i].kind == kind &&
                 m->typed_reads[i].ptr == target) {
                 m->dirty = 1;
@@ -109,7 +109,7 @@ static void llg_monitor_target_changed(const void* target, int kind) {
 
 // Append a fresh entry. `$monitor` (primary) first discards its predecessor:
 // "Only one $monitor display list can be active at any one time" (SV 21.2.3).
-static llg_monitor_state_t* monitor_add(int primary, const char* fmt, int n) {
+static llg_monitor_state_t* monitor_add(int32_t primary, const char* fmt, int32_t n) {
     if (primary) {
         for (llg_monitor_state_t* m = g.monitors; m; m = m->next) {
             if (!m->primary) continue;
@@ -133,13 +133,13 @@ static llg_monitor_state_t* monitor_add(int primary, const char* fmt, int n) {
     return m;
 }
 
-void llg_monitor_with_reads(const char* fmt, int n, llg_mon_eval_fn eval,
-                            sv4_t* const* reads, int n_reads) {
+void llg_monitor_with_reads(const char* fmt, int32_t n, llg_mon_eval_fn eval,
+                            sv4_t* const* reads, int32_t n_reads) {
     if (!region_can_mutate("monitor scheduling")) return;
     llg_monitor_state_t* m = monitor_add(1, fmt, n);
     m->eval = eval;
     m->n_reads = n_reads;
-    int alloc = n > 0 ? n : 1;
+    int32_t alloc = n > 0 ? n : 1;
     m->last = (sv4_t*)llg_checked_calloc(
         (size_t)alloc, sizeof(sv4_t), "monitor previous values");
     m->work = (sv4_t*)llg_checked_calloc(
@@ -151,7 +151,7 @@ void llg_monitor_with_reads(const char* fmt, int n, llg_mon_eval_fn eval,
     }
 }
 
-void llg_monitor(const char* fmt, int n, llg_mon_eval_fn eval) {
+void llg_monitor(const char* fmt, int32_t n, llg_mon_eval_fn eval) {
     llg_monitor_with_reads(fmt, n, eval, NULL, 0);
 }
 
@@ -163,7 +163,7 @@ static void strobe_push(llg_strobe_t* e) {
     g.strobes = e;
 }
 
-void llg_strobe(const char* fmt, int n, llg_mon_eval_fn eval) {
+void llg_strobe(const char* fmt, int32_t n, llg_mon_eval_fn eval) {
     change_check();
     if (!region_can_mutate("strobe scheduling")) return;
     llg_strobe_t* e = (llg_strobe_t*)llg_checked_malloc(
@@ -178,18 +178,18 @@ void llg_strobe(const char* fmt, int n, llg_mon_eval_fn eval) {
     e->context = NULL;
     e->scope = NULL;
     e->region = LLG_REGION_POSTPONED;
-    int alloc = n > 0 ? n : 1;
+    int32_t alloc = n > 0 ? n : 1;
     e->work = (sv4_t*)llg_checked_calloc(
         (size_t)alloc, sizeof(sv4_t), "strobe working values");
     strobe_push(e);
 }
 
-static void monitor_register_typed(int primary, uint32_t descriptor,
-                                   const char* fmt, int n,
+static void monitor_register_typed(int32_t primary, uint32_t descriptor,
+                                   const char* fmt, int32_t n,
                                    llg_display_eval_fn eval, const char* scope,
                                    const llg_display_read_t* reads,
-                                   int n_reads, llg_monitor_reads_fn resolve,
-                                   int n_resolved, void* context) {
+                                   int32_t n_reads, llg_monitor_reads_fn resolve,
+                                   int32_t n_resolved, void* context) {
     if (!region_can_mutate("monitor scheduling")) return;
     // An invalid or closed descriptor registers nothing, and a multichannel
     // monitor keeps only its open channels (S25-D7), so a channel reopened
@@ -205,7 +205,7 @@ static void monitor_register_typed(int primary, uint32_t descriptor,
     m->scope = (char*)llg_checked_malloc(strlen(scope ? scope : "") + 1, 1,
                                          "monitor scope");
     strcpy(m->scope, scope ? scope : "");
-    int alloc = n > 0 ? n : 1;
+    int32_t alloc = n > 0 ? n : 1;
     m->typed_last = (llg_fmt_arg_t*)llg_checked_calloc(
         (size_t)alloc, sizeof(llg_fmt_arg_t), "monitor previous values");
     m->typed_work = (llg_fmt_arg_t*)llg_checked_calloc(
@@ -217,12 +217,12 @@ static void monitor_register_typed(int primary, uint32_t descriptor,
         m->typed_reads = (llg_display_read_t*)llg_checked_calloc(
             (size_t)n_reads + (size_t)n_resolved, sizeof(llg_display_read_t),
             "monitor trigger set");
-        for (int i = 0; i < n_reads; i++) {
+        for (int32_t i = 0; i < n_reads; i++) {
             if (reads[i].kind == LLG_MONITOR_READ_POLL) {
                 m->poll = 1;
             } else if (reads[i].kind == LLG_MONITOR_TIME_ARG) {
                 if (!m->time_args)
-                    m->time_args = (unsigned char*)llg_checked_calloc(
+                    m->time_args = (uint8_t*)llg_checked_calloc(
                         (size_t)alloc, 1, "monitor time arguments");
                 m->time_args[(uintptr_t)reads[i].ptr] = 1;
             } else {
@@ -235,53 +235,53 @@ static void monitor_register_typed(int primary, uint32_t descriptor,
     m->n_typed_reads += n_resolved;
 }
 
-void llg_monitor_with_typed_reads(const char* fmt, int n,
+void llg_monitor_with_typed_reads(const char* fmt, int32_t n,
                                   llg_display_eval_fn eval, const char* scope,
-                                  const llg_display_read_t* reads, int n_reads) {
+                                  const llg_display_read_t* reads, int32_t n_reads) {
     monitor_register_typed(1, 1u, fmt, n, eval, scope, reads, n_reads, NULL, 0,
                            NULL);
 }
 
 void llg_file_monitor_with_typed_reads(
-    uint32_t descriptor, const char* fmt, int n, llg_display_eval_fn eval,
-    const char* scope, const llg_display_read_t* reads, int n_reads) {
+    uint32_t descriptor, const char* fmt, int32_t n, llg_display_eval_fn eval,
+    const char* scope, const llg_display_read_t* reads, int32_t n_reads) {
     monitor_register_typed(0, descriptor, fmt, n, eval, scope, reads, n_reads,
                            NULL, 0, NULL);
 }
 
-void llg_monitor_with_dynamic_reads(const char* fmt, int n,
+void llg_monitor_with_dynamic_reads(const char* fmt, int32_t n,
                                     llg_display_eval_fn eval, const char* scope,
-                                    const llg_display_read_t* reads, int n_reads,
-                                    llg_monitor_reads_fn resolve, int n_resolved,
+                                    const llg_display_read_t* reads, int32_t n_reads,
+                                    llg_monitor_reads_fn resolve, int32_t n_resolved,
                                     void* context) {
     monitor_register_typed(1, 1u, fmt, n, eval, scope, reads, n_reads, resolve,
                            n_resolved, context);
 }
 
 void llg_file_monitor_with_dynamic_reads(
-    uint32_t descriptor, const char* fmt, int n, llg_display_eval_fn eval,
-    const char* scope, const llg_display_read_t* reads, int n_reads,
-    llg_monitor_reads_fn resolve, int n_resolved, void* context) {
+    uint32_t descriptor, const char* fmt, int32_t n, llg_display_eval_fn eval,
+    const char* scope, const llg_display_read_t* reads, int32_t n_reads,
+    llg_monitor_reads_fn resolve, int32_t n_resolved, void* context) {
     monitor_register_typed(0, descriptor, fmt, n, eval, scope, reads, n_reads,
                            resolve, n_resolved, context);
 }
 
-void llg_strobe_typed(const char* fmt, int n, llg_display_eval_fn eval,
+void llg_strobe_typed(const char* fmt, int32_t n, llg_display_eval_fn eval,
                       const char* scope) {
     llg_file_strobe_typed(1u, fmt, n, eval, scope);
 }
 
-void llg_file_strobe_typed(uint32_t descriptor, const char* fmt, int n,
+void llg_file_strobe_typed(uint32_t descriptor, const char* fmt, int32_t n,
                            llg_display_eval_fn eval, const char* scope) {
     llg_file_strobe_with_context(descriptor, fmt, n, eval, scope, NULL);
 }
 
-void llg_strobe_with_context(const char* fmt, int n, llg_display_eval_fn eval,
+void llg_strobe_with_context(const char* fmt, int32_t n, llg_display_eval_fn eval,
                              const char* scope, void* context) {
     llg_file_strobe_with_context(1u, fmt, n, eval, scope, context);
 }
 
-void llg_file_strobe_with_context(uint32_t descriptor, const char* fmt, int n,
+void llg_file_strobe_with_context(uint32_t descriptor, const char* fmt, int32_t n,
                                   llg_display_eval_fn eval, const char* scope,
                                   void* context) {
     change_check();
@@ -299,7 +299,7 @@ void llg_file_strobe_with_context(uint32_t descriptor, const char* fmt, int n,
     e->scope = (char*)llg_checked_malloc(strlen(scope ? scope : "") + 1, 1,
                                          "strobe scope");
     strcpy(e->scope, scope ? scope : "");
-    int alloc = n > 0 ? n : 1;
+    int32_t alloc = n > 0 ? n : 1;
     e->work = NULL;
     e->typed_work = (llg_fmt_arg_t*)llg_checked_calloc(
         (size_t)alloc, sizeof(llg_fmt_arg_t), "strobe working values");
@@ -309,7 +309,7 @@ void llg_file_strobe_with_context(uint32_t descriptor, const char* fmt, int n,
 
 // A null handle access in a report's evaluator ended the run (SV 8.4): the
 // report prints nothing, as the access stops any other statement at once.
-static int report_failed(void) { return g.finish && llg_rt_failed(); }
+static int32_t report_failed(void) { return g.finish && llg_rt_failed(); }
 
 // Re-print one dirty monitor at the settled observation point. The
 // registration and enable paths set force_report so equal values still print.
@@ -323,9 +323,9 @@ static void check_monitor(llg_monitor_state_t* m) {
         if (m->resolve)
             m->resolve(m->typed_reads + (m->n_typed_reads - m->n_resolved),
                        m->context);
-        int changed = m->force_report;
+        int32_t changed = m->force_report;
         if (!changed) {
-            for (int i = 0; i < m->n; i++) {
+            for (int32_t i = 0; i < m->n; i++) {
                 if (m->time_args && m->time_args[i]) continue;
                 if (!llg_fmt_arg_same(&m->typed_work[i], &m->typed_last[i])) {
                     changed = 1;
@@ -337,7 +337,7 @@ static void check_monitor(llg_monitor_state_t* m) {
         m->force_report = 0;
         if (changed) {
             llg_fmt_args_destroy(m->typed_last, m->n);
-            for (int i = 0; i < m->n; i++)
+            for (int32_t i = 0; i < m->n; i++)
                 m->typed_last[i] = llg_fmt_arg_clone(&m->typed_work[i]);
             llg_print_typed_to(m->descriptor, m->fmt, m->typed_work, m->n,
                                m->scope, 1);
@@ -347,9 +347,9 @@ static void check_monitor(llg_monitor_state_t* m) {
     }
     sv4_destroy_array(m->work, (size_t)m->n);
     m->eval(m->work, NULL);
-    int changed = m->force_report;
+    int32_t changed = m->force_report;
     if (!changed) {
-        for (int i = 0; i < m->n; i++) {
+        for (int32_t i = 0; i < m->n; i++) {
             if (!sv4_same(m->work[i], m->last[i])) {
                 changed = 1;
                 break;
@@ -362,7 +362,7 @@ static void check_monitor(llg_monitor_state_t* m) {
         sv4_destroy_array(m->work, (size_t)m->n);
         return;
     }
-    for (int i = 0; i < m->n; i++) sv4_copy(&m->last[i], &m->work[i]);
+    for (int32_t i = 0; i < m->n; i++) sv4_copy(&m->last[i], &m->work[i]);
     llg_print_array(m->fmt, m->work, m->n);
     sv4_destroy_array(m->work, (size_t)m->n);
 }
@@ -408,7 +408,7 @@ static void flush_strobes(void) {
 // `$monitoron`/`$monitoroff` set one flag that only `$monitor` observes; "there
 // is no counterpart to $monitoron and $monitoroff tasks" for $fmonitor (SV
 // 21.3.2). The flag survives a later `$monitor` call.
-void llg_monitor_set(int on) {
+void llg_monitor_set(int32_t on) {
     if (!region_can_mutate("monitor scheduling")) return;
     g.monitor_off = !on;
     if (!on) return;

@@ -59,13 +59,13 @@ static char* llg_cov_db_name;
 static uint64_t* llg_cov_group_hashes;
 
 // Assertion coverage (coverage/assertions.c) contributes its own section.
-static int llg_acov_available(void);
+static int32_t llg_acov_available(void);
 static uint64_t llg_acov_schema_hash(void);
 // So do FSM coverage (coverage/fsm.c) and statement and toggle coverage
 // (coverage/code.c).
-static int llg_fcov_available(void);
-static int llg_scov_available(void);
-static int llg_tcov_available(void);
+static int32_t llg_fcov_available(void);
+static int32_t llg_scov_available(void);
+static int32_t llg_tcov_available(void);
 
 // ── Hashing ─────────────────────────────────────────────────────────────────
 
@@ -73,7 +73,7 @@ static int llg_tcov_available(void);
 #define LLG_COV_FNV_PRIME UINT64_C(0x100000001b3)
 
 static void llg_cov_fnv(uint64_t* hash, const void* data, size_t len) {
-    const unsigned char* bytes = (const unsigned char*)data;
+    const uint8_t* bytes = (const uint8_t*)data;
     for (size_t i = 0; i < len; ++i) {
         *hash ^= bytes[i];
         *hash *= LLG_COV_FNV_PRIME;
@@ -81,8 +81,8 @@ static void llg_cov_fnv(uint64_t* hash, const void* data, size_t len) {
 }
 
 static void llg_cov_fnv_u64(uint64_t* hash, uint64_t value) {
-    unsigned char bytes[8];
-    for (int i = 0; i < 8; ++i) bytes[i] = (unsigned char)(value >> (8 * i));
+    uint8_t bytes[8];
+    for (int32_t i = 0; i < 8; ++i) bytes[i] = (uint8_t)(value >> (8 * i));
     llg_cov_fnv(hash, bytes, sizeof bytes);
 }
 
@@ -293,7 +293,7 @@ static int64_t llg_cov_model_group_index(const llg_cov_group_t* group) {
 // ── Byte buffers ────────────────────────────────────────────────────────────
 
 typedef struct {
-    unsigned char* data;
+    uint8_t* data;
     size_t len, cap;
 } llg_cov_buf_t;
 
@@ -305,7 +305,7 @@ static void llg_cov_put(llg_cov_buf_t* buf, const void* data, size_t len) {
             if (cap > SIZE_MAX / 2u) llg_fatal_allocation("coverage database", 2, SIZE_MAX);
             cap *= 2u;
         }
-        buf->data = (unsigned char*)llg_cov_grow(buf->data, cap, 1, "coverage database");
+        buf->data = (uint8_t*)llg_cov_grow(buf->data, cap, 1, "coverage database");
         buf->cap = cap;
     }
     if (len) memcpy(buf->data + buf->len, data, len);
@@ -317,14 +317,14 @@ static void llg_cov_put_u8(llg_cov_buf_t* buf, uint8_t value) {
 }
 
 static void llg_cov_put_u32(llg_cov_buf_t* buf, uint32_t value) {
-    unsigned char bytes[4];
-    for (int i = 0; i < 4; ++i) bytes[i] = (unsigned char)(value >> (8 * i));
+    uint8_t bytes[4];
+    for (int32_t i = 0; i < 4; ++i) bytes[i] = (uint8_t)(value >> (8 * i));
     llg_cov_put(buf, bytes, sizeof bytes);
 }
 
 static void llg_cov_put_u64(llg_cov_buf_t* buf, uint64_t value) {
-    unsigned char bytes[8];
-    for (int i = 0; i < 8; ++i) bytes[i] = (unsigned char)(value >> (8 * i));
+    uint8_t bytes[8];
+    for (int32_t i = 0; i < 8; ++i) bytes[i] = (uint8_t)(value >> (8 * i));
     llg_cov_put(buf, bytes, sizeof bytes);
 }
 
@@ -336,16 +336,16 @@ static void llg_cov_put_text(llg_cov_buf_t* buf, const char* text) {
 }
 
 static void llg_cov_patch_u64(llg_cov_buf_t* buf, size_t at, uint64_t value) {
-    for (int i = 0; i < 8; ++i) buf->data[at + (size_t)i] = (unsigned char)(value >> (8 * i));
+    for (int32_t i = 0; i < 8; ++i) buf->data[at + (size_t)i] = (uint8_t)(value >> (8 * i));
 }
 
 typedef struct {
-    const unsigned char* data;
+    const uint8_t* data;
     size_t len, pos;
     const char* error;  // the first reason a read failed
 } llg_cov_reader_t;
 
-static int llg_cov_fail(llg_cov_reader_t* reader, const char* error) {
+static int32_t llg_cov_fail(llg_cov_reader_t* reader, const char* error) {
     if (!reader->error) reader->error = error;
     return 0;
 }
@@ -354,7 +354,7 @@ static int llg_cov_fail(llg_cov_reader_t* reader, const char* error) {
 // failure: a local filled through an inlined reader is then never read
 // uninitialized, which GCC 11, and GCC 13 on AArch64, otherwise report under
 // -Wmaybe-uninitialized (docs/cross_platform.md, Compiler versions).
-static int llg_cov_get(llg_cov_reader_t* reader, void* out, size_t len) {
+static int32_t llg_cov_get(llg_cov_reader_t* reader, void* out, size_t len) {
     memset(out, 0, len);
     if (reader->error) return 0;
     if (len > reader->len - reader->pos) return llg_cov_fail(reader, "the file is truncated");
@@ -363,27 +363,27 @@ static int llg_cov_get(llg_cov_reader_t* reader, void* out, size_t len) {
     return 1;
 }
 
-static int llg_cov_get_u8(llg_cov_reader_t* reader, uint8_t* out) {
+static int32_t llg_cov_get_u8(llg_cov_reader_t* reader, uint8_t* out) {
     return llg_cov_get(reader, out, 1);
 }
 
-static int llg_cov_get_u32(llg_cov_reader_t* reader, uint32_t* out) {
-    unsigned char bytes[4];
+static int32_t llg_cov_get_u32(llg_cov_reader_t* reader, uint32_t* out) {
+    uint8_t bytes[4];
     *out = 0;
     if (!llg_cov_get(reader, bytes, sizeof bytes)) return 0;
-    for (int i = 0; i < 4; ++i) *out |= (uint32_t)bytes[i] << (8 * i);
+    for (int32_t i = 0; i < 4; ++i) *out |= (uint32_t)bytes[i] << (8 * i);
     return 1;
 }
 
-static int llg_cov_get_u64(llg_cov_reader_t* reader, uint64_t* out) {
-    unsigned char bytes[8];
+static int32_t llg_cov_get_u64(llg_cov_reader_t* reader, uint64_t* out) {
+    uint8_t bytes[8];
     *out = 0;
     if (!llg_cov_get(reader, bytes, sizeof bytes)) return 0;
-    for (int i = 0; i < 8; ++i) *out |= (uint64_t)bytes[i] << (8 * i);
+    for (int32_t i = 0; i < 8; ++i) *out |= (uint64_t)bytes[i] << (8 * i);
     return 1;
 }
 
-static int llg_cov_get_i64(llg_cov_reader_t* reader, int64_t* out) {
+static int32_t llg_cov_get_i64(llg_cov_reader_t* reader, int64_t* out) {
     uint64_t raw = 0;
     *out = 0;
     if (!llg_cov_get_u64(reader, &raw)) return 0;
@@ -392,7 +392,7 @@ static int llg_cov_get_i64(llg_cov_reader_t* reader, int64_t* out) {
 }
 
 // A borrowed text field: `*text` points into the buffer, `*len` bytes.
-static int llg_cov_get_text(llg_cov_reader_t* reader, const char** text, uint32_t* len) {
+static int32_t llg_cov_get_text(llg_cov_reader_t* reader, const char** text, uint32_t* len) {
     *text = NULL;
     if (!llg_cov_get_u32(reader, len)) return 0;
     if (*len > LLG_COV_DB_MAX_TEXT) return llg_cov_fail(reader, "a name or comment is too long");
@@ -404,7 +404,7 @@ static int llg_cov_get_text(llg_cov_reader_t* reader, const char** text, uint32_
 }
 
 // An element count that cannot exceed what the remaining bytes can hold.
-static int llg_cov_get_count(llg_cov_reader_t* reader, uint64_t* count, size_t element_bytes) {
+static int32_t llg_cov_get_count(llg_cov_reader_t* reader, uint64_t* count, size_t element_bytes) {
     if (!llg_cov_get_u64(reader, count)) return 0;
     if (*count > (reader->len - reader->pos) / element_bytes)
         return llg_cov_fail(reader, "an element count exceeds the file");
@@ -415,7 +415,7 @@ static int llg_cov_get_count(llg_cov_reader_t* reader, uint64_t* count, size_t e
 
 // Records with equal layout keys have identical counter layouts: the same
 // declaration, argument slots and automatic bin limits.
-static int llg_cov_same_layout_key(const llg_cov_inst_t* a, const llg_cov_inst_t* b) {
+static int32_t llg_cov_same_layout_key(const llg_cov_inst_t* a, const llg_cov_inst_t* b) {
     if (a->group != b->group) return 0;
     for (uint32_t i = 0; i < a->group->n_slots; ++i)
         if (a->slots[i].raw != b->slots[i].raw ||
@@ -608,8 +608,8 @@ static void llg_cov_put_functional(llg_cov_buf_t* buf) {
             llg_cov_put_record(buf, recs, used, llg_cov_model_group_hash((size_t)index));
             records++;
         }
-        for (int b = 0; b < 4; ++b)
-            buf->data[count_at + (size_t)b] = (unsigned char)(records >> (8 * b));
+        for (int32_t b = 0; b < 4; ++b)
+            buf->data[count_at + (size_t)b] = (uint8_t)(records >> (8 * b));
         free(written);
         free(all);
     }
@@ -670,7 +670,7 @@ static void llg_cov_db_image(llg_cov_buf_t* buf, uint32_t sections) {
 // LLG_SIM_OUT_DIR). Returns 1 on success; on failure reports why at `site`
 // (a framed site, or NULL) with `what` naming the call, and removes both the
 // temporary file and `name` (40.3.2.5).
-static int llg_cov_db_save(const char* name, uint32_t sections, const char* what,
+static int32_t llg_cov_db_save(const char* name, uint32_t sections, const char* what,
                            const char* site) {
     char* path = llg_output_path(name);
     size_t len = strlen(path);
@@ -704,7 +704,7 @@ static int llg_cov_db_save(const char* name, uint32_t sections, const char* what
 // ── Loading ─────────────────────────────────────────────────────────────────
 
 typedef struct {
-    unsigned char* data;
+    uint8_t* data;
     size_t len;
     uint32_t version;
     uint32_t sections;
@@ -723,7 +723,7 @@ typedef struct {
 // Read and check the frame of database `name`: magic, version, lengths and
 // checksum. Returns NULL with `*error` set on failure; `*missing` tells a
 // file that cannot be opened from one that is not a valid database.
-static const char* llg_cov_db_read(const char* name, llg_cov_db_file_t* db, int* missing) {
+static const char* llg_cov_db_read(const char* name, llg_cov_db_file_t* db, int32_t* missing) {
     memset(db, 0, sizeof *db);
     *missing = 0;
     FILE* file = fopen(name, "rb");
@@ -740,7 +740,7 @@ static const char* llg_cov_db_read(const char* name, llg_cov_db_file_t* db, int*
                 break;
             }
             cap = cap ? cap * 2u : 65536u;
-            db->data = (unsigned char*)llg_cov_grow(db->data, cap, 1, "coverage database");
+            db->data = (uint8_t*)llg_cov_grow(db->data, cap, 1, "coverage database");
         }
         size_t got = fread(db->data + db->len, 1, cap - db->len, file);
         db->len += got;
@@ -771,7 +771,7 @@ static const char* llg_cov_db_read(const char* name, llg_cov_db_file_t* db, int*
     db->end = db->len - 8u;
     uint64_t checksum = LLG_COV_FNV_OFFSET, stored = 0;
     llg_cov_fnv(&checksum, db->data, db->end);
-    for (int i = 0; i < 8; ++i) stored |= (uint64_t)db->data[db->end + (size_t)i] << (8 * i);
+    for (int32_t i = 0; i < 8; ++i) stored |= (uint64_t)db->data[db->end + (size_t)i] << (8 * i);
     if (checksum != stored) return "the checksum does not match (the file is corrupt)";
     // Section framing: each present section's length and body, exactly
     // filling the payload.
@@ -824,7 +824,7 @@ static void llg_cov_add_count(llg_cov_point_state_t* state, uint64_t bin, uint64
 // builds the record's layout in a new unlinked record stored in `*staged`;
 // with a target (publication), adds the counters to it. The reader is
 // positioned at the record and left after it.
-static int llg_cov_db_record(llg_cov_reader_t* reader, const char* type_name,
+static int32_t llg_cov_db_record(llg_cov_reader_t* reader, const char* type_name,
                              llg_cov_inst_t** staged, llg_cov_inst_t* target) {
     uint64_t hash;
     if (!llg_cov_get_u64(reader, &hash)) return 0;
@@ -938,7 +938,7 @@ static int llg_cov_db_record(llg_cov_reader_t* reader, const char* type_name,
             !llg_cov_get_i64(reader, &ignored) || !llg_cov_get_text(reader, &text, &text_len) ||
             !llg_cov_get_count(reader, &entries, 16u))
             return 0;
-        int is_point = i < group->n_points;
+        int32_t is_point = i < group->n_points;
         uint64_t limit = is_point ? state->layout->n_bins
                                   : (state->cross ? state->cross->layout->product : 0u);
         for (uint64_t e = 0; e < entries; ++e) {
@@ -1002,7 +1002,7 @@ static int llg_cov_db_record(llg_cov_reader_t* reader, const char* type_name,
 // entry per covergroup type of the model, in model order. A load applies
 // none of them: the run keeps its own type options, declared or written
 // (19.9 is silent; industry-standard behaviour, decision S46-D15).
-LLG_OUTLYING static int llg_cov_db_type_options(llg_cov_reader_t* reader) {
+LLG_OUTLYING static int32_t llg_cov_db_type_options(llg_cov_reader_t* reader) {
     uint32_t types = 0;
     if (!llg_cov_get_u32(reader, &types)) return 0;
     if (types != llg_cov_n_model_types)
@@ -1036,7 +1036,7 @@ LLG_OUTLYING static int llg_cov_db_type_options(llg_cov_reader_t* reader) {
 // Parse the records of the functional section in one of two passes:
 // validation stages a record per database record into `staged`;
 // publication adds the counters of record r to `targets[r]`.
-static int llg_cov_db_functional(llg_cov_reader_t* reader, llg_cov_inst_t*** staged,
+static int32_t llg_cov_db_functional(llg_cov_reader_t* reader, llg_cov_inst_t*** staged,
                                  size_t* n_staged, size_t* staged_cap, llg_cov_inst_t** targets) {
     uint32_t types = 0;
     if (!llg_cov_get_u32(reader, &types)) return 0;
@@ -1048,7 +1048,7 @@ static int llg_cov_db_functional(llg_cov_reader_t* reader, llg_cov_inst_t*** sta
             return 0;
         char* type_name = llg_cov_strdup_bytes(name, name_len);
         for (uint32_t r = 0; r < records; ++r, ++record) {
-            int ok;
+            int32_t ok;
             if (targets) {
                 ok = llg_cov_db_record(reader, type_name, NULL, targets[record]);
             } else {
@@ -1082,7 +1082,7 @@ void llg_cov_load_db(llg_string_t name, const char* site) {
     char* path = llg_cov_strdup_bytes(name.data, name.data ? name.len : 0u);
     llg_string_destroy(&name);
     llg_cov_db_file_t db;
-    int missing;
+    int32_t missing;
     const char* error = llg_cov_db_read(path, &db, &missing);
     if (!error && !(db.sections & LLG_COV_DB_FUNCTIONAL))
         error = "the database holds no functional coverage";

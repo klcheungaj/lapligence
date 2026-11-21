@@ -43,7 +43,7 @@ static uint64_t sequence_mult_mul(uint64_t a, uint64_t b) {
 
 /* Work that runs once per match (match items, cover pass statements) is
  * enumerated, so it stays under the thread budget like live threads do. */
-static int sequence_mult_enumerable(uint64_t mult) {
+static int32_t sequence_mult_enumerable(uint64_t mult) {
     if (mult <= g.sequence_thread_limit) return 1;
     const llg_concurrent_assertion_t* assertion = g.sequence_current;
     if (!g.finish) {
@@ -148,7 +148,7 @@ sv4_t* llg_sequence_local_addr(void* data, uint32_t slot) {
     llg_sequence_attempt_t* attempt = sequence_attempt_from_data(data);
     if (!attempt || !attempt->graph || slot >= attempt->graph->local_count ||
         !attempt->locals) {
-        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid sequence local slot %u", (unsigned)slot);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid sequence local slot %" PRIu32, (uint32_t)slot);
         llg_last_failure = 1;
         g.finish = 1;
         return NULL;
@@ -175,7 +175,7 @@ void llg_sequence_local_write(sv4_t* target, sv4_t value) {
     sv4_copy(target, &value);
 }
 
-static int sequence_locals_same(const sv4_t* left, const sv4_t* right,
+static int32_t sequence_locals_same(const sv4_t* left, const sv4_t* right,
                                 uint32_t count) {
     if (count == 0) return 1;
     if (!left || !right) return 0;
@@ -228,7 +228,7 @@ static void sequence_scope_release(llg_sequence_scope_t* scope) {
 /* Its marks are built from an event that sequence_choose_event filled; a
  * caller reads the event only after that helper reported success. */
 LLG_MAYBE_UNINIT_BEGIN
-static int sequence_mark_same(const llg_sequence_mark_t* a, const llg_sequence_mark_t* b) {
+static int32_t sequence_mark_same(const llg_sequence_mark_t* a, const llg_sequence_mark_t* b) {
     return a->time == b->time && a->tick == b->tick && a->clock == b->clock &&
            a->edge == b->edge;
 }
@@ -237,24 +237,24 @@ LLG_MAYBE_UNINIT_END
 /* A pending thread is dead when an enclosing first_match invocation has
  * closed, or when an enclosing join can no longer pair its endpoint: the
  * other side has no live thread and, for AND, never matched. */
-static int sequence_scope_doomed(const llg_sequence_scope_t* scope) {
+static int32_t sequence_scope_doomed(const llg_sequence_scope_t* scope) {
     for (; scope; scope = scope->parent) {
         if (scope->matched) return 1;
         const llg_sequence_join_instance_t* join = scope->join;
         if (!join) continue;
-        int other = !scope->side;
+        int32_t other = !scope->side;
         if (join->alive[other]) continue;
         if (join->plan->kind == LLG_SEQUENCE_JOIN_INTERSECT || !join->matched[other]) return 1;
     }
     return 0;
 }
 
-static int sequence_scope_closed(const llg_sequence_scope_t* scope) {
+static int32_t sequence_scope_closed(const llg_sequence_scope_t* scope) {
     for (; scope; scope = scope->parent) if (scope->matched) return 1;
     return 0;
 }
 
-static int sequence_scope_allows(const llg_sequence_scope_t* scope,
+static int32_t sequence_scope_allows(const llg_sequence_scope_t* scope,
                                  const llg_assertion_clock_event_t* event) {
     for (; scope; scope = scope->parent) {
         if (!scope->matched) continue;
@@ -295,7 +295,7 @@ static llg_sequence_token_t* sequence_token_copy(
     return token;
 }
 
-static int sequence_token_same(const llg_sequence_graph_t* graph,
+static int32_t sequence_token_same(const llg_sequence_graph_t* graph,
                                const llg_sequence_token_t* a,
                                const llg_sequence_token_t* b) {
     return a->state == b->state && a->transition == b->transition &&
@@ -436,7 +436,7 @@ static void sequence_endpoints_free(llg_sequence_endpoint_t* endpoint) {
 }
 
 static void sequence_endpoint_add(llg_sequence_attempt_t* attempt,
-                                   const llg_sequence_token_t* token, int empty) {
+                                   const llg_sequence_token_t* token, int32_t empty) {
     llg_sequence_endpoint_t* endpoint = sequence_endpoint_alloc();
     endpoint->local_count = attempt->graph->local_count;
     endpoint->locals = sequence_locals_clone(attempt->graph, token->locals);
@@ -503,22 +503,22 @@ static void sequence_token_anchor(llg_sequence_token_t* token,
 /* A coincident destination edge is usable even when delivered before the
  * source. History is bounded to one physical time slot, not the whole run. */
 static const llg_assertion_clock_event_t* sequence_coincident(
-    const llg_concurrent_assertion_t* assertion, sv4_t* clock, int edge, uint64_t time) {
+    const llg_concurrent_assertion_t* assertion, sv4_t* clock, int32_t edge, uint64_t time) {
     for (const llg_assertion_clock_event_t* event = assertion->clock_history;
          event; event = event->next)
         if (event->signal == clock && event->edge == edge && event->time == time) return event;
     return NULL;
 }
 
-static int sequence_choose_event(const llg_concurrent_assertion_t* assertion,
+static int32_t sequence_choose_event(const llg_concurrent_assertion_t* assertion,
                                   const llg_sequence_token_t* token,
                                   const llg_sequence_transition_t* transition,
                                   const llg_assertion_clock_event_t* current,
                                   llg_assertion_clock_event_t* selected,
                                   uint64_t* elapsed) {
     sv4_t* clock = transition->clock ? transition->clock : assertion->hot->clock;
-    int edge = transition->clock ? transition->edge : assertion->hot->edge;
-    int same = clock == token->entered_clock && edge == token->entered_edge;
+    int32_t edge = transition->clock ? transition->edge : assertion->hot->edge;
+    int32_t same = clock == token->entered_clock && edge == token->entered_edge;
     if (same) {
         if (!token->checked && transition->min_delay == 0 && token->entered_time == current->time) {
             *selected = (llg_assertion_clock_event_t){ .signal = clock, .edge = edge,
@@ -548,7 +548,7 @@ static int sequence_choose_event(const llg_concurrent_assertion_t* assertion,
     return 1;
 }
 
-int llg_sequence_local_inherited(void* data, uint32_t slot) {
+int32_t llg_sequence_local_inherited(void* data, uint32_t slot) {
     llg_sequence_attempt_t* attempt = sequence_attempt_from_data(data);
     return attempt && attempt->graph && slot < attempt->graph->local_count &&
         attempt->inherited && attempt->inherited[slot];
@@ -591,7 +591,7 @@ static llg_sequence_attempt_t* sequence_attempt_new(
     return attempt;
 }
 
-static int sequence_start(llg_sequence_attempt_t* attempt,
+static int32_t sequence_start(llg_sequence_attempt_t* attempt,
                            const llg_concurrent_assertion_t* assertion,
                            const llg_assertion_clock_event_t* current) {
     llg_assertion_clock_event_t event = *current;
@@ -634,11 +634,11 @@ static int sequence_start(llg_sequence_attempt_t* attempt,
  * `event` is read only after sequence_choose_event reported success; this is
  * the per-token loop of every clocked sequence, so it is not initialized. */
 LLG_MAYBE_UNINIT_BEGIN
-static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
+static int32_t sequence_attempt_step(llg_sequence_attempt_t* attempt,
                                   const llg_concurrent_assertion_t* assertion,
-                                  uint64_t cycle, sv4_t* event_clock, int event_edge,
+                                  uint64_t cycle, sv4_t* event_clock, int32_t event_edge,
                                   uint64_t event_time, uint64_t event_order,
-                                  uint64_t event_tick, int* accepted) {
+                                  uint64_t event_tick, int32_t* accepted) {
     const llg_sequence_graph_t* graph = attempt->graph;
     llg_assertion_clock_event_t current = { .signal = event_clock, .edge = event_edge,
         .time = event_time, .order = event_order, .tick = event_tick };
@@ -665,7 +665,7 @@ static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
             work = token->next;
         }
         token->next = NULL;
-        int duplicate = 0;
+        int32_t duplicate = 0;
         for (llg_sequence_token_t* old = processed; old; old = old->next)
             if (sequence_token_same(graph, old, token)) { duplicate = 1; break; }
         if (duplicate) { sequence_token_free(token); continue; }
@@ -705,7 +705,7 @@ static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
         destination->transition = UINT32_MAX;
         sequence_token_anchor(destination, &event);
         attempt->locals = destination->locals;
-        int matches = edge->atom == LLG_SEQUENCE_EPSILON || (graph->atom && graph->atom(edge->atom, attempt));
+        int32_t matches = edge->atom == LLG_SEQUENCE_EPSILON || (graph->atom && graph->atom(edge->atom, attempt));
         if (matches && edge->exit_scope) {
             llg_sequence_scope_t* scope = destination->scope;
             if (!scope || scope->identity != edge->exit_scope) {
@@ -730,8 +730,8 @@ static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
                 llg_last_failure = 1; g.finish = 1; matches = 0;
             } else {
                 llg_sequence_join_instance_t* join = frame->join;
-                int side = frame->side;
-                int other = !side;
+                int32_t side = frame->side;
+                int32_t other = !side;
                 llg_sequence_mark_t mark = { .time = event.time, .tick = event.tick,
                     .clock = event.signal, .edge = event.edge };
                 if (!join->matched[side] || !sequence_mark_same(&join->last[side], &mark))
@@ -818,7 +818,7 @@ static int sequence_attempt_step(llg_sequence_attempt_t* attempt,
     sequence_tokens_free(processed);
     // Dropping a doomed thread can end a join side and doom further
     // threads, so prune to a fixed point (bounded by the frame depth).
-    int pruned;
+    int32_t pruned;
     do {
         pruned = 0;
         llg_sequence_token_t** link = &next;
@@ -883,7 +883,7 @@ static void sequence_attempt_discard(llg_sequence_attempt_t* attempt) {
     sequence_thread_release();
 }
 
-static int sequence_cycle_next(llg_concurrent_assertion_t* assertion, uint64_t* cycle) {
+static int32_t sequence_cycle_next(llg_concurrent_assertion_t* assertion, uint64_t* cycle) {
     if (assertion->sequence_cycle == UINT64_MAX) {
         llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "concurrent assertion sequence clock-cycle counter overflow");
         llg_last_failure = 1; g.finish = 1; return 0;
@@ -892,7 +892,7 @@ static int sequence_cycle_next(llg_concurrent_assertion_t* assertion, uint64_t* 
     return 1;
 }
 
-static int sequence_spawn_consequents(llg_concurrent_assertion_t* assertion,
+static int32_t sequence_spawn_consequents(llg_concurrent_assertion_t* assertion,
                                       llg_sequence_attempt_t* antecedent, uint64_t cycle) {
     llg_sequence_endpoint_t* endpoint = antecedent->endpoints;
     antecedent->endpoints = NULL;

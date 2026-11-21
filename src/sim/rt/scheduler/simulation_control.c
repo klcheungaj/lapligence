@@ -17,7 +17,7 @@
 // are never split, so their text is printed unchanged.
 #define LLG_RT_HINT_SEPARATOR '\036'
 
-static int llg_rt_site_is_location(const char* text, size_t len) {
+static int32_t llg_rt_site_is_location(const char* text, size_t len) {
     const char* suffix = NULL;
     size_t i;
     for (i = 0; i + 8 <= len; i++)
@@ -26,7 +26,7 @@ static int llg_rt_site_is_location(const char* text, size_t len) {
             break;
         }
     size_t end = suffix ? (size_t)(suffix - text) : len;
-    int fields = 0;
+    int32_t fields = 0;
     while (fields < 2) {
         size_t digits = 0;
         while (end > 0 && text[end - 1] >= '0' && text[end - 1] <= '9') {
@@ -37,7 +37,7 @@ static int llg_rt_site_is_location(const char* text, size_t len) {
         end--;
         fields++;
     }
-    int dotted = 0;
+    int32_t dotted = 0;
     for (i = 0; i < end; i++) {
         if (text[i] == '.') dotted = 1;
         if (i + 4 <= end && memcmp(text + i, " at ", 4) == 0) return 0;
@@ -51,7 +51,7 @@ static void llg_rt_time_text(char* out, size_t cap) {
     static const char* const units[] = {"fs", "ps", "ns", "us", "ms", "s"};
     uint64_t precision = g.design_precision_fs ? g.design_precision_fs : 1u;
     uint64_t scale = 1;
-    int unit = 0;
+    int32_t unit = 0;
     while (unit < 5 && precision % (scale * 1000u) == 0) {
         scale *= 1000u;
         unit++;
@@ -72,7 +72,7 @@ static void llg_rt_time_text(char* out, size_t cap) {
 
 // Append message `id` framed by `site` and the current time. `scope` names
 // the context when the site carries none; `hint` may be NULL.
-static void llg_rt_framed(llg_report_t* out, llg_msg_id_t id, int severity,
+static void llg_rt_framed(llg_report_t* out, llg_msg_id_t id, int32_t severity,
                           const char* site, const char* scope, const char* text,
                           size_t text_len, const char* hint) {
     char scope_inline[256];
@@ -112,9 +112,9 @@ static void llg_rt_framed_line(llg_msg_id_t id, const char* site, const char* te
 // The end-of-run summary over every message of the model (SIM-000),
 // printed when the run reported a warning or worse.
 static void llg_rt_report_summary(void) {
-    static int printed;
+    static int32_t printed;
     uint64_t counts[4];
-    int severity;
+    int32_t severity;
     if (printed) return;
     for (severity = 0; severity < 4; severity++) counts[severity] = llg_msg_counts[severity];
     if (!counts[LLG_SEVERITY_WARNING] && !counts[LLG_SEVERITY_ERROR] &&
@@ -133,10 +133,10 @@ static void llg_rt_report_summary(void) {
 }
 
 
-static void report_finish(int verbosity, const char* location) {
+static void report_finish(int32_t verbosity, const char* location) {
     if (verbosity >= 1) llg_rt_framed_line(LLG_MSG_FINISH, location, "$finish called");
     if (verbosity >= 2) {
-        llg_msg(LLG_MSG_STATISTICS, NULL, "simulation statistics: processes=%d", g.n_procs);
+        llg_msg(LLG_MSG_STATISTICS, NULL, "simulation statistics: processes=%" PRId32, g.n_procs);
         if (llg_severity_counts[LLG_SEVERITY_INFO] != 0 ||
             llg_severity_counts[LLG_SEVERITY_WARNING] != 0 ||
             llg_severity_counts[LLG_SEVERITY_ERROR] != 0 ||
@@ -173,11 +173,11 @@ static void report_finish(int verbosity, const char* location) {
     }
 }
 
-void llg_rt_finish_with_level(int verbosity, const char* location) {
+void llg_rt_finish_with_level(int32_t verbosity, const char* location) {
     llg_proc_t* current = llg_current();
     llg_runtime_service_enter(current, "$finish");
     if (verbosity < 0 || verbosity > 2) {
-        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid $finish verbosity %d", verbosity);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid $finish verbosity %" PRId32, verbosity);
         abort();
     }
     deferred_assertions_finish();
@@ -195,7 +195,7 @@ void llg_rt_request_finish(void) {
     if (g.current) g.current->chain.exiting = LLG_EXIT_COMPLETE;
 }
 
-int llg_rt_exiting(void) {
+int32_t llg_rt_exiting(void) {
     if (g.current) return g.current->chain.exiting != LLG_EXIT_NONE;
     // Static initialization runs outside every process: a `$finish`, a
     // `$fatal` or a run-ending error there leaves the initializer at once
@@ -234,13 +234,13 @@ void llg_rt_skip_finals(void) {
     llg_skip_final_procedures = 1;
 }
 
-static void report_stop(int verbosity, const char* location) {
+static void report_stop(int32_t verbosity, const char* location) {
     if (verbosity >= 1) llg_rt_framed_line(LLG_MSG_STOP, location, "$stop called");
     if (verbosity >= 2)
-        llg_msg(LLG_MSG_STATISTICS, NULL, "simulation statistics: processes=%d", g.n_procs);
+        llg_msg(LLG_MSG_STATISTICS, NULL, "simulation statistics: processes=%" PRId32, g.n_procs);
 }
 
-static int resume_stopped_process(void) {
+static int32_t resume_stopped_process(void) {
     if (!g.suspended) return 0;
     if (!g.stop_proc) {
         g.suspended = 0;
@@ -262,11 +262,11 @@ static int resume_stopped_process(void) {
     return 1;
 }
 
-llg_co_arm_t llg_arm_stop(llg_proc_t* self, int verbosity,
+llg_co_arm_t llg_arm_stop(llg_proc_t* self, int32_t verbosity,
                           const char* location) {
     llg_runtime_service_enter(self, "$stop");
     if (verbosity < 0 || verbosity > 2) {
-        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid $stop verbosity %d", verbosity);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid $stop verbosity %" PRId32, verbosity);
         abort();
     }
     if (!g.running || !g.process_turn_active || !self || self != g.current ||
@@ -285,9 +285,9 @@ llg_co_arm_t llg_arm_stop(llg_proc_t* self, int verbosity,
     return LLG_CO_ARM_SUSPEND;
 }
 
-void llg_rt_request_stop(int verbosity, const char* location) {
+void llg_rt_request_stop(int32_t verbosity, const char* location) {
     if (verbosity < 0 || verbosity > 2) {
-        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid $stop verbosity %d", verbosity);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid $stop verbosity %" PRId32, verbosity);
         abort();
     }
     report_stop(verbosity, location);
@@ -306,9 +306,9 @@ void llg_rt_request_stop(int verbosity, const char* location) {
     g.deferred_stop = 1;
 }
 
-void llg_rt_action_stop(int verbosity, const char* location) {
+void llg_rt_action_stop(int32_t verbosity, const char* location) {
     if (verbosity < 0 || verbosity > 2) {
-        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid $stop verbosity %d", verbosity);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "invalid $stop verbosity %" PRId32, verbosity);
         abort();
     }
     report_stop(verbosity, location);
@@ -318,7 +318,7 @@ void llg_rt_action_stop(int verbosity, const char* location) {
     g.suspended = 1;
 }
 
-int llg_rt_control_stop(int verbosity) {
+int32_t llg_rt_control_stop(int32_t verbosity) {
     if (!g.running || g.finish || g.suspended || g.stop_proc || g.deferred_stop) return 0;
     if (g.process_turn_active && g.current) {
         llg_rt_request_stop(verbosity, NULL);
@@ -328,7 +328,7 @@ int llg_rt_control_stop(int verbosity) {
     return 1;
 }
 
-int llg_rt_control_stop_before_run(int verbosity) {
+int32_t llg_rt_control_stop_before_run(int32_t verbosity) {
     if (!g.initialized || g.running || g.finish || g.suspended || g.stop_proc ||
         g.deferred_stop || g.held_stop)
         return 0;
@@ -343,7 +343,7 @@ int llg_rt_control_stop_before_run(int verbosity) {
     return 1;
 }
 
-int llg_rt_control_finish(int verbosity) {
+int32_t llg_rt_control_finish(int32_t verbosity) {
     if (g.finish) return 0;
     report_finish(verbosity, NULL);
     llg_rt_request_finish();
@@ -352,7 +352,7 @@ int llg_rt_control_finish(int verbosity) {
 
 uint64_t llg_rt_end_time(void) { return g.initialized ? g.now : llg_final_time; }
 
-int llg_rt_set_stop_policy(int policy) {
+int32_t llg_rt_set_stop_policy(int32_t policy) {
     if (policy != LLG_STOP_POLICY_RESUME && policy != LLG_STOP_POLICY_EXIT) return 0;
     if (g.running) return 0;
     llg_stop_policy_override = 1;
@@ -361,13 +361,13 @@ int llg_rt_set_stop_policy(int policy) {
     return 1;
 }
 
-int llg_rt_stop_policy(void) {
+int32_t llg_rt_stop_policy(void) {
     return g.initialized ? g.stop_policy : llg_configured_stop_policy;
 }
 
-int llg_rt_is_suspended(void) { return g.suspended != 0; }
+int32_t llg_rt_is_suspended(void) { return g.suspended != 0; }
 
-int llg_rt_resume(void) {
+int32_t llg_rt_resume(void) {
     if (g.running) return 0;
     return resume_stopped_process();
 }
@@ -387,13 +387,13 @@ static void insert_region_callback(llg_region_callback_t* entry) {
     *slot = entry;
 }
 
-int llg_schedule_region_callback_after(llg_region_t region,
+int32_t llg_schedule_region_callback_after(llg_region_t region,
                                        llg_region_callback_fn callback,
                                        void* data, uint64_t ticks) {
     return llg_schedule_region_callback_id(region, callback, data, ticks, NULL);
 }
 
-int llg_schedule_region_callback_id(llg_region_t region,
+int32_t llg_schedule_region_callback_id(llg_region_t region,
                                     llg_region_callback_fn callback,
                                     void* data, uint64_t ticks,
                                     llg_region_callback_id_t* id) {
@@ -418,7 +418,7 @@ int llg_schedule_region_callback_id(llg_region_t region,
     return 1;
 }
 
-int llg_cancel_region_callback(llg_region_callback_id_t id) {
+int32_t llg_cancel_region_callback(llg_region_callback_id_t id) {
     if (id.generation != llg_event_generation) return 0;
     for (llg_region_callback_t** slot = &g.callbacks; *slot;
          slot = &(*slot)->next) {
@@ -431,12 +431,12 @@ int llg_cancel_region_callback(llg_region_callback_id_t id) {
     return 0;
 }
 
-int llg_schedule_region_callback(llg_region_t region,
+int32_t llg_schedule_region_callback(llg_region_t region,
                                  llg_region_callback_fn callback, void* data) {
     return llg_schedule_region_callback_after(region, callback, data, 0);
 }
 
-int llg_register_pli_callback(llg_region_t region,
+int32_t llg_register_pli_callback(llg_region_t region,
                               llg_region_callback_fn callback, void* data) {
     return llg_schedule_region_callback(region, callback, data);
 }

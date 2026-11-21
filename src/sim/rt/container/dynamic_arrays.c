@@ -15,8 +15,8 @@ static void llg_dyn_new_count(llg_dyn_array_t* dst, size_t size,
                                         dst->element_two_state);
     for (size_t i = copied; i < size; ++i) data[i] = sv4_clone(&initial);
     sv4_destroy(&initial);
-    int shape_changed = dst->size != size;
-    int contents_changed = shape_changed;
+    int32_t shape_changed = dst->size != size;
+    int32_t contents_changed = shape_changed;
     if (!contents_changed) {
         for (size_t i = 0; i < size; ++i) {
             if (!sv4_same(dst->data[i], data[i])) {
@@ -45,7 +45,7 @@ void llg_dyn_new(llg_dyn_array_t* dst, sv4_t requested_size,
 }
 
 sv4_t llg_dyn_stream(const llg_dyn_array_t* array, uint32_t slice,
-                     int right_to_left, int selector_kind, sv4_t first,
+                     int32_t right_to_left, int32_t selector_kind, sv4_t first,
                      sv4_t second) {
     int64_t left;
     int64_t right;
@@ -74,7 +74,7 @@ sv4_t llg_dyn_stream(const llg_dyn_array_t* array, uint32_t slice,
 }
 
 static size_t llg_stream_unpacked_values(sv4_t source, uint32_t element_width,
-                                         int selector_kind, sv4_t first,
+                                         int32_t selector_kind, sv4_t first,
                                          sv4_t second, int64_t* left,
                                          int64_t* right) {
     if (element_width == 0)
@@ -103,7 +103,7 @@ static size_t llg_stream_unpacked_values(sv4_t source, uint32_t element_width,
 /* Reorder an unpack source as the stream operator does (SV 11.4.14.3) and
  * zero-fill it on the right to `count` whole elements. Borrows `source`. */
 static sv4_t llg_stream_unpacked_image(sv4_t source, uint32_t slice,
-                                       int right_to_left,
+                                       int32_t right_to_left,
                                        uint32_t element_width, size_t count) {
     sv4_t unpacked = sv4_stream(source, slice, right_to_left);
     uint32_t width = llg_sv4_width(unpacked);
@@ -118,8 +118,8 @@ static sv4_t llg_stream_unpacked_image(sv4_t source, uint32_t slice,
 }
 
 static void llg_dyn_unstream_assign_impl(llg_dyn_array_t* dst, sv4_t source,
-                             uint32_t slice, int right_to_left,
-                             int selector_kind, sv4_t first, sv4_t second) {
+                             uint32_t slice, int32_t right_to_left,
+                             int32_t selector_kind, sv4_t first, sv4_t second) {
     int64_t left;
     int64_t right;
     size_t count = llg_stream_unpacked_values(
@@ -170,8 +170,8 @@ static void llg_dyn_unstream_assign_impl(llg_dyn_array_t* dst, sv4_t source,
 }
 
 void llg_dyn_unstream_assign(llg_dyn_array_t* dst, sv4_t source,
-                                  uint32_t slice, int right_to_left,
-                                  int selector_kind, sv4_t first, sv4_t second) {
+                                  uint32_t slice, int32_t right_to_left,
+                                  int32_t selector_kind, sv4_t first, sv4_t second) {
     llg_container_notify_fn notify = dst->notify;
     sv4_t* contents = dst->contents_dependency;
     sv4_t* shape = dst->shape_dependency;
@@ -198,7 +198,7 @@ void llg_dyn_copy(llg_dyn_array_t* dst, const llg_dyn_array_t* src) {
         dst->element_width == src->element_width &&
         dst->element_signed == src->element_signed &&
         dst->element_two_state == src->element_two_state) {
-        int changed = 0;
+        int32_t changed = 0;
         for (size_t i = 0; i < dst->size; ++i) {
             if (sv4_same(dst->data[i], src->data[i])) continue;
             sv4_destroy(&dst->data[i]);
@@ -255,8 +255,8 @@ void llg_dyn_assign_values(llg_dyn_array_t* dst, const sv4_t* values,
         data[i] = llg_element_assign(values[i], dst->element_width,
                                      dst->element_signed,
                                      dst->element_two_state);
-    int shape_changed = dst->size != count;
-    int contents_changed = shape_changed;
+    int32_t shape_changed = dst->size != count;
+    int32_t contents_changed = shape_changed;
     if (!contents_changed) {
         for (size_t i = 0; i < count; ++i) {
             if (!sv4_same(dst->data[i], data[i])) {
@@ -298,7 +298,7 @@ LLG_INTERNAL LLG_COLD LLG_OUTLYING void llg_dyn_copy_range(
     int64_t to = 0;
     if (!sv4_to_index_i64(dst_start, &to)) return;
     int64_t from = 0;
-    int from_known = sv4_to_index_i64(src_start, &from);
+    int32_t from_known = sv4_to_index_i64(src_start, &from);
     size_t n = llg_checked_count(count, sizeof(sv4_t));
     /* Every selected source cell (the default outside the source) is taken
      * before the first write, so overlapping ranges of one array read their
@@ -316,7 +316,7 @@ LLG_INTERNAL LLG_COLD LLG_OUTLYING void llg_dyn_copy_range(
                                            dst->element_signed,
                                            dst->element_two_state);
     }
-    int changed = 0;
+    int32_t changed = 0;
     for (size_t i = 0; i < n; ++i) {
         if (to < 0 || (uint64_t)to > SIZE_MAX - i || (size_t)to + i >= dst->size)
             continue;
@@ -338,7 +338,7 @@ LLG_INTERNAL LLG_COLD LLG_OUTLYING void llg_dyn_set_range(
     llg_dyn_array_t* dst, sv4_t start, const sv4_t* values, size_t count) {
     int64_t to = 0;
     if (!sv4_to_index_i64(start, &to) || to < 0) return;
-    int changed = 0;
+    int32_t changed = 0;
     for (size_t i = 0; i < count; ++i) {
         if ((uint64_t)to > SIZE_MAX - i || (size_t)to + i >= dst->size) break;
         sv4_t cell = llg_element_assign(values[i], dst->element_width,
@@ -357,7 +357,7 @@ LLG_INTERNAL LLG_COLD LLG_OUTLYING void llg_dyn_set_range(
                    dst->shape_dependency, LLG_CONTAINER_CHANGED_CONTENTS);
 }
 
-int llg_dyn_set(llg_dyn_array_t* array, sv4_t index, sv4_t value) {
+int32_t llg_dyn_set(llg_dyn_array_t* array, sv4_t index, sv4_t value) {
     size_t native;
     if (!llg_index(index, array->size, 0, &native)) return 0;
     sv4_t assigned = llg_element_assign(
@@ -373,14 +373,14 @@ int llg_dyn_set(llg_dyn_array_t* array, sv4_t index, sv4_t value) {
     return 1;
 }
 
-sv4_t llg_dyn_reduce(const llg_dyn_array_t* array, int operation) {
+sv4_t llg_dyn_reduce(const llg_dyn_array_t* array, int32_t operation) {
     return llg_reduce_values(array->data, array->size, array->element_width,
                              array->element_signed, operation);
 }
 
-sv4_t llg_dyn_reduce_with(const llg_dyn_array_t* array, int operation,
+sv4_t llg_dyn_reduce_with(const llg_dyn_array_t* array, int32_t operation,
                           uint32_t result_width, int8_t result_signed,
-                          int result_two_state, llg_container_eval_fn eval,
+                          int32_t result_two_state, llg_container_eval_fn eval,
                           void* context) {
     llg_check_element_type(result_width);
     return llg_reduce_values_with(

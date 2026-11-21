@@ -116,7 +116,7 @@ static void future_assertion_free(llg_concurrent_assertion_t* assertion) {
  * marker at the end of the queue (1); otherwise it happens now (0). The
  * clock events of the current step not yet taken are discarded either way,
  * as for an assertion evaluated without delay. */
-static int future_assertion_defer_end(llg_concurrent_assertion_t* assertion, int killed) {
+static int32_t future_assertion_defer_end(llg_concurrent_assertion_t* assertion, int32_t killed) {
     if (!assertion->lag_head || assertion->lag_replaying) return 0;
     free_assertion_clock_events(assertion);
     // Consecutive markers discard the same attempts: the first one counts
@@ -191,7 +191,7 @@ static void future_assertion_add_start(llg_concurrent_assertion_t* assertion) {
 
 /* Evaluate one queued clock event through the assertion's engine. */
 static void future_event_step(llg_concurrent_assertion_t* assertion,
-                              const llg_assertion_clock_event_t* event, int root_event) {
+                              const llg_assertion_clock_event_t* event, int32_t root_event) {
     if (assertion->property) {
         run_property_assertion(assertion, event, root_event);
         return;
@@ -244,7 +244,7 @@ static void future_assertion_replay(llg_concurrent_assertion_t* assertion) {
             assertion->fail_action_off = entry->fail_action_off;
             for (const llg_assertion_clock_event_t* event = entry->events; event && !g.finish;
                  event = event->next) {
-                int root_event = event->signal == assertion->hot->clock &&
+                int32_t root_event = event->signal == assertion->hot->clock &&
                                  event->edge == assertion->hot->edge;
                 future_event_step(assertion, event, root_event);
             }
@@ -284,7 +284,7 @@ static void future_assertion_observed(llg_concurrent_assertion_t* assertion) {
         // As without delay: a leading-clock event recorded before disable
         // iff became true starts an attempt that is disabled at once
         // (40.5.3), and the running attempts end at this point.
-        int root_event = 0;
+        int32_t root_event = 0;
         for (const llg_assertion_clock_event_t* event = assertion->clock_events;
              event && !root_event; event = event->next)
             root_event = event->signal == assertion->hot->clock &&
@@ -323,7 +323,7 @@ static void future_assertion_observed(llg_concurrent_assertion_t* assertion) {
     future_lag_append(assertion, entry);
 }
 
-int llg_assertion_future(uint64_t identity, uint64_t global_clock, uint32_t slots,
+int32_t llg_assertion_future(uint64_t identity, uint64_t global_clock, uint32_t slots,
                          llg_assertion_capture_fn capture) {
     llg_concurrent_assertion_t* assertion = g.assertion_tail;
     llg_sampled_clock_t* clock = find_sampled_clock(global_clock);
@@ -348,7 +348,7 @@ int llg_assertion_future(uint64_t identity, uint64_t global_clock, uint32_t slot
 
 static const sv4_t* future_captured_slot(uint32_t slot) {
     if (!g.assertion_lag_slots || slot >= g.assertion_lag_slot_count) {
-        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "captured assertion operand %u read outside its deferred evaluation", (unsigned)slot);
+        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "captured assertion operand %" PRIu32 " read outside its deferred evaluation", (uint32_t)slot);
         llg_last_failure = 1;
         g.finish = 1;
         return NULL;
@@ -367,7 +367,7 @@ void llg_assertion_captured_to(sv4_t* dst, uint32_t slot) {
     else sv4_replace(dst, sv4_x(1, 0));
 }
 
-int llg_assertion_future_status(int kind, uint32_t slot, const sv4_t* future) {
+int32_t llg_assertion_future_status(int32_t kind, uint32_t slot, const sv4_t* future) {
     const sv4_t* current = future_captured_slot(slot);
     if (!current || !future) return 0;
     // Annex F.3.4.4: $rising_gclk(e) is `b !== 1 && $future_gclk(b) === 1`
@@ -378,7 +378,7 @@ int llg_assertion_future_status(int kind, uint32_t slot, const sv4_t* future) {
         case 2: return sv4_same(*current, *future);
         case 3: return !sv4_same(*current, *future);
         default:
-            llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid future sampled-value status %d", kind);
+            llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "invalid future sampled-value status %" PRId32, kind);
             llg_last_failure = 1;
             g.finish = 1;
             return 0;

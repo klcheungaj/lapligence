@@ -57,7 +57,7 @@ static void llg_queue_disconnect(llg_queue_t* queue, uint64_t identity) {
 }
 
 void llg_queue_init(llg_queue_t* queue, uint32_t element_width,
-                    int8_t element_signed, int element_two_state,
+                    int8_t element_signed, int32_t element_two_state,
                     uint64_t maximum_elements) {
     llg_check_element_type(element_width);
     memset(queue, 0, sizeof(*queue));
@@ -84,7 +84,7 @@ void llg_queue_destroy(llg_queue_t* queue) {
 
 void llg_queue_delete(llg_queue_t* queue) {
     llg_queue_disconnect(queue, 0);
-    int changed = queue->size != 0;
+    int32_t changed = queue->size != 0;
     sv4_destroy_array(queue->data, queue->size);
     queue->size = 0;
     llg_notify(queue->notify, queue->contents_dependency,
@@ -119,8 +119,8 @@ void llg_queue_assign_values(llg_queue_t* dst, const sv4_t* values,
         data[i] = llg_element_assign(values[i], dst->element_width,
                                      dst->element_signed,
                                      dst->element_two_state);
-    int shape_changed = dst->size != retained;
-    int contents_changed = shape_changed;
+    int32_t shape_changed = dst->size != retained;
+    int32_t contents_changed = shape_changed;
     if (!contents_changed) {
         for (size_t i = 0; i < retained; ++i) {
             if (!sv4_same(dst->data[i], data[i])) {
@@ -150,7 +150,7 @@ void llg_queue_assign_values(llg_queue_t* dst, const sv4_t* values,
 }
 
 sv4_t llg_queue_stream(const llg_queue_t* queue, uint32_t slice,
-                       int right_to_left, int selector_kind, sv4_t first,
+                       int32_t right_to_left, int32_t selector_kind, sv4_t first,
                        sv4_t second) {
     int64_t left;
     int64_t right;
@@ -198,8 +198,8 @@ static void llg_queue_resize_default(llg_queue_t* queue, size_t size) {
 }
 
 static void llg_queue_unstream_assign_impl(llg_queue_t* dst, sv4_t source,
-                               uint32_t slice, int right_to_left,
-                               int selector_kind, sv4_t first, sv4_t second) {
+                               uint32_t slice, int32_t right_to_left,
+                               int32_t selector_kind, sv4_t first, sv4_t second) {
     int64_t left;
     int64_t right;
     size_t count = llg_stream_unpacked_values(
@@ -247,8 +247,8 @@ static void llg_queue_unstream_assign_impl(llg_queue_t* dst, sv4_t source,
 }
 
 void llg_queue_unstream_assign(llg_queue_t* dst, sv4_t source,
-                                  uint32_t slice, int right_to_left,
-                                  int selector_kind, sv4_t first, sv4_t second) {
+                                  uint32_t slice, int32_t right_to_left,
+                                  int32_t selector_kind, sv4_t first, sv4_t second) {
     llg_container_notify_fn notify = dst->notify;
     sv4_t* contents = dst->contents_dependency;
     sv4_t* shape = dst->shape_dependency;
@@ -264,7 +264,7 @@ void llg_queue_unstream_assign(llg_queue_t* dst, sv4_t source,
     llg_notify(notify, contents, shape, changes.width);
 }
 
-static int llg_queue_source_range(const llg_queue_source_t* source,
+static int32_t llg_queue_source_range(const llg_queue_source_t* source,
                                   size_t* first, size_t* count) {
     const llg_queue_t* queue = source->queue;
     if (!queue || !first || !count)
@@ -303,8 +303,8 @@ void llg_queue_assign_sources(llg_queue_t* dst,
                 source->queue->data[first + source_offset], dst->element_width,
                 dst->element_signed, dst->element_two_state);
     }
-    int shape_changed = dst->size != retained;
-    int contents_changed = shape_changed;
+    int32_t shape_changed = dst->size != retained;
+    int32_t contents_changed = shape_changed;
     if (!contents_changed) {
         for (size_t i = 0; i < retained; ++i) {
             if (!sv4_same(dst->data[i], data[i])) {
@@ -367,8 +367,8 @@ void llg_queue_push_front(llg_queue_t* queue, sv4_t value) {
     sv4_t assigned = llg_element_assign(value, queue->element_width,
                                         queue->element_signed,
                                         queue->element_two_state);
-    int shape_changed = queue->size < queue->limit;
-    int contents_changed = shape_changed;
+    int32_t shape_changed = queue->size < queue->limit;
+    int32_t contents_changed = shape_changed;
     if (!shape_changed) {
         for (size_t i = 0; i < queue->size; ++i) {
             sv4_t expected = i == 0 ? assigned : queue->data[i - 1];
@@ -401,7 +401,7 @@ void llg_queue_push_front(llg_queue_t* queue, sv4_t value) {
                    (shape_changed ? LLG_CONTAINER_CHANGED_SHAPE : 0));
 }
 
-int llg_queue_set(llg_queue_t* queue, sv4_t index, sv4_t value) {
+int32_t llg_queue_set(llg_queue_t* queue, sv4_t index, sv4_t value) {
     size_t native;
     if (!llg_index(index, queue->size, 1, &native)) {
         llg_container_warning("invalid queue write index");
@@ -425,7 +425,7 @@ int llg_queue_set(llg_queue_t* queue, sv4_t index, sv4_t value) {
     return 1;
 }
 
-int llg_queue_insert(llg_queue_t* queue, sv4_t index, sv4_t value) {
+int32_t llg_queue_insert(llg_queue_t* queue, sv4_t index, sv4_t value) {
     size_t native;
     if (!llg_index(index, queue->size, 1, &native)) {
         llg_invalid_queue_index("queue insert", "invalid queue insert index", index, queue->size, 1);
@@ -439,8 +439,8 @@ int llg_queue_insert(llg_queue_t* queue, sv4_t index, sv4_t value) {
     sv4_t assigned = llg_element_assign(value, queue->element_width,
                                         queue->element_signed,
                                         queue->element_two_state);
-    int shape_changed = queue->size < queue->limit;
-    int contents_changed = shape_changed;
+    int32_t shape_changed = queue->size < queue->limit;
+    int32_t contents_changed = shape_changed;
     if (!shape_changed) {
         for (size_t i = 0; i < queue->size; ++i) {
             sv4_t expected = i == native
@@ -477,7 +477,7 @@ int llg_queue_insert(llg_queue_t* queue, sv4_t index, sv4_t value) {
     return 1;
 }
 
-int llg_queue_delete_index(llg_queue_t* queue, sv4_t index) {
+int32_t llg_queue_delete_index(llg_queue_t* queue, sv4_t index) {
     size_t native;
     if (!llg_index(index, queue->size, 0, &native)) {
         llg_invalid_queue_index("queue delete", NULL, index, queue->size, 0);
@@ -565,14 +565,14 @@ sv4_t llg_queue_back(const llg_queue_t* queue) {
     return sv4_clone(&queue->data[queue->size - 1]);
 }
 
-sv4_t llg_queue_reduce(const llg_queue_t* queue, int operation) {
+sv4_t llg_queue_reduce(const llg_queue_t* queue, int32_t operation) {
     return llg_reduce_values(queue->data, queue->size, queue->element_width,
                              queue->element_signed, operation);
 }
 
-sv4_t llg_queue_reduce_with(const llg_queue_t* queue, int operation,
+sv4_t llg_queue_reduce_with(const llg_queue_t* queue, int32_t operation,
                             uint32_t result_width, int8_t result_signed,
-                            int result_two_state, llg_container_eval_fn eval,
+                            int32_t result_two_state, llg_container_eval_fn eval,
                             void* context) {
     llg_check_element_type(result_width);
     return llg_reduce_values_with(

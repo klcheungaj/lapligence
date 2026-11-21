@@ -5,7 +5,7 @@
 // payload tracers and coroutine frame maps through the public registration API.
 
 static void gc_frame_visit(void* user, const llg_co_desc_t* desc,
-                           const llg_co_frame_t* frame, unsigned depth) {
+                           const llg_co_frame_t* frame, uint32_t depth) {
     (void)depth;
     gc_trace_frame((llg_gc_tracer_t*)user, desc, frame);
 }
@@ -16,7 +16,7 @@ static void gc_value_visit(void* const* slot, const llg_value_desc_t* desc,
 }
 
 static void gc_trace_processes(llg_gc_tracer_t* tracer) {
-    for (int i = 0; i < g.all_procs_capacity; ++i) {
+    for (int32_t i = 0; i < g.all_procs_capacity; ++i) {
         llg_proc_t* proc = g.all_procs[i];
         if (!proc) continue;
         // Root, static embedded callees (site tables) and anchored or arena
@@ -88,11 +88,11 @@ static void gc_trace_nba_queue(llg_gc_tracer_t* tracer, const llg_nba_queue_t* q
 }
 
 static void gc_trace_nbas(llg_gc_tracer_t* tracer) {
-    for (int region = 0; region < LLG_REGION_COUNT; ++region)
+    for (int32_t region = 0; region < LLG_REGION_COUNT; ++region)
         gc_trace_nba_queue(tracer, &g.nba_queues[region]);
     for (const llg_nba_bucket_t* bucket = g.delayed_nba_buckets; bucket;
          bucket = bucket->next)
-        for (int region = 0; region < LLG_REGION_COUNT; ++region)
+        for (int32_t region = 0; region < LLG_REGION_COUNT; ++region)
             gc_trace_nba_queue(tracer, &bucket->queues[region]);
     for (const llg_nba_hold_t* hold = g.nba_holds; hold; hold = hold->next)
         for (const llg_nba_t* nba = hold->head; nba; nba = nba->queue_next)
@@ -126,7 +126,7 @@ static void gc_safe_point(void) {
     llg_gc_collect();
 }
 
-static int gc_runtime_init(void) {
+static int32_t gc_runtime_init(void) {
     if (!gc_configure()) return 0;
     // Class-property native records own an unregistered value released by
     // llg_native_value_destroy; registered native roots are traced above.

@@ -6,9 +6,9 @@ static void llg_switch_net_changed(llg_net_t* net);
 static void switch_overlay_value(const llg_net_t* net, sv4_t* value, uint32_t low,
                                  uint32_t width);
 static void switch_overlay_strength(llg_net_t* net, uint64_t* out);
-static int switches_flush(void);
+static int32_t switches_flush(void);
 
-static uint32_t llg_net_index_priority(int index) {
+static uint32_t llg_net_index_priority(int32_t index) {
     uint32_t value = (uint32_t)index + UINT32_C(0x9e3779b9);
     value ^= value >> 16;
     value *= UINT32_C(0x7feb352d);
@@ -18,11 +18,11 @@ static uint32_t llg_net_index_priority(int index) {
     return value;
 }
 
-static uint32_t llg_net_index_max(const llg_net_t* net, int index) {
+static uint32_t llg_net_index_max(const llg_net_t* net, int32_t index) {
     return index < 0 ? 0 : net->driver_index[index].max_high;
 }
 
-static void llg_net_index_recompute(llg_net_t* net, int index) {
+static void llg_net_index_recompute(llg_net_t* net, int32_t index) {
     llg_net_driver_index_t* node = &net->driver_index[index];
     node->max_high = node->high;
     uint32_t left = llg_net_index_max(net, node->left);
@@ -31,14 +31,14 @@ static void llg_net_index_recompute(llg_net_t* net, int index) {
     if (right > node->max_high) node->max_high = right;
 }
 
-static int llg_net_index_before(const llg_net_t* net, int left, int right) {
+static int32_t llg_net_index_before(const llg_net_t* net, int32_t left, int32_t right) {
     const llg_net_driver_index_t* a = &net->driver_index[left];
     const llg_net_driver_index_t* b = &net->driver_index[right];
     return a->low < b->low || (a->low == b->low && left < right);
 }
 
-static int llg_net_index_rotate_left(llg_net_t* net, int root) {
-    int next = net->driver_index[root].right;
+static int32_t llg_net_index_rotate_left(llg_net_t* net, int32_t root) {
+    int32_t next = net->driver_index[root].right;
     net->driver_index[root].right = net->driver_index[next].left;
     net->driver_index[next].left = root;
     llg_net_index_recompute(net, root);
@@ -46,8 +46,8 @@ static int llg_net_index_rotate_left(llg_net_t* net, int root) {
     return next;
 }
 
-static int llg_net_index_rotate_right(llg_net_t* net, int root) {
-    int next = net->driver_index[root].left;
+static int32_t llg_net_index_rotate_right(llg_net_t* net, int32_t root) {
+    int32_t next = net->driver_index[root].left;
     net->driver_index[root].left = net->driver_index[next].right;
     net->driver_index[next].right = root;
     llg_net_index_recompute(net, root);
@@ -55,7 +55,7 @@ static int llg_net_index_rotate_right(llg_net_t* net, int root) {
     return next;
 }
 
-static int llg_net_index_insert_at(llg_net_t* net, int root, int index) {
+static int32_t llg_net_index_insert_at(llg_net_t* net, int32_t root, int32_t index) {
     if (root < 0) return index;
     if (llg_net_index_before(net, index, root)) {
         net->driver_index[root].left =
@@ -74,7 +74,7 @@ static int llg_net_index_insert_at(llg_net_t* net, int root, int index) {
     return root;
 }
 
-static int llg_net_index_merge(llg_net_t* net, int left, int right) {
+static int32_t llg_net_index_merge(llg_net_t* net, int32_t left, int32_t right) {
     if (left < 0) return right;
     if (right < 0) return left;
     if (net->driver_index[left].priority < net->driver_index[right].priority) {
@@ -89,7 +89,7 @@ static int llg_net_index_merge(llg_net_t* net, int left, int right) {
     return right;
 }
 
-static int llg_net_index_remove_at(llg_net_t* net, int root, int index) {
+static int32_t llg_net_index_remove_at(llg_net_t* net, int32_t root, int32_t index) {
     if (root < 0) return -1;
     if (root == index)
         return llg_net_index_merge(net, net->driver_index[root].left,
@@ -104,14 +104,14 @@ static int llg_net_index_remove_at(llg_net_t* net, int root, int index) {
     return root;
 }
 
-static int llg_net_has_index(const llg_net_t* net) {
+static int32_t llg_net_has_index(const llg_net_t* net) {
     return net->driver_index && net->overlap_scratch && net->n_drivers > 0;
 }
 
 void llg_net_index_reset(llg_net_t* net) {
     if (!net || !net->driver_index) return;
     net->index_root = -1;
-    for (int index = 0; index < net->n_drivers; index++) {
+    for (int32_t index = 0; index < net->n_drivers; index++) {
         llg_net_driver_index_t* node = &net->driver_index[index];
         node->low = 0;
         node->high = 0;
@@ -123,7 +123,7 @@ void llg_net_index_reset(llg_net_t* net) {
     }
 }
 
-static void llg_net_index_remove(llg_net_t* net, int index) {
+static void llg_net_index_remove(llg_net_t* net, int32_t index) {
     llg_net_driver_index_t* node = &net->driver_index[index];
     if (!node->active) return;
     net->index_root = llg_net_index_remove_at(net, net->index_root, index);
@@ -132,7 +132,7 @@ static void llg_net_index_remove(llg_net_t* net, int index) {
     node->active = 0;
 }
 
-static void llg_net_index_insert(llg_net_t* net, int index,
+static void llg_net_index_insert(llg_net_t* net, int32_t index,
                                  uint32_t low, uint32_t high) {
     llg_net_driver_index_t* node = &net->driver_index[index];
     node->low = low;
@@ -144,8 +144,8 @@ static void llg_net_index_insert(llg_net_t* net, int index,
     net->index_root = llg_net_index_insert_at(net, net->index_root, index);
 }
 
-static void llg_net_index_collect(const llg_net_t* net, int root,
-                                  uint32_t low, uint32_t high, int* count) {
+static void llg_net_index_collect(const llg_net_t* net, int32_t root,
+                                  uint32_t low, uint32_t high, int32_t* count) {
     if (root < 0) return;
     const llg_net_driver_index_t* node = &net->driver_index[root];
     if (node->left >= 0 &&
@@ -157,9 +157,9 @@ static void llg_net_index_collect(const llg_net_t* net, int root,
         llg_net_index_collect(net, node->right, low, high, count);
 }
 
-static int llg_net_all_z(const sv4_t* value) {
-    int limbs = (int)((llg_sv4_width(*value) + 63u) / 64u);
-    for (int limb = 0; limb < limbs; limb++) {
+static int32_t llg_net_all_z(const sv4_t* value) {
+    int32_t limbs = (int32_t)((llg_sv4_width(*value) + 63u) / 64u);
+    for (int32_t limb = 0; limb < limbs; limb++) {
         uint32_t remaining = llg_sv4_width(*value) - (uint32_t)limb * 64u;
         uint64_t mask = remaining >= 64u
             ? UINT64_MAX : (UINT64_C(1) << remaining) - UINT64_C(1);
@@ -172,12 +172,12 @@ static int llg_net_all_z(const sv4_t* value) {
 
 // The lowest and highest bit of `value` that is not Z; 0 when all bits are
 // Z. Z bits add no drive, so a driver is indexed by this extent only.
-static int llg_net_driven_extent(const sv4_t* value, uint32_t* low,
+static int32_t llg_net_driven_extent(const sv4_t* value, uint32_t* low,
                                  uint32_t* high) {
     uint32_t width = llg_sv4_width(*value);
-    int limbs = (int)((width + 63u) / 64u);
-    int found = 0;
-    for (int limb = 0; limb < limbs; limb++) {
+    int32_t limbs = (int32_t)((width + 63u) / 64u);
+    int32_t found = 0;
+    for (int32_t limb = 0; limb < limbs; limb++) {
         uint32_t remaining = width - (uint32_t)limb * 64u;
         uint64_t mask = remaining >= 64u
             ? UINT64_MAX : (UINT64_C(1) << remaining) - UINT64_C(1);
@@ -198,7 +198,7 @@ static int llg_net_driven_extent(const sv4_t* value, uint32_t* low,
 
 static sv4_t llg_net_compute_range(llg_net_t* net, uint32_t low,
                                    uint32_t width) {
-    int count = 0;
+    int32_t count = 0;
     llg_net_index_collect(net, net->index_root, low, low + width - 1u, &count);
     sv4_t value = sv4_resolve_strengths_range(
         (const sv4_t* const*)net->drivers, net->strength0, net->strength1,
@@ -233,7 +233,7 @@ static void llg_net_pending_overlay(const llg_net_t* net, sv4_t* value) {
 }
 
 static void llg_net_pending_mark(llg_net_t* net, uint32_t low, uint32_t count,
-                                 int pending) {
+                                 int32_t pending) {
     if (low >= net->width) return;
     if (count > net->width - low) count = net->width - low;
     while (count) {
@@ -267,14 +267,14 @@ static void llg_net_settle_cover(llg_net_t* net, uint32_t low, uint32_t count) {
 
 void llg_net_layout(llg_net_t* net, const llg_net_shape_t* shape,
                     llg_net_pools_t* pools) {
-    int n_drivers = shape->n_drivers;
+    int32_t n_drivers = shape->n_drivers;
     net->width = shape->width;
     net->is_signed = shape->is_signed;
     net->resolution = shape->resolution;
     net->n_drivers = n_drivers;
     net->silent_slots = 0;
     if (n_drivers > 0) {
-        for (int slot = 0; slot < n_drivers; slot++)
+        for (int32_t slot = 0; slot < n_drivers; slot++)
             pools->driver_slots[slot] = &pools->cells[slot];
         net->drivers = pools->driver_slots;
         net->strength0 = shape->strength0;
@@ -368,7 +368,7 @@ static void llg_net_alias_refresh(llg_net_alias_t* alias) {
 }
 
 /* Whether a part fits both its alias's visible value and its net. */
-static int llg_net_alias_part_fits(const llg_net_alias_t* alias,
+static int32_t llg_net_alias_part_fits(const llg_net_alias_t* alias,
                                    const llg_net_alias_part_t* part) {
     return part->net && part->bit_count != 0 &&
            (uint64_t)part->signal_bit + part->bit_count <= llg_net_alias_width(alias) &&
@@ -380,7 +380,7 @@ static int llg_net_alias_part_fits(const llg_net_alias_t* alias,
  * last published value: llg_net_alias_bind built it whole, and every later
  * change of a net refreshes that net's parts. */
 static void llg_net_alias_refresh_parts(llg_net_alias_t* alias,
-                                        const llg_net_alias_ref_t* refs, int count) {
+                                        const llg_net_alias_ref_t* refs, int32_t count) {
     if (llg_sv4_width(alias->visible) != llg_net_alias_width(alias)) {
         llg_net_alias_refresh(alias);
         return;
@@ -388,7 +388,7 @@ static void llg_net_alias_refresh_parts(llg_net_alias_t* alias,
     llg_value_scope_t* scope = value_scope_begin_private(1);
     sv4_t* owned = llg_value_scope_values(scope);
     sv4_copy(&owned[0], &alias->visible);
-    for (int i = 0; i < count; i++) {
+    for (int32_t i = 0; i < count; i++) {
         const llg_net_alias_part_t* part = &alias->parts[refs[i].part];
         sv4_t bits = sv4_part_select(part->net->resolved,
                                      (int64_t)part->group_bit + part->bit_count - 1,
@@ -410,11 +410,11 @@ static void llg_net_alias_refresh_parts(llg_net_alias_t* alias,
 
 /* Whether bits [a_low, a_low + count) of `a` equal those of `b` from
  * `b_low`; both ranges fit. */
-static int llg_net_bits_same(const sv4_t* a, uint32_t a_low, const sv4_t* b,
+static int32_t llg_net_bits_same(const sv4_t* a, uint32_t a_low, const sv4_t* b,
                              uint32_t b_low, uint32_t count) {
     for (uint32_t bit = 0; bit < count;) {
-        unsigned chunk = count - bit < 64u ? count - bit : 64u;
-        for (unsigned plane = LLG_SV4_BITS; plane <= LLG_SV4_Z; ++plane)
+        uint32_t chunk = count - bit < 64u ? count - bit : 64u;
+        for (uint32_t plane = LLG_SV4_BITS; plane <= LLG_SV4_Z; ++plane)
             if (llg_sv4_plane_slice(*a, a_low + bit, chunk, plane) !=
                 llg_sv4_plane_slice(*b, b_low + bit, chunk, plane))
                 return 0;
@@ -456,16 +456,16 @@ static void llg_net_alias_refresh_entry(llg_net_t* net, const llg_net_alias_ref_
     llg_value_scope_end(scope);
 }
 
-static int llg_net_alias_span_order(const void* left, const void* right) {
+static int32_t llg_net_alias_span_order(const void* left, const void* right) {
     const llg_net_alias_span_t* a = (const llg_net_alias_span_t*)left;
     const llg_net_alias_span_t* b = (const llg_net_alias_span_t*)right;
     if (a->low != b->low) return a->low < b->low ? -1 : 1;
     return (a->ref > b->ref) - (a->ref < b->ref);
 }
 
-static uint32_t llg_net_alias_span_reach(llg_net_alias_span_t* spans, int begin, int end) {
+static uint32_t llg_net_alias_span_reach(llg_net_alias_span_t* spans, int32_t begin, int32_t end) {
     if (begin >= end) return 0;
-    int mid = begin + (end - begin) / 2;
+    int32_t mid = begin + (end - begin) / 2;
     uint32_t reach = spans[mid].high;
     uint32_t left = llg_net_alias_span_reach(spans, begin, mid);
     uint32_t right = llg_net_alias_span_reach(spans, mid + 1, end);
@@ -479,7 +479,7 @@ static void llg_net_alias_spans_build(llg_net_t* net) {
     free(net->alias_spans);
     net->alias_spans = (llg_net_alias_span_t*)llg_checked_malloc(
         (size_t)net->n_aliases, sizeof(llg_net_alias_span_t), "net alias spans");
-    for (int i = 0; i < net->n_aliases; i++) {
+    for (int32_t i = 0; i < net->n_aliases; i++) {
         const llg_net_alias_ref_t* ref = &net->aliases[i];
         llg_net_alias_span_t* span = &net->alias_spans[i];
         span->ref = i;
@@ -504,10 +504,10 @@ static void llg_net_alias_spans_build(llg_net_t* net) {
     net->alias_spans_valid = 1;
 }
 
-static void llg_net_alias_spans_visit(llg_net_t* net, int begin, int end,
+static void llg_net_alias_spans_visit(llg_net_t* net, int32_t begin, int32_t end,
                                       uint32_t low, uint32_t high) {
     while (begin < end) {
-        int mid = begin + (end - begin) / 2;
+        int32_t mid = begin + (end - begin) / 2;
         const llg_net_alias_span_t* span = &net->alias_spans[mid];
         if (span->reach < low) return;
         llg_net_alias_spans_visit(net, begin, mid, low, high);
@@ -537,7 +537,7 @@ static void llg_net_alias_refresh_range(llg_net_t* net, uint32_t low, uint32_t h
 
 static void llg_net_alias_refresh_all(llg_net_t* net) {
     if (!net) return;
-    int i = 0;
+    int32_t i = 0;
     while (i < net->n_aliases) {
         llg_net_alias_t* alias = net->aliases[i].alias;
         if (net->aliases[i].part == UINT32_MAX) {
@@ -545,7 +545,7 @@ static void llg_net_alias_refresh_all(llg_net_t* net) {
             i++;
             continue;
         }
-        int end = i + 1;
+        int32_t end = i + 1;
         while (end < net->n_aliases && net->aliases[end].alias == alias &&
                net->aliases[end].part != UINT32_MAX)
             end++;
@@ -567,19 +567,19 @@ static void llg_net_alias_refresh_all(llg_net_t* net) {
 // levels give X on a wire and the wired value on wand/wor. Only the strongest
 // definite and possible levels of each value decide that hull.
 
-static int llg_net_top_level(const uint64_t* levels, uint64_t bit) {
-    for (int level = LLG_STRENGTH_SUPPLY; level > LLG_STRENGTH_HIGHZ; level--)
+static int32_t llg_net_top_level(const uint64_t* levels, uint64_t bit) {
+    for (int32_t level = LLG_STRENGTH_SUPPLY; level > LLG_STRENGTH_HIGHZ; level--)
         if (levels[level] & bit) return level;
     return -1;
 }
 
-static uint8_t llg_net_strength_code(int lo, int hi) {
+static uint8_t llg_net_strength_code(int32_t lo, int32_t hi) {
     return (uint8_t)(((hi + 7) << 4) | (lo + 7));
 }
 
-static uint8_t llg_net_strength_hull(int mode, int k0, int k1, int p0, int p1) {
-    int hi;
-    int lo;
+static uint8_t llg_net_strength_hull(int32_t mode, int32_t k0, int32_t k1, int32_t p0, int32_t p1) {
+    int32_t hi;
+    int32_t lo;
     if (mode == LLG_RESOLVE_WAND) {
         hi = p1 >= 0 && p1 > k0 ? p1 : k0 >= 0 ? -k0 : 0;
         lo = p0 >= 0 && p0 >= k1 ? -p0 : k1 >= 0 ? k1 : 0;
@@ -608,10 +608,10 @@ static sv4_t llg_net_strength_levels(llg_net_t* net) {
     size_t out_words = ((size_t)width * 8u + 63u) / 64u;
     uint64_t* out = (uint64_t*)llg_checked_calloc(out_words, sizeof(uint64_t),
                                                   "net strength view");
-    int forced = llg_is_forced(&net->resolved);
-    int mode = net->resolution;
-    int implicit = -1;
-    int implicit_strength = LLG_STRENGTH_PULL;
+    int32_t forced = llg_is_forced(&net->resolved);
+    int32_t mode = net->resolution;
+    int32_t implicit = -1;
+    int32_t implicit_strength = LLG_STRENGTH_PULL;
     if (mode == LLG_RESOLVE_TRI0 || mode == LLG_RESOLVE_SUPPLY0) implicit = 0;
     if (mode == LLG_RESOLVE_TRI1 || mode == LLG_RESOLVE_SUPPLY1) implicit = 1;
     if (mode == LLG_RESOLVE_SUPPLY0 || mode == LLG_RESOLVE_SUPPLY1)
@@ -626,7 +626,7 @@ static sv4_t llg_net_strength_levels(llg_net_t* net) {
         uint64_t possible1[8] = {0};
         if (implicit == 0) known0[implicit_strength] = possible0[implicit_strength] = m;
         if (implicit == 1) known1[implicit_strength] = possible1[implicit_strength] = m;
-        for (int d = 0; d < net->n_drivers; d++) {
+        for (int32_t d = 0; d < net->n_drivers; d++) {
             const sv4_t* v = net->drivers[d];
             if (!v) continue;
             uint8_t s0 = net->strength0 ? net->strength0[d] : LLG_STRENGTH_STRONG;
@@ -677,7 +677,7 @@ static sv4_t llg_net_strength_levels(llg_net_t* net) {
 // Publish the strength view after the value. Unchanged strengths are not
 // rewritten, so only a real strength change wakes `%v` monitors. A pending
 // net propagation delay publishes the view with the delayed value instead.
-static int llg_net_propagation_pending(const llg_net_t* net) {
+static int32_t llg_net_propagation_pending(const llg_net_t* net) {
     if (net->propagation && net->propagation->pending) return 1;
     for (uint32_t part = 0; part < net->n_segments; part++) {
         if (net->segment_records[part] && net->segment_records[part]->pending)
@@ -724,7 +724,7 @@ void llg_net_strength_snapshot(llg_net_t* net, sv4_t* out) {
     else sv4_replace(out, llg_net_strength_levels(net));
 }
 
-int llg_net_strength_attach(llg_net_t* net, sv4_t* view) {
+int32_t llg_net_strength_attach(llg_net_t* net, sv4_t* view) {
     if (!net || !view || net->strength) return 0;
     net->strength = view;
     sv4_replace(view, llg_net_strength_levels(net));
@@ -768,7 +768,7 @@ static void llg_net_publish_ranges(llg_net_t* net,
     }
 }
 
-void llg_net_start_unknown(llg_net_t* net, int resolve) {
+void llg_net_start_unknown(llg_net_t* net, int32_t resolve) {
     if (!net) return;
     if (net->strength) {
         size_t words = ((size_t)net->width * 8u + 63u) / 64u;
@@ -857,17 +857,17 @@ typedef struct {
 static llg_net_deferred_t* net_deferred;
 static size_t net_deferred_count;
 static size_t net_deferred_capacity;
-static int net_defer_active;
-static int net_defer_exact;
+static int32_t net_defer_active;
+static int32_t net_defer_exact;
 static uint64_t* net_deferred_bits;
 static size_t net_deferred_bits_count;
 static size_t net_deferred_bits_capacity;
 
-static int llg_net_flush_deferred(void);
+static int32_t llg_net_flush_deferred(void);
 
 // Exact deferral: whether a pending entry already wrote one of bits
 // [low, high] in this batch (a whole entry wrote every bit).
-static int llg_net_deferred_touches(const llg_net_deferred_t* entry, uint32_t low,
+static int32_t llg_net_deferred_touches(const llg_net_deferred_t* entry, uint32_t low,
                                     uint32_t high) {
     if (entry->whole || entry->map == SIZE_MAX) return 1;
     const uint64_t* map = net_deferred_bits + entry->map;
@@ -930,7 +930,7 @@ static void llg_net_defer_prepare(llg_net_t* net, uint32_t low, uint32_t high) {
 }
 
 // Queue the net's resolution of [low, high] (every bit when `whole`).
-static int llg_net_defer(llg_net_t* net, int whole, uint32_t low, uint32_t high) {
+static int32_t llg_net_defer(llg_net_t* net, int32_t whole, uint32_t low, uint32_t high) {
     if (!net_defer_active || net->n_drivers - net->silent_slots < 2) return 0;
     if (net->deferred_slot > 0) {
         llg_net_deferred_t* entry = &net_deferred[net->deferred_slot - 1];
@@ -992,9 +992,9 @@ static void llg_net_commit_range(llg_net_t* net, uint32_t low, uint32_t high) {
 // Resolve every queued net in first-write order. Publication wakes waiters
 // into their region queues; writes made by callbacks meanwhile publish at
 // once.
-static int llg_net_flush_deferred(void) {
+static int32_t llg_net_flush_deferred(void) {
     if (!net_deferred_count) return switches_flush();
-    int outer = net_defer_active;
+    int32_t outer = net_defer_active;
     net_defer_active = 0;
     for (size_t i = 0; i < net_deferred_count; i++) {
         llg_net_deferred_t entry = net_deferred[i];
@@ -1013,14 +1013,14 @@ static int llg_net_flush_deferred(void) {
     return 1;
 }
 
-static void llg_net_write_covering(llg_net_t* net, int idx, sv4_t value,
+static void llg_net_write_covering(llg_net_t* net, int32_t idx, sv4_t value,
                                    uint32_t cover_low, uint32_t cover_count);
 
-void llg_net_write(llg_net_t* net, int idx, sv4_t value) {
+void llg_net_write(llg_net_t* net, int32_t idx, sv4_t value) {
     llg_net_write_covering(net, idx, value, 0, net ? net->width : 0);
 }
 
-void llg_net_write_driven(llg_net_t* net, int idx, sv4_t value) {
+void llg_net_write_driven(llg_net_t* net, int32_t idx, sv4_t value) {
     if (!net) return;
     llg_net_defer_prepare(net, 0, net->width - 1u);
     if (net->start_pending) {
@@ -1036,10 +1036,10 @@ void llg_net_write_driven(llg_net_t* net, int idx, sv4_t value) {
     llg_net_write_covering(net, idx, value, 0, 0);
 }
 
-static void llg_net_write_slice(llg_net_t* net, int idx, sv4_t selected,
+static void llg_net_write_slice(llg_net_t* net, int32_t idx, sv4_t selected,
                                 uint32_t new_low);
 
-void llg_net_write_driven_part(llg_net_t* net, int idx, sv4_t value, uint32_t lsb) {
+void llg_net_write_driven_part(llg_net_t* net, int32_t idx, sv4_t value, uint32_t lsb) {
     if (!net || !region_can_mutate("net write")) return;
     uint32_t width = llg_sv4_width(value);
     if (idx < 0 || idx >= net->n_drivers || !net->drivers[idx] || !width ||
@@ -1053,7 +1053,7 @@ void llg_net_write_driven_part(llg_net_t* net, int idx, sv4_t value, uint32_t ls
 
 // A whole-slot write whose driver drives [cover_low, cover_low + cover_count)
 // of the net (the whole net except for a port alias).
-static void llg_net_write_covering(llg_net_t* net, int idx, sv4_t value,
+static void llg_net_write_covering(llg_net_t* net, int32_t idx, sv4_t value,
                                    uint32_t cover_low, uint32_t cover_count) {
     if (!net || !region_can_mutate("net write")) return;
     if (idx < 0 || idx >= net->n_drivers || !net->drivers[idx]) return;
@@ -1062,7 +1062,7 @@ static void llg_net_write_covering(llg_net_t* net, int idx, sv4_t value,
     sv4_t* slot = net->drivers[idx];
     // The first write of a driver of a net that started X resolves it whole,
     // even when the driver's value equals its all-Z slot (T0-D3).
-    int settle = net->unsettled;
+    int32_t settle = net->unsettled;
     if (settle) llg_net_settle_cover(net, cover_low, cover_count);
     // A same-width value needs no resize to compare: an unchanged driver
     // (most gate and assignment wakes) returns without copying it.
@@ -1079,7 +1079,7 @@ static void llg_net_write_covering(llg_net_t* net, int idx, sv4_t value,
     }
     uint32_t old_low = 0;
     uint32_t old_high = 0;
-    int old_active = 0;
+    int32_t old_active = 0;
     if (llg_net_has_index(net)) {
         llg_net_driver_index_t* node = &net->driver_index[idx];
         old_low = node->low;
@@ -1090,7 +1090,7 @@ static void llg_net_write_covering(llg_net_t* net, int idx, sv4_t value,
     sv4_move(slot, &replacement);
     uint32_t new_low = 0;
     uint32_t new_high = net->width - 1u;
-    int new_active;
+    int32_t new_active;
     if (LLG_GATE_FAST_PATH)
         new_active = llg_net_driven_extent(slot, &new_low, &new_high);
     else
@@ -1117,7 +1117,7 @@ static void llg_net_write_covering(llg_net_t* net, int idx, sv4_t value,
     llg_net_commit_range(net, low, high);
 }
 
-static int llg_net_range_same(const sv4_t* target, uint32_t offset,
+static int32_t llg_net_range_same(const sv4_t* target, uint32_t offset,
                               const sv4_t* value) {
     return llg_sv4_range_same(*target, offset, *value);
 }
@@ -1132,13 +1132,13 @@ static void llg_net_range_copy(sv4_t* target, uint32_t offset,
     llg_sv4_range_copy(target, offset, *value);
 }
 
-static void llg_net_write_slice(llg_net_t* net, int idx, sv4_t selected,
+static void llg_net_write_slice(llg_net_t* net, int32_t idx, sv4_t selected,
                                 uint32_t new_low) {
     if (idx < net->silent_slots) net->silent_slots = 0;
     sv4_t* slot = net->drivers[idx];
     uint32_t old_low = 0;
     uint32_t old_high = net->width - 1u;
-    int old_active = 1;
+    int32_t old_active = 1;
     if (llg_net_has_index(net)) {
         llg_net_driver_index_t* node = &net->driver_index[idx];
         old_low = node->low;
@@ -1160,7 +1160,7 @@ static void llg_net_write_slice(llg_net_t* net, int idx, sv4_t selected,
         }
         llg_net_defer_prepare(net, touch_low, touch_high);
     }
-    int new_active = llg_sv4_width(selected) && !llg_net_all_z(&selected);
+    int32_t new_active = llg_sv4_width(selected) && !llg_net_all_z(&selected);
     // A driver turning off over exactly its indexed range keeps its node:
     // high impedance adds no drive, and a tri-state driver of one bit of a
     // wide shared group then toggles without reshaping the index.
@@ -1169,7 +1169,7 @@ static void llg_net_write_slice(llg_net_t* net, int idx, sv4_t selected,
         new_low + llg_sv4_width(selected) - 1u == old_high)
         new_active = 1;
     uint32_t new_high = new_active ? new_low + llg_sv4_width(selected) - 1u : new_low;
-    int settle = net->unsettled;
+    int32_t settle = net->unsettled;
     if (settle) llg_net_settle_cover(net, new_low, llg_sv4_width(selected));
     if (old_active == new_active &&
         (!new_active || (old_low == new_low && old_high == new_high &&
@@ -1179,7 +1179,7 @@ static void llg_net_write_slice(llg_net_t* net, int idx, sv4_t selected,
     }
     // The index orders drivers by their driven range only: a new value over
     // the same range keeps the driver's node and overwrites those bits.
-    int same_range = LLG_GATE_FAST_PATH && llg_net_has_index(net) &&
+    int32_t same_range = LLG_GATE_FAST_PATH && llg_net_has_index(net) &&
         old_active && new_active && old_low == new_low && old_high == new_high;
     if (same_range) {
         llg_net_range_copy(slot, new_low, &selected);
@@ -1233,8 +1233,8 @@ static void llg_net_write_slice(llg_net_t* net, int idx, sv4_t selected,
     llg_net_commit_range(net, low, high);
 }
 
-void llg_net_write_selected(llg_net_t* net, int idx, sv4_t value,
-                            sv4_select_plan_t plan, int reverse) {
+void llg_net_write_selected(llg_net_t* net, int32_t idx, sv4_t value,
+                            sv4_select_plan_t plan, int32_t reverse) {
     if (!net || !region_can_mutate("net write")) return;
     if (idx < 0 || idx >= net->n_drivers || !net->drivers[idx] ||
         plan.storage_width != net->width) {
@@ -1255,7 +1255,7 @@ static void llg_net_alias_reserve(llg_net_t* net) {
         llg_msg(LLG_MSG_INTERNAL, NULL, "net alias capacity is invalid");
         abort();
     }
-    int capacity = net->alias_capacity ? net->alias_capacity : 4;
+    int32_t capacity = net->alias_capacity ? net->alias_capacity : 4;
     while (capacity <= net->n_aliases) {
         if (capacity > INT_MAX / 2) {
             llg_msg(LLG_MSG_INTERNAL, NULL, "net alias capacity overflow");
@@ -1265,7 +1265,7 @@ static void llg_net_alias_reserve(llg_net_t* net) {
     }
     llg_net_alias_ref_t* grown = (llg_net_alias_ref_t*)llg_checked_malloc(
         (size_t)capacity, sizeof(*grown), "net alias table");
-    for (int i = 0; i < net->n_aliases; i++) grown[i] = net->aliases[i];
+    for (int32_t i = 0; i < net->n_aliases; i++) grown[i] = net->aliases[i];
     free(net->aliases);
     net->aliases = grown;
     net->alias_capacity = capacity;
@@ -1277,7 +1277,7 @@ void llg_net_alias_bind(llg_net_alias_t* alias) {
      * its own parts (llg_net_alias_ref); otherwise every net of the alias
      * rebuilds it whole. */
     uint64_t covered = 0;
-    int exact = 1;
+    int32_t exact = 1;
     for (uint32_t i = 0; i < alias->n_parts; i++) {
         if (!llg_net_alias_part_fits(alias, &alias->parts[i])) exact = 0;
         else covered += alias->parts[i].bit_count;
@@ -1288,8 +1288,8 @@ void llg_net_alias_bind(llg_net_alias_t* alias) {
         if (!net) continue;
         /* A second bind of the same alias adds nothing. */
         uint32_t part = exact ? i : UINT32_MAX;
-        int seen = 0;
-        for (int j = 0; j < net->n_aliases; j++)
+        int32_t seen = 0;
+        for (int32_t j = 0; j < net->n_aliases; j++)
             if (net->aliases[j].alias == alias && net->aliases[j].part == part) seen = 1;
         if (seen) continue;
         llg_net_alias_reserve(net);
@@ -1357,7 +1357,7 @@ void llg_net_alias_write(llg_net_alias_t* alias, sv4_t value) {
     for (uint32_t i = 0; i < alias->n_parts; i++) {
         const llg_net_alias_part_t* part = &alias->parts[i];
         if (!part->net) continue;
-        int seen = 0;
+        int32_t seen = 0;
         for (uint32_t j = 0; j < i; j++) {
             const llg_net_alias_part_t* prior = &alias->parts[j];
             if (prior->net == part->net && prior->slot == part->slot) seen = 1;
@@ -1391,12 +1391,12 @@ void llg_net_alias_write(llg_net_alias_t* alias, sv4_t value) {
     llg_value_scope_end(scope);
 }
 
-static int inertial_bit(const sv4_t* value, uint32_t bit) {
+static int32_t inertial_bit(const sv4_t* value, uint32_t bit) {
     if (!value || bit >= llg_sv4_width(*value)) return 0;
-    return (int)llg_sv4_state(*value, bit);
+    return (int32_t)llg_sv4_state(*value, bit);
 }
 
-static int inertial_masked_same(const sv4_t* a, const sv4_t* b,
+static int32_t inertial_masked_same(const sv4_t* a, const sv4_t* b,
                                 const sv4_t* mask) {
     return llg_sv4_masked_same(*a, *b, mask);
 }
@@ -1416,7 +1416,7 @@ enum {
     INERTIAL_RISE_OR_FALL = 4,
 };
 
-static int inertial_transition(int old_state, int new_state) {
+static int32_t inertial_transition(int32_t old_state, int32_t new_state) {
     if (old_state == new_state) return INERTIAL_NO_TRANSITION;
     if (new_state == 3) return INERTIAL_TURN_OFF;
     if (new_state == 1) {
@@ -1452,14 +1452,14 @@ static uint64_t inertial_transition_ticks(const sv4_t* old_value,
                          : llg_sv4_width(*new_value);
     uint32_t driven = 0;
     uint32_t last = 0;
-    int old_zero = 1;
-    int new_zero = 1;
-    int new_z = 1;
-    int changed = 0;
+    int32_t old_zero = 1;
+    int32_t new_zero = 1;
+    int32_t new_z = 1;
+    int32_t changed = 0;
     for (uint32_t bit = 0; bit < width; bit++) {
         if (mask && inertial_bit(mask, bit) != 1) continue;
-        int old_state = inertial_bit(old_value, bit);
-        int new_state = inertial_bit(new_value, bit);
+        int32_t old_state = inertial_bit(old_value, bit);
+        int32_t new_state = inertial_bit(new_value, bit);
         driven++;
         last = bit;
         old_zero &= old_state == 0;
@@ -1553,9 +1553,9 @@ static void inertial_snapshot(llg_inertial_t* driver, const sv4_t* target) {
 // keeps only those bits, so a narrow contribution to a wide shared group
 // costs its own width instead of the group's.
 static void inertial_update(llg_inertial_t** handle, sv4_t* target,
-                            llg_net_t* net, int slot, sv4_t value,
+                            llg_net_t* net, int32_t slot, sv4_t value,
                             const sv4_t* mask, uint64_t rise, uint64_t fall,
-                            uint64_t turn_off, int part, uint32_t part_lsb) {
+                            uint64_t turn_off, int32_t part, uint32_t part_lsb) {
     if (!region_can_mutate("inertial scheduling")) return;
     llg_inertial_t* driver = *handle;
     uint32_t part_width = part ? llg_sv4_width(value) : 0u;
@@ -1642,7 +1642,7 @@ void llg_inertial_assign(llg_inertial_t** handle, sv4_t* target,
     inertial_update(handle, target, NULL, 0, value, NULL, rise, fall, turn_off, 0, 0);
 }
 
-void llg_inertial_net(llg_inertial_t** handle, llg_net_t* net, int slot,
+void llg_inertial_net(llg_inertial_t** handle, llg_net_t* net, int32_t slot,
                       sv4_t value, uint64_t rise, uint64_t fall,
                       uint64_t turn_off) {
     if (slot < 0 || slot >= net->n_drivers || !net->drivers[slot]) {
@@ -1660,7 +1660,7 @@ void llg_inertial_selected_assign(llg_inertial_t** handle, sv4_t* target,
 }
 
 void llg_inertial_selected_net(llg_inertial_t** handle, llg_net_t* net,
-                               int slot, sv4_t value, sv4_t mask,
+                               int32_t slot, sv4_t value, sv4_t mask,
                                uint64_t rise, uint64_t fall,
                                uint64_t turn_off) {
     if (slot < 0 || slot >= net->n_drivers || !net->drivers[slot]) {
@@ -1671,8 +1671,8 @@ void llg_inertial_selected_net(llg_inertial_t** handle, llg_net_t* net,
                     fall, turn_off, 0, 0);
 }
 
-void llg_inertial_part_net(llg_inertial_t** handle, llg_net_t* net, int slot,
-                           sv4_t value, sv4_select_plan_t plan, int reverse,
+void llg_inertial_part_net(llg_inertial_t** handle, llg_net_t* net, int32_t slot,
+                           sv4_t value, sv4_select_plan_t plan, int32_t reverse,
                            uint64_t rise, uint64_t fall, uint64_t turn_off) {
     if (slot < 0 || slot >= net->n_drivers || !net->drivers[slot] ||
         plan.storage_width != net->width) {
@@ -1690,7 +1690,7 @@ void llg_inertial_part_net(llg_inertial_t** handle, llg_net_t* net, int slot,
 
 // The part a driver's halves occupy in their net slots: `driver->current`
 // starts as what the two slots hold.
-static sv4_t enable_pair_slots(const llg_net_t* net, int zero_slot, int one_slot,
+static sv4_t enable_pair_slots(const llg_net_t* net, int32_t zero_slot, int32_t one_slot,
                                uint32_t lsb, uint32_t width) {
     int64_t high = (int64_t)lsb + width - 1;
     sv4_t zero = sv4_part_select(*net->drivers[zero_slot], high, lsb);
@@ -1703,9 +1703,9 @@ static sv4_t enable_pair_slots(const llg_net_t* net, int zero_slot, int one_slot
 
 // The combined output of an enable pair's bit `bit` in the states of
 // inertial_transition: L and H are unknowns, Z has both slots absent.
-static int enable_pair_state(const sv4_t* halves, uint32_t bit, uint32_t width) {
-    int zero = inertial_bit(halves, bit);
-    int one = inertial_bit(halves, bit + width);
+static int32_t enable_pair_state(const sv4_t* halves, uint32_t bit, uint32_t width) {
+    int32_t zero = inertial_bit(halves, bit);
+    int32_t one = inertial_bit(halves, bit + width);
     if (zero == 0 && one == 0) return 0;
     if (zero == 1 && one == 1) return 1;
     if (zero == 1 && one == 0) return 3;
@@ -1715,10 +1715,10 @@ static int enable_pair_state(const sv4_t* halves, uint32_t bit, uint32_t width) 
 static uint64_t enable_pair_ticks(const sv4_t* old_halves, const sv4_t* new_halves,
                                   uint32_t width, uint64_t rise, uint64_t fall,
                                   uint64_t turn_off) {
-    int old_zero = 1;
-    int new_zero = 1;
-    int new_z = 1;
-    int new_state = 0;
+    int32_t old_zero = 1;
+    int32_t new_zero = 1;
+    int32_t new_z = 1;
+    int32_t new_state = 0;
     for (uint32_t bit = 0; bit < width; bit++) {
         new_state = enable_pair_state(new_halves, bit, width);
         old_zero &= enable_pair_state(old_halves, bit, width) == 0;
@@ -1737,9 +1737,9 @@ static uint64_t enable_pair_ticks(const sv4_t* old_halves, const sv4_t* new_halv
     return rise;
 }
 
-void llg_inertial_enable_net(llg_inertial_t** handle, llg_net_t* net, int zero_slot,
-                             int one_slot, sv4_t zero, sv4_t one,
-                             sv4_select_plan_t plan, int reverse, uint64_t rise,
+void llg_inertial_enable_net(llg_inertial_t** handle, llg_net_t* net, int32_t zero_slot,
+                             int32_t one_slot, sv4_t zero, sv4_t one,
+                             sv4_select_plan_t plan, int32_t reverse, uint64_t rise,
                              uint64_t fall, uint64_t turn_off) {
     if (zero_slot < 0 || zero_slot >= net->n_drivers || !net->drivers[zero_slot] ||
         one_slot < 0 || one_slot >= net->n_drivers || !net->drivers[one_slot] ||
@@ -1797,7 +1797,7 @@ cleanup:
 
 // Write both halves as one update of the net: the batch's exact deferral would
 // otherwise publish the first half before the second touches the same bits.
-static void enable_pair_store(llg_net_t* net, int idx, sv4_t value) {
+static void enable_pair_store(llg_net_t* net, int32_t idx, sv4_t value) {
     if (llg_net_has_index(net)) llg_net_index_remove(net, idx);
     sv4_copy(net->drivers[idx], &value);
     uint32_t low = 0;
@@ -1809,7 +1809,7 @@ static void enable_pair_store(llg_net_t* net, int idx, sv4_t value) {
 // A plain scalar net with this pair for its only drivers takes the gate's
 // output without a resolution, as a net with one driver does, unless the
 // output is L or H or a strength hides a half.
-static int enable_pair_alone(llg_inertial_t* driver, sv4_t zero, sv4_t one) {
+static int32_t enable_pair_alone(llg_inertial_t* driver, sv4_t zero, sv4_t one) {
     llg_net_t* net = driver->net;
     if (net->width != 1 || net->n_drivers != 2 || net->silent_slots || net->unsettled ||
         net->switch_net || net->propagation_enabled || net->resolution != LLG_RESOLVE_WIRE ||
@@ -1817,16 +1817,16 @@ static int enable_pair_alone(llg_inertial_t* driver, sv4_t zero, sv4_t one) {
         !net->strength0 || !net->strength1 ||
         !net->strength0[driver->slot] || !net->strength1[driver->publication_bit])
         return 0;
-    int zero_bit = inertial_bit(&zero, 0);
-    int one_bit = inertial_bit(&one, 0);
+    int32_t zero_bit = inertial_bit(&zero, 0);
+    int32_t one_bit = inertial_bit(&one, 0);
     // A slot drives only its own value, so the halves agree on 0 and 1, and
     // a 1 in the strength0 slot over a 0 in the strength1 slot is Z.
     if (zero_bit > 1 || one_bit > 1) return 0;
-    int high_z = zero_bit == 1 && one_bit == 0;
+    int32_t high_z = zero_bit == 1 && one_bit == 0;
     llg_net_defer_prepare(net, 0, 0);
     if (net->deferred_slot > 0) return 0;
     enable_pair_store(net, driver->slot, zero);
-    enable_pair_store(net, (int)driver->publication_bit, one);
+    enable_pair_store(net, (int32_t)driver->publication_bit, one);
     sv4_t value = high_z ? sv4_fill(3, 1, 0) : sv4_from_u64((uint64_t)zero_bit, 1, 0);
     llg_net_publish_range(net, 0, value);
     sv4_destroy(&value);
@@ -1844,13 +1844,13 @@ static void enable_pair_commit(llg_inertial_t* driver, const sv4_t* halves) {
         sv4_destroy(&zero);
         return;
     }
-    int whole = width == net->width;
+    int32_t whole = width == net->width;
     if (whole) llg_net_write(net, driver->slot, zero);
     else llg_net_write_slice(net, driver->slot, zero, driver->part_lsb);
-    int exact = net_defer_exact;
+    int32_t exact = net_defer_exact;
     net_defer_exact = 0;
-    if (whole) llg_net_write(net, (int)driver->publication_bit, one);
-    else llg_net_write_slice(net, (int)driver->publication_bit, one, driver->part_lsb);
+    if (whole) llg_net_write(net, (int32_t)driver->publication_bit, one);
+    else llg_net_write_slice(net, (int32_t)driver->publication_bit, one, driver->part_lsb);
     net_defer_exact = exact;
     sv4_destroy(&one);
     sv4_destroy(&zero);
@@ -1941,12 +1941,12 @@ static void llg_net_path_stage_commit(llg_net_t* net) {
 static struct {
     uint32_t reject_percent;
     uint32_t error_percent;
-    int style;          // -1: declarations decide, 0 on-event, 1 on-detect
-    int show_cancelled; // -1: declarations decide, 0 off, 1 on
+    int32_t style;          // -1: declarations decide, 0 on-event, 1 on-detect
+    int32_t show_cancelled; // -1: declarations decide, 0 off, 1 on
 } path_pulse = {100u, 100u, -1, -1};
 
 void llg_module_paths_configure(uint32_t reject_percent, uint32_t error_percent,
-                                int style, int show_cancelled) {
+                                int32_t style, int32_t show_cancelled) {
     path_pulse.reject_percent = reject_percent > 100u ? 100u : reject_percent;
     path_pulse.error_percent = error_percent > 100u ? 100u : error_percent;
     if (path_pulse.error_percent < path_pulse.reject_percent)
@@ -1956,8 +1956,8 @@ void llg_module_paths_configure(uint32_t reject_percent, uint32_t error_percent,
 }
 
 // Index of a transition in the path delay table; -1 for no transition.
-static int path_transition_index(unsigned from, unsigned to) {
-    static const signed char table[4][4] = {
+static int32_t path_transition_index(uint32_t from, uint32_t to) {
+    static const int8_t table[4][4] = {
         /* from 0 */ {-1, 0, 6, 2},
         /* from 1 */ {1, -1, 8, 4},
         /* from x */ {9, 7, -1, 10},
@@ -1968,8 +1968,8 @@ static int path_transition_index(unsigned from, unsigned to) {
 }
 
 // Edge classes of a transition (Table 9-2): bit 0 a posedge, bit 1 a negedge.
-static unsigned path_edge_classes(unsigned from, unsigned to) {
-    static const unsigned char table[4][4] = {
+static uint32_t path_edge_classes(uint32_t from, uint32_t to) {
+    static const uint8_t table[4][4] = {
         /* from 0 */ {0, 1, 1, 1},
         /* from 1 */ {2, 0, 2, 2},
         /* from x */ {2, 1, 0, 0},
@@ -1978,7 +1978,7 @@ static unsigned path_edge_classes(unsigned from, unsigned to) {
     return from > 3u || to > 3u ? 0u : table[from][to];
 }
 
-static int path_set_ready(const llg_module_path_set_t* set) {
+static int32_t path_set_ready(const llg_module_path_set_t* set) {
     return set && (set->n_sources == 0 || (set->last && set->stamps));
 }
 
@@ -1992,12 +1992,12 @@ void llg_module_path_stamp(llg_module_path_set_t* set) {
             continue;
         uint32_t width = llg_sv4_width(*last);
         for (uint32_t bit = 0; bit < width; bit++) {
-            unsigned from = llg_sv4_state(*last, bit);
-            unsigned to = llg_sv4_state(*source, bit);
+            uint32_t from = llg_sv4_state(*last, bit);
+            uint32_t to = llg_sv4_state(*source, bit);
             if (from == to) continue;
             set->stamps[index][bit] = g.now;
             if (!set->rise_stamps) continue;
-            unsigned classes = path_edge_classes(from, to);
+            uint32_t classes = path_edge_classes(from, to);
             if (classes & 1u) set->rise_stamps[index][bit] = g.now;
             if (classes & 2u) set->fall_stamps[index][bit] = g.now;
         }
@@ -2017,7 +2017,7 @@ static uint64_t path_source_stamp(const llg_module_path_set_t* set,
     return latest;
 }
 
-static int path_covers(const llg_module_path_t* path, uint32_t bit) {
+static int32_t path_covers(const llg_module_path_t* path, uint32_t bit) {
     return bit >= path->dest_lsb && bit - path->dest_lsb < path->dest_width;
 }
 
@@ -2046,8 +2046,8 @@ static uint64_t path_input_time(const llg_module_path_set_t* set,
 // A conditional path applies while the least significant bit of its
 // condition is 1, x or z (30.4.4.1); the generated evaluator reads the
 // conditions in the instance's scope when a transition is being scheduled.
-static int path_enabled(llg_module_path_set_t* set,
-                        const llg_module_path_t* path, int* evaluated) {
+static int32_t path_enabled(llg_module_path_set_t* set,
+                        const llg_module_path_t* path, int32_t* evaluated) {
     if (!path->condition || path->ifnone) return 1;
     if (!*evaluated) {
         set->conditions(set->condition_values, (void*)set->condition_context);
@@ -2071,10 +2071,10 @@ typedef struct {
 // (the distributed delays have elapsed) and that input time plus the
 // delay (30.6). Returns 0 when no path is active: the transition then has
 // no path delay.
-static int path_choose(llg_module_path_set_t* set, llg_module_path_dest_t* dest,
-                       uint32_t bit, int transition, int* evaluated,
+static int32_t path_choose(llg_module_path_set_t* set, llg_module_path_dest_t* dest,
+                       uint32_t bit, int32_t transition, int32_t* evaluated,
                        path_choice_t* choice) {
-    int found = 0;
+    int32_t found = 0;
     uint64_t latest = 0;
     for (uint32_t index = 0; index < dest->n_paths; index++) {
         const llg_module_path_t* path = &dest->paths[index];
@@ -2092,7 +2092,7 @@ static int path_choose(llg_module_path_set_t* set, llg_module_path_dest_t* dest,
             path_input_time(set, dest, index, bit) != latest)
             continue;
         if (path->ifnone) {
-            int yields = 0;
+            int32_t yields = 0;
             for (uint32_t other = 0; other < dest->n_paths && !yields; other++) {
                 const llg_module_path_t* peer = &dest->paths[other];
                 yields = peer->group == path->group && !peer->ifnone &&
@@ -2127,7 +2127,7 @@ static int path_choose(llg_module_path_set_t* set, llg_module_path_dest_t* dest,
 }
 
 static void path_queue_push(llg_inertial_t* driver, uint64_t time,
-                            unsigned state) {
+                            uint32_t state) {
     llg_path_queue_t* queue = driver->queue;
     if (!queue) {
         queue = llg_checked_calloc(1, sizeof(*queue), "module path queue");
@@ -2156,7 +2156,7 @@ static void path_queue_push(llg_inertial_t* driver, uint64_t time,
 
 // Make (state, time) the record's pending update (the head).
 static void path_head_schedule(llg_inertial_t* driver, uint64_t time,
-                               unsigned state) {
+                               uint32_t state) {
     sv4_replace(&driver->value, sv4_fill((uint8_t)state, 1u, 0));
     driver->time = time;
     driver->pending = 1;
@@ -2167,7 +2167,7 @@ static void path_head_schedule(llg_inertial_t* driver, uint64_t time,
 
 // Move the last scheduled update of a destination bit to (state, time).
 static void path_last_replace(llg_inertial_t* driver, uint64_t time,
-                              unsigned state) {
+                              uint32_t state) {
     llg_path_queue_t* queue = driver->queue;
     if (queue && queue->count) {
         queue->times[queue->count - 1u] = time;
@@ -2191,7 +2191,7 @@ static void path_queue_advance(llg_inertial_t* driver) {
     llg_path_queue_t* queue = driver->queue;
     if (!queue || !queue->count || driver->pending) return;
     uint64_t time = queue->times[0];
-    unsigned state = queue->states[0];
+    uint32_t state = queue->states[0];
     queue->count--;
     memmove(queue->times, queue->times + 1, queue->count * sizeof(*queue->times));
     memmove(queue->states, queue->states + 1, queue->count * sizeof(*queue->states));
@@ -2210,24 +2210,24 @@ static void path_queue_advance(llg_inertial_t* driver) {
 // to the committed value cancels it.
 static void path_bit_schedule(llg_module_path_set_t* set,
                               llg_module_path_dest_t* dest, uint32_t bit,
-                              llg_inertial_t* driver, unsigned state,
-                              int* evaluated) {
-    unsigned flags = dest->styles ? dest->styles[bit] : 0u;
-    int on_detect = path_pulse.style >= 0
+                              llg_inertial_t* driver, uint32_t state,
+                              int32_t* evaluated) {
+    uint32_t flags = dest->styles ? dest->styles[bit] : 0u;
+    int32_t on_detect = path_pulse.style >= 0
                         ? path_pulse.style == 1
                         : (flags & LLG_PATH_STYLE_ON_DETECT) != 0u;
-    int show_cancelled = path_pulse.show_cancelled >= 0
+    int32_t show_cancelled = path_pulse.show_cancelled >= 0
                              ? path_pulse.show_cancelled == 1
                              : (flags & LLG_PATH_STYLE_SHOW_CANCELLED) != 0u;
     for (;;) {
         llg_path_queue_t* queue = driver->queue;
-        int queued = queue && queue->count;
-        unsigned projected = queued ? queue->states[queue->count - 1u]
+        int32_t queued = queue && queue->count;
+        uint32_t projected = queued ? queue->states[queue->count - 1u]
                              : driver->pending ? llg_sv4_state(driver->value, 0)
                                                : llg_sv4_state(driver->current, 0);
         if (state == projected) return;
         path_choice_t choice = {g.now, 0, 0};
-        int transition = path_transition_index(projected, state);
+        int32_t transition = path_transition_index(projected, state);
         if (transition < 0 ||
             !path_choose(set, dest, bit, transition, evaluated, &choice)) {
             choice.due = g.now;
@@ -2286,7 +2286,7 @@ static void llg_net_propagate_paths(llg_net_t* net, sv4_t resolved) {
                                            path->source_width)
                        : 0;
     }
-    int evaluated = set->conditions == NULL;
+    int32_t evaluated = set->conditions == NULL;
     for (uint32_t bit = 0; bit < net->width; bit++) {
         llg_inertial_t* driver = llg_net_bit_record(net, bit);
         path_bit_schedule(set, dest, bit, driver, llg_sv4_state(resolved, bit),
@@ -2338,7 +2338,7 @@ void llg_module_paths_layout(llg_module_path_set_t* set, const char* scope,
 
 void llg_module_paths_start(llg_module_path_set_t* set) {
     if (!set || set->last) return;
-    int edges = 0;
+    int32_t edges = 0;
     for (uint32_t index = 0; index < set->n_dests; index++) {
         for (uint32_t path = 0; path < set->dests[index].n_paths; path++)
             edges |= set->dests[index].paths[path].edge != 0;
@@ -2388,26 +2388,26 @@ void llg_module_paths_start(llg_module_path_set_t* set) {
 
 llg_module_path_set_t* llg_module_path_sets(void) { return g.module_path_sets; }
 
-int llg_net_path_pending(const llg_net_t* net, uint32_t bit, uint64_t* time,
-                         int* state) {
+int32_t llg_net_path_pending(const llg_net_t* net, uint32_t bit, uint64_t* time,
+                         int32_t* state) {
     return llg_net_path_event(net, bit, 0, time, state);
 }
 
-int llg_net_path_event(const llg_net_t* net, uint32_t bit, uint32_t index,
-                       uint64_t* time, int* state) {
+int32_t llg_net_path_event(const llg_net_t* net, uint32_t bit, uint32_t index,
+                       uint64_t* time, int32_t* state) {
     if (!net || !net->path_dest || !net->propagation_bits || bit >= net->width)
         return 0;
     const llg_inertial_t* driver = net->propagation_bits[bit];
     if (!driver || !driver->pending) return 0;
     if (index == 0) {
         if (time) *time = driver->time;
-        if (state) *state = (int)llg_sv4_state(driver->value, 0);
+        if (state) *state = (int32_t)llg_sv4_state(driver->value, 0);
         return 1;
     }
     const llg_path_queue_t* queue = driver->queue;
     if (!queue || index - 1u >= queue->count) return 0;
     if (time) *time = queue->times[index - 1u];
-    if (state) *state = (int)queue->states[index - 1u];
+    if (state) *state = (int32_t)queue->states[index - 1u];
     return 1;
 }
 
@@ -2504,7 +2504,7 @@ static llg_inertial_t* inertial_due(llg_region_t region) {
     return NULL;
 }
 
-static int inertial_ready(llg_region_t region) {
+static int32_t inertial_ready(llg_region_t region) {
     return inertial_due(region) != NULL;
 }
 
@@ -2519,7 +2519,7 @@ static void commit_inertial(llg_region_t region) {
     sv4_t mask = SV4_EMPTY;
     sv4_move(&value, &driver->value);
     sv4_move(&mask, &driver->mask);
-    int has_mask = driver->has_mask;
+    int32_t has_mask = driver->has_mask;
     driver->has_mask = 0;
     llg_net_t* publication_net = driver->publication_net;
     if (has_mask) {
@@ -2562,7 +2562,7 @@ static void commit_inertial(llg_region_t region) {
     }
     uint32_t range_offset = 0;
     uint32_t range_width = 0;
-    int selected_net = driver->net && has_mask &&
+    int32_t selected_net = driver->net && has_mask &&
         nba_mask_contiguous(driver->net->width, value, mask,
                             &range_offset, &range_width);
     if (selected_net) {

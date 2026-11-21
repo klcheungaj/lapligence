@@ -1,12 +1,12 @@
 #include "internal.h"
 
-void llg_gmp_sv4_arithmetic_into_wide(g4_t* dst, g4_t a, g4_t b, unsigned op) {
+void llg_gmp_sv4_arithmetic_into_wide(g4_t* dst, g4_t a, g4_t b, uint32_t op) {
     uint32_t w = g4_maxw(a, b);
     if (dst->width != w || a.width != w || b.width != w) {
         llg_gmp_sv4_replace(dst, g4_binary(a, b, op));
         return;
     }
-    int unknown = llg_gmp_sv4_is_unknown(a) || llg_gmp_sv4_is_unknown(b);
+    int32_t unknown = llg_gmp_sv4_is_unknown(a) || llg_gmp_sv4_is_unknown(b);
     int8_t sign = a.is_signed && b.is_signed;
     size_t n = llg_gmp_sv4_words(*dst);
     if (unknown) {
@@ -48,7 +48,7 @@ void llg_gmp_sv4_arithmetic_into_wide(g4_t* dst, g4_t a, g4_t b, unsigned op) {
  * in place: word i reads both inputs before it is written, so exact aliases are
  * safe. Unknown operands, other widths and empty destinations take the
  * returning form, whose X/Z planes and extension rules stay authoritative. */
-void llg_gmp_sv4_bitwise_into_wide(g4_t* dst, g4_t a, g4_t b, unsigned op) {
+void llg_gmp_sv4_bitwise_into_wide(g4_t* dst, g4_t a, g4_t b, uint32_t op) {
     uint32_t w = g4_maxw(a, b);
     if (dst->width != w || a.width != w || b.width != w || a.data.wide.b || b.data.wide.b) {
         llg_gmp_sv4_replace(dst, g4_binary(a, b, op));
@@ -69,7 +69,7 @@ static g4_t multiply(g4_t a, g4_t b) {
     uint32_t w = g4_maxw(a, b);
     int8_t s = a.is_signed && b.is_signed;
     size_t n = ((size_t)w + 63u) / 64u;
-    int mixed = a.width != w || b.width != w;
+    int32_t mixed = a.width != w || b.width != w;
     size_t product = g4_product_words(n);
     /* One result allocation includes any temporary tail and normalized inputs.
      * The 65-bit/equal-width path allocates exactly the two result words. */
@@ -99,7 +99,7 @@ static g4_t multiply(g4_t a, g4_t b) {
 /* Known equal-width operands need neither normalization nor a copied left
  * operand. Every allocated word is written before the result is published. */
 g4_t llg_gmp_sv4_binary_known_equal(const uint64_t* lhs, const uint64_t* rhs, uint32_t width,
-                                    int8_t sign, unsigned op) {
+                                    int8_t sign, uint32_t op) {
     size_t n = ((size_t)width + 63u) / 64u;
     uint64_t* result = (uint64_t*)malloc(n * sizeof(uint64_t));
     if (!result)
@@ -126,10 +126,10 @@ g4_t llg_gmp_sv4_binary_known_equal(const uint64_t* lhs, const uint64_t* rhs, ui
     out.data.wide.a = result;
     return out;
 }
-g4_t llg_gmp_sv4_binary_wide(g4_t a, g4_t b, unsigned op) {
+g4_t llg_gmp_sv4_binary_wide(g4_t a, g4_t b, uint32_t op) {
     uint32_t w = g4_maxw(a, b);
     int8_t s = a.is_signed && b.is_signed;
-    int unknown = llg_gmp_sv4_is_unknown(a) || llg_gmp_sv4_is_unknown(b);
+    int32_t unknown = llg_gmp_sv4_is_unknown(a) || llg_gmp_sv4_is_unknown(b);
     if (op <= 2 && unknown)
         return llg_gmp_sv4_x(w, s);
     if (op == 2)
@@ -174,7 +174,7 @@ g4_t llg_gmp_sv4_binary_wide(g4_t a, g4_t b, unsigned op) {
     llg_gmp_sv4_finish(&out);
     return out;
 }
-g4_t llg_gmp_sv4_unary_wide(g4_t v, int bitwise) {
+g4_t llg_gmp_sv4_unary_wide(g4_t v, int32_t bitwise) {
     if (!bitwise && llg_gmp_sv4_is_unknown(v))
         return llg_gmp_sv4_x(v.width, v.is_signed);
     g4_t out = llg_gmp_sv4_new(v.width, v.is_signed, bitwise && llg_gmp_sv4_is_unknown(v));
@@ -208,7 +208,7 @@ static void negate_words(uint64_t* a, size_t n, uint32_t w) {
     if (n)
         a[n - 1] &= g4_topmask(w);
 }
-g4_t llg_gmp_sv4_divmod_wide(g4_t a, g4_t b, int remainder) {
+g4_t llg_gmp_sv4_divmod_wide(g4_t a, g4_t b, int32_t remainder) {
     uint32_t w = g4_maxw(a, b);
     int8_t s = a.is_signed && b.is_signed;
     if (llg_gmp_sv4_is_unknown(a) || llg_gmp_sv4_is_unknown(b))
@@ -217,14 +217,14 @@ g4_t llg_gmp_sv4_divmod_wide(g4_t a, g4_t b, int remainder) {
     uint64_t *operands = llg_gmp_sv4_alloc(2u * n), *x = operands, *y = x + n;
     llg_gmp_sv4_extend_plane(x, w, g4_a(&a), a.width, s);
     llg_gmp_sv4_extend_plane(y, w, g4_a(&b), b.width, s);
-    int nonzero = 0;
+    int32_t nonzero = 0;
     for (size_t i = 0; i < n; ++i)
         nonzero |= y[i] != 0;
     if (!nonzero) {
         free(operands);
         return llg_gmp_sv4_x(w, s);
     }
-    int xn = s && ((x[n - 1] >> ((w - 1) % 64)) & 1), yn = s && ((y[n - 1] >> ((w - 1) % 64)) & 1);
+    int32_t xn = s && ((x[n - 1] >> ((w - 1) % 64)) & 1), yn = s && ((y[n - 1] >> ((w - 1) % 64)) & 1);
     if (xn)
         negate_words(x, n, w);
     if (yn)
@@ -242,15 +242,15 @@ g4_t llg_gmp_sv4_pow_wide(g4_t a, g4_t b) {
         return llg_gmp_sv4_x(a.width, a.is_signed);
     size_t an = llg_gmp_sv4_words(a), bn = llg_gmp_sv4_words(b);
     const uint64_t *ap = g4_a(&a), *bp = g4_a(&b);
-    int zero = 1, one = an && ap[0] == 1, all_ones = a.width != 0;
+    int32_t zero = 1, one = an && ap[0] == 1, all_ones = a.width != 0;
     for (size_t i = 0; i < an; ++i) {
         zero &= ap[i] == 0;
         if (i)
             one &= ap[i] == 0;
         all_ones &= ap[i] == (i + 1 == an ? g4_topmask(a.width) : UINT64_MAX);
     }
-    int minus_one = a.is_signed && all_ones;
-    int negative = b.is_signed && b.width && ((bp[bn - 1] >> ((b.width - 1) % 64)) & 1);
+    int32_t minus_one = a.is_signed && all_ones;
+    int32_t negative = b.is_signed && b.width && ((bp[bn - 1] >> ((b.width - 1) % 64)) & 1);
     if (negative) {
         if (zero)
             return llg_gmp_sv4_x(a.width, a.is_signed);
@@ -273,7 +273,7 @@ g4_t llg_gmp_sv4_pow_wide(g4_t a, g4_t b) {
         while (bn && bp[bn - 1] == 0)
             --bn;
         for (size_t i = 0; i < bn; ++i)
-            for (unsigned bit = 0; bit < 64; ++bit) {
+            for (uint32_t bit = 0; bit < 64; ++bit) {
                 if ((bp[i] >> bit) & 1)
                     r *= base;
                 base *= base;
@@ -287,10 +287,10 @@ g4_t llg_gmp_sv4_pow_wide(g4_t a, g4_t b) {
     memcpy(base, ap, an * 8u);
     while (bn && bp[bn - 1] == 0)
         --bn;
-    int zeroed = 0;
+    int32_t zeroed = 0;
     for (size_t i = 0; i < bn && !zeroed; ++i) {
         uint64_t exponent = bp[i];
-        unsigned limit = 64;
+        uint32_t limit = 64;
         if (i + 1 == bn) {
             limit = 0;
             uint64_t t = exponent;
@@ -299,7 +299,7 @@ g4_t llg_gmp_sv4_pow_wide(g4_t a, g4_t b) {
                 t >>= 1;
             }
         }
-        for (unsigned bit = 0; bit < limit; ++bit) {
+        for (uint32_t bit = 0; bit < limit; ++bit) {
             if ((exponent >> bit) & 1) {
                 llg_gmp_sv4_kernel_mul(temp, r, base, an);
                 temp[an - 1] &= g4_topmask(a.width);
@@ -341,11 +341,11 @@ g4_t llg_gmp_sv4_clog2_wide(g4_t v) {
     if (!n)
         return llg_gmp_sv4_from_u64(0, 32, 0);
     uint64_t top = p[n - 1];
-    unsigned bit = 0;
+    uint32_t bit = 0;
     while (top >>= 1)
         ++bit;
     uint32_t r = (uint32_t)((n - 1) * 64 + bit);
-    int extra = (p[n - 1] & (p[n - 1] - 1)) != 0;
+    int32_t extra = (p[n - 1] & (p[n - 1] - 1)) != 0;
     for (size_t i = 0; i + 1 < n; ++i)
         extra |= p[i] != 0;
     return llg_gmp_sv4_from_u64(r + (uint32_t)extra, 32, 0);

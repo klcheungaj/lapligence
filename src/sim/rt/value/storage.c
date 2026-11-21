@@ -9,7 +9,7 @@ static size_t sv4_storage_limb_count(uint32_t width) {
 
 sv4_t sv4_zero(uint32_t width, int8_t is_signed) {
     if (width >= LLG_SUPPORTED_WIDTH_LIMIT) {
-        llg_msg(LLG_MSG_INTERNAL, NULL, "packed storage width %llu reaches or exceeds supported limit %u", (unsigned long long)width, (unsigned)LLG_SUPPORTED_WIDTH_LIMIT);
+        llg_msg(LLG_MSG_INTERNAL, NULL, "packed storage width %llu reaches or exceeds supported limit %" PRIu32, (unsigned long long)width, (uint32_t)LLG_SUPPORTED_WIDTH_LIMIT);
         abort();
     }
     size_t limbs = sv4_storage_limb_count(width);

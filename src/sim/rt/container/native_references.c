@@ -33,7 +33,7 @@ typedef struct llg_native_ref_mirror {
     llg_value_t* item;
     void* container;
     struct llg_native_ref_mirror* next;
-    int kind;
+    int32_t kind;
     uint8_t syncing;
 } llg_native_ref_mirror_t;
 
@@ -52,7 +52,7 @@ struct llg_native_ref {
     size_t refs;
     size_t index;
     sv4_t key;
-    unsigned char* string_key;
+    uint8_t* string_key;
     size_t string_length;
     uint8_t kind;
     uint8_t valid;
@@ -95,7 +95,7 @@ static void llg_native_ref_link_all(llg_native_ref_t* ref) {
     ++llg_native_refs_live;
 }
 
-static int llg_native_ref_has_items(const llg_native_ref_t* ref) {
+static int32_t llg_native_ref_has_items(const llg_native_ref_t* ref) {
     uint8_t kind = ref->value.desc->kind;
     return kind == LLG_VALUE_AGGREGATE || kind == LLG_VALUE_FIXED_ARRAY;
 }
@@ -134,7 +134,7 @@ static llg_value_t* llg_native_ref_element(const llg_native_ref_t* ref) {
         return &((llg_queue_value_array_t*)ref->owner)->data[ref->index];
     default: {
         llg_assoc_value_t* array = ref->owner;
-        int found = 0;
+        int32_t found = 0;
         size_t position = ref->kind == LLG_NATIVE_REF_ASSOC_STRING
             ? llg_assoc_value_string_position(array, ref->string_key,
                                               ref->string_length, &found)
@@ -145,7 +145,7 @@ static llg_value_t* llg_native_ref_element(const llg_native_ref_t* ref) {
     }
 }
 
-static void llg_native_refs_notify(sv4_t* contents, sv4_t* shape, int change);
+static void llg_native_refs_notify(sv4_t* contents, sv4_t* shape, int32_t change);
 
 static void llg_native_ref_publish(llg_native_ref_t* ref) {
     if (llg_value_hooks.publish) llg_value_hooks.publish(&ref->marker);
@@ -280,7 +280,7 @@ static void llg_native_refs_rekey(llg_native_ref_t** list, llg_value_t* old_data
     }
 }
 
-static int llg_native_ref_same_entry(const llg_native_ref_t* ref,
+static int32_t llg_native_ref_same_entry(const llg_native_ref_t* ref,
                                      const llg_assoc_value_entry_t* entry) {
     if (ref->kind == LLG_NATIVE_REF_ASSOC_STRING)
         return llg_assoc_string_compare(ref->string_key, ref->string_length,
@@ -300,7 +300,7 @@ static void llg_native_refs_assoc_removed(llg_native_ref_t** list,
 
 /* Bring one stale copy up to date. A subscriber of the marker may end the
  * process holding any reference, so the caller rescans afterwards. */
-static int llg_native_ref_refresh(llg_native_ref_t* ref) {
+static int32_t llg_native_ref_refresh(llg_native_ref_t* ref) {
     if (!ref->owner || ref->syncing || llg_native_ref_has_items(ref)) return 0;
     const llg_value_t* element = llg_native_ref_element(ref);
     if (llg_value_equal(&ref->value, element)) return 0;
@@ -362,7 +362,7 @@ enum {
  * readers wake on each publication, so it publishes only a changed handle; a
  * real's readers follow its cell, which a store in place (a whole-record
  * copy) did not write through the scheduler. */
-static int llg_native_ref_leaf_pending(const llg_native_ref_t* ref) {
+static int32_t llg_native_ref_leaf_pending(const llg_native_ref_t* ref) {
     if (!ref->leaf || !ref->member) return LLG_NATIVE_REF_QUIET;
     if (ref->value.desc->kind == LLG_VALUE_REAL)
         return ref->real_counted && llg_value_hooks.store_real &&
@@ -375,7 +375,7 @@ static int llg_native_ref_leaf_pending(const llg_native_ref_t* ref) {
                : LLG_NATIVE_REF_QUIET;
 }
 
-static void llg_native_ref_publish_pending(llg_native_ref_t* ref, int pending) {
+static void llg_native_ref_publish_pending(llg_native_ref_t* ref, int32_t pending) {
     ref->syncing = 1;
     if (pending == LLG_NATIVE_REF_CELL) {
         double* cell = &ref->member->value.real;
@@ -398,7 +398,7 @@ static void llg_native_ref_publish_pending(llg_native_ref_t* ref, int pending) {
 static void llg_native_refs_publish_watched(void) {
     uint64_t current = ++llg_native_refs_pass;
     for (llg_native_ref_t* ref = llg_native_refs_all; ref;) {
-        int pending = LLG_NATIVE_REF_QUIET;
+        int32_t pending = LLG_NATIVE_REF_QUIET;
         if (ref->watch_pass != current) {
             if (ref->watched) pending = LLG_NATIVE_REF_MARKER;
             else if (ref->parent && ref->parent->owner)
@@ -414,7 +414,7 @@ static void llg_native_refs_publish_watched(void) {
     }
 }
 
-static void llg_native_refs_notify(sv4_t* contents, sv4_t* shape, int change) {
+static void llg_native_refs_notify(sv4_t* contents, sv4_t* shape, int32_t change) {
     llg_native_refs_mirrors_load();
     for (llg_native_ref_t* ref = llg_native_refs_all; ref;)
         ref = llg_native_ref_refresh(ref) ? llg_native_refs_all : ref->all_next;
@@ -457,7 +457,7 @@ static void llg_native_ref_touch(llg_native_ref_t* ref) {
 /* The companion changed: replace the nested slot, then tell the element's
  * container, whose notify recopies any other mirror of the slot. */
 static void llg_native_ref_mirror_changed(sv4_t* contents, sv4_t* shape,
-                                          int change) {
+                                          int32_t change) {
     (void)shape;
     (void)change;
     llg_native_ref_mirror_t* mirror = (llg_native_ref_mirror_t*)contents;
@@ -518,7 +518,7 @@ static void llg_native_ref_mirror_install(llg_native_ref_mirror_t* mirror,
 }
 
 void* llg_native_ref_mirror(void* reference, llg_value_t* item, void* container,
-                            int kind) {
+                            int32_t kind) {
     llg_native_ref_t* ref = reference;
     llg_native_ref_mirror_t* mirror = llg_alloc_items(1, sizeof(*mirror));
     memset(mirror, 0, sizeof(*mirror));
@@ -589,7 +589,7 @@ static LLG_OUTLYING void llg_record_watch_stored(const llg_value_t* value) {
 /* Whether member reference `ref` addresses storage inside record `value`:
  * its root stands for `value`, or for the member that another such reference
  * binds (a `ref` formal passed on by member). */
-static int llg_native_ref_inside(const llg_native_ref_t* ref,
+static int32_t llg_native_ref_inside(const llg_native_ref_t* ref,
                                  const llg_value_t* value) {
     while (ref->parent && ref->parent->origin) {
         const llg_value_t* origin = ref->parent->origin;
@@ -609,7 +609,7 @@ static int llg_native_ref_inside(const llg_native_ref_t* ref,
 static void llg_native_refs_publish_inside(const llg_value_t* value) {
     uint64_t current = ++llg_native_refs_pass;
     for (llg_native_ref_t* ref = llg_native_refs_all; ref;) {
-        int pending = LLG_NATIVE_REF_QUIET;
+        int32_t pending = LLG_NATIVE_REF_QUIET;
         if (ref->watch_pass != current && llg_native_ref_inside(ref, value)) {
             /* A packed reader compares values; a string publishes itself. */
             switch (ref->value.desc->kind) {
@@ -638,7 +638,7 @@ static void llg_native_refs_publish_inside(const llg_value_t* value) {
 void llg_native_ref_value_stored(llg_value_t* value) {
     if (!llg_native_refs_live) return;
     llg_native_ref_t* holder = NULL;
-    int rooted = 0;
+    int32_t rooted = 0;
     for (llg_native_ref_t* ref = llg_native_refs_all; ref;
          ref = ref->all_next) {
         if (&ref->value == value) {
@@ -699,7 +699,7 @@ void llg_native_ref_stored(sv4_t* marker) {
 }
 
 void* llg_dyn_value_ref_acquire(llg_dyn_value_array_t* array, sv4_t index,
-                                int fixed) {
+                                int32_t fixed) {
     if (!array) llg_container_fatal("null dynamic-array reference source");
     size_t native;
     if (!llg_index(index, array->size, 0, &native))
@@ -813,7 +813,7 @@ llg_value_t* llg_native_ref_value(void* reference) {
     return ref->member ? ref->member : &ref->value;
 }
 
-int llg_native_ref_selected(void* reference) {
+int32_t llg_native_ref_selected(void* reference) {
     return ((llg_native_ref_t*)reference)->valid;
 }
 
@@ -921,7 +921,7 @@ void* llg_native_ref_bind(void* reference) {
     return ref;
 }
 
-int llg_native_ref_selects(sv4_t index, int64_t declared) {
+int32_t llg_native_ref_selects(sv4_t index, int64_t declared) {
     int64_t position = 0;
     return sv4_to_index_i64(index, &position) && position == declared;
 }
@@ -937,7 +937,7 @@ sv4_t llg_native_ref_packed_read(const void* reference) {
     return sv4_clone(&value->value.packed);
 }
 
-int llg_native_ref_packed_write(void* reference, sv4_t value) {
+int32_t llg_native_ref_packed_write(void* reference, sv4_t value) {
     llg_native_ref_t* ref = reference;
     if (!ref->valid) return 0;
     llg_value_t* target = llg_native_ref_value(ref);
