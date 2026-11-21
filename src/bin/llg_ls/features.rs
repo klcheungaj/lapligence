@@ -34,6 +34,7 @@ use tower_lsp::lsp_types::{
 use crate::semantic_tokens;
 use llg::core::compile::{self, CompileOpts};
 use llg::core::compile::{Diag, Severity};
+use llg::core::design_checks::{self, DesignDiag, Reporter};
 use llg::core::elab::Val;
 use llg::core::lint::{self, LintConfig, LintDiag, LintRegistry, LintSeverity, RuleConfig};
 use llg::core::macros;

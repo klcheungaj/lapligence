@@ -12,6 +12,7 @@ retain native pointers nor reopen source paths.
 | `model.rs` | Editor and hierarchy projections. |
 | `tokens.rs`, `macros.rs` | Lexical tokens, exact declaration/reference bindings and macro information. |
 | `lint/` | Shared rules over the owned DB/design model. |
+| `design_checks.rs` | Design-wide elaboration errors over the owned DB (`ELAB-006` mixed time scales) that `llg` stops on and `llg_ls` publishes, one message text per check. |
 
 Library-map selection, source-preserving native map configuration parsing and strict
 edition checks are shared by execution and navigation. `compile_checked` rejects

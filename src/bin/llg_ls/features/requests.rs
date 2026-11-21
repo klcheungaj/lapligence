@@ -1,6 +1,8 @@
 //! Pure projections from committed analyses to LSP response payloads.
 
 use super::*;
+use llg::core::report::Severity as ReportSeverity;
+use tower_lsp::lsp_types::DiagnosticRelatedInformation;
 
 /// Failure to produce semantic tokens for an isolated open document.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,12 +120,56 @@ pub fn lsp_diagnostics_with_fallback(
             data: None,
         });
     }
+    for d in &a.design {
+        let Some(path) = d.location.file.as_deref() else {
+            continue;
+        };
+        let related_information: Vec<_> = d
+            .related
+            .iter()
+            .filter_map(|related| {
+                Some(DiagnosticRelatedInformation {
+                    location: Location::new(
+                        Url::from_file_path(related.location.file.as_deref()?).ok()?,
+                        point_range(related.location.line, related.location.col),
+                    ),
+                    message: related.message.clone(),
+                })
+            })
+            .collect();
+        out.entry(path.to_owned()).or_default().push(LspDiagnostic {
+            range: point_range(d.location.line, d.location.col),
+            severity: Some(match d.def.severity {
+                ReportSeverity::Fatal | ReportSeverity::Error => DiagnosticSeverity::ERROR,
+                ReportSeverity::Warning => DiagnosticSeverity::WARNING,
+                ReportSeverity::Info => DiagnosticSeverity::INFORMATION,
+            }),
+            code: Some(NumberOrString::String(d.def.id())),
+            code_description: None,
+            source: Some("llg".to_owned()),
+            message: d.text.clone(),
+            related_information: (!related_information.is_empty()).then_some(related_information),
+            tags: None,
+            data: None,
+        });
+    }
     for (path, diagnostic) in &a.frontend_diagnostics {
         out.entry(path.clone())
             .or_default()
             .push(diagnostic.clone());
     }
     out
+}
+
+/// The empty LSP range at a 1-based core position; 0 (unknown) maps to the
+/// start of the file.
+fn point_range(line: u32, col: u32) -> Range {
+    let (line, col) = if line == 0 {
+        (0, 0)
+    } else {
+        (line - 1, col.saturating_sub(1))
+    };
+    Range::new(Position::new(line, col), Position::new(line, col))
 }
 
 // ── Semantic tokens ───────────────────────────────────────────────────────────

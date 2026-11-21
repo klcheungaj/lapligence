@@ -2,6 +2,7 @@
 
 pub mod compile;
 pub mod db;
+pub mod design_checks;
 pub mod diagnostics;
 pub mod elab;
 pub mod lint;
