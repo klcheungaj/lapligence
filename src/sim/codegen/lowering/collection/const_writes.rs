@@ -33,7 +33,9 @@ impl Codegen<'_> {
     /// Reject a modifying built-in method call whose receiver is a `const`
     /// variable or class property, with the call's source location.
     pub(in super::super) fn validate_const_method_writes(&self) -> Result<(), String> {
-        for node in self.db.node_ids() {
+        // Code of an untaken generate block does not exist (27.3), so its
+        // calls write nothing.
+        for node in self.db.instantiated_node_ids() {
             let NodeKind::MethodCall {
                 name,
                 receiver: Some(receiver),

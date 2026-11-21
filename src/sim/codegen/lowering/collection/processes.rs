@@ -1271,7 +1271,8 @@ impl<'a> Codegen<'a> {
 
         // A structural gate is also a driver of its output terminal. Include
         // it so an always-family process cannot silently share that storage.
-        for id in self.db.node_ids() {
+        // A gate of an untaken generate block does not exist (27.3).
+        for id in self.db.instantiated_node_ids() {
             if !matches!(self.kind(id), NodeKind::Gate { .. }) {
                 continue;
             }

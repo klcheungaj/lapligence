@@ -98,4 +98,14 @@ fn untaken_generate_classes_are_not_class_roots() {
         .filter(|id| database.node(*id).name == "x" && database.is_uninstantiated(*id))
         .collect();
     assert!(!blocks.is_empty(), "the untaken block x is uninstantiated");
+    // The whole-arena scan of the elaborated model visits every node that
+    // is not marked, in capture order.
+    let instantiated: Vec<_> = database.instantiated_node_ids().collect();
+    let unmarked: Vec<_> = database
+        .node_ids()
+        .filter(|id| !database.is_uninstantiated(*id))
+        .collect();
+    assert_eq!(instantiated, unmarked);
+    assert!(instantiated.len() < database.node_ids().len());
+    assert!(instantiated.contains(&base));
 }

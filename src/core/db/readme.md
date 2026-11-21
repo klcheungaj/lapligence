@@ -74,7 +74,7 @@ branch, IEEE 1800-2009 27.3, 27.5) is no scope's child; its nodes stay in the
 arena for navigation and `Db::is_uninstantiated` marks them and the block.
 Its classes are not in `Db::classes` and have no `Db::class_metadata`, so
 nothing of them is simulated; consumers that scan the whole arena instead of
-walking the roots skip marked nodes.
+walking the roots skip marked nodes (`Db::instantiated_node_ids`).
 `Db::instance_array_range` keeps the declared `(left, right)` of every
 instance array level (`NodeKind::InstanceArray`), for VPI instance array
 objects (37.11).

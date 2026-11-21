@@ -874,6 +874,16 @@ impl Db {
         self.uninstantiated_nodes.contains(&id)
     }
 
+    /// Every arena ID in stable capture order except those
+    /// [`Db::is_uninstantiated`] marks: the nodes a whole-arena scan of the
+    /// elaborated model visits. A design without untaken generate blocks
+    /// pays no lookup per node.
+    pub fn instantiated_node_ids(&self) -> impl Iterator<Item = NodeId> + '_ {
+        let all = self.uninstantiated_nodes.is_empty();
+        self.node_ids()
+            .filter(move |id| all || !self.uninstantiated_nodes.contains(id))
+    }
+
     /// The class that forward typedef `id` names (`typedef class c;` or
     /// `typedef c;`, IEEE 1800-2009 6.18, 8.25), with whether it names the
     /// `class` keyword. The typedef is a member of the scope that declares

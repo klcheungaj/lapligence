@@ -802,8 +802,7 @@ impl<'a> Codegen<'a> {
     fn constructed_covergroups(&self) -> Vec<NodeId> {
         let mut groups = self
             .db
-            .node_ids()
-            .filter(|id| !self.db.is_uninstantiated(*id))
+            .instantiated_node_ids()
             .filter_map(|id| match self.kind(id) {
                 NodeKind::Expr(ExprKind::NewCovergroup { group_type, .. }) => {
                     self.covergroup_of_type(*group_type)
@@ -1146,7 +1145,8 @@ impl<'a> Codegen<'a> {
         if refs.is_empty() {
             return Ok((vec![HashMap::new()], variant_of_new));
         }
-        for site in self.db.node_ids() {
+        // A `new` of an untaken generate block constructs nothing (27.3).
+        for site in self.db.instantiated_node_ids() {
             let NodeKind::Expr(ExprKind::NewCovergroup { group_type, args }) = self.kind(site)
             else {
                 continue;

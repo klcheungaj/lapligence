@@ -368,14 +368,15 @@ impl Codegen<'_> {
     }
 
     /// The event list of the design's one global clocking block (IEEE
-    /// 1800-2009 14.14: at most one in the elaborated model).
+    /// 1800-2009 14.14: at most one in the elaborated model, which holds
+    /// no untaken generate block, 27.3).
     pub(in crate::sim::codegen) fn global_clocking_events(
         &self,
         path: &str,
     ) -> Result<Vec<EventSpec>, String> {
         let mut blocks = self
             .db
-            .node_ids()
+            .instantiated_node_ids()
             .filter_map(|id| self.db.clocking_block(id).filter(|info| info.is_global));
         match (blocks.next(), blocks.next()) {
             (Some(block), None) => Ok(block.event_specs.clone()),

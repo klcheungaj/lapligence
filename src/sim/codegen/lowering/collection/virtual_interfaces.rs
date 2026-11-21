@@ -523,11 +523,12 @@ impl<'a> Codegen<'a> {
     /// The member paths through a virtual-interface handle that an
     /// assignment target, output or inout actual or non-`const` `ref` actual
     /// in the owned database writes ([`Self::written_targets`],
-    /// [`Self::handle_member_writes`]), in node order.
+    /// [`Self::handle_member_writes`]), in node order. Code of an untaken
+    /// generate block writes nothing: it does not exist (27.3).
     fn virtual_interface_write_paths(&self) -> Vec<NodeId> {
         let mut paths = Vec::new();
         let mut targets = Vec::new();
-        for id in self.db.node_ids() {
+        for id in self.db.instantiated_node_ids() {
             targets.clear();
             self.written_targets(id, &mut targets);
             for target in &targets {

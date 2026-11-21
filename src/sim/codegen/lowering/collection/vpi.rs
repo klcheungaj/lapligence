@@ -1160,14 +1160,15 @@ impl Codegen<'_> {
     /// A19-D6): `<keyword>$<n>` for a gate or switch and `udp$<n>` for a
     /// UDP, `n` counting the unnamed primitives of the enclosing module
     /// instance from 1, its UDP instances first, each kind in elaboration
-    /// order (generate blocks included). Elements of primitive arrays are
+    /// order (generate blocks included, untaken ones not: their primitives
+    /// do not exist, IEEE 1800-2009 27.3). Elements of primitive arrays are
     /// named by their array.
     fn vpi_unnamed_primitive_names(
         &self,
         array_of: &HashMap<NodeId, NodeId>,
     ) -> HashMap<NodeId, String> {
         let mut by_instance: HashMap<NodeId, (Vec<NodeId>, Vec<NodeId>)> = HashMap::new();
-        for id in self.db.node_ids() {
+        for id in self.db.instantiated_node_ids() {
             let NodeKind::Gate { prim_type, .. } = self.kind(id) else {
                 continue;
             };
@@ -1568,7 +1569,9 @@ impl Codegen<'_> {
                     .filter(|id| self.vpi_package_name(*id).is_some()),
             )
             .collect();
-        for id in self.db.node_ids() {
+        // The nodes of an untaken generate block keep their parent chain but
+        // are no objects: the block does not exist (27.3).
+        for id in self.db.instantiated_node_ids() {
             if !reachable(self.db, id, &roots) {
                 continue;
             }
@@ -2965,7 +2968,8 @@ impl Codegen<'_> {
     /// registration under its name stops the run at startup instead of being
     /// silently ignored (IEEE 1800-2009 36.3.2, decision S99-D6). Names with
     /// a VPI call site (user system tasks and built-ins without a lowering)
-    /// are dispatched to the registration and are left out.
+    /// are dispatched to the registration and are left out, and so are the
+    /// calls of untaken generate blocks, which do not exist (27.3).
     pub(in super::super) fn populate_vpi_builtin_calls(&self, model: &mut IrModel) {
         use std::collections::BTreeMap;
         let dispatched: HashSet<&str> = model
@@ -2974,7 +2978,7 @@ impl Codegen<'_> {
             .map(|call| call.name.as_str())
             .collect();
         let mut first: BTreeMap<&str, (Option<&str>, u32, u32)> = BTreeMap::new();
-        for id in self.db.node_ids() {
+        for id in self.db.instantiated_node_ids() {
             let NodeKind::SysCall { name } = self.kind(id) else {
                 continue;
             };
