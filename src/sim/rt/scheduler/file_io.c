@@ -368,7 +368,7 @@ void llg_file_rewind(uint32_t descriptor) {
 int64_t llg_file_tell(uint32_t descriptor) {
     llg_file_slot_t* slot = NULL;
     if (!llg_file_single_ordinary(descriptor, &slot)) return -1;
-    long position = ftell(slot->stream);
+    int64_t position = llg_file_tell64(slot->stream);
     if (position < 0) {
         llg_file_slot_failure(slot, "file tell failed");
         return -1;
@@ -377,7 +377,7 @@ int64_t llg_file_tell(uint32_t descriptor) {
         llg_file_slot_failure(slot, "file tell position precedes pushed-back characters");
         return -1;
     }
-    return (int64_t)position - (int64_t)slot->pushback_len;
+    return position - (int64_t)slot->pushback_len;
 }
 
 int32_t llg_file_seek(uint32_t descriptor, sv4_t offset, sv4_t operation) {
@@ -397,8 +397,7 @@ int32_t llg_file_seek(uint32_t descriptor, sv4_t offset, sv4_t operation) {
         }
         signed_offset -= (int64_t)slot->pushback_len;
     }
-    if (signed_offset < (int64_t)LONG_MIN || signed_offset > (int64_t)LONG_MAX ||
-        fseek(slot->stream, (long)signed_offset, whence) != 0) {
+    if (llg_file_seek64(slot->stream, signed_offset, whence) != 0) {
         llg_file_slot_failure(slot, "file seek failed");
         return -1;
     }

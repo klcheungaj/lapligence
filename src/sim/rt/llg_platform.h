@@ -215,6 +215,39 @@ static inline int32_t llg_replace_file(const char* from, const char* to) {
     return rename(from, to);
 }
 
+// ── File positions ──────────────────────────────────────────────────────────
+//
+// 64-bit stream positions ($ftell, $fseek): ftell and fseek use `long`, which
+// is 32-bit on Windows, so a file beyond 2 GiB needs _ftelli64/_fseeki64
+// there; POSIX ftello/fseeko use off_t, 64-bit on every supported host.
+// <stdio.h> declares ftello/fseeko only under a feature-test macro, so a
+// translation unit opts in by defining LLG_PLATFORM_FILE_POSITIONS together
+// with one (_GNU_SOURCE or LLG_PLATFORM_POSIX_2008).
+
+#if defined(LLG_PLATFORM_FILE_POSITIONS)
+#if !defined(_WIN32)
+_Static_assert(sizeof(off_t) == sizeof(int64_t), "ftello/fseeko need a 64-bit off_t");
+#endif
+
+// The position of `stream`, or -1 with errno set.
+static inline int64_t llg_file_tell64(FILE* stream) {
+#if defined(_WIN32)
+    return _ftelli64(stream);
+#else
+    return (int64_t)ftello(stream);
+#endif
+}
+
+// Repositions `stream` like fseek; 0 on success, nonzero otherwise.
+static inline int32_t llg_file_seek64(FILE* stream, int64_t offset, int32_t whence) {
+#if defined(_WIN32)
+    return _fseeki64(stream, offset, whence);
+#else
+    return fseeko(stream, (off_t)offset, whence);
+#endif
+}
+#endif  // LLG_PLATFORM_FILE_POSITIONS
+
 // ── Host stack ──────────────────────────────────────────────────────────────
 
 // Stores the current soft stack limit and returns 1 when the host reports a

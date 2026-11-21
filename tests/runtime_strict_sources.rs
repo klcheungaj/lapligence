@@ -891,21 +891,6 @@ const PLATFORM_INTEGER_TYPE_EXCEPTIONS: &[(&str, &str, &str)] = &[
         "long long value = strtoll(",
         "strtoll returns long long",
     ),
-    (
-        "llg_wave_selftest.c",
-        "long size = ftell(",
-        "ftell returns long",
-    ),
-    (
-        "scheduler/file_io.c",
-        "long position = ftell(",
-        "ftell returns long",
-    ),
-    (
-        "scheduler/file_io.c",
-        "fseek(slot->stream, (long)",
-        "fseek takes a long offset",
-    ),
 ];
 
 /// The runtime spells integers with fixed-width types (`src/sim/rt/AGENTS.md`):

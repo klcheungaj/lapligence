@@ -1,5 +1,8 @@
 // llg_wave_selftest.c — bounded queue, flush barrier, VCD, and FST smoke test.
 #define LLG_WAVEFORM 1
+#define LLG_PLATFORM_POSIX_2008 1
+#define LLG_PLATFORM_FILE_POSITIONS 1
+#include "llg_platform.h"
 
 #include "llg_wave.h"
 #include "fstapi.h"
@@ -48,12 +51,12 @@ static void selftest_report(FILE* stream, int32_t severity, int32_t line, const 
 static int32_t file_contains(const char* path, const char* needle) {
     FILE* file = fopen(path, "rb");
     if (!file) return 0;
-    if (fseek(file, 0, SEEK_END) != 0) {
+    if (llg_file_seek64(file, 0, SEEK_END) != 0) {
         fclose(file);
         return 0;
     }
-    long size = ftell(file);
-    if (size < 0 || fseek(file, 0, SEEK_SET) != 0) {
+    int64_t size = llg_file_tell64(file);
+    if (size < 0 || (uint64_t)size >= SIZE_MAX || llg_file_seek64(file, 0, SEEK_SET) != 0) {
         fclose(file);
         return 0;
     }
