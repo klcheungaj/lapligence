@@ -1,0 +1,26 @@
+1: pa.Q.v
+2: pa.P.v
+3: pa.R.v
+4: pb.P.v
+5: pb.Q.v
+6: pb.R.v
+7: pc.Q.v
+8: pc.P.v
+9: pd.P.v
+10: pd.Q.v
+11: pd.S.v
+12: pd.R.v
+13: pe.D.w
+14: pe.B.v
+15: pf.Q.f.s
+16: pf.P.v
+17: pg.G#(3).v
+18: pg.A.v
+19: ph.R.v
+20: ph.T.v
+21: ph.S.v
+22: unit.UQ.v
+23: unit.UP.v
+24: tb.MQ.v
+25: tb.MP.v
+done 2 8 11 13 15 17 25

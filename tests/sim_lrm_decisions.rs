@@ -2073,6 +2073,30 @@ fn s22_d8_array_query_preset() {
 }
 
 #[test]
+fn s22_d8_class_first_declaration() {
+    run_decision(
+        "S22-D8_class_first_declaration",
+        include_str!("fixtures/sim/lrm_decisions/S22-D8_class_first_declaration.out"),
+    );
+}
+
+#[test]
+fn s22_d8_nested_class_order() {
+    run_decision(
+        "S22-D8_nested_class_order",
+        include_str!("fixtures/sim/lrm_decisions/S22-D8_nested_class_order.out"),
+    );
+}
+
+#[test]
+fn s22_d8_generate_class_order() {
+    run_decision(
+        "S22-D8_generate_class_order",
+        include_str!("fixtures/sim/lrm_decisions/S22-D8_generate_class_order.out"),
+    );
+}
+
+#[test]
 fn s22_d9_initializer_finish_runs_finals() {
     run_decision(
         "S22-D9_initializer_finish_runs_finals",

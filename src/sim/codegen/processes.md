@@ -71,7 +71,12 @@ sorted by scope and position only (S22-D8): packages, `$unit`, then the
 design in post-order; in each the class static properties, then each generate
 block, then the scope's own declarations, each of these its constant
 initializers (no call, no variable value read; array queries may name a
-variable) first, then the others in declaration order. Positions come from the
+variable) first, then the others in declaration order. Classes run at their
+first declaration (`class_ranks`: a `typedef class` forward declaration
+counts, `Db::forward_typedef`; nested classes at the outer definition); an
+instance interleaves the class ranks of its module body and generate blocks
+in pre-order (`class_slot`); specializations of one generic class share its
+place. Positions come from the
 declaring scope's members, and scopes keep the order reserved at collection,
 so deferred and late-lowered initializers keep their declaration slot. A
 forward read sees what the later declaration holds then (its default value, or
