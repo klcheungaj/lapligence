@@ -863,7 +863,8 @@ impl Db {
     /// `class` keyword. The typedef is a member of the scope that declares
     /// the class, before or after the definition. `None` for any other node
     /// and for a forward typedef of a type other than a class; synthetic
-    /// test databases have none.
+    /// test databases and declaration-only (language server) captures have
+    /// none.
     pub fn forward_typedef(&self, id: NodeId) -> Option<ForwardTypedef> {
         self.forward_typedefs.get(&id).copied()
     }

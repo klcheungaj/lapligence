@@ -1371,7 +1371,7 @@ enum {
    * after the definition. The index is the ordinal, with
    * LLG_SLANG_FORWARD_DECLARATION_CLASS set when the typedef names the
    * `class` keyword. A specialization of a generic class has none: its
-   * generic class holds them. Not a child edge. */
+   * generic class holds them. Simulation captures only. Not a child edge. */
   LLG_SLANG_EDGE_FORWARD_DECLARATION = 47
 };
 /* FORWARD_DECLARATION index bit: the forward typedef is `typedef class c;`. */
