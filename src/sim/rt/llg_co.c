@@ -74,7 +74,7 @@ void llg_co_bad_state(const llg_co_frame_t* co, const char* fn) {
 static size_t visit_static(const llg_co_desc_t* d, const llg_co_frame_t* f,
                            llg_co_visit_fn visit, void* user, size_t n) {
     while (d && f) {
-        visit(user, d, f, (unsigned)n++);
+        visit(user, d, f, (uint32_t)n++);
         if (!d->sites || f->state >= d->n_sites) break;
         const llg_co_site_t* site = &d->sites[f->state];
         /* A leaf wait, or an anchored call: anchored callees are visited from

@@ -51,9 +51,9 @@ void llg_dpi_fill_x(void* out, size_t count) {
 }
 
 /* Read `width` <= 32 bits at bit `lsb` of a canonical chunk array. */
-static svLogicVecVal llg_dpi_get_field(const svLogicVecVal* chunks, uint64_t lsb, unsigned width) {
+static svLogicVecVal llg_dpi_get_field(const svLogicVecVal* chunks, uint64_t lsb, uint32_t width) {
     size_t index = (size_t)(lsb / 32u);
-    unsigned shift = (unsigned)(lsb % 32u);
+    uint32_t shift = (uint32_t)(lsb % 32u);
     uint64_t aval = chunks[index].aval >> shift;
     uint64_t bval = chunks[index].bval >> shift;
     if (shift + width > 32u) {
@@ -66,9 +66,9 @@ static svLogicVecVal llg_dpi_get_field(const svLogicVecVal* chunks, uint64_t lsb
 }
 
 /* Write `width` <= 32 bits at bit `lsb` of a canonical chunk array. */
-static void llg_dpi_set_field(svLogicVecVal* chunks, uint64_t lsb, unsigned width, svLogicVecVal field) {
+static void llg_dpi_set_field(svLogicVecVal* chunks, uint64_t lsb, uint32_t width, svLogicVecVal field) {
     size_t index = (size_t)(lsb / 32u);
-    unsigned shift = (unsigned)(lsb % 32u);
+    uint32_t shift = (uint32_t)(lsb % 32u);
     uint64_t mask = width >= 32u ? UINT32_MAX : (((uint64_t)1 << width) - 1u);
     uint64_t aval = ((uint64_t)field.aval & mask) << shift;
     uint64_t bval = ((uint64_t)field.bval & mask) << shift;
@@ -91,7 +91,7 @@ static uint64_t llg_dpi_element_lsb(const llg_dpi_type_t* type, uint64_t lsb, si
 }
 
 static void llg_dpi_leaf_to_c(const llg_dpi_type_t* type, const svLogicVecVal* chunks,
-                              uint64_t lsb, unsigned char* out) {
+                              uint64_t lsb, uint8_t* out) {
     switch (type->kind) {
     case LLG_DPI_BIT: {
         svLogicVecVal field = llg_dpi_get_field(chunks, lsb, 1u);
@@ -106,9 +106,9 @@ static void llg_dpi_leaf_to_c(const llg_dpi_type_t* type, const svLogicVecVal* c
     }
     case LLG_DPI_INT: {
         uint64_t bits = 0;
-        unsigned width = (unsigned)type->size * 8u;
-        for (unsigned done = 0; done < width; done += 32u) {
-            unsigned part = width - done < 32u ? width - done : 32u;
+        uint32_t width = (uint32_t)type->size * 8u;
+        for (uint32_t done = 0; done < width; done += 32u) {
+            uint32_t part = width - done < 32u ? width - done : 32u;
             svLogicVecVal field = llg_dpi_get_field(chunks, lsb + done, part);
             bits |= (uint64_t)(field.aval & ~field.bval) << done;
         }
@@ -121,7 +121,7 @@ static void llg_dpi_leaf_to_c(const llg_dpi_type_t* type, const svLogicVecVal* c
     case LLG_DPI_BITVEC: {
         size_t count = llg_dpi_chunks(type->width);
         for (size_t i = 0; i < count; ++i) {
-            unsigned part = type->width - i * 32u < 32u ? (unsigned)(type->width - i * 32u) : 32u;
+            uint32_t part = type->width - i * 32u < 32u ? (uint32_t)(type->width - i * 32u) : 32u;
             svLogicVecVal field = llg_dpi_get_field(chunks, lsb + i * 32u, part);
             svBitVecVal bits = field.aval & ~field.bval;
             memcpy(out + i * sizeof(svBitVecVal), &bits, sizeof(bits));
@@ -131,7 +131,7 @@ static void llg_dpi_leaf_to_c(const llg_dpi_type_t* type, const svLogicVecVal* c
     case LLG_DPI_LOGICVEC: {
         size_t count = llg_dpi_chunks(type->width);
         for (size_t i = 0; i < count; ++i) {
-            unsigned part = type->width - i * 32u < 32u ? (unsigned)(type->width - i * 32u) : 32u;
+            uint32_t part = type->width - i * 32u < 32u ? (uint32_t)(type->width - i * 32u) : 32u;
             svLogicVecVal field = llg_dpi_get_field(chunks, lsb + i * 32u, part);
             memcpy(out + i * sizeof(svLogicVecVal), &field, sizeof(field));
         }
@@ -143,7 +143,7 @@ static void llg_dpi_leaf_to_c(const llg_dpi_type_t* type, const svLogicVecVal* c
 }
 
 static void llg_dpi_walk_to_c(const llg_dpi_type_t* type, const svLogicVecVal* chunks,
-                              uint64_t lsb, unsigned char* out) {
+                              uint64_t lsb, uint8_t* out) {
     if (type->kind == LLG_DPI_ARRAY) {
         for (size_t k = 0; k < type->count; ++k)
             llg_dpi_walk_to_c(type->element, chunks, llg_dpi_element_lsb(type, lsb, k),
@@ -161,7 +161,7 @@ static void llg_dpi_walk_to_c(const llg_dpi_type_t* type, const svLogicVecVal* c
     }
 }
 
-static void llg_dpi_leaf_from_c(const llg_dpi_type_t* type, const unsigned char* in,
+static void llg_dpi_leaf_from_c(const llg_dpi_type_t* type, const uint8_t* in,
                                 svLogicVecVal* chunks, uint64_t lsb) {
     switch (type->kind) {
     case LLG_DPI_BIT: {
@@ -180,9 +180,9 @@ static void llg_dpi_leaf_from_c(const llg_dpi_type_t* type, const unsigned char*
         else if (type->size == 2u) { uint16_t v; memcpy(&v, in, 2u); bits = v; }
         else if (type->size == 4u) { uint32_t v; memcpy(&v, in, 4u); bits = v; }
         else { memcpy(&bits, in, 8u); }
-        unsigned width = (unsigned)type->size * 8u;
-        for (unsigned done = 0; done < width; done += 32u) {
-            unsigned part = width - done < 32u ? width - done : 32u;
+        uint32_t width = (uint32_t)type->size * 8u;
+        for (uint32_t done = 0; done < width; done += 32u) {
+            uint32_t part = width - done < 32u ? width - done : 32u;
             svLogicVecVal field = {(uint32_t)(bits >> done), 0};
             llg_dpi_set_field(chunks, lsb + done, part, field);
         }
@@ -191,7 +191,7 @@ static void llg_dpi_leaf_from_c(const llg_dpi_type_t* type, const unsigned char*
     case LLG_DPI_BITVEC: {
         size_t count = llg_dpi_chunks(type->width);
         for (size_t i = 0; i < count; ++i) {
-            unsigned part = type->width - i * 32u < 32u ? (unsigned)(type->width - i * 32u) : 32u;
+            uint32_t part = type->width - i * 32u < 32u ? (uint32_t)(type->width - i * 32u) : 32u;
             svBitVecVal bits;
             memcpy(&bits, in + i * sizeof(svBitVecVal), sizeof(bits));
             svLogicVecVal field = {bits, 0};
@@ -202,7 +202,7 @@ static void llg_dpi_leaf_from_c(const llg_dpi_type_t* type, const unsigned char*
     case LLG_DPI_LOGICVEC: {
         size_t count = llg_dpi_chunks(type->width);
         for (size_t i = 0; i < count; ++i) {
-            unsigned part = type->width - i * 32u < 32u ? (unsigned)(type->width - i * 32u) : 32u;
+            uint32_t part = type->width - i * 32u < 32u ? (uint32_t)(type->width - i * 32u) : 32u;
             svLogicVecVal field;
             memcpy(&field, in + i * sizeof(svLogicVecVal), sizeof(field));
             llg_dpi_set_field(chunks, lsb + i * 32u, part, field);
@@ -214,7 +214,7 @@ static void llg_dpi_leaf_from_c(const llg_dpi_type_t* type, const unsigned char*
     }
 }
 
-static void llg_dpi_walk_from_c(const llg_dpi_type_t* type, const unsigned char* in,
+static void llg_dpi_walk_from_c(const llg_dpi_type_t* type, const uint8_t* in,
                                 svLogicVecVal* chunks, uint64_t lsb) {
     if (type->kind == LLG_DPI_ARRAY) {
         for (size_t k = 0; k < type->count; ++k)
@@ -246,19 +246,19 @@ void llg_dpi_to_c(const llg_dpi_type_t* type, const sv4_t* payload, void* out) {
     svLogicVecVal* chunks = llg_dpi_scratch(count);
     llg_sv4_export_vpi32(*payload, chunks, count, sizeof(svLogicVecVal));
     memset(out, 0, type->size);
-    llg_dpi_walk_to_c(type, chunks, 0, (unsigned char*)out);
+    llg_dpi_walk_to_c(type, chunks, 0, (uint8_t*)out);
     free(chunks);
 }
 
 void llg_dpi_from_c(const llg_dpi_type_t* type, const void* in, sv4_t* payload) {
     size_t count = llg_dpi_chunks(type->width);
     svLogicVecVal* chunks = llg_dpi_scratch(count);
-    llg_dpi_walk_from_c(type, (const unsigned char*)in, chunks, 0);
+    llg_dpi_walk_from_c(type, (const uint8_t*)in, chunks, 0);
     llg_sv4_import_vpi32(payload, chunks, count, sizeof(svLogicVecVal));
     free(chunks);
 }
 
-static void llg_dpi_walk_init(const llg_dpi_type_t* type, unsigned char* out) {
+static void llg_dpi_walk_init(const llg_dpi_type_t* type, uint8_t* out) {
     switch (type->kind) {
     case LLG_DPI_ARRAY:
         for (size_t k = 0; k < type->count; ++k)
@@ -281,7 +281,7 @@ static void llg_dpi_walk_init(const llg_dpi_type_t* type, unsigned char* out) {
 
 void llg_dpi_init_c(const llg_dpi_type_t* type, void* out) {
     memset(out, 0, type->size);
-    llg_dpi_walk_init(type, (unsigned char*)out);
+    llg_dpi_walk_init(type, (uint8_t*)out);
 }
 
 /* ---- Aggregates outside the payload: native values, real cells and
@@ -292,7 +292,7 @@ static void llg_dpi_bad_shape(void) {
     abort();
 }
 
-static int llg_dpi_is_leaf(const llg_dpi_type_t* type) {
+static int32_t llg_dpi_is_leaf(const llg_dpi_type_t* type) {
     return type->kind != LLG_DPI_ARRAY && type->kind != LLG_DPI_STRUCT;
 }
 
@@ -305,7 +305,7 @@ static size_t llg_dpi_position(const llg_dpi_type_t* type, size_t k) {
 
 /* Flat items below one element of array level `type`: the elements of its
  * joined inner dimensions, or of every inner dimension when `all`. */
-static size_t llg_dpi_stride(const llg_dpi_type_t* type, int all) {
+static size_t llg_dpi_stride(const llg_dpi_type_t* type, int32_t all) {
     size_t stride = 1u;
     for (const llg_dpi_type_t* inner = type->element;
          inner->kind == LLG_DPI_ARRAY && (all || inner->joined); inner = inner->element)
@@ -315,7 +315,7 @@ static size_t llg_dpi_stride(const llg_dpi_type_t* type, int all) {
 
 /* One packed cell holding the payload of `type`. A leaf of at most 64 bits,
  * the usual element, converts without a scratch allocation. */
-static void llg_dpi_cell_to_c(const llg_dpi_type_t* type, const sv4_t* cell, unsigned char* out) {
+static void llg_dpi_cell_to_c(const llg_dpi_type_t* type, const sv4_t* cell, uint8_t* out) {
     if (llg_dpi_is_leaf(type) && type->width <= 64u) {
         llg_sv4_vpi_word_t word = llg_sv4_vpi_word(*cell, 0);
         svLogicVecVal chunks[2];
@@ -329,7 +329,7 @@ static void llg_dpi_cell_to_c(const llg_dpi_type_t* type, const sv4_t* cell, uns
     llg_dpi_to_c(type, cell, out);
 }
 
-static void llg_dpi_cell_from_c(const llg_dpi_type_t* type, const unsigned char* in, sv4_t* cell) {
+static void llg_dpi_cell_from_c(const llg_dpi_type_t* type, const uint8_t* in, sv4_t* cell) {
     if (llg_dpi_is_leaf(type) && type->width <= 64u) {
         svLogicVecVal chunks[2] = {{0, 0}, {0, 0}};
         llg_sv4_vpi_word_t word;
@@ -354,7 +354,7 @@ typedef struct llg_dpi_strings {
     size_t capacity;
 } llg_dpi_strings_t;
 
-static void llg_dpi_string_read(llg_dpi_strings_t* strings, const unsigned char* in,
+static void llg_dpi_string_read(llg_dpi_strings_t* strings, const uint8_t* in,
                                 llg_string_t* target) {
     const char* text;
     memcpy(&text, in, sizeof(text));
@@ -382,16 +382,16 @@ static void llg_dpi_strings_store(llg_dpi_strings_t* strings) {
 }
 
 static void llg_dpi_native_to_c(const llg_dpi_type_t* type, const llg_value_desc_t* desc,
-                                const llg_value_t* value, unsigned char* out);
+                                const llg_value_t* value, uint8_t* out);
 
 /* The flat `items` of array level `type`, each of type `element`. */
 static void llg_dpi_level_to_c(const llg_dpi_type_t* type, const llg_value_desc_t* element,
-                               const llg_value_t* items, unsigned char* out) {
+                               const llg_value_t* items, uint8_t* out) {
     size_t stride = llg_dpi_stride(type, 0);
-    int joined = type->element->kind == LLG_DPI_ARRAY && type->element->joined;
+    int32_t joined = type->element->kind == LLG_DPI_ARRAY && type->element->joined;
     for (size_t k = 0; k < type->count; ++k) {
         const llg_value_t* item = items + llg_dpi_position(type, k) * stride;
-        unsigned char* at = out + k * type->element->size;
+        uint8_t* at = out + k * type->element->size;
         if (joined) {
             llg_dpi_level_to_c(type->element, element, item, at);
         } else {
@@ -401,7 +401,7 @@ static void llg_dpi_level_to_c(const llg_dpi_type_t* type, const llg_value_desc_
 }
 
 static void llg_dpi_native_to_c(const llg_dpi_type_t* type, const llg_value_desc_t* desc,
-                                const llg_value_t* value, unsigned char* out) {
+                                const llg_value_t* value, uint8_t* out) {
     if (!desc) llg_dpi_bad_shape();
     switch (type->kind) {
     case LLG_DPI_ARRAY:
@@ -448,18 +448,18 @@ static void llg_dpi_native_to_c(const llg_dpi_type_t* type, const llg_value_desc
     }
 }
 
-static void llg_dpi_native_from_c(const llg_dpi_type_t* type, const unsigned char* in,
+static void llg_dpi_native_from_c(const llg_dpi_type_t* type, const uint8_t* in,
                                   const llg_value_desc_t* desc, llg_value_t* value,
                                   llg_dpi_strings_t* strings);
 
-static void llg_dpi_level_from_c(const llg_dpi_type_t* type, const unsigned char* in,
+static void llg_dpi_level_from_c(const llg_dpi_type_t* type, const uint8_t* in,
                                  const llg_value_desc_t* element, llg_value_t* items,
                                  llg_dpi_strings_t* strings) {
     size_t stride = llg_dpi_stride(type, 0);
-    int joined = type->element->kind == LLG_DPI_ARRAY && type->element->joined;
+    int32_t joined = type->element->kind == LLG_DPI_ARRAY && type->element->joined;
     for (size_t k = 0; k < type->count; ++k) {
         llg_value_t* item = items + llg_dpi_position(type, k) * stride;
-        const unsigned char* at = in + k * type->element->size;
+        const uint8_t* at = in + k * type->element->size;
         if (joined) {
             llg_dpi_level_from_c(type->element, at, element, item, strings);
         } else {
@@ -468,7 +468,7 @@ static void llg_dpi_level_from_c(const llg_dpi_type_t* type, const unsigned char
     }
 }
 
-static void llg_dpi_native_from_c(const llg_dpi_type_t* type, const unsigned char* in,
+static void llg_dpi_native_from_c(const llg_dpi_type_t* type, const uint8_t* in,
                                   const llg_value_desc_t* desc, llg_value_t* value,
                                   llg_dpi_strings_t* strings) {
     if (!desc) llg_dpi_bad_shape();
@@ -519,12 +519,12 @@ static void llg_dpi_native_from_c(const llg_dpi_type_t* type, const unsigned cha
 }
 
 void llg_dpi_value_to_c(const llg_dpi_type_t* type, const llg_value_t* value, void* out) {
-    llg_dpi_native_to_c(type, value->desc, value, (unsigned char*)out);
+    llg_dpi_native_to_c(type, value->desc, value, (uint8_t*)out);
 }
 
 void llg_dpi_value_from_c(const llg_dpi_type_t* type, const void* in, llg_value_t* value) {
     llg_dpi_strings_t strings = {NULL, 0, 0};
-    llg_dpi_native_from_c(type, (const unsigned char*)in, value->desc, value, &strings);
+    llg_dpi_native_from_c(type, (const uint8_t*)in, value->desc, value, &strings);
     llg_dpi_strings_store(&strings);
 }
 
@@ -532,7 +532,7 @@ void llg_dpi_items_to_c(const llg_dpi_type_t* type, const llg_value_desc_t* elem
                         const llg_value_t* items, size_t count, void* out) {
     if (type->kind != LLG_DPI_ARRAY || count != type->count * llg_dpi_stride(type, 0))
         llg_dpi_bad_shape();
-    llg_dpi_level_to_c(type, element, items, (unsigned char*)out);
+    llg_dpi_level_to_c(type, element, items, (uint8_t*)out);
 }
 
 void llg_dpi_items_from_c(const llg_dpi_type_t* type, const void* in,
@@ -540,7 +540,7 @@ void llg_dpi_items_from_c(const llg_dpi_type_t* type, const void* in,
     llg_dpi_strings_t strings = {NULL, 0, 0};
     if (type->kind != LLG_DPI_ARRAY || count != type->count * llg_dpi_stride(type, 0))
         llg_dpi_bad_shape();
-    llg_dpi_level_from_c(type, (const unsigned char*)in, element, items, &strings);
+    llg_dpi_level_from_c(type, (const uint8_t*)in, element, items, &strings);
     llg_dpi_strings_store(&strings);
 }
 
@@ -548,19 +548,19 @@ void llg_dpi_cells_to_c(const llg_dpi_type_t* type, const sv4_t* cells, size_t c
     if (type->kind != LLG_DPI_ARRAY || count != type->count) llg_dpi_bad_shape();
     for (size_t k = 0; k < count; ++k)
         llg_dpi_cell_to_c(type->element, &cells[llg_dpi_position(type, k)],
-                          (unsigned char*)out + k * type->element->size);
+                          (uint8_t*)out + k * type->element->size);
 }
 
 void llg_dpi_cells_from_c(const llg_dpi_type_t* type, const void* in, sv4_t* cells, size_t count) {
     if (type->kind != LLG_DPI_ARRAY || count != type->count) llg_dpi_bad_shape();
     for (size_t k = 0; k < count; ++k)
-        llg_dpi_cell_from_c(type->element, (const unsigned char*)in + k * type->element->size,
+        llg_dpi_cell_from_c(type->element, (const uint8_t*)in + k * type->element->size,
                             &cells[llg_dpi_position(type, k)]);
 }
 
 /* Real cells lie flat over every dimension, whatever array types nest. */
 static void llg_dpi_real_level_to_c(const llg_dpi_type_t* type, const double* cells,
-                                    unsigned char* out) {
+                                    uint8_t* out) {
     if (type->kind == LLG_DPI_ARRAY) {
         size_t stride = llg_dpi_stride(type, 1);
         for (size_t k = 0; k < type->count; ++k)
@@ -576,7 +576,7 @@ static void llg_dpi_real_level_to_c(const llg_dpi_type_t* type, const double* ce
     }
 }
 
-static void llg_dpi_real_level_from_c(const llg_dpi_type_t* type, const unsigned char* in,
+static void llg_dpi_real_level_from_c(const llg_dpi_type_t* type, const uint8_t* in,
                                       double* cells) {
     if (type->kind == LLG_DPI_ARRAY) {
         size_t stride = llg_dpi_stride(type, 1);
@@ -595,11 +595,11 @@ static void llg_dpi_real_level_from_c(const llg_dpi_type_t* type, const unsigned
 }
 
 void llg_dpi_reals_to_c(const llg_dpi_type_t* type, const double* cells, void* out) {
-    llg_dpi_real_level_to_c(type, cells, (unsigned char*)out);
+    llg_dpi_real_level_to_c(type, cells, (uint8_t*)out);
 }
 
 void llg_dpi_reals_from_c(const llg_dpi_type_t* type, const void* in, double* cells) {
-    llg_dpi_real_level_from_c(type, (const unsigned char*)in, cells);
+    llg_dpi_real_level_from_c(type, (const uint8_t*)in, cells);
 }
 
 void llg_dpi_dynamic_level(llg_dpi_type_t* level, const llg_dpi_type_t* element, size_t count) {
@@ -620,7 +620,7 @@ void llg_dpi_dynamic_level(llg_dpi_type_t* level, const llg_dpi_type_t* element,
     level->element = element;
 }
 
-static void llg_dpi_walk_empty_strings(const llg_dpi_type_t* type, unsigned char* out) {
+static void llg_dpi_walk_empty_strings(const llg_dpi_type_t* type, uint8_t* out) {
     switch (type->kind) {
     case LLG_DPI_ARRAY:
         for (size_t k = 0; k < type->count; ++k)
@@ -642,7 +642,7 @@ static void llg_dpi_walk_empty_strings(const llg_dpi_type_t* type, unsigned char
 
 void llg_dpi_init_native(const llg_dpi_type_t* type, void* out) {
     memset(out, 0, type->size);
-    llg_dpi_walk_empty_strings(type, (unsigned char*)out);
+    llg_dpi_walk_empty_strings(type, (uint8_t*)out);
 }
 
 /* ---- svdpi.h: version and canonical bit/part selects (H.10.1.3, H.11.5) */
@@ -673,7 +673,7 @@ static llg_dpi_call_t llg_dpi_now = {NULL, NULL, 0, LLG_DPI_CHAIN_NONE, 0};
 static llg_dpi_guard_t* llg_dpi_guard_top = NULL;
 /* The token holder is a foreign call context unwinding after its process was
  * killed (ADV-018): the chain is disabled and may not call exports. */
-static int llg_dpi_unwinding = 0;
+static int32_t llg_dpi_unwinding = 0;
 /* Hooks of the foreign call contexts (llg_dpi_context.c), set when the first
  * context starts, so models without one never link that unit. */
 static void (*llg_dpi_park_hook)(void) = NULL;
@@ -709,7 +709,7 @@ void llg_dpi_context_hooks(void (*park)(void), void (*shutdown)(void)) {
     llg_dpi_context_shutdown_hook = shutdown;
 }
 
-llg_dpi_guard_t* llg_dpi_context_switch(llg_dpi_guard_t* guards, int unwinding) {
+llg_dpi_guard_t* llg_dpi_context_switch(llg_dpi_guard_t* guards, int32_t unwinding) {
     llg_dpi_guard_t* previous = llg_dpi_guard_top;
     llg_dpi_guard_top = guards;
     llg_dpi_unwinding = unwinding;
@@ -720,7 +720,7 @@ void llg_dpi_chain_snapshot(llg_dpi_call_t* out) {
     *out = llg_dpi_now;
 }
 
-int llg_dpi_context_abandoned(void) {
+int32_t llg_dpi_context_abandoned(void) {
     return llg_dpi_unwinding;
 }
 
@@ -747,7 +747,7 @@ static void llg_dpi_fatal(const char* what, const char* c_name, const char* deta
     llg_rt_fatal_typed(0, "DPI-C protocol violation", NULL, 0, "", c_name);
 }
 
-void llg_dpi_import_enter(llg_dpi_call_t* saved, llg_dpi_scope_t* scope, int task, int depth) {
+void llg_dpi_import_enter(llg_dpi_call_t* saved, llg_dpi_scope_t* scope, int32_t task, int32_t depth) {
     *saved = llg_dpi_now;
     (void)task;
     llg_dpi_now.scope = scope;
@@ -780,8 +780,8 @@ void llg_dpi_import_abort(const llg_dpi_call_t* saved) {
     llg_dpi_now = *saved;
 }
 
-void llg_dpi_import_leave(const llg_dpi_call_t* saved, const char* c_name, int task) {
-    int acked = llg_dpi_now.acked;
+void llg_dpi_import_leave(const llg_dpi_call_t* saved, const char* c_name, int32_t task) {
+    int32_t acked = llg_dpi_now.acked;
     llg_dpi_now = *saved;
     if (!task && !acked && llg_activation_cancelled()) {
         char detail[160];
@@ -792,7 +792,7 @@ void llg_dpi_import_leave(const llg_dpi_call_t* saved, const char* c_name, int t
     }
 }
 
-void llg_dpi_import_abandoned(const llg_dpi_call_t* saved, int status, const char* c_name) {
+void llg_dpi_import_abandoned(const llg_dpi_call_t* saved, int32_t status, const char* c_name) {
     llg_dpi_now = *saved;
     if (status == 0) {
         char detail[160];
@@ -803,8 +803,8 @@ void llg_dpi_import_abandoned(const llg_dpi_call_t* saved, int status, const cha
     }
 }
 
-int llg_dpi_task_status(int status, const char* c_name) {
-    int disabled = llg_activation_cancelled();
+int32_t llg_dpi_task_status(int32_t status, const char* c_name) {
+    int32_t disabled = llg_activation_cancelled();
     if (status != 0 && !disabled) {
         if (!llg_rt_exiting()) {
             llg_msg(LLG_MSG_DPI_ERROR, NULL, "DPI-C import task `%s` returned nonzero, but nothing disabled it (SV 35.9: an imported task returns 1 only after a disable)", c_name);
@@ -824,7 +824,7 @@ int llg_dpi_task_status(int status, const char* c_name) {
     return status != 0;
 }
 
-llg_dpi_fn_t llg_dpi_export_target(uint32_t id, const char* c_name, int task) {
+llg_dpi_fn_t llg_dpi_export_target(uint32_t id, const char* c_name, int32_t task) {
     char detail[256];
     if (llg_dpi_now.chain != LLG_DPI_CHAIN_CONTEXT) {
         snprintf(detail, sizeof(detail),
@@ -866,22 +866,22 @@ llg_dpi_fn_t llg_dpi_export_target(uint32_t id, const char* c_name, int task) {
     return NULL;
 }
 
-int llg_dpi_export_enter(llg_dpi_call_t* saved) {
+int32_t llg_dpi_export_enter(llg_dpi_call_t* saved) {
     *saved = llg_dpi_now;
     llg_dpi_now.chain = LLG_DPI_CHAIN_NONE;
     llg_dpi_now.site = NULL;
     return saved->depth + 1;
 }
 
-int llg_dpi_export_abandoned(const llg_dpi_call_t* saved) {
+int32_t llg_dpi_export_abandoned(const llg_dpi_call_t* saved) {
     llg_dpi_now = *saved;
     return 1;
 }
 
-int llg_dpi_export_leave(const llg_dpi_call_t* saved, int task) {
+int32_t llg_dpi_export_leave(const llg_dpi_call_t* saved, int32_t task) {
     /* 35.9: a disable of the export task itself ended with its own
      * activation, so only a cancelled caller activation remains. */
-    int status = task && llg_activation_cancelled() ? 1 : 0;
+    int32_t status = task && llg_activation_cancelled() ? 1 : 0;
     llg_dpi_now = *saved;
     return status;
 }
@@ -913,7 +913,7 @@ svScope svGetScopeFromName(const char* scopeName) {
     size_t high = llg_dpi_table_count;
     while (low < high) {
         size_t middle = low + (high - low) / 2;
-        int order = strcmp(llg_dpi_table[middle].name, scopeName);
+        int32_t order = strcmp(llg_dpi_table[middle].name, scopeName);
         if (order == 0) return (svScope)&llg_dpi_table[middle];
         if (order < 0) {
             low = middle + 1;
@@ -983,15 +983,15 @@ void svAckDisabledState(void) {
  * integer as $time rounds it and the real as $realtime scales it. */
 
 /* Femtoseconds of the unit `exponent` (2 to -15) names. */
-static uint64_t llg_dpi_unit_fs(int exponent) {
+static uint64_t llg_dpi_unit_fs(int32_t exponent) {
     uint64_t fs = 1u;
-    for (int i = -15; i < exponent; ++i) fs *= 10u;
+    for (int32_t i = -15; i < exponent; ++i) fs *= 10u;
     return fs;
 }
 
 /* The scope a time service asked about: 1 with `*target` NULL for the
  * simulation time unit, 0 for a value that is no scope. */
-static int llg_dpi_time_scope(const svScope scope, llg_dpi_scope_t** target) {
+static int32_t llg_dpi_time_scope(const svScope scope, llg_dpi_scope_t** target) {
     *target = NULL;
     if (!scope) return 1;
     *target = llg_dpi_valid_scope(scope);
@@ -1018,7 +1018,7 @@ int svGetTimeUnit(const svScope scope, int32_t* time_unit) {
         *time_unit = target->time_unit;
     } else {
         uint64_t precision = llg_time_precision_fs();
-        int exponent = -15;
+        int32_t exponent = -15;
         for (; precision >= 10u; precision /= 10u) ++exponent;
         *time_unit = exponent;
     }
@@ -1076,7 +1076,7 @@ void svGetPartselBit(svBitVecVal* d, const svBitVecVal* s, int i, int w) {
 
 void svGetPartselLogic(svLogicVecVal* d, const svLogicVecVal* s, int i, int w) {
     if (!d || !s || i < 0 || w <= 0 || w > 32) return;
-    svLogicVecVal field = llg_dpi_get_field(s, (uint64_t)i, (unsigned)w);
+    svLogicVecVal field = llg_dpi_get_field(s, (uint64_t)i, (uint32_t)w);
     uint64_t mask = w == 32 ? UINT32_MAX : (((uint64_t)1 << w) - 1u);
     d->aval = (uint32_t)((d->aval & ~mask) | field.aval);
     d->bval = (uint32_t)((d->bval & ~mask) | field.bval);
@@ -1092,29 +1092,29 @@ void svPutPartselBit(svBitVecVal* d, const svBitVecVal s, int i, int w) {
         pair[k].aval = d[index + k];
         pair[k].bval = 0;
     }
-    llg_dpi_set_field(pair, (uint64_t)(i % 32), (unsigned)w, field);
+    llg_dpi_set_field(pair, (uint64_t)(i % 32), (uint32_t)w, field);
     for (size_t k = 0; k < span; ++k) d[index + k] = pair[k].aval;
 }
 
 void svPutPartselLogic(svLogicVecVal* d, const svLogicVecVal s, int i, int w) {
     if (!d || i < 0 || w <= 0 || w > 32) return;
-    llg_dpi_set_field(d, (uint64_t)i, (unsigned)w, s);
+    llg_dpi_set_field(d, (uint64_t)i, (uint32_t)w, s);
 }
 
 /* ---- svdpi.h: open arrays (H.12) ---- */
 
 /* The array level of dimension `d` (1-based, slowest first), or NULL. */
-static const llg_dpi_type_t* llg_dpi_level(const llg_dpi_open_t* open, int d) {
+static const llg_dpi_type_t* llg_dpi_level(const llg_dpi_open_t* open, int32_t d) {
     if (!open || d < 1 || d > open->dims) return NULL;
     const llg_dpi_type_t* level = open->type;
-    for (int i = 1; i < d; ++i) level = level->element;
+    for (int32_t i = 1; i < d; ++i) level = level->element;
     return level;
 }
 
 /* The element below every unpacked dimension. */
 static const llg_dpi_type_t* llg_dpi_open_element(const llg_dpi_open_t* open) {
     const llg_dpi_type_t* element = open->type;
-    for (int i = 0; i < open->dims; ++i) element = element->element;
+    for (int32_t i = 0; i < open->dims; ++i) element = element->element;
     return element;
 }
 
@@ -1134,13 +1134,13 @@ static uint32_t llg_dpi_packed_width(const llg_dpi_type_t* element) {
 
 /* Dimension `d` as [left:right]; 0 for the packed part, linearized and
  * normalized (H.12.2). Returns 0 when `d` names no dimension. */
-static int llg_dpi_range(const svOpenArrayHandle h, int d, int* left, int* right) {
+static int32_t llg_dpi_range(const svOpenArrayHandle h, int32_t d, int32_t* left, int32_t* right) {
     const llg_dpi_open_t* open = (const llg_dpi_open_t*)h;
     if (!open) return 0;
     if (d == 0) {
         uint32_t width = llg_dpi_packed_width(llg_dpi_open_element(open));
         if (!width) return 0;
-        *left = (int)width - 1;
+        *left = (int32_t)width - 1;
         *right = 0;
         return 1;
     }
@@ -1154,39 +1154,39 @@ static int llg_dpi_range(const svOpenArrayHandle h, int d, int* left, int* right
 }
 
 int svLeft(const svOpenArrayHandle h, int d) {
-    int left = 0, right = 0;
+    int32_t left = 0, right = 0;
     return llg_dpi_range(h, d, &left, &right) ? left : 0;
 }
 
 int svRight(const svOpenArrayHandle h, int d) {
-    int left = 0, right = 0;
+    int32_t left = 0, right = 0;
     return llg_dpi_range(h, d, &left, &right) ? right : 0;
 }
 
 int svLow(const svOpenArrayHandle h, int d) {
-    int left = 0, right = 0;
-    int kind = llg_dpi_range(h, d, &left, &right);
+    int32_t left = 0, right = 0;
+    int32_t kind = llg_dpi_range(h, d, &left, &right);
     if (!kind) return 0;
     return kind == 2 || left < right ? left : right;
 }
 
 int svHigh(const svOpenArrayHandle h, int d) {
-    int left = 0, right = 0;
-    int kind = llg_dpi_range(h, d, &left, &right);
+    int32_t left = 0, right = 0;
+    int32_t kind = llg_dpi_range(h, d, &left, &right);
     if (!kind) return 0;
     return kind == 2 || left <= right ? right : left;
 }
 
 int svIncrement(const svOpenArrayHandle h, int d) {
-    int left = 0, right = 0;
-    int kind = llg_dpi_range(h, d, &left, &right);
+    int32_t left = 0, right = 0;
+    int32_t kind = llg_dpi_range(h, d, &left, &right);
     if (!kind) return 0;
     return kind != 2 && left >= right ? 1 : -1;
 }
 
 int svSize(const svOpenArrayHandle h, int d) {
-    int left = 0, right = 0;
-    int kind = llg_dpi_range(h, d, &left, &right);
+    int32_t left = 0, right = 0;
+    int32_t kind = llg_dpi_range(h, d, &left, &right);
     if (!kind) return 0;
     if (kind == 2) return right + 1;
     return (left > right ? left - right : right - left) + 1;
@@ -1205,7 +1205,7 @@ void* svGetArrayPtr(const svOpenArrayHandle h) {
 
 int svSizeOfArray(const svOpenArrayHandle h) {
     const llg_dpi_open_t* open = (const llg_dpi_open_t*)h;
-    return open && open->type->size <= (size_t)INT32_MAX ? (int)open->type->size : 0;
+    return open && open->type->size <= (size_t)INT32_MAX ? (int32_t)open->type->size : 0;
 }
 
 /* Element address for exactly `count` original-range indices, else NULL. */
@@ -1214,18 +1214,18 @@ int svSizeOfArray(const svOpenArrayHandle h) {
  * import that received the handle is abandoned at the access, and the run
  * ends. An index outside its dimension only selects no element (SV 7.4.6,
  * S40-D4). */
-static unsigned char* llg_dpi_element_at(const svOpenArrayHandle h, int count, const int* index) {
+static uint8_t* llg_dpi_element_at(const svOpenArrayHandle h, int32_t count, const int32_t* index) {
     const llg_dpi_open_t* open = (const llg_dpi_open_t*)h;
     if (open && count != open->dims && !llg_rt_exiting()) {
-        llg_msg(LLG_MSG_DPI_ERROR, NULL, "DPI-C open array element access with %d index(es) to an array with %d unpacked dimension(s)", count, open->dims);
+        llg_msg(LLG_MSG_DPI_ERROR, NULL, "DPI-C open array element access with %" PRId32 " index(es) to an array with %" PRId32 " unpacked dimension(s)", count, open->dims);
         llg_rt_mark_failed();
         llg_rt_fatal_typed(0, "DPI-C open array index count", NULL, 0, "", "svdpi.h");
         llg_dpi_abandon_foreign_code();
     }
     if (!open || count != open->dims || count < 1) return NULL;
     const llg_dpi_type_t* level = open->type;
-    unsigned char* address = (unsigned char*)open->data;
-    for (int i = 0; i < count; ++i) {
+    uint8_t* address = (uint8_t*)open->data;
+    for (int32_t i = 0; i < count; ++i) {
         /* A dynamic dimension is [0:count-1]: empty, [0:-1], it has no
          * element. */
         int64_t low = level->dynamic || level->left < level->right ? level->left : level->right;
@@ -1237,35 +1237,35 @@ static unsigned char* llg_dpi_element_at(const svOpenArrayHandle h, int count, c
     return address;
 }
 
-static unsigned char* llg_dpi_element_va(const svOpenArrayHandle h, int first, va_list rest) {
+static uint8_t* llg_dpi_element_va(const svOpenArrayHandle h, int32_t first, va_list rest) {
     const llg_dpi_open_t* open = (const llg_dpi_open_t*)h;
-    int index[64];
+    int32_t index[64];
     if (!open || open->dims < 1 || open->dims > 64) return NULL;
     index[0] = first;
-    for (int i = 1; i < open->dims; ++i) index[i] = va_arg(rest, int);
+    for (int32_t i = 1; i < open->dims; ++i) index[i] = va_arg(rest, int32_t);
     return llg_dpi_element_at(h, open->dims, index);
 }
 
 void* svGetArrElemPtr(const svOpenArrayHandle h, int indx1, ...) {
     va_list rest;
     va_start(rest, indx1);
-    unsigned char* address = llg_dpi_element_va(h, indx1, rest);
+    uint8_t* address = llg_dpi_element_va(h, indx1, rest);
     va_end(rest);
     return address;
 }
 
 void* svGetArrElemPtr1(const svOpenArrayHandle h, int indx1) {
-    int index[1] = {indx1};
+    int32_t index[1] = {indx1};
     return llg_dpi_element_at(h, 1, index);
 }
 
 void* svGetArrElemPtr2(const svOpenArrayHandle h, int indx1, int indx2) {
-    int index[2] = {indx1, indx2};
+    int32_t index[2] = {indx1, indx2};
     return llg_dpi_element_at(h, 2, index);
 }
 
 void* svGetArrElemPtr3(const svOpenArrayHandle h, int indx1, int indx2, int indx3) {
-    int index[3] = {indx1, indx2, indx3};
+    int32_t index[3] = {indx1, indx2, indx3};
     return llg_dpi_element_at(h, 3, index);
 }
 
@@ -1273,15 +1273,15 @@ void* svGetArrElemPtr3(const svOpenArrayHandle h, int indx1, int indx2, int indx
  * 4-state element returns its value (aval) bits, so X reads 1 and Z reads 0
  * (S40-D4; Annex H is silent). An invalid index reads the element type's
  * default (SV 7.4.6), which is 0 through the svBit accessors. */
-static void llg_dpi_get_vec(const svOpenArrayHandle h, const unsigned char* element,
-                            svLogicVecVal* out, int logic) {
+static void llg_dpi_get_vec(const svOpenArrayHandle h, const uint8_t* element,
+                            svLogicVecVal* out, int32_t logic) {
     const llg_dpi_open_t* open = (const llg_dpi_open_t*)h;
     if (!open) return;
     const llg_dpi_type_t* type = llg_dpi_open_element(open);
     uint32_t width = llg_dpi_packed_width(type);
     if (!width) return;
     size_t count = llg_dpi_chunks(width);
-    int four_state = type->kind == LLG_DPI_LOGIC || type->kind == LLG_DPI_LOGICVEC;
+    int32_t four_state = type->kind == LLG_DPI_LOGIC || type->kind == LLG_DPI_LOGICVEC;
     if (!element) {
         for (size_t i = 0; i < count; ++i) {
             out[i].aval = four_state && logic ? UINT32_MAX : 0u;
@@ -1300,7 +1300,7 @@ static void llg_dpi_get_vec(const svOpenArrayHandle h, const unsigned char* elem
         for (size_t i = 0; i < count; ++i) out[i].bval = 0;
 }
 
-static void llg_dpi_put_vec(const svOpenArrayHandle h, unsigned char* element,
+static void llg_dpi_put_vec(const svOpenArrayHandle h, uint8_t* element,
                             const svLogicVecVal* in) {
     const llg_dpi_open_t* open = (const llg_dpi_open_t*)h;
     if (!open || !element) return;
@@ -1316,7 +1316,7 @@ static void llg_dpi_put_vec(const svOpenArrayHandle h, unsigned char* element,
     free(chunks);
 }
 
-static void llg_dpi_get_bits(svBitVecVal* d, const svOpenArrayHandle h, const unsigned char* element) {
+static void llg_dpi_get_bits(svBitVecVal* d, const svOpenArrayHandle h, const uint8_t* element) {
     const llg_dpi_open_t* open = (const llg_dpi_open_t*)h;
     if (!d || !open) return;
     size_t count = llg_dpi_chunks(llg_dpi_packed_width(llg_dpi_open_element(open)));
@@ -1327,7 +1327,7 @@ static void llg_dpi_get_bits(svBitVecVal* d, const svOpenArrayHandle h, const un
     free(chunks);
 }
 
-static void llg_dpi_put_bits(const svOpenArrayHandle h, unsigned char* element, const svBitVecVal* s) {
+static void llg_dpi_put_bits(const svOpenArrayHandle h, uint8_t* element, const svBitVecVal* s) {
     const llg_dpi_open_t* open = (const llg_dpi_open_t*)h;
     if (!s || !open || !element) return;
     size_t count = llg_dpi_chunks(llg_dpi_packed_width(llg_dpi_open_element(open)));
@@ -1346,18 +1346,18 @@ void svPutBitArrElemVecVal(const svOpenArrayHandle d, const svBitVecVal* s, int 
 }
 
 void svPutBitArrElem1VecVal(const svOpenArrayHandle d, const svBitVecVal* s, int indx1) {
-    int index[1] = {indx1};
+    int32_t index[1] = {indx1};
     llg_dpi_put_bits(d, llg_dpi_element_at(d, 1, index), s);
 }
 
 void svPutBitArrElem2VecVal(const svOpenArrayHandle d, const svBitVecVal* s, int indx1, int indx2) {
-    int index[2] = {indx1, indx2};
+    int32_t index[2] = {indx1, indx2};
     llg_dpi_put_bits(d, llg_dpi_element_at(d, 2, index), s);
 }
 
 void svPutBitArrElem3VecVal(const svOpenArrayHandle d, const svBitVecVal* s, int indx1, int indx2,
                             int indx3) {
-    int index[3] = {indx1, indx2, indx3};
+    int32_t index[3] = {indx1, indx2, indx3};
     llg_dpi_put_bits(d, llg_dpi_element_at(d, 3, index), s);
 }
 
@@ -1369,19 +1369,19 @@ void svPutLogicArrElemVecVal(const svOpenArrayHandle d, const svLogicVecVal* s, 
 }
 
 void svPutLogicArrElem1VecVal(const svOpenArrayHandle d, const svLogicVecVal* s, int indx1) {
-    int index[1] = {indx1};
+    int32_t index[1] = {indx1};
     if (s) llg_dpi_put_vec(d, llg_dpi_element_at(d, 1, index), s);
 }
 
 void svPutLogicArrElem2VecVal(const svOpenArrayHandle d, const svLogicVecVal* s, int indx1,
                               int indx2) {
-    int index[2] = {indx1, indx2};
+    int32_t index[2] = {indx1, indx2};
     if (s) llg_dpi_put_vec(d, llg_dpi_element_at(d, 2, index), s);
 }
 
 void svPutLogicArrElem3VecVal(const svOpenArrayHandle d, const svLogicVecVal* s, int indx1,
                               int indx2, int indx3) {
-    int index[3] = {indx1, indx2, indx3};
+    int32_t index[3] = {indx1, indx2, indx3};
     if (s) llg_dpi_put_vec(d, llg_dpi_element_at(d, 3, index), s);
 }
 
@@ -1393,18 +1393,18 @@ void svGetBitArrElemVecVal(svBitVecVal* d, const svOpenArrayHandle s, int indx1,
 }
 
 void svGetBitArrElem1VecVal(svBitVecVal* d, const svOpenArrayHandle s, int indx1) {
-    int index[1] = {indx1};
+    int32_t index[1] = {indx1};
     llg_dpi_get_bits(d, s, llg_dpi_element_at(s, 1, index));
 }
 
 void svGetBitArrElem2VecVal(svBitVecVal* d, const svOpenArrayHandle s, int indx1, int indx2) {
-    int index[2] = {indx1, indx2};
+    int32_t index[2] = {indx1, indx2};
     llg_dpi_get_bits(d, s, llg_dpi_element_at(s, 2, index));
 }
 
 void svGetBitArrElem3VecVal(svBitVecVal* d, const svOpenArrayHandle s, int indx1, int indx2,
                             int indx3) {
-    int index[3] = {indx1, indx2, indx3};
+    int32_t index[3] = {indx1, indx2, indx3};
     llg_dpi_get_bits(d, s, llg_dpi_element_at(s, 3, index));
 }
 
@@ -1416,23 +1416,23 @@ void svGetLogicArrElemVecVal(svLogicVecVal* d, const svOpenArrayHandle s, int in
 }
 
 void svGetLogicArrElem1VecVal(svLogicVecVal* d, const svOpenArrayHandle s, int indx1) {
-    int index[1] = {indx1};
+    int32_t index[1] = {indx1};
     if (d) llg_dpi_get_vec(s, llg_dpi_element_at(s, 1, index), d, 1);
 }
 
 void svGetLogicArrElem2VecVal(svLogicVecVal* d, const svOpenArrayHandle s, int indx1, int indx2) {
-    int index[2] = {indx1, indx2};
+    int32_t index[2] = {indx1, indx2};
     if (d) llg_dpi_get_vec(s, llg_dpi_element_at(s, 2, index), d, 1);
 }
 
 void svGetLogicArrElem3VecVal(svLogicVecVal* d, const svOpenArrayHandle s, int indx1, int indx2,
                               int indx3) {
-    int index[3] = {indx1, indx2, indx3};
+    int32_t index[3] = {indx1, indx2, indx3};
     if (d) llg_dpi_get_vec(s, llg_dpi_element_at(s, 3, index), d, 1);
 }
 
 /* Scalar element access (H.12.6) reads bit 0 of the element. */
-static svLogic llg_dpi_get_scalar(const svOpenArrayHandle h, const unsigned char* element, int logic) {
+static svLogic llg_dpi_get_scalar(const svOpenArrayHandle h, const uint8_t* element, int32_t logic) {
     svLogicVecVal chunks[2];
     const llg_dpi_open_t* open = (const llg_dpi_open_t*)h;
     if (!open || !llg_dpi_packed_width(llg_dpi_open_element(open))) return logic ? sv_x : sv_0;
@@ -1447,7 +1447,7 @@ static svLogic llg_dpi_get_scalar(const svOpenArrayHandle h, const unsigned char
     return (svLogic)((chunks[0].aval & 1u) | ((chunks[0].bval & 1u) << 1));
 }
 
-static void llg_dpi_put_scalar(const svOpenArrayHandle h, unsigned char* element, svLogic value) {
+static void llg_dpi_put_scalar(const svOpenArrayHandle h, uint8_t* element, svLogic value) {
     const llg_dpi_open_t* open = (const llg_dpi_open_t*)h;
     if (!open || !element) return;
     uint32_t width = llg_dpi_packed_width(llg_dpi_open_element(open));
@@ -1470,17 +1470,17 @@ svBit svGetBitArrElem(const svOpenArrayHandle s, int indx1, ...) {
 }
 
 svBit svGetBitArrElem1(const svOpenArrayHandle s, int indx1) {
-    int index[1] = {indx1};
+    int32_t index[1] = {indx1};
     return (svBit)llg_dpi_get_scalar(s, llg_dpi_element_at(s, 1, index), 0);
 }
 
 svBit svGetBitArrElem2(const svOpenArrayHandle s, int indx1, int indx2) {
-    int index[2] = {indx1, indx2};
+    int32_t index[2] = {indx1, indx2};
     return (svBit)llg_dpi_get_scalar(s, llg_dpi_element_at(s, 2, index), 0);
 }
 
 svBit svGetBitArrElem3(const svOpenArrayHandle s, int indx1, int indx2, int indx3) {
-    int index[3] = {indx1, indx2, indx3};
+    int32_t index[3] = {indx1, indx2, indx3};
     return (svBit)llg_dpi_get_scalar(s, llg_dpi_element_at(s, 3, index), 0);
 }
 
@@ -1493,17 +1493,17 @@ svLogic svGetLogicArrElem(const svOpenArrayHandle s, int indx1, ...) {
 }
 
 svLogic svGetLogicArrElem1(const svOpenArrayHandle s, int indx1) {
-    int index[1] = {indx1};
+    int32_t index[1] = {indx1};
     return llg_dpi_get_scalar(s, llg_dpi_element_at(s, 1, index), 1);
 }
 
 svLogic svGetLogicArrElem2(const svOpenArrayHandle s, int indx1, int indx2) {
-    int index[2] = {indx1, indx2};
+    int32_t index[2] = {indx1, indx2};
     return llg_dpi_get_scalar(s, llg_dpi_element_at(s, 2, index), 1);
 }
 
 svLogic svGetLogicArrElem3(const svOpenArrayHandle s, int indx1, int indx2, int indx3) {
-    int index[3] = {indx1, indx2, indx3};
+    int32_t index[3] = {indx1, indx2, indx3};
     return llg_dpi_get_scalar(s, llg_dpi_element_at(s, 3, index), 1);
 }
 
@@ -1515,17 +1515,17 @@ void svPutLogicArrElem(const svOpenArrayHandle d, svLogic value, int indx1, ...)
 }
 
 void svPutLogicArrElem1(const svOpenArrayHandle d, svLogic value, int indx1) {
-    int index[1] = {indx1};
+    int32_t index[1] = {indx1};
     llg_dpi_put_scalar(d, llg_dpi_element_at(d, 1, index), value);
 }
 
 void svPutLogicArrElem2(const svOpenArrayHandle d, svLogic value, int indx1, int indx2) {
-    int index[2] = {indx1, indx2};
+    int32_t index[2] = {indx1, indx2};
     llg_dpi_put_scalar(d, llg_dpi_element_at(d, 2, index), value);
 }
 
 void svPutLogicArrElem3(const svOpenArrayHandle d, svLogic value, int indx1, int indx2, int indx3) {
-    int index[3] = {indx1, indx2, indx3};
+    int32_t index[3] = {indx1, indx2, indx3};
     llg_dpi_put_scalar(d, llg_dpi_element_at(d, 3, index), value);
 }
 
@@ -1537,16 +1537,16 @@ void svPutBitArrElem(const svOpenArrayHandle d, svBit value, int indx1, ...) {
 }
 
 void svPutBitArrElem1(const svOpenArrayHandle d, svBit value, int indx1) {
-    int index[1] = {indx1};
+    int32_t index[1] = {indx1};
     llg_dpi_put_scalar(d, llg_dpi_element_at(d, 1, index), (svLogic)(value & 1u));
 }
 
 void svPutBitArrElem2(const svOpenArrayHandle d, svBit value, int indx1, int indx2) {
-    int index[2] = {indx1, indx2};
+    int32_t index[2] = {indx1, indx2};
     llg_dpi_put_scalar(d, llg_dpi_element_at(d, 2, index), (svLogic)(value & 1u));
 }
 
 void svPutBitArrElem3(const svOpenArrayHandle d, svBit value, int indx1, int indx2, int indx3) {
-    int index[3] = {indx1, indx2, indx3};
+    int32_t index[3] = {indx1, indx2, indx3};
     llg_dpi_put_scalar(d, llg_dpi_element_at(d, 3, index), (svLogic)(value & 1u));
 }

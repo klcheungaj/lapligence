@@ -30,6 +30,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+// The runtime spells `int` as int32_t and `unsigned int` as uint32_t
+// (src/sim/rt/AGENTS.md). Every supported target, LP64 and LLP64 alike,
+// defines them as those types, so the C ABI towards generated code, printf
+// `*` widths and C library callbacks keep their standard types.
+_Static_assert(_Generic((int32_t)0, int: 1, default: 0), "int32_t must be int");
+_Static_assert(_Generic((uint32_t)0, unsigned int: 1, default: 0),
+               "uint32_t must be unsigned int");
+
 #if defined(_WIN32)
 #include <direct.h>
 #include <process.h>
@@ -73,15 +81,15 @@ static inline uint64_t llg_atomic_u64_fetch_add(llg_atomic_u64_t* p, uint64_t v)
     return (uint64_t)_InterlockedExchangeAdd64(p, (__int64)v);
 }
 // Acquire load.
-static inline int llg_atomic_int_load(const llg_atomic_int_t* p) {
-    return (int)_InterlockedCompareExchange((llg_atomic_int_t*)p, 0, 0);
+static inline int32_t llg_atomic_int_load(const llg_atomic_int_t* p) {
+    return (int32_t)_InterlockedCompareExchange((llg_atomic_int_t*)p, 0, 0);
 }
 // Release store.
-static inline void llg_atomic_int_store(llg_atomic_int_t* p, int v) {
+static inline void llg_atomic_int_store(llg_atomic_int_t* p, int32_t v) {
     (void)_InterlockedExchange(p, (long)v);
 }
 // Acquire-release compare-exchange; nonzero when *p held `expected`.
-static inline int llg_atomic_int_cas(llg_atomic_int_t* p, int expected, int desired) {
+static inline int32_t llg_atomic_int_cas(llg_atomic_int_t* p, int32_t expected, int32_t desired) {
     return _InterlockedCompareExchange(p, (long)desired, (long)expected) == (long)expected;
 }
 // Orders an earlier llg_atomic store before a later llg_atomic load (a
@@ -92,7 +100,7 @@ static inline void llg_atomic_store_load_fence(void) {}
 #include <stdatomic.h>
 
 typedef _Atomic uint64_t llg_atomic_u64_t;
-typedef _Atomic int llg_atomic_int_t;
+typedef _Atomic int32_t llg_atomic_int_t;
 
 static inline uint64_t llg_atomic_u64_load(const llg_atomic_u64_t* p) {
     return atomic_load_explicit(p, memory_order_acquire);
@@ -103,13 +111,13 @@ static inline void llg_atomic_u64_store(llg_atomic_u64_t* p, uint64_t v) {
 static inline uint64_t llg_atomic_u64_fetch_add(llg_atomic_u64_t* p, uint64_t v) {
     return atomic_fetch_add_explicit(p, v, memory_order_relaxed);
 }
-static inline int llg_atomic_int_load(const llg_atomic_int_t* p) {
+static inline int32_t llg_atomic_int_load(const llg_atomic_int_t* p) {
     return atomic_load_explicit(p, memory_order_acquire);
 }
-static inline void llg_atomic_int_store(llg_atomic_int_t* p, int v) {
+static inline void llg_atomic_int_store(llg_atomic_int_t* p, int32_t v) {
     atomic_store_explicit(p, v, memory_order_release);
 }
-static inline int llg_atomic_int_cas(llg_atomic_int_t* p, int expected, int desired) {
+static inline int32_t llg_atomic_int_cas(llg_atomic_int_t* p, int32_t expected, int32_t desired) {
     return atomic_compare_exchange_strong_explicit(
         p, &expected, desired, memory_order_acq_rel, memory_order_acquire);
 }
@@ -127,7 +135,7 @@ static inline void llg_atomic_store_load_fence(void) {
 #define LLG_PATH_LIST_SEPARATOR ':'
 #endif
 
-static inline int llg_path_is_separator(char c) {
+static inline int32_t llg_path_is_separator(char c) {
 #if defined(_WIN32)
     return c == '/' || c == '\\';
 #else
@@ -137,10 +145,10 @@ static inline int llg_path_is_separator(char c) {
 
 // Rooted (`/x`, `\x`) or drive-qualified (`C:...`) paths are not joined to an
 // output directory.
-static inline int llg_path_is_absolute(const char* path) {
+static inline int32_t llg_path_is_absolute(const char* path) {
     if (llg_path_is_separator(path[0])) return 1;
 #if defined(_WIN32)
-    return isalpha((unsigned char)path[0]) && path[1] == ':';
+    return isalpha((uint8_t)path[0]) && path[1] == ':';
 #else
     return 0;
 #endif
@@ -148,7 +156,7 @@ static inline int llg_path_is_absolute(const char* path) {
 
 // True when `c`, just before a separator, ends a drive prefix such as `C:`;
 // `mkdir -p` must not try to create that component.
-static inline int llg_path_ends_drive_prefix(char c) {
+static inline int32_t llg_path_ends_drive_prefix(char c) {
 #if defined(_WIN32)
     return c == ':';
 #else
@@ -158,7 +166,7 @@ static inline int llg_path_ends_drive_prefix(char c) {
 }
 
 // Create one directory; 0 on success, -1 with errno set otherwise.
-static inline int llg_mkdir(const char* dir) {
+static inline int32_t llg_mkdir(const char* dir) {
 #if defined(_WIN32)
     return _mkdir(dir);
 #else
@@ -166,7 +174,7 @@ static inline int llg_mkdir(const char* dir) {
 #endif
 }
 
-static inline int llg_path_is_dir(const char* dir) {
+static inline int32_t llg_path_is_dir(const char* dir) {
 #if defined(_WIN32)
     struct _stat info;
     return _stat(dir, &info) == 0 && (info.st_mode & _S_IFDIR);
@@ -188,7 +196,7 @@ static inline uint64_t llg_process_id(void) {
 
 // Remove the file `path`, never a directory (POSIX remove() also removes an
 // empty directory); 0 on success.
-static inline int llg_remove_file(const char* path) {
+static inline int32_t llg_remove_file(const char* path) {
 #if defined(_WIN32)
     return remove(path);  // the Windows C runtime removes files only
 #else
@@ -200,7 +208,7 @@ static inline int llg_remove_file(const char* path) {
 // POSIX rename replaces atomically. The Windows C runtime's rename refuses an
 // existing target, so `to` is removed first: a crash between the two calls
 // leaves `from` complete and `to` missing, never a partial `to`.
-static inline int llg_replace_file(const char* from, const char* to) {
+static inline int32_t llg_replace_file(const char* from, const char* to) {
 #if defined(_WIN32)
     if (llg_remove_file(to) != 0 && errno != ENOENT) return -1;
 #endif
@@ -212,7 +220,7 @@ static inline int llg_replace_file(const char* from, const char* to) {
 // Stores the current soft stack limit and returns 1 when the host reports a
 // finite one; returns 0 when it is unlimited or unknown (Windows reserves the
 // stack at link time instead, see the generated CMake /STACK option).
-static inline int llg_host_stack_limit(uint64_t* bytes) {
+static inline int32_t llg_host_stack_limit(uint64_t* bytes) {
 #if defined(__unix__) || defined(__APPLE__)
     struct rlimit limit;
     if (getrlimit(RLIMIT_STACK, &limit) != 0 || limit.rlim_cur == RLIM_INFINITY) return 0;
@@ -243,8 +251,8 @@ static inline int llg_host_stack_limit(uint64_t* bytes) {
 #if !defined(_WIN32)
 typedef struct {
     pid_t pid;
-    int saved_out;
-    int saved_err;
+    int32_t saved_out;
+    int32_t saved_err;
 } llg_console_log_state_t;
 
 // One state per process; a function-local static keeps translation units that
@@ -254,7 +262,7 @@ static inline llg_console_log_state_t* llg_console_log_state(void) {
     return &state;
 }
 
-static inline int llg_console_write_all(int fd, const char* data, size_t len) {
+static inline int32_t llg_console_write_all(int32_t fd, const char* data, size_t len) {
     while (len > 0) {
         ssize_t written = write(fd, data, len);
         if (written < 0) {
@@ -269,7 +277,7 @@ static inline int llg_console_write_all(int fd, const char* data, size_t len) {
 
 // Child side: only async-signal-safe calls, since the parent may already be
 // multithreaded when embedded.
-static inline void llg_console_tee(int log_fd, int out_read, int err_read, int out, int err) {
+static inline void llg_console_tee(int32_t log_fd, int32_t out_read, int32_t err_read, int32_t out, int32_t err) {
     // Interrupts and a closed console must not cut the log short; the tee
     // exits on EOF once the simulator side has gone.
     signal(SIGINT, SIG_IGN);
@@ -279,15 +287,15 @@ static inline void llg_console_tee(int log_fd, int out_read, int err_read, int o
     signal(SIGPIPE, SIG_IGN);
     // err_read < 0: stderr shares the stdout pipe (poll ignores negative fds).
     struct pollfd fds[2] = {{out_read, POLLIN, 0}, {err_read, POLLIN, 0}};
-    int targets[2] = {out, err};
-    int open_count = err_read < 0 ? 1 : 2;
+    int32_t targets[2] = {out, err};
+    int32_t open_count = err_read < 0 ? 1 : 2;
     static char buffer[65536];
     while (open_count > 0) {
         if (poll(fds, 2, -1) < 0) {
             if (errno == EINTR) continue;
             break;
         }
-        for (int i = 0; i < 2; ++i) {
+        for (int32_t i = 0; i < 2; ++i) {
             if (fds[i].fd < 0 || !(fds[i].revents & (POLLIN | POLLHUP | POLLERR))) continue;
             ssize_t count = read(fds[i].fd, buffer, sizeof(buffer));
             if (count < 0 && errno == EINTR) continue;
@@ -315,13 +323,13 @@ static inline void llg_console_log_finish(void) {
     (void)dup2(state->saved_err, STDERR_FILENO);
     close(state->saved_out);
     close(state->saved_err);
-    int status;
+    int32_t status;
     while (waitpid(state->pid, &status, 0) < 0 && errno == EINTR) {
     }
     state->pid = -1;
 }
 
-static inline int llg_console_dup_cloexec(int fd) {
+static inline int32_t llg_console_dup_cloexec(int32_t fd) {
     return fcntl(fd, F_DUPFD_CLOEXEC, 3);
 }
 #endif
@@ -331,29 +339,29 @@ static inline int llg_console_dup_cloexec(int fd) {
 // reason to `error` (the caller reports it, so this layer stays free of the
 // runtime's reporter) and returns 0, including on hosts without a console
 // log implementation.
-static inline int llg_console_log_start(const char* path, char* error, size_t error_size) {
+static inline int32_t llg_console_log_start(const char* path, char* error, size_t error_size) {
 #if !defined(_WIN32)
-    int log_fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0666);
+    int32_t log_fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0666);
     if (log_fd < 0) {
         (void)snprintf(error, error_size, "cannot open LLG_SIM_LOG_FILE `%s`: %s", path,
                        strerror(errno));
         return 0;
     }
-    int out_pipe[2] = {-1, -1};
-    int err_pipe[2] = {-1, -1};
+    int32_t out_pipe[2] = {-1, -1};
+    int32_t err_pipe[2] = {-1, -1};
     fflush(stdout);
     fflush(stderr);
-    int saved_out = llg_console_dup_cloexec(STDOUT_FILENO);
-    int saved_err = llg_console_dup_cloexec(STDERR_FILENO);
+    int32_t saved_out = llg_console_dup_cloexec(STDOUT_FILENO);
+    int32_t saved_err = llg_console_dup_cloexec(STDERR_FILENO);
     struct stat out_info;
     struct stat err_info;
-    int shared = saved_out >= 0 && saved_err >= 0 && fstat(saved_out, &out_info) == 0 &&
+    int32_t shared = saved_out >= 0 && saved_err >= 0 && fstat(saved_out, &out_info) == 0 &&
                  fstat(saved_err, &err_info) == 0 && out_info.st_dev == err_info.st_dev &&
                  out_info.st_ino == err_info.st_ino;
     if (saved_out < 0 || saved_err < 0 || pipe(out_pipe) != 0 ||
         (!shared && pipe(err_pipe) != 0)) {
         (void)snprintf(error, error_size, "cannot set up LLG_SIM_LOG_FILE: %s", strerror(errno));
-        int fds[] = {log_fd, saved_out, saved_err, out_pipe[0], out_pipe[1],
+        int32_t fds[] = {log_fd, saved_out, saved_err, out_pipe[0], out_pipe[1],
                      err_pipe[0], err_pipe[1]};
         for (size_t i = 0; i < sizeof(fds) / sizeof(fds[0]); ++i)
             if (fds[i] >= 0) close(fds[i]);
@@ -363,7 +371,7 @@ static inline int llg_console_log_start(const char* path, char* error, size_t er
     if (pid < 0) {
         (void)snprintf(error, error_size, "cannot start LLG_SIM_LOG_FILE writer: %s",
                        strerror(errno));
-        int fds[] = {log_fd, saved_out, saved_err, out_pipe[0], out_pipe[1],
+        int32_t fds[] = {log_fd, saved_out, saved_err, out_pipe[0], out_pipe[1],
                      err_pipe[0], err_pipe[1]};
         for (size_t i = 0; i < sizeof(fds) / sizeof(fds[0]); ++i)
             if (fds[i] >= 0) close(fds[i]);

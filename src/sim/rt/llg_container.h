@@ -22,7 +22,7 @@ enum {
 };
 
 typedef void (*llg_container_notify_fn)(sv4_t* contents, sv4_t* shape,
-                                        int change);
+                                        int32_t change);
 
 /* Packed inputs/indices/keys are borrowed for the call. Packed return values
  * are independent owners; destroy or move them. Init/destroy delimit each
@@ -90,7 +90,7 @@ struct llg_gc_type {
     void (*trace)(void* object, llg_gc_tracer_t* tracer);
     // Optional: nonzero when the object's own storage contains an address
     // reported through llg_gc_visit_interior (see llg_gc_interior_hit).
-    int (*interior)(const void* object, const llg_gc_tracer_t* tracer);
+    int32_t (*interior)(const void* object, const llg_gc_tracer_t* tracer);
     // Release the object's fields; never follows handles or frees `object`.
     void (*finalize)(void* object);
     // Optional (LLG_GC_VERIFY): poison an unreachable object kept allocated so
@@ -198,12 +198,12 @@ void llg_value_set_handle_hooks(const llg_value_handle_hooks_t* hooks);
 #define LLG_VALUE_DESC_MAX_DEPTH 64
 
 /* Return the LLG_VALUE_COPY_* policy of `desc`, or -1 for an invalid kind. */
-int llg_value_desc_copy_policy(const llg_value_desc_t* desc);
+int32_t llg_value_desc_copy_policy(const llg_value_desc_t* desc);
 /* Structural validation: known kinds, nonzero nominal aggregate identities,
  * member/item counts that agree and fit host allocation, packed widths below
  * LLG_SUPPORTED_WIDTH_LIMIT, and no cycle or nesting beyond
  * LLG_VALUE_DESC_MAX_DEPTH. Returns 1 when valid; has no side effects. */
-int llg_value_desc_valid(const llg_value_desc_t* desc);
+int32_t llg_value_desc_valid(const llg_value_desc_t* desc);
 /* Fatal diagnostic naming `label` when `desc` is invalid. Generated models
  * check each emitted root descriptor once at startup. */
 void llg_value_desc_check(const llg_value_desc_t* desc, const char* label);
@@ -229,7 +229,7 @@ void llg_value_trace(const llg_value_t* value, llg_value_visit_fn visit,
  * fatal error. Leaf payload allocators keep their own fatal OOM policy. */
 void llg_native_value_init(llg_value_t* value, const llg_value_desc_t* desc);
 void llg_native_value_destroy(void* value);
-int llg_native_value_try_copy(llg_value_t* dst, const llg_value_t* src);
+int32_t llg_native_value_try_copy(llg_value_t* dst, const llg_value_t* src);
 void llg_native_value_copy(llg_value_t* dst, const llg_value_t* src);
 /* Construct `dst` (empty or uninitialized) as a deep copy of `src` with
  * src's descriptor, in one allocation pass; allocation failure is fatal. */
@@ -245,8 +245,8 @@ enum {
     LLG_VALUE_EQUAL = 1,
     LLG_VALUE_EQUALITY_UNKNOWN = 2,
 };
-int llg_value_equality(const llg_value_t* a, const llg_value_t* b,
-                       int case_equality);
+int32_t llg_value_equality(const llg_value_t* a, const llg_value_t* b,
+                       int32_t case_equality);
 
 /* Explicit native roots. Every live descriptor-backed value owned by model
  * storage, an activation scope or a call temporary is one registered root, so
@@ -336,16 +336,16 @@ static inline void* llg_dyn_value_chandle_at(const llg_dyn_value_array_t* array,
     const llg_value_t* value = llg_dyn_value_element_at(array, position);
     return value ? value->value.handle : NULL;
 }
-int llg_dyn_value_store_chandle_at(llg_dyn_value_array_t* array, llg_value_t* target,
+int32_t llg_dyn_value_store_chandle_at(llg_dyn_value_array_t* array, llg_value_t* target,
                                    void* value);
-static inline int llg_dyn_value_set_chandle_at(llg_dyn_value_array_t* array, uint64_t position,
+static inline int32_t llg_dyn_value_set_chandle_at(llg_dyn_value_array_t* array, uint64_t position,
                                                void* value) {
     llg_value_t* target = llg_dyn_value_element_at(array, position);
     if (!target) return 0;
     return target->value.handle == value ? 1 : llg_dyn_value_store_chandle_at(array, target, value);
 }
 /* Store the string owner `*value`, leaving it empty. */
-int llg_dyn_value_move_string_at(llg_dyn_value_array_t* array, uint64_t position,
+int32_t llg_dyn_value_move_string_at(llg_dyn_value_array_t* array, uint64_t position,
                                  llg_string_t* value);
 sv4_t llg_dyn_value_get_nested(const llg_dyn_value_array_t* array,
                                const sv4_t* indices, size_t count);
@@ -355,24 +355,24 @@ llg_string_t llg_dyn_value_get_nested_string(
     const llg_dyn_value_array_t* array, const sv4_t* indices, size_t count);
 void* llg_dyn_value_get_nested_chandle(
     const llg_dyn_value_array_t* array, const sv4_t* indices, size_t count);
-int llg_dyn_value_set_real(llg_dyn_value_array_t* array, sv4_t index,
+int32_t llg_dyn_value_set_real(llg_dyn_value_array_t* array, sv4_t index,
                            double value);
-int llg_dyn_value_set_string(llg_dyn_value_array_t* array, sv4_t index,
+int32_t llg_dyn_value_set_string(llg_dyn_value_array_t* array, sv4_t index,
                              llg_string_t value);
-int llg_dyn_value_set_chandle(llg_dyn_value_array_t* array, sv4_t index,
+int32_t llg_dyn_value_set_chandle(llg_dyn_value_array_t* array, sv4_t index,
                               void* value);
-int llg_dyn_value_set_nested(llg_dyn_value_array_t* array,
+int32_t llg_dyn_value_set_nested(llg_dyn_value_array_t* array,
                              const sv4_t* indices, size_t count, sv4_t value);
-int llg_dyn_value_set_nested_real(llg_dyn_value_array_t* array,
+int32_t llg_dyn_value_set_nested_real(llg_dyn_value_array_t* array,
                                   const sv4_t* indices, size_t count,
                                   double value);
-int llg_dyn_value_set_nested_string(llg_dyn_value_array_t* array,
+int32_t llg_dyn_value_set_nested_string(llg_dyn_value_array_t* array,
                                     const sv4_t* indices, size_t count,
                                     llg_string_t value);
-int llg_dyn_value_set_nested_chandle(llg_dyn_value_array_t* array,
+int32_t llg_dyn_value_set_nested_chandle(llg_dyn_value_array_t* array,
                                      const sv4_t* indices, size_t count,
                                      void* value);
-int llg_dyn_value_set_nested_container(
+int32_t llg_dyn_value_set_nested_container(
     llg_dyn_value_array_t* array, const sv4_t* indices, size_t count,
     const llg_dyn_value_array_t* source);
 
@@ -392,7 +392,7 @@ enum {
     LLG_STREAM_SELECTOR_INDEXED_MINUS = 4,
 };
 
-uint32_t llg_stream_selector_width(int selector_kind, sv4_t first,
+uint32_t llg_stream_selector_width(int32_t selector_kind, sv4_t first,
                                    sv4_t second, uint32_t element_width);
 
 /* Fixed-unpacked-array streaming targets resolve their runtime `with`
@@ -403,13 +403,13 @@ uint32_t llg_stream_selector_width(int selector_kind, sv4_t first,
  * before publishing staged writes. A false `target_in_bounds` result requires
  * an error AND writes to the in-range elements, not a silent clipped success.
  * Operands are borrowed; these helpers neither allocate nor publish writes. */
-void llg_fixed_stream_bounds(int selector_kind, sv4_t first, sv4_t second,
+void llg_fixed_stream_bounds(int32_t selector_kind, sv4_t first, sv4_t second,
                              int64_t declaration_left, int64_t declaration_right,
                              int64_t* left, int64_t* right, size_t* count);
-uint32_t llg_fixed_stream_width(int selector_kind, sv4_t first, sv4_t second,
+uint32_t llg_fixed_stream_width(int32_t selector_kind, sv4_t first, sv4_t second,
                                 uint32_t element_width);
 void llg_stream_require_bits(int64_t available, uint32_t required);
-int llg_fixed_stream_target_in_bounds(int64_t declaration_left,
+int32_t llg_fixed_stream_target_in_bounds(int64_t declaration_left,
                                       int64_t declaration_right,
                                       int64_t left, int64_t right, size_t count);
 int64_t llg_fixed_stream_index_at(int64_t left, int64_t right, size_t offset);
@@ -419,7 +419,7 @@ int64_t llg_fixed_stream_index_at(int64_t left, int64_t right, size_t offset);
  * selector bounds are independent of the array size. */
 sv4_t llg_fixed_stream_source(const sv4_t* values, int64_t declaration_left,
                               int64_t declaration_right, uint32_t element_width,
-                              sv4_t fallback, int selector_kind,
+                              sv4_t fallback, int32_t selector_kind,
                               sv4_t first, sv4_t second);
 /* Fixed-array `with` helpers for arrays without model storage, represented
  * by their whole declaration-order image (left declared element in the MSBs).
@@ -432,14 +432,14 @@ sv4_t llg_fixed_stream_source(const sv4_t* values, int64_t declaration_left,
  * stream operator. A wider source keeps its leftmost bits (SV 11.4.14.3);
  * a narrower one is a fatal error. Borrows `value`. */
 sv4_t llg_stream_unpack_source(sv4_t value, uint64_t bits, uint32_t slice,
-                               int right_to_left);
+                               int32_t right_to_left);
 int64_t llg_fixed_stream_storage_offset(int64_t declaration_left,
                                         int64_t declaration_right,
                                         int64_t logical);
 sv4_t llg_fixed_image_stream_source(sv4_t image, int64_t declaration_left,
                                     int64_t declaration_right,
                                     uint32_t element_width, sv4_t fallback,
-                                    int selector_kind, sv4_t first,
+                                    int32_t selector_kind, sv4_t first,
                                     sv4_t second);
 void llg_fixed_image_stream_scatter(sv4_t* image, sv4_t segment,
                                     int64_t declaration_left,
@@ -457,10 +457,10 @@ void llg_stream_segment_two_state(sv4_t* segment, uint32_t element_width,
  * target: the stream is left-aligned and zero-filled on the right, and a
  * stream larger than the target is an error (IEEE 1800-2009 11.4.14). The
  * source is borrowed; the returned value is owned by the caller. */
-sv4_t llg_stream_to_fixed(sv4_t value, uint32_t width, int is_signed);
+sv4_t llg_stream_to_fixed(sv4_t value, uint32_t width, int32_t is_signed);
 /* Bit-stream cast of a dynamically sized source to a fixed-size type: the
  * sizes must match (IEEE 1800-2009 6.24.3). Borrows `value`. */
-sv4_t llg_stream_cast_fixed(sv4_t value, uint32_t width, int is_signed);
+sv4_t llg_stream_cast_fixed(sv4_t value, uint32_t width, int32_t is_signed);
 
 enum {
     LLG_CONTAINER_METHOD_FIND = 0,
@@ -492,7 +492,7 @@ typedef struct llg_dyn_array_t {
     struct llg_element_cell* references;
 } llg_dyn_array_t;
 
-int llg_dyn_value_set_nested_container_from_packed(
+int32_t llg_dyn_value_set_nested_container_from_packed(
     llg_dyn_value_array_t* array, const sv4_t* indices, size_t count,
     const llg_dyn_array_t* source);
 
@@ -546,29 +546,29 @@ llg_string_t llg_queue_value_get_nested_string(
     const llg_queue_value_array_t* queue, const sv4_t* indices, size_t count);
 void* llg_queue_value_get_nested_chandle(
     const llg_queue_value_array_t* queue, const sv4_t* indices, size_t count);
-int llg_queue_value_set(llg_queue_value_array_t* queue, sv4_t index,
+int32_t llg_queue_value_set(llg_queue_value_array_t* queue, sv4_t index,
                         sv4_t value);
-int llg_queue_value_set_real(llg_queue_value_array_t* queue, sv4_t index,
+int32_t llg_queue_value_set_real(llg_queue_value_array_t* queue, sv4_t index,
                              double value);
-int llg_queue_value_set_string(llg_queue_value_array_t* queue, sv4_t index,
+int32_t llg_queue_value_set_string(llg_queue_value_array_t* queue, sv4_t index,
                                llg_string_t value);
-int llg_queue_value_set_chandle(llg_queue_value_array_t* queue, sv4_t index,
+int32_t llg_queue_value_set_chandle(llg_queue_value_array_t* queue, sv4_t index,
                                 void* value);
-int llg_queue_value_set_nested(llg_queue_value_array_t* queue,
+int32_t llg_queue_value_set_nested(llg_queue_value_array_t* queue,
                                const sv4_t* indices, size_t count, sv4_t value);
-int llg_queue_value_set_nested_real(llg_queue_value_array_t* queue,
+int32_t llg_queue_value_set_nested_real(llg_queue_value_array_t* queue,
                                     const sv4_t* indices, size_t count,
                                     double value);
-int llg_queue_value_set_nested_string(
+int32_t llg_queue_value_set_nested_string(
     llg_queue_value_array_t* queue, const sv4_t* indices, size_t count,
     llg_string_t value);
-int llg_queue_value_set_nested_chandle(
+int32_t llg_queue_value_set_nested_chandle(
     llg_queue_value_array_t* queue, const sv4_t* indices, size_t count,
     void* value);
-int llg_queue_value_set_nested_container(
+int32_t llg_queue_value_set_nested_container(
     llg_queue_value_array_t* queue, const sv4_t* indices, size_t count,
     const llg_dyn_value_array_t* source);
-int llg_queue_value_set_nested_container_from_packed(
+int32_t llg_queue_value_set_nested_container_from_packed(
     llg_queue_value_array_t* queue, const sv4_t* indices, size_t count,
     const llg_dyn_array_t* source);
 void llg_queue_value_push_front(llg_queue_value_array_t* queue, sv4_t value);
@@ -593,33 +593,33 @@ void llg_queue_value_push_front_container_from_packed(
     llg_queue_value_array_t* queue, const llg_dyn_array_t* source);
 void llg_queue_value_push_back_container_from_packed(
     llg_queue_value_array_t* queue, const llg_dyn_array_t* source);
-int llg_queue_value_insert(llg_queue_value_array_t* queue, sv4_t index,
+int32_t llg_queue_value_insert(llg_queue_value_array_t* queue, sv4_t index,
                            sv4_t value);
-int llg_queue_value_insert_real(llg_queue_value_array_t* queue, sv4_t index,
+int32_t llg_queue_value_insert_real(llg_queue_value_array_t* queue, sv4_t index,
                                 double value);
-int llg_queue_value_insert_string(llg_queue_value_array_t* queue, sv4_t index,
+int32_t llg_queue_value_insert_string(llg_queue_value_array_t* queue, sv4_t index,
                                   llg_string_t value);
-int llg_queue_value_insert_chandle(llg_queue_value_array_t* queue,
+int32_t llg_queue_value_insert_chandle(llg_queue_value_array_t* queue,
                                    sv4_t index, void* value);
-int llg_queue_value_insert_container(llg_queue_value_array_t* queue,
+int32_t llg_queue_value_insert_container(llg_queue_value_array_t* queue,
                                      sv4_t index,
                                      const llg_dyn_value_array_t* source);
-int llg_queue_value_insert_container_from_packed(
+int32_t llg_queue_value_insert_container_from_packed(
     llg_queue_value_array_t* queue, sv4_t index, const llg_dyn_array_t* source);
-int llg_queue_value_delete_index(llg_queue_value_array_t* queue, sv4_t index);
+int32_t llg_queue_value_delete_index(llg_queue_value_array_t* queue, sv4_t index);
 /* Whole-container `==`/`!=`/`===`/`!==` (`negate` selects the inequality
  * forms); the one-bit unsigned result is a fresh owner, X when the equality
  * is unknown. Operands are borrowed. */
 sv4_t llg_dyn_value_equal(const llg_dyn_value_array_t* a,
-                          const llg_dyn_value_array_t* b, int case_equality,
-                          int negate);
+                          const llg_dyn_value_array_t* b, int32_t case_equality,
+                          int32_t negate);
 sv4_t llg_queue_value_equal(const llg_queue_value_array_t* a,
                             const llg_queue_value_array_t* b,
-                            int case_equality, int negate);
+                            int32_t case_equality, int32_t negate);
 sv4_t llg_dyn_equal(const llg_dyn_array_t* a, const llg_dyn_array_t* b,
-                    int case_equality, int negate);
+                    int32_t case_equality, int32_t negate);
 sv4_t llg_queue_equal(const llg_queue_t* a, const llg_queue_t* b,
-                      int case_equality, int negate);
+                      int32_t case_equality, int32_t negate);
 /* Whole elements and in-place members of descriptor-backed containers
  * (SIM-006). Locators return the element at `indices` (`count` >= 1, nested
  * through container elements) or NULL for an invalid index or missing key;
@@ -641,9 +641,9 @@ llg_value_t* llg_queue_value_element(llg_queue_value_array_t* queue,
  * (SV 7.4.6): NULL, after the queue's invalid-write warning for a queue
  * write. */
 llg_value_t* llg_dyn_value_cell_miss(const llg_dyn_value_array_t* array,
-                                     sv4_t index, int write);
+                                     sv4_t index, int32_t write);
 llg_value_t* llg_queue_value_cell_miss(llg_queue_value_array_t* queue,
-                                       sv4_t index, int write);
+                                       sv4_t index, int32_t write);
 /* A whole unpacked-array element write (`q[k] = '{...}`) that
  * `llg_queue_value_set_element` refused: the same rules as a cell write,
  * except that a refused write at the queue's size (a full bounded queue)
@@ -652,21 +652,21 @@ void llg_queue_value_store_miss(const llg_queue_value_array_t* queue,
                                 sv4_t index);
 llg_value_t* llg_assoc_value_element_integral(llg_assoc_value_t* array,
                                               const sv4_t* indices,
-                                              size_t count, int create);
+                                              size_t count, int32_t create);
 llg_value_t* llg_assoc_value_element_string(llg_assoc_value_t* array,
                                             const void* key, size_t length,
-                                            int create);
+                                            int32_t create);
 /* Make the nested element at `indices` (`count` >= 2) exist before a checked
  * `$cast` source runs (decision S11-D5): a missing associative entry is
  * created, and at each level a position one past the end appends an element
  * holding its initial value. The caller has already stopped on every
  * position no write can reach, so an append only meets a queue level.
  * Returns 1 when the whole path then exists. */
-int llg_dyn_value_extend_nested(llg_dyn_value_array_t* array,
+int32_t llg_dyn_value_extend_nested(llg_dyn_value_array_t* array,
                                 const sv4_t* indices, size_t count);
-int llg_queue_value_extend_nested(llg_queue_value_array_t* queue,
+int32_t llg_queue_value_extend_nested(llg_queue_value_array_t* queue,
                                   const sv4_t* indices, size_t count);
-int llg_assoc_value_extend_nested_integral(llg_assoc_value_t* array,
+int32_t llg_assoc_value_extend_nested_integral(llg_assoc_value_t* array,
                                            const sv4_t* indices, size_t count);
 void llg_dyn_value_touch(llg_dyn_value_array_t* array);
 void llg_queue_value_touch(llg_queue_value_array_t* queue);
@@ -683,7 +683,7 @@ void llg_assoc_value_touch(llg_assoc_value_t* array);
  * object holding the reference, llg_native_ref_scope_release. `fixed` says
  * the array is fixed-size: assigning it never outdates a reference. */
 void* llg_dyn_value_ref_acquire(llg_dyn_value_array_t* array, sv4_t index,
-                                int fixed);
+                                int32_t fixed);
 void* llg_queue_value_ref_acquire(llg_queue_value_array_t* queue, sv4_t index);
 void* llg_assoc_value_ref_acquire_integral(llg_assoc_value_t* array, sv4_t key);
 void* llg_assoc_value_ref_acquire_string(llg_assoc_value_t* array,
@@ -705,7 +705,7 @@ enum {
     LLG_NATIVE_MIRROR_QUEUE_VALUE = 3,
 };
 void* llg_native_ref_mirror(void* reference, llg_value_t* item, void* container,
-                            int kind);
+                            int32_t kind);
 void llg_native_ref_mirror_scope_release(void* object);
 llg_string_t* llg_native_ref_string(void* reference);
 void** llg_native_ref_handle(void* reference);
@@ -719,7 +719,7 @@ void llg_native_ref_real_stored(double* cell);
 llg_value_t* llg_native_ref_value(void* reference);
 /* Whether the acquire selected an element; an unselected index binds the
  * default of the element type, which no write ever reaches. */
-int llg_native_ref_selected(void* reference);
+int32_t llg_native_ref_selected(void* reference);
 /* A reference to a value that is no container element, for its members. */
 void* llg_native_ref_root(llg_value_t* value);
 /* Select one item of the record or fixed array `reference` names, taking
@@ -748,7 +748,7 @@ static inline uint32_t llg_native_item_step(int64_t position) {
     return position < 0 ? LLG_NATIVE_ITEM_INVALID : (uint32_t)position;
 }
 
-int llg_native_ref_selects(sv4_t index, int64_t declared);
+int32_t llg_native_ref_selects(sv4_t index, int64_t declared);
 /* A store through a record `ref` formal, or into a subroutine record that
    roots member references, finished; `value` is the formal or the record.
    Tells a container element's readers, the record holding a member a formal
@@ -775,7 +775,7 @@ void llg_record_watch_end(void* watch);
 int64_t llg_native_ref_position(sv4_t index);
 /* Retained-cell accessors of an `llg_ref_t` naming a packed member. */
 sv4_t llg_native_ref_packed_read(const void* reference);
-int llg_native_ref_packed_write(void* reference, sv4_t value);
+int32_t llg_native_ref_packed_write(void* reference, sv4_t value);
 sv4_t* llg_native_ref_dependency(const void* reference);
 /* The change marker of one reference: it toggles when this element changes,
  * through the reference or the container, and never for other elements. */
@@ -829,46 +829,46 @@ void llg_value_item_from_queue_value(llg_value_t* item,
 /* In-place stores into one leaf of a record element from a source of the
  * leaf's own type; each returns whether the leaf changed, and the writer
  * publishes through llg_dyn_value_touch once. take_string consumes `value`. */
-int llg_value_item_set_packed(llg_value_t* item, sv4_t value);
-int llg_value_item_set_real(llg_value_t* item, double value);
-int llg_value_item_set_string(llg_value_t* item, const llg_string_t* value);
-int llg_value_item_take_string(llg_value_t* item, llg_string_t value);
-int llg_value_item_set_handle(llg_value_t* item, void* value);
-int llg_dyn_value_set_element(llg_dyn_value_array_t* array,
+int32_t llg_value_item_set_packed(llg_value_t* item, sv4_t value);
+int32_t llg_value_item_set_real(llg_value_t* item, double value);
+int32_t llg_value_item_set_string(llg_value_t* item, const llg_string_t* value);
+int32_t llg_value_item_take_string(llg_value_t* item, llg_string_t value);
+int32_t llg_value_item_set_handle(llg_value_t* item, void* value);
+int32_t llg_dyn_value_set_element(llg_dyn_value_array_t* array,
                               const sv4_t* indices, size_t count,
                               const llg_value_t* value);
-int llg_queue_value_set_element(llg_queue_value_array_t* queue,
+int32_t llg_queue_value_set_element(llg_queue_value_array_t* queue,
                                 const sv4_t* indices, size_t count,
                                 const llg_value_t* value);
-void llg_queue_value_push_value(llg_queue_value_array_t* queue, int back,
+void llg_queue_value_push_value(llg_queue_value_array_t* queue, int32_t back,
                                 const llg_value_t* value);
-int llg_queue_value_insert_value(llg_queue_value_array_t* queue, sv4_t index,
+int32_t llg_queue_value_insert_value(llg_queue_value_array_t* queue, sv4_t index,
                                  const llg_value_t* value);
-int llg_assoc_value_set_element_integral(llg_assoc_value_t* array,
+int32_t llg_assoc_value_set_element_integral(llg_assoc_value_t* array,
                                          const sv4_t* indices, size_t count,
                                          const llg_value_t* value);
-int llg_assoc_value_set_element_string(llg_assoc_value_t* array,
+int32_t llg_assoc_value_set_element_string(llg_assoc_value_t* array,
                                        const void* key, size_t length,
                                        const llg_value_t* value);
 /* Remove an endpoint into initialized `dst` (the default when empty). */
-void llg_queue_value_pop_value(llg_queue_value_array_t* queue, int back,
+void llg_queue_value_pop_value(llg_queue_value_array_t* queue, int32_t back,
                                llg_value_t* dst);
 
 /* Remove the front (`back` == 0) or back element and return it as an
  * independent result: a real, the moved string (into the empty or
  * expression-owned `dst`) or the handle identity. An empty queue yields the
  * Table 7-1 value (0.0, "", null) and does not notify. */
-double llg_queue_value_pop_real(llg_queue_value_array_t* queue, int back);
+double llg_queue_value_pop_real(llg_queue_value_array_t* queue, int32_t back);
 void llg_queue_value_pop_string_to(llg_string_t* dst,
-                                   llg_queue_value_array_t* queue, int back);
-void* llg_queue_value_pop_chandle(llg_queue_value_array_t* queue, int back);
+                                   llg_queue_value_array_t* queue, int32_t back);
+void* llg_queue_value_pop_chandle(llg_queue_value_array_t* queue, int32_t back);
 /* Process elements transfer their reference into `*dst`, releasing the
  * handle it previously held. */
 void llg_queue_value_pop_process_to(void** dst, llg_queue_value_array_t* queue,
-                                    int back);
+                                    int32_t back);
 
 void llg_dyn_init(llg_dyn_array_t* array, uint32_t element_width,
-                  int8_t element_signed, int element_two_state);
+                  int8_t element_signed, int32_t element_two_state);
 void llg_dyn_destroy(llg_dyn_array_t* array);
 void llg_dyn_delete(llg_dyn_array_t* array);
 void llg_dyn_copy(llg_dyn_array_t* dst, const llg_dyn_array_t* src);
@@ -897,24 +897,24 @@ void llg_dyn_set_range(llg_dyn_array_t* dst, sv4_t start, const sv4_t* values,
 void llg_dyn_new(llg_dyn_array_t* dst, sv4_t size,
                  const llg_dyn_array_t* initializer);
 sv4_t llg_dyn_stream(const llg_dyn_array_t* array, uint32_t slice,
-                     int right_to_left, int selector_kind, sv4_t first,
+                     int32_t right_to_left, int32_t selector_kind, sv4_t first,
                      sv4_t second);
 void llg_dyn_unstream_assign(llg_dyn_array_t* dst, sv4_t source,
-                             uint32_t slice, int right_to_left,
-                             int selector_kind, sv4_t first, sv4_t second);
+                             uint32_t slice, int32_t right_to_left,
+                             int32_t selector_kind, sv4_t first, sv4_t second);
 void llg_dyn_resize(llg_dyn_array_t* array, sv4_t size);
 size_t llg_dyn_size(const llg_dyn_array_t* array);
 sv4_t llg_dyn_get(const llg_dyn_array_t* array, sv4_t index);
-int llg_dyn_set(llg_dyn_array_t* array, sv4_t index, sv4_t value);
-sv4_t llg_dyn_reduce(const llg_dyn_array_t* array, int operation);
-sv4_t llg_dyn_reduce_with(const llg_dyn_array_t* array, int operation,
+int32_t llg_dyn_set(llg_dyn_array_t* array, sv4_t index, sv4_t value);
+sv4_t llg_dyn_reduce(const llg_dyn_array_t* array, int32_t operation);
+sv4_t llg_dyn_reduce_with(const llg_dyn_array_t* array, int32_t operation,
                           uint32_t result_width, int8_t result_signed,
-                          int result_two_state, llg_container_eval_fn eval,
+                          int32_t result_two_state, llg_container_eval_fn eval,
                           void* context);
 void llg_dyn_method_assign(llg_queue_t* dst, const llg_dyn_array_t* src,
-                           int method, llg_container_eval_fn eval,
+                           int32_t method, llg_container_eval_fn eval,
                            void* context);
-void llg_dyn_method(llg_dyn_array_t* array, int method,
+void llg_dyn_method(llg_dyn_array_t* array, int32_t method,
                     llg_container_eval_fn eval, void* context);
 /* `shuffle` draws from the stream `source` returns (a generated model passes
  * the calling thread's stream, IEEE 1800-2009 18.14). Without a source it
@@ -946,7 +946,7 @@ typedef struct llg_fixed_order_t {
 } llg_fixed_order_t;
 void llg_fixed_order_init(llg_fixed_order_t* order, uint64_t count,
                           uint64_t row_cells);
-int llg_fixed_order_sort(llg_fixed_order_t* order, int descending);
+int32_t llg_fixed_order_sort(llg_fixed_order_t* order, int32_t descending);
 void llg_fixed_order_destroy(void* order);
 
 struct llg_queue_t {
@@ -977,7 +977,7 @@ typedef struct llg_queue_source_t {
 } llg_queue_source_t;
 
 void llg_queue_init(llg_queue_t* queue, uint32_t element_width,
-                    int8_t element_signed, int element_two_state,
+                    int8_t element_signed, int32_t element_two_state,
                     uint64_t maximum_elements);
 void llg_queue_destroy(llg_queue_t* queue);
 void llg_queue_delete(llg_queue_t* queue);
@@ -987,19 +987,19 @@ void llg_queue_merge(llg_queue_t* dst, const llg_queue_t* a,
 void llg_queue_assign_values(llg_queue_t* dst, const sv4_t* values,
                              size_t count);
 sv4_t llg_queue_stream(const llg_queue_t* queue, uint32_t slice,
-                       int right_to_left, int selector_kind, sv4_t first,
+                       int32_t right_to_left, int32_t selector_kind, sv4_t first,
                        sv4_t second);
 void llg_queue_unstream_assign(llg_queue_t* dst, sv4_t source,
-                               uint32_t slice, int right_to_left,
-                               int selector_kind, sv4_t first, sv4_t second);
+                               uint32_t slice, int32_t right_to_left,
+                               int32_t selector_kind, sv4_t first, sv4_t second);
 void llg_queue_assign_sources(llg_queue_t* dst,
                               const llg_queue_source_t* sources,
                               size_t source_count);
 size_t llg_queue_size(const llg_queue_t* queue);
 sv4_t llg_queue_get(const llg_queue_t* queue, sv4_t index);
-int llg_queue_set(llg_queue_t* queue, sv4_t index, sv4_t value);
-int llg_queue_insert(llg_queue_t* queue, sv4_t index, sv4_t value);
-int llg_queue_delete_index(llg_queue_t* queue, sv4_t index);
+int32_t llg_queue_set(llg_queue_t* queue, sv4_t index, sv4_t value);
+int32_t llg_queue_insert(llg_queue_t* queue, sv4_t index, sv4_t value);
+int32_t llg_queue_delete_index(llg_queue_t* queue, sv4_t index);
 void llg_queue_push_front(llg_queue_t* queue, sv4_t value);
 void llg_queue_push_back(llg_queue_t* queue, sv4_t value);
 /* Output forms publish into caller-owned storage before notifying. Use a
@@ -1011,25 +1011,25 @@ sv4_t llg_queue_pop_front(llg_queue_t* queue);
 sv4_t llg_queue_pop_back(llg_queue_t* queue);
 sv4_t llg_queue_front(const llg_queue_t* queue);
 sv4_t llg_queue_back(const llg_queue_t* queue);
-sv4_t llg_queue_reduce(const llg_queue_t* queue, int operation);
-sv4_t llg_queue_reduce_with(const llg_queue_t* queue, int operation,
+sv4_t llg_queue_reduce(const llg_queue_t* queue, int32_t operation);
+sv4_t llg_queue_reduce_with(const llg_queue_t* queue, int32_t operation,
                             uint32_t result_width, int8_t result_signed,
-                            int result_two_state, llg_container_eval_fn eval,
+                            int32_t result_two_state, llg_container_eval_fn eval,
                             void* context);
 void llg_queue_method_assign(llg_queue_t* dst, const llg_queue_t* src,
-                             int method, llg_container_eval_fn eval,
+                             int32_t method, llg_container_eval_fn eval,
                              void* context);
 /* Stable order of real keys, ascending or (when `descending`) descending:
  * on return order[i] names the original position whose key belongs at i.
  * `order` holds 2 * count entries (the upper half is merge scratch). NaN keys
  * are unordered and keep their positions; the keys between them sort
  * independently, like unknown packed keys. Returns whether any key moves. */
-int llg_real_sort_order(const double* keys, size_t count, int descending,
+int32_t llg_real_sort_order(const double* keys, size_t count, int32_t descending,
                         size_t* order);
 /* In-place sort/rsort/reverse/shuffle of a resizable container whose
  * elements are real/shortreal values (LLG_CONTAINER_METHOD_*). Values are
  * compared numerically, never as bit patterns. */
-void llg_dyn_value_method(llg_dyn_value_array_t* array, int method);
+void llg_dyn_value_method(llg_dyn_value_array_t* array, int32_t method);
 /* `with` evaluator over a real iterator item; `out` receives the packed
  * truth of the clause. `context` is borrowed for the callback. */
 typedef void (*llg_container_real_eval_fn)(sv4_t* out, double item,
@@ -1042,14 +1042,14 @@ typedef void (*llg_container_real_eval_fn)(sv4_t* out, double item,
  * and every NaN is unique). The source elements are borrowed. */
 void llg_real_method_assign_values(llg_queue_value_array_t* dst,
                                    const llg_value_t* data, size_t count,
-                                   int method, llg_container_real_eval_fn eval,
+                                   int32_t method, llg_container_real_eval_fn eval,
                                    void* context);
 void llg_real_method_assign_indices(llg_queue_t* dst_indices,
                                     const llg_value_t* data, size_t count,
-                                    int method, llg_container_real_eval_fn eval,
+                                    int32_t method, llg_container_real_eval_fn eval,
                                     void* context);
-void llg_queue_value_method(llg_queue_value_array_t* queue, int method);
-void llg_queue_method(llg_queue_t* queue, int method,
+void llg_queue_value_method(llg_queue_value_array_t* queue, int32_t method);
+void llg_queue_method(llg_queue_t* queue, int32_t method,
                       llg_container_eval_fn eval, void* context);
 /* Retain an element independently of queue membership. Acquisitions of the
  * same live element share one cell. Release once per acquisition, including
@@ -1057,7 +1057,7 @@ void llg_queue_method(llg_queue_t* queue, int method,
 void* llg_queue_ref_acquire(llg_queue_t* queue, uint64_t index);
 void llg_queue_ref_release(void* cell);
 sv4_t llg_queue_cell_read(const void* cell);
-int llg_queue_cell_write(void* cell, sv4_t value);
+int32_t llg_queue_cell_write(void* cell, sv4_t value);
 /* The contents marker a `ref` wait on a retained element follows: the
  * queue's while it lives (writes to a removed element's cell publish it as
  * well), NULL for an invalid actual or after the queue was destroyed. */
@@ -1065,15 +1065,15 @@ sv4_t* llg_queue_cell_dependency(const void* cell);
 /* Whether the acquire selected an element. Meaningful right after the
  * acquire: a cell outdated later keeps its identity. An unselected index
  * binds a default cell that no write reaches. */
-int llg_queue_cell_selected(const void* cell);
+int32_t llg_queue_cell_selected(const void* cell);
 uint64_t llg_queue_ref_identity(const llg_queue_t* queue, uint64_t index);
 sv4_t llg_queue_ref_read(const llg_queue_t* queue, uint64_t identity);
-int llg_queue_ref_write(llg_queue_t* queue, uint64_t identity, sv4_t value);
+int32_t llg_queue_ref_write(llg_queue_t* queue, uint64_t identity, sv4_t value);
 
 /* Associative storage for recursive/non-packed elements. */
 typedef struct {
     sv4_t integral_key;
-    unsigned char* string_key;
+    uint8_t* string_key;
     size_t string_length;
     llg_value_t value;
 } llg_assoc_value_entry_t;
@@ -1101,7 +1101,7 @@ struct llg_assoc_value_t {
 void llg_assoc_value_init_integral(llg_assoc_value_t* array,
                                    const llg_value_desc_t* element,
                                    uint32_t key_width, int8_t key_signed,
-                                   int key_two_state);
+                                   int32_t key_two_state);
 void llg_assoc_value_init_string(llg_assoc_value_t* array,
                                  const llg_value_desc_t* element);
 void llg_assoc_value_init_class(llg_assoc_value_t* array,
@@ -1128,44 +1128,44 @@ llg_string_t llg_assoc_value_get_nested_integral_string(
     const llg_assoc_value_t* array, const sv4_t* indices, size_t count);
 void* llg_assoc_value_get_nested_integral_chandle(
     const llg_assoc_value_t* array, const sv4_t* indices, size_t count);
-int llg_assoc_value_set_integral(llg_assoc_value_t* array, sv4_t key,
+int32_t llg_assoc_value_set_integral(llg_assoc_value_t* array, sv4_t key,
                                  sv4_t value);
-int llg_assoc_value_set_integral_real(llg_assoc_value_t* array, sv4_t key,
+int32_t llg_assoc_value_set_integral_real(llg_assoc_value_t* array, sv4_t key,
                                       double value);
-int llg_assoc_value_set_integral_string(llg_assoc_value_t* array, sv4_t key,
+int32_t llg_assoc_value_set_integral_string(llg_assoc_value_t* array, sv4_t key,
                                         llg_string_t value);
-int llg_assoc_value_set_integral_chandle(llg_assoc_value_t* array, sv4_t key,
+int32_t llg_assoc_value_set_integral_chandle(llg_assoc_value_t* array, sv4_t key,
                                          void* value);
-int llg_assoc_value_set_nested_integral_container(
+int32_t llg_assoc_value_set_nested_integral_container(
     llg_assoc_value_t* array, const sv4_t* indices, size_t count,
     const llg_dyn_value_array_t* source);
-int llg_assoc_value_set_nested_integral_container_from_packed(
+int32_t llg_assoc_value_set_nested_integral_container_from_packed(
     llg_assoc_value_t* array, const sv4_t* indices, size_t count,
     const llg_dyn_array_t* source);
-int llg_assoc_value_set_nested_integral(
+int32_t llg_assoc_value_set_nested_integral(
     llg_assoc_value_t* array, const sv4_t* indices, size_t count,
     sv4_t value);
-int llg_assoc_value_set_nested_integral_real(
+int32_t llg_assoc_value_set_nested_integral_real(
     llg_assoc_value_t* array, const sv4_t* indices, size_t count,
     double value);
-int llg_assoc_value_set_nested_integral_string(
+int32_t llg_assoc_value_set_nested_integral_string(
     llg_assoc_value_t* array, const sv4_t* indices, size_t count,
     llg_string_t value);
-int llg_assoc_value_set_nested_integral_chandle(
+int32_t llg_assoc_value_set_nested_integral_chandle(
     llg_assoc_value_t* array, const sv4_t* indices, size_t count,
     void* value);
-int llg_assoc_value_exists_integral(const llg_assoc_value_t* array, sv4_t key);
-int llg_assoc_value_delete_integral(llg_assoc_value_t* array, sv4_t key);
+int32_t llg_assoc_value_exists_integral(const llg_assoc_value_t* array, sv4_t key);
+int32_t llg_assoc_value_delete_integral(llg_assoc_value_t* array, sv4_t key);
 void llg_assoc_value_set_default(llg_assoc_value_t* array, sv4_t value);
 void llg_assoc_value_set_default_real(llg_assoc_value_t* array, double value);
 void llg_assoc_value_set_default_string(llg_assoc_value_t* array,
                                         llg_string_t value);
 void llg_assoc_value_set_default_chandle(llg_assoc_value_t* array, void* value);
 void llg_assoc_value_reset_default(llg_assoc_value_t* array);
-int llg_assoc_value_first_integral(const llg_assoc_value_t* array, sv4_t* key);
-int llg_assoc_value_last_integral(const llg_assoc_value_t* array, sv4_t* key);
-int llg_assoc_value_next_integral(const llg_assoc_value_t* array, sv4_t* key);
-int llg_assoc_value_prev_integral(const llg_assoc_value_t* array, sv4_t* key);
+int32_t llg_assoc_value_first_integral(const llg_assoc_value_t* array, sv4_t* key);
+int32_t llg_assoc_value_last_integral(const llg_assoc_value_t* array, sv4_t* key);
+int32_t llg_assoc_value_next_integral(const llg_assoc_value_t* array, sv4_t* key);
+int32_t llg_assoc_value_prev_integral(const llg_assoc_value_t* array, sv4_t* key);
 llg_string_t llg_assoc_value_get_string(const llg_assoc_value_t* array,
                                         const void* key, size_t key_length);
 double llg_assoc_value_get_string_real(const llg_assoc_value_t* array,
@@ -1175,30 +1175,30 @@ llg_string_t llg_assoc_value_get_string_string(const llg_assoc_value_t* array,
                                                size_t key_length);
 void* llg_assoc_value_get_string_chandle(const llg_assoc_value_t* array,
                                          const void* key, size_t key_length);
-int llg_assoc_value_set_string(llg_assoc_value_t* array, const void* key,
+int32_t llg_assoc_value_set_string(llg_assoc_value_t* array, const void* key,
                                size_t key_length, sv4_t value);
-int llg_assoc_value_set_string_real(llg_assoc_value_t* array, const void* key,
+int32_t llg_assoc_value_set_string_real(llg_assoc_value_t* array, const void* key,
                                     size_t key_length, double value);
-int llg_assoc_value_set_string_string(llg_assoc_value_t* array,
+int32_t llg_assoc_value_set_string_string(llg_assoc_value_t* array,
                                       const void* key, size_t key_length,
                                       llg_string_t value);
-int llg_assoc_value_set_string_chandle(llg_assoc_value_t* array,
+int32_t llg_assoc_value_set_string_chandle(llg_assoc_value_t* array,
                                        const void* key, size_t key_length,
                                        void* value);
-int llg_assoc_value_exists_string(const llg_assoc_value_t* array,
+int32_t llg_assoc_value_exists_string(const llg_assoc_value_t* array,
                                   const void* key, size_t key_length);
-int llg_assoc_value_delete_string(llg_assoc_value_t* array, const void* key,
+int32_t llg_assoc_value_delete_string(llg_assoc_value_t* array, const void* key,
                                   size_t key_length);
-int llg_assoc_value_first_string(const llg_assoc_value_t* array,
-                                 const unsigned char** key, size_t* key_length);
-int llg_assoc_value_last_string(const llg_assoc_value_t* array,
-                                const unsigned char** key, size_t* key_length);
-int llg_assoc_value_next_string(const llg_assoc_value_t* array,
+int32_t llg_assoc_value_first_string(const llg_assoc_value_t* array,
+                                 const uint8_t** key, size_t* key_length);
+int32_t llg_assoc_value_last_string(const llg_assoc_value_t* array,
+                                const uint8_t** key, size_t* key_length);
+int32_t llg_assoc_value_next_string(const llg_assoc_value_t* array,
                                 const void* current, size_t current_length,
-                                const unsigned char** key, size_t* key_length);
-int llg_assoc_value_prev_string(const llg_assoc_value_t* array,
+                                const uint8_t** key, size_t* key_length);
+int32_t llg_assoc_value_prev_string(const llg_assoc_value_t* array,
                                 const void* current, size_t current_length,
-                                const unsigned char** key, size_t* key_length);
+                                const uint8_t** key, size_t* key_length);
 
 enum {
     LLG_ASSOC_INTEGRAL = 0,
@@ -1207,7 +1207,7 @@ enum {
 
 typedef struct {
     sv4_t integral_key;
-    unsigned char* string_key;
+    uint8_t* string_key;
     size_t string_length;
     sv4_t value;
 } llg_assoc_entry_t;
@@ -1244,13 +1244,13 @@ typedef struct llg_assoc_t {
 } llg_assoc_t;
 
 void llg_assoc_init_integral(llg_assoc_t* array, uint32_t element_width,
-                             int8_t element_signed, int element_two_state,
+                             int8_t element_signed, int32_t element_two_state,
                              uint32_t key_width, int8_t key_signed,
-                             int key_two_state);
+                             int32_t key_two_state);
 void llg_assoc_init_string(llg_assoc_t* array, uint32_t element_width,
-                           int8_t element_signed, int element_two_state);
+                           int8_t element_signed, int32_t element_two_state);
 void llg_assoc_init_class(llg_assoc_t* array, uint32_t element_width,
-                          int8_t element_signed, int element_two_state);
+                          int8_t element_signed, int32_t element_two_state);
 void llg_assoc_destroy(llg_assoc_t* array);
 void llg_assoc_delete(llg_assoc_t* array);
 void llg_assoc_copy(llg_assoc_t* dst, const llg_assoc_t* src);
@@ -1277,7 +1277,7 @@ llg_nested_assoc_t* llg_nested_assoc_clone(const llg_nested_assoc_t* source);
 void llg_nested_assoc_release(llg_nested_assoc_t* nested);
 size_t llg_nested_assoc_size(const llg_nested_assoc_t* nested);
 /* Whether two arrays hold equal keys and elements; null is empty. */
-int llg_nested_assoc_equal(const llg_nested_assoc_t* a,
+int32_t llg_nested_assoc_equal(const llg_nested_assoc_t* a,
                            const llg_nested_assoc_t* b);
 void llg_nested_assoc_trace(const llg_nested_assoc_t* nested,
                             llg_value_visit_fn visit, void* context);
@@ -1322,10 +1322,10 @@ llg_nested_seq_t* llg_nested_seq_clone(const llg_value_desc_t* desc,
 void llg_nested_seq_release(llg_nested_seq_t* seq);
 size_t llg_nested_seq_size(const llg_nested_seq_t* seq);
 /* Whether two sequences hold identical elements; null is empty. */
-int llg_nested_seq_equal(const llg_nested_seq_t* a, const llg_nested_seq_t* b);
+int32_t llg_nested_seq_equal(const llg_nested_seq_t* a, const llg_nested_seq_t* b);
 /* SystemVerilog equality (LLG_VALUE_EQUAL and friends); null is empty. */
-int llg_nested_seq_equality(const llg_nested_seq_t* a,
-                            const llg_nested_seq_t* b, int case_equality);
+int32_t llg_nested_seq_equality(const llg_nested_seq_t* a,
+                            const llg_nested_seq_t* b, int32_t case_equality);
 void llg_nested_seq_trace(const llg_nested_seq_t* seq, llg_value_visit_fn visit,
                           void* context);
 /* The ambiguous-condition merge of two sequences (`llg_dyn_value_merge`) as
@@ -1351,15 +1351,15 @@ llg_value_t* llg_nested_seq_value_at(const llg_value_t* owner, sv4_t index);
  * the size of a queue a new element holding its initial value (a bounded
  * queue at its bound takes none and warns). */
 llg_value_t* llg_nested_seq_write_at(llg_value_t* owner, sv4_t index,
-                                     int* change);
-int llg_nested_seq_holds_packed(const llg_value_t* owner);
+                                     int32_t* change);
+int32_t llg_nested_seq_holds_packed(const llg_value_t* owner);
 sv4_t llg_nested_seq_get_packed(const llg_value_t* owner, sv4_t index);
-int llg_nested_seq_set_packed(llg_value_t* owner, sv4_t index, sv4_t value,
-                              int* change);
+int32_t llg_nested_seq_set_packed(llg_value_t* owner, sv4_t index, sv4_t value,
+                              int32_t* change);
 /* Push or insert a copy of `source`, storage of the queue's element type. */
-void llg_queue_value_push_assoc(llg_queue_value_array_t* queue, int back,
+void llg_queue_value_push_assoc(llg_queue_value_array_t* queue, int32_t back,
                                 const void* source);
-int llg_queue_value_insert_assoc(llg_queue_value_array_t* queue, sv4_t index,
+int32_t llg_queue_value_insert_assoc(llg_queue_value_array_t* queue, sv4_t index,
                                  const void* source);
 /* Retained cells for `ref` actuals that select a dynamic-array element or an
  * associative entry (IEEE 1800-2009 13.5.2). A cell follows its element until
@@ -1373,50 +1373,50 @@ void* llg_assoc_ref_acquire_string(llg_assoc_t* array, const void* key,
                                    size_t key_length);
 void llg_element_ref_release(void* cell);
 sv4_t llg_element_cell_read(const void* cell);
-int llg_element_cell_write(void* cell, sv4_t value);
+int32_t llg_element_cell_write(void* cell, sv4_t value);
 /* As llg_queue_cell_dependency, for dynamic and associative array cells. */
 sv4_t* llg_element_cell_dependency(const void* cell);
 /* As llg_queue_cell_selected, for dynamic and associative array cells. */
-int llg_element_cell_selected(const void* cell);
+int32_t llg_element_cell_selected(const void* cell);
 size_t llg_assoc_count(const llg_assoc_t* array);
 sv4_t llg_assoc_value_at(const llg_assoc_t* array, size_t index);
-sv4_t llg_assoc_reduce(const llg_assoc_t* array, int operation);
-sv4_t llg_assoc_reduce_with(const llg_assoc_t* array, int operation,
+sv4_t llg_assoc_reduce(const llg_assoc_t* array, int32_t operation);
+sv4_t llg_assoc_reduce_with(const llg_assoc_t* array, int32_t operation,
                             uint32_t result_width, int8_t result_signed,
-                            int result_two_state, llg_container_eval_fn eval,
+                            int32_t result_two_state, llg_container_eval_fn eval,
                             void* context);
 void llg_assoc_method_assign(llg_queue_t* dst, const llg_assoc_t* src,
-                             int method, llg_container_eval_fn eval,
+                             int32_t method, llg_container_eval_fn eval,
                              void* context);
 
 sv4_t llg_assoc_get_integral(const llg_assoc_t* array, sv4_t key);
-int llg_assoc_set_integral(llg_assoc_t* array, sv4_t key, sv4_t value);
-int llg_assoc_exists_integral(const llg_assoc_t* array, sv4_t key);
-int llg_assoc_delete_integral(llg_assoc_t* array, sv4_t key);
+int32_t llg_assoc_set_integral(llg_assoc_t* array, sv4_t key, sv4_t value);
+int32_t llg_assoc_exists_integral(const llg_assoc_t* array, sv4_t key);
+int32_t llg_assoc_delete_integral(llg_assoc_t* array, sv4_t key);
 void llg_assoc_set_default(llg_assoc_t* array, sv4_t value);
 void llg_assoc_reset_default(llg_assoc_t* array);
-int llg_assoc_first_integral(const llg_assoc_t* array, sv4_t* key);
-int llg_assoc_last_integral(const llg_assoc_t* array, sv4_t* key);
-int llg_assoc_next_integral(const llg_assoc_t* array, sv4_t* key);
-int llg_assoc_prev_integral(const llg_assoc_t* array, sv4_t* key);
+int32_t llg_assoc_first_integral(const llg_assoc_t* array, sv4_t* key);
+int32_t llg_assoc_last_integral(const llg_assoc_t* array, sv4_t* key);
+int32_t llg_assoc_next_integral(const llg_assoc_t* array, sv4_t* key);
+int32_t llg_assoc_prev_integral(const llg_assoc_t* array, sv4_t* key);
 
 sv4_t llg_assoc_get_string(const llg_assoc_t* array, const void* key,
                            size_t key_length);
-int llg_assoc_set_string(llg_assoc_t* array, const void* key, size_t key_length,
+int32_t llg_assoc_set_string(llg_assoc_t* array, const void* key, size_t key_length,
                          sv4_t value);
-int llg_assoc_exists_string(const llg_assoc_t* array, const void* key,
+int32_t llg_assoc_exists_string(const llg_assoc_t* array, const void* key,
                             size_t key_length);
-int llg_assoc_delete_string(llg_assoc_t* array, const void* key,
+int32_t llg_assoc_delete_string(llg_assoc_t* array, const void* key,
                             size_t key_length);
-int llg_assoc_first_string(const llg_assoc_t* array, const unsigned char** key,
+int32_t llg_assoc_first_string(const llg_assoc_t* array, const uint8_t** key,
                            size_t* key_length);
-int llg_assoc_last_string(const llg_assoc_t* array, const unsigned char** key,
+int32_t llg_assoc_last_string(const llg_assoc_t* array, const uint8_t** key,
                           size_t* key_length);
-int llg_assoc_next_string(const llg_assoc_t* array, const void* current,
-                          size_t current_length, const unsigned char** key,
+int32_t llg_assoc_next_string(const llg_assoc_t* array, const void* current,
+                          size_t current_length, const uint8_t** key,
                           size_t* key_length);
-int llg_assoc_prev_string(const llg_assoc_t* array, const void* current,
-                          size_t current_length, const unsigned char** key,
+int32_t llg_assoc_prev_string(const llg_assoc_t* array, const void* current,
+                          size_t current_length, const uint8_t** key,
                           size_t* key_length);
 
 /* Destination-passing forms of the packed-returning calls above, used by
@@ -1425,32 +1425,32 @@ int llg_assoc_prev_string(const llg_assoc_t* array, const void* current,
  * arguments are borrowed by address; string arguments are consumed through
  * their address and left empty, like the returning forms' by-value strings. */
 void llg_dyn_value_get_nested_to(sv4_t* dst, const llg_dyn_value_array_t* array, const sv4_t* indices, size_t count);
-void llg_fixed_stream_source_to(sv4_t* dst, const sv4_t* values, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int selector_kind, const sv4_t* first, const sv4_t* second);
-void llg_stream_unpack_source_to(sv4_t* dst, const sv4_t* value, uint64_t bits, uint32_t slice, int right_to_left);
-void llg_fixed_image_stream_source_to(sv4_t* dst, const sv4_t* image, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int selector_kind, const sv4_t* first, const sv4_t* second);
-void llg_stream_to_fixed_to(sv4_t* dst, const sv4_t* value, uint32_t width, int is_signed);
-void llg_stream_cast_fixed_to(sv4_t* dst, const sv4_t* value, uint32_t width, int is_signed);
+void llg_fixed_stream_source_to(sv4_t* dst, const sv4_t* values, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int32_t selector_kind, const sv4_t* first, const sv4_t* second);
+void llg_stream_unpack_source_to(sv4_t* dst, const sv4_t* value, uint64_t bits, uint32_t slice, int32_t right_to_left);
+void llg_fixed_image_stream_source_to(sv4_t* dst, const sv4_t* image, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int32_t selector_kind, const sv4_t* first, const sv4_t* second);
+void llg_stream_to_fixed_to(sv4_t* dst, const sv4_t* value, uint32_t width, int32_t is_signed);
+void llg_stream_cast_fixed_to(sv4_t* dst, const sv4_t* value, uint32_t width, int32_t is_signed);
 void llg_queue_value_get_to(sv4_t* dst, const llg_queue_value_array_t* queue, const sv4_t* index);
 void llg_queue_value_get_nested_to(sv4_t* dst, const llg_queue_value_array_t* queue, const sv4_t* indices, size_t count);
-void llg_dyn_stream_to(sv4_t* dst, const llg_dyn_array_t* array, uint32_t slice, int right_to_left, int selector_kind, const sv4_t* first, const sv4_t* second);
+void llg_dyn_stream_to(sv4_t* dst, const llg_dyn_array_t* array, uint32_t slice, int32_t right_to_left, int32_t selector_kind, const sv4_t* first, const sv4_t* second);
 void llg_dyn_get_to(sv4_t* dst, const llg_dyn_array_t* array, const sv4_t* index);
-void llg_dyn_reduce_to(sv4_t* dst, const llg_dyn_array_t* array, int operation);
-void llg_dyn_reduce_with_to(sv4_t* dst, const llg_dyn_array_t* array, int operation, uint32_t result_width, int8_t result_signed, int result_two_state, llg_container_eval_fn eval, void* context);
-void llg_queue_stream_to(sv4_t* dst, const llg_queue_t* queue, uint32_t slice, int right_to_left, int selector_kind, const sv4_t* first, const sv4_t* second);
+void llg_dyn_reduce_to(sv4_t* dst, const llg_dyn_array_t* array, int32_t operation);
+void llg_dyn_reduce_with_to(sv4_t* dst, const llg_dyn_array_t* array, int32_t operation, uint32_t result_width, int8_t result_signed, int32_t result_two_state, llg_container_eval_fn eval, void* context);
+void llg_queue_stream_to(sv4_t* dst, const llg_queue_t* queue, uint32_t slice, int32_t right_to_left, int32_t selector_kind, const sv4_t* first, const sv4_t* second);
 void llg_queue_get_to(sv4_t* dst, const llg_queue_t* queue, const sv4_t* index);
 void llg_queue_pop_front_to(sv4_t* dst, llg_queue_t* queue);
 void llg_queue_pop_back_to(sv4_t* dst, llg_queue_t* queue);
 void llg_queue_front_to(sv4_t* dst, const llg_queue_t* queue);
 void llg_queue_back_to(sv4_t* dst, const llg_queue_t* queue);
-void llg_queue_reduce_to(sv4_t* dst, const llg_queue_t* queue, int operation);
-void llg_queue_reduce_with_to(sv4_t* dst, const llg_queue_t* queue, int operation, uint32_t result_width, int8_t result_signed, int result_two_state, llg_container_eval_fn eval, void* context);
+void llg_queue_reduce_to(sv4_t* dst, const llg_queue_t* queue, int32_t operation);
+void llg_queue_reduce_with_to(sv4_t* dst, const llg_queue_t* queue, int32_t operation, uint32_t result_width, int8_t result_signed, int32_t result_two_state, llg_container_eval_fn eval, void* context);
 void llg_queue_cell_read_to(sv4_t* dst, const void* cell);
 void llg_queue_ref_read_to(sv4_t* dst, const llg_queue_t* queue, uint64_t identity);
 void llg_assoc_value_get_integral_to(sv4_t* dst, const llg_assoc_value_t* array, const sv4_t* key);
 void llg_assoc_value_get_nested_integral_to(sv4_t* dst, const llg_assoc_value_t* array, const sv4_t* indices, size_t count);
 void llg_assoc_value_at_to(sv4_t* dst, const llg_assoc_t* array, size_t index);
-void llg_assoc_reduce_to(sv4_t* dst, const llg_assoc_t* array, int operation);
-void llg_assoc_reduce_with_to(sv4_t* dst, const llg_assoc_t* array, int operation, uint32_t result_width, int8_t result_signed, int result_two_state, llg_container_eval_fn eval, void* context);
+void llg_assoc_reduce_to(sv4_t* dst, const llg_assoc_t* array, int32_t operation);
+void llg_assoc_reduce_with_to(sv4_t* dst, const llg_assoc_t* array, int32_t operation, uint32_t result_width, int8_t result_signed, int32_t result_two_state, llg_container_eval_fn eval, void* context);
 void llg_assoc_get_integral_to(sv4_t* dst, const llg_assoc_t* array, const sv4_t* key);
 void llg_assoc_get_string_to(sv4_t* dst, const llg_assoc_t* array, const void* key, size_t key_length);
 
@@ -1501,11 +1501,11 @@ void llg_queue_value_copy_from_dyn(llg_queue_value_array_t* dst,
 void llg_method_gather_positions(llg_queue_t* dst, const llg_queue_t* positions,
                                  size_t count);
 void llg_dyn_gather(llg_queue_t* dst, const llg_dyn_array_t* src,
-                    const llg_queue_t* positions, int keys);
+                    const llg_queue_t* positions, int32_t keys);
 void llg_queue_gather(llg_queue_t* dst, const llg_queue_t* src,
-                      const llg_queue_t* positions, int keys);
+                      const llg_queue_t* positions, int32_t keys);
 void llg_assoc_gather(llg_queue_t* dst, const llg_assoc_t* src,
-                      const llg_queue_t* positions, int keys);
+                      const llg_queue_t* positions, int32_t keys);
 void llg_assoc_gather_string_keys(llg_queue_value_array_t* dst,
                                   const llg_assoc_t* src,
                                   const llg_queue_t* positions);
@@ -1537,18 +1537,18 @@ void llg_method_unique_value_positions(llg_queue_t* positions,
  * receiver leaves it unchanged with a warning. */
 void llg_dyn_sort_by_keys(llg_dyn_array_t* array, const llg_queue_t* packed_keys,
                           const llg_queue_value_array_t* value_keys,
-                          int descending);
+                          int32_t descending);
 void llg_queue_sort_by_keys(llg_queue_t* queue, const llg_queue_t* packed_keys,
                             const llg_queue_value_array_t* value_keys,
-                            int descending);
+                            int32_t descending);
 void llg_dyn_value_sort_by_keys(llg_dyn_value_array_t* array,
                                 const llg_queue_t* packed_keys,
                                 const llg_queue_value_array_t* value_keys,
-                                int descending);
+                                int32_t descending);
 void llg_queue_value_sort_by_keys(llg_queue_value_array_t* queue,
                                   const llg_queue_t* packed_keys,
                                   const llg_queue_value_array_t* value_keys,
-                                  int descending);
+                                  int32_t descending);
 
 /* Runtime-sized bit streams for streaming operators and bit-stream casts with
  * resizable operands or destinations (IEEE 1800-2009 6.24.3, 11.4.14). The
@@ -1575,10 +1575,10 @@ void llg_bitstream_append_values(llg_bitstream_t* stream, const sv4_t* values,
 void llg_bitstream_append_stream(llg_bitstream_t* stream,
                                  const llg_bitstream_t* source);
 void llg_bitstream_append_dyn(llg_bitstream_t* stream,
-                              const llg_dyn_array_t* array, int selector_kind,
+                              const llg_dyn_array_t* array, int32_t selector_kind,
                               sv4_t first, sv4_t second);
 void llg_bitstream_append_queue(llg_bitstream_t* stream,
-                                const llg_queue_t* queue, int selector_kind,
+                                const llg_queue_t* queue, int32_t selector_kind,
                                 sv4_t first, sv4_t second);
 void llg_bitstream_append_assoc(llg_bitstream_t* stream,
                                 const llg_assoc_t* array);
@@ -1586,11 +1586,11 @@ void llg_bitstream_append_assoc(llg_bitstream_t* stream,
  * declaration and index order (SV 11.4.14.1). */
 void llg_bitstream_append_dyn_values(llg_bitstream_t* stream,
                                      const llg_dyn_value_array_t* array,
-                                     int selector_kind, sv4_t first,
+                                     int32_t selector_kind, sv4_t first,
                                      sv4_t second);
 void llg_bitstream_append_queue_values(llg_bitstream_t* stream,
                                        const llg_queue_value_array_t* queue,
-                                       int selector_kind, sv4_t first,
+                                       int32_t selector_kind, sv4_t first,
                                        sv4_t second);
 void llg_bitstream_append_string(llg_bitstream_t* stream, llg_string_t value);
 void llg_bitstream_take(llg_bitstream_t* stream, uint64_t bits);
@@ -1601,10 +1601,10 @@ sv4_t llg_bitstream_bits(const llg_bitstream_t* stream, uint64_t position,
                          uint32_t width);
 void llg_bitstream_value_to(sv4_t* dst, const llg_bitstream_t* stream);
 void llg_bitstream_to_dyn(llg_dyn_array_t* dst, const llg_bitstream_t* stream,
-                          int exact);
+                          int32_t exact);
 void llg_bitstream_to_queue(llg_queue_t* dst, const llg_bitstream_t* stream,
-                            int exact);
-llg_string_t llg_bitstream_string(const llg_bitstream_t* stream, int exact);
+                            int32_t exact);
+llg_string_t llg_bitstream_string(const llg_bitstream_t* stream, int32_t exact);
 
 #ifdef __cplusplus
 }

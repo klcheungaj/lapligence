@@ -70,18 +70,18 @@ static struct {
     size_t live_count;
     uint64_t next_id;
     uint32_t object_cbs;      /* live cbCreateObj/cbReclaimObj/cbEndOfObject records */
-    int hooked;               /* the collector's reclaim hook is installed */
-    int reclaiming;
+    int32_t hooked;               /* the collector's reclaim hook is installed */
+    int32_t reclaiming;
 } g_dyn;
 
 static void dyn_reclaimed(void* const* objects, size_t count);
-static int dyn_is_event_array(const llg_vpi_shape_t* shape);
-static vpiHandle dyn_iterator(unsigned sub_kind, uint32_t count);
+static int32_t dyn_is_event_array(const llg_vpi_shape_t* shape);
+static vpiHandle dyn_iterator(uint32_t sub_kind, uint32_t count);
 static char* dyn_text(const char* format, ...);
 
 /* ── tables ─────────────────────────────────────────────────────────────── */
 
-int llg_vpi_model_dynamic(const llg_vpi_dynamic_tables_t* tables) {
+int32_t llg_vpi_model_dynamic(const llg_vpi_dynamic_tables_t* tables) {
     g_dyn.tables = tables;
     return 1;
 }
@@ -125,7 +125,7 @@ static const llg_vpi_class_field_t* dyn_field(uint32_t class_index, uint32_t fie
 /* Static property `k` of class `class_index` (with `inherited`, of its
  * base classes first and then its own, as an object lists them), as a
  * property number, or LLG_VPI_NONE. */
-static LLG_OUTLYING uint32_t dyn_class_static(uint32_t class_index, int inherited, uint32_t k) {
+static LLG_OUTLYING uint32_t dyn_class_static(uint32_t class_index, int32_t inherited, uint32_t k) {
     uint32_t chain[64];
     uint32_t depth = 0;
     for (uint32_t current = class_index; depth < 64u;) {
@@ -172,7 +172,7 @@ static uint32_t dyn_class_located_scope(uint32_t class_index) {
     return layout && layout->scope ? located_scope(row_object(layout->scope - 1u)) : LLG_VPI_NONE;
 }
 
-static int dyn_tables_valid(void) {
+static int32_t dyn_tables_valid(void) {
     const llg_vpi_dynamic_tables_t* t = g_dyn.tables;
     if (!t) return 1;
     if ((t->shape_count && !t->shapes) || (t->class_count && !t->classes) ||
@@ -215,7 +215,7 @@ static int dyn_tables_valid(void) {
         }
         /* Ranges on the shape: a fixed-size array only, at most as many
          * as a multi-index names; inline cells are values. */
-        int fixed = shape->shape == LLG_VPI_SHAPE_CONTAINER && shape->array_type == vpiStaticArray;
+        int32_t fixed = shape->shape == LLG_VPI_SHAPE_CONTAINER && shape->array_type == vpiStaticArray;
         if (shape->dim_count &&
             (!fixed || !shape->dims || shape->dim_count > DYN_MAX_DIMS || dyn_is_event_array(shape)))
             return 0;
@@ -236,7 +236,7 @@ static int dyn_tables_valid(void) {
         const llg_vpi_class_static_t* entry = &t->statics[i];
         const llg_vpi_shape_t* shape =
             entry->field.shape < t->shape_count ? &t->shapes[entry->field.shape] : NULL;
-        int fixed = shape && shape->shape == LLG_VPI_SHAPE_CONTAINER &&
+        int32_t fixed = shape && shape->shape == LLG_VPI_SHAPE_CONTAINER &&
                     shape->array_type == vpiStaticArray;
         if (!entry->field.name || !shape || !entry->storage || entry->field.mode ||
             entry->class_index >= t->class_count ||
@@ -263,7 +263,7 @@ static int dyn_tables_valid(void) {
             if (t->fields[layout->first_field + f].mode > layout->field_count) return 0;
         for (uint32_t k = 0; k < layout->item_count; ++k) {
             const llg_vpi_class_item_t* item = &t->items[items + k];
-            int method = item->type == vpiTask || item->type == vpiFunction;
+            int32_t method = item->type == vpiTask || item->type == vpiFunction;
             if (!item->name || item->typespec > typespecs || item->mode > layout->field_count ||
                 (item->code && (!g_vpi.code || item->code > g_vpi.code->node_count)))
                 return 0;
@@ -285,14 +285,14 @@ static int dyn_tables_valid(void) {
 
 /* A catalog row with LLG_VPI_OBJ_DYNAMIC: storage, a variable shape, and a
  * change marker only for handle variables. */
-static int dyn_row_valid(const llg_vpi_model_object_t* object) {
+static int32_t dyn_row_valid(const llg_vpi_model_object_t* object) {
     const llg_vpi_shape_t* shape = object->shape ? dyn_shape(object->shape - 1u) : NULL;
     if (!shape || !object->storage || shape->shape == LLG_VPI_SHAPE_OTHER ||
         object->packed || object->real)
         return 0;
     /* A fixed-size array row carries its declared ranges, at most as many
      * as a multi-index names. */
-    int fixed = shape->shape == LLG_VPI_SHAPE_CONTAINER && shape->array_type == vpiStaticArray;
+    int32_t fixed = shape->shape == LLG_VPI_SHAPE_CONTAINER && shape->array_type == vpiStaticArray;
     if (fixed ? (!object->dim_count || object->dim_count > DYN_MAX_DIMS || !object->dims)
               : object->dim_count != 0u)
         return 0;
@@ -311,7 +311,7 @@ static const llg_vpi_class_item_t* dyn_item(uint32_t class_index, uint32_t item)
     return &g_dyn.tables->items[layout->first_item + item];
 }
 
-static int dyn_item_is_method(const llg_vpi_class_item_t* item) {
+static int32_t dyn_item_is_method(const llg_vpi_class_item_t* item) {
     return item->type == vpiTask || item->type == vpiFunction;
 }
 
@@ -340,7 +340,7 @@ static void dyn_static_slots(uint32_t base) {
     }
 }
 
-static vpiHandle dyn_class_handle(uint32_t class_index, unsigned which) {
+static vpiHandle dyn_class_handle(uint32_t class_index, uint32_t which) {
     if (class_index >= dyn_class_count()) return NULL;
     return encode_handle(g_dyn.class_base + which * dyn_class_count() + class_index);
 }
@@ -388,7 +388,7 @@ static llg_vpi_live_t* live_find(const void* object) {
     }
 }
 
-static int live_grow(void) {
+static int32_t live_grow(void) {
     size_t capacity = g_dyn.live_capacity ? g_dyn.live_capacity * 2u : 64u;
     llg_vpi_live_t* table = (llg_vpi_live_t*)calloc(capacity, sizeof(*table));
     if (!table) return 0;
@@ -451,7 +451,7 @@ static void live_remove(llg_vpi_live_t* entry) {
 
 /* The layout of a live object, or 0 for an object the model already
  * reclaimed (kept allocated by LLG_GC_VERIFY). */
-static int dyn_object_class(void* object, uint32_t* class_index) {
+static int32_t dyn_object_class(void* object, uint32_t* class_index) {
     uint32_t id = 0;
     if (!object || !g_dyn.tables || !g_dyn.tables->object || !g_dyn.tables->object(object, &id) ||
         id >= dyn_class_count())
@@ -553,19 +553,19 @@ typedef struct {
 /* llg_vpi_runtime.c: the container automatic `index` of frame `serial`,
  * or 0 once that frame has ended; the same for a container or record
  * automatic; its vpiFullName prefix (the frame). */
-static int rts_auto_container(uint64_t serial, uint32_t index, dyn_place_t* place);
-static int rts_auto_value_place(uint64_t serial, uint32_t index, dyn_place_t* place);
+static int32_t rts_auto_container(uint64_t serial, uint32_t index, dyn_place_t* place);
+static int32_t rts_auto_value_place(uint64_t serial, uint32_t index, dyn_place_t* place);
 static const char* rts_auto_frame_name(uint64_t serial);
 /* llg_vpi_runtime.c: where the automatic `index` of frame `serial` is
  * declared (37.3.3), 0 once that frame has ended; the located scope of its
  * subprogram (decision A19-D86). */
-static int rts_auto_location(uint64_t serial, uint32_t index, uint32_t* line, const char** file);
+static int32_t rts_auto_location(uint64_t serial, uint32_t index, uint32_t* line, const char** file);
 static uint32_t rts_auto_scope(uint64_t serial);
 static vpiHandle rts_auto_handle_by_serial(uint64_t serial, uint32_t index);
 
 /* Whether `shape` is a named event array class property (37.25): a
  * fixed-size container of events with its declared range. */
-static int dyn_is_event_array(const llg_vpi_shape_t* shape) {
+static int32_t dyn_is_event_array(const llg_vpi_shape_t* shape) {
     return shape && shape->shape == LLG_VPI_SHAPE_CONTAINER && shape->type == vpiNamedEventArray;
 }
 
@@ -607,7 +607,7 @@ static LLG_OUTLYING void dyn_fixed_dim(const dyn_place_t* place, uint32_t d, int
 
 /* The declared range of a one-dimensional fixed-size array: its elements
  * are numbered from `left`. */
-static int dyn_fixed_range(const dyn_place_t* place, int64_t* left, int64_t* right) {
+static int32_t dyn_fixed_range(const dyn_place_t* place, int64_t* left, int64_t* right) {
     if (dyn_fixed_dim_count(place) != 1u) return 0;
     dyn_fixed_dim(place, 0, left, right);
     return 1;
@@ -643,8 +643,8 @@ static int64_t dyn_declared_index(const dyn_place_t* place, uint64_t offset) {
 
 /* The cell of the declared `indices` (one per range) of a fixed-size
  * array; 0, with an error unless `quiet`, when one is outside its range. */
-static LLG_OUTLYING int dyn_fixed_offset(const dyn_place_t* place, const int64_t* indices, uint64_t* offset,
-                            int quiet) {
+static LLG_OUTLYING int32_t dyn_fixed_offset(const dyn_place_t* place, const int64_t* indices, uint64_t* offset,
+                            int32_t quiet) {
     uint32_t count = dyn_fixed_dim_count(place);
     uint64_t cell = 0;
     for (uint32_t d = 0; d < count; ++d) {
@@ -662,7 +662,7 @@ static LLG_OUTLYING int dyn_fixed_offset(const dyn_place_t* place, const int64_t
     return 1;
 }
 
-static int dyn_is_dying(const void* object) {
+static int32_t dyn_is_dying(const void* object) {
     const llg_vpi_live_t* entry = object ? live_find(object) : NULL;
     return entry && entry->dying;
 }
@@ -672,7 +672,7 @@ static int dyn_is_dying(const void* object) {
 static void* dyn_field_storage(void* object, uint32_t field, const llg_vpi_shape_t* shape) {
     const llg_vpi_class_static_t* entry = dyn_static(field);
     if (entry) return entry->storage;
-    unsigned kind = 0;
+    uint32_t kind = 0;
     void* storage = g_dyn.tables->field(object, field, &kind);
     if (!storage || !shape) return NULL;
     switch (shape->shape) {
@@ -691,7 +691,7 @@ static void* dyn_field_storage(void* object, uint32_t field, const llg_vpi_shape
 }
 
 /* The place of a dynamic row or a property handle. */
-static int dyn_place(const llg_vpi_slot_t* slot, dyn_place_t* place) {
+static int32_t dyn_place(const llg_vpi_slot_t* slot, dyn_place_t* place) {
     memset(place, 0, sizeof(*place));
     place->row = LLG_VPI_NONE;
     if (slot->kind == SLOT_OBJECT) {
@@ -733,7 +733,7 @@ static int dyn_place(const llg_vpi_slot_t* slot, dyn_place_t* place) {
 
 /* The container place of an element slot or element iterator: the
  * catalog row, or property `field` of `owner`. */
-static int dyn_container_place(uint32_t row, void* owner, uint32_t field, int64_t serial,
+static int32_t dyn_container_place(uint32_t row, void* owner, uint32_t field, int64_t serial,
                                dyn_place_t* place) {
     memset(place, 0, sizeof(*place));
     place->row = LLG_VPI_NONE;
@@ -848,7 +848,7 @@ static LLG_OUTLYING vpiHandle make_dyn_path(const dyn_place_t* place, uint32_t f
         return NULL;
     if (count > 1u) {
         rest = (dyn_step_t*)calloc(count - 1u, sizeof(*rest));
-        int failed = rest == NULL;
+        int32_t failed = rest == NULL;
         for (uint32_t i = 1; !failed && i < count; ++i) {
             rest[i - 1u] = steps[i];
             rest[i - 1u].key = NULL;
@@ -896,8 +896,8 @@ static LLG_OUTLYING vpiHandle make_dyn_path(const dyn_place_t* place, uint32_t f
 }
 
 /* An element handle; `key`/`key_length` copy a string key. */
-static vpiHandle make_dyn_element(const dyn_place_t* place, uint32_t field, unsigned at,
-                                  uint64_t element, const unsigned char* key, size_t key_length) {
+static vpiHandle make_dyn_element(const dyn_place_t* place, uint32_t field, uint32_t at,
+                                  uint64_t element, const uint8_t* key, size_t key_length) {
     dyn_step_t step;
     step.at = (uint8_t)at;
     step.element = element;
@@ -911,11 +911,11 @@ static vpiHandle make_dyn_element(const dyn_place_t* place, uint32_t field, unsi
 
 /* The selection of assoc entry `position` (key order) of `place`; 0, with
  * an error for a key no handle can name, when there is none. */
-static LLG_OUTLYING int dyn_assoc_step(const dyn_place_t* place, size_t position, dyn_step_t* step) {
+static LLG_OUTLYING int32_t dyn_assoc_step(const dyn_place_t* place, size_t position, dyn_step_t* step) {
     const sv4_t* key = NULL;
-    const unsigned char* text = NULL;
+    const uint8_t* text = NULL;
     size_t length = 0;
-    int string_key;
+    int32_t string_key;
     if (place->shape->values) {
         const llg_assoc_value_t* array = (const llg_assoc_value_t*)place->storage;
         if (position >= array->size) return 0;
@@ -961,7 +961,7 @@ static vpiHandle dyn_assoc_entry(const dyn_place_t* place, uint32_t field, size_
 /* Locate the element `step` selects in `place`. Packed containers report
  * through `exists` only; value containers also return the element. */
 static LLG_OUTLYING llg_value_t* dyn_locate_step(const dyn_place_t* place, const dyn_step_t* step,
-                                    int* exists) {
+                                    int32_t* exists) {
     const llg_vpi_shape_t* shape = place->shape;
     *exists = 0;
     if (!place->storage || step->at == DYN_AT_MEMBER) return NULL;
@@ -1008,7 +1008,7 @@ static LLG_OUTLYING llg_value_t* dyn_locate_step(const dyn_place_t* place, const
 
 /* Locate the element an element slot's own selection names. */
 static llg_value_t* dyn_locate(const dyn_place_t* place, const llg_vpi_slot_t* slot,
-                               int* exists) {
+                               int32_t* exists) {
     dyn_step_t step = dyn_step_at(slot, 0);
     return dyn_locate_step(place, &step, exists);
 }
@@ -1017,7 +1017,7 @@ static llg_value_t* dyn_locate(const dyn_place_t* place, const llg_vpi_slot_t* s
  * container shape) as a place: the variable-form storage its value holds,
  * NULL for the empty null default (C2 nested sequences, nested
  * associative arrays). 0 when the value is not of that shape. */
-static LLG_OUTLYING int dyn_nested_level(llg_value_t* value, const llg_vpi_shape_t* shape, dyn_place_t* level) {
+static LLG_OUTLYING int32_t dyn_nested_level(llg_value_t* value, const llg_vpi_shape_t* shape, dyn_place_t* level) {
     memset(level, 0, sizeof(*level));
     level->row = LLG_VPI_NONE;
     level->shape = shape;
@@ -1045,7 +1045,7 @@ static LLG_OUTLYING int dyn_nested_level(llg_value_t* value, const llg_vpi_shape
     if (value->desc->kind != LLG_VALUE_CONTAINER) return 0;
     llg_nested_seq_t* seq = value->value.container;
     if (!seq) return 1;
-    int queue = shape->array_type == vpiQueueArray;
+    int32_t queue = shape->array_type == vpiQueueArray;
     switch (seq->kind) {
         case LLG_NESTED_SEQ_DYN:
             if (queue || shape->values) return 0;
@@ -1082,13 +1082,13 @@ typedef struct {
     const llg_vpi_shape_t* shape;
     llg_value_t* value;
     dyn_step_t step;
-    int packed;
+    int32_t packed;
 } dyn_target_t;
 
 /* Resolve the first `count` selections of `slot` (a SLOT_DYNELEM of
  * storage); 0 with an error when its array or any of them no longer
  * exists. */
-static LLG_OUTLYING int dyn_resolve_steps(const llg_vpi_slot_t* slot, uint32_t count, dyn_target_t* t) {
+static LLG_OUTLYING int32_t dyn_resolve_steps(const llg_vpi_slot_t* slot, uint32_t count, dyn_target_t* t) {
     memset(t, 0, sizeof(*t));
     if (!dyn_container_place(slot->object, slot->pointer, (uint32_t)slot->aux, slot->right, &t->top)) {
         vpi_error("LLG_VPI_HANDLE", "the array of this element no longer exists");
@@ -1118,7 +1118,7 @@ static LLG_OUTLYING int dyn_resolve_steps(const llg_vpi_slot_t* slot, uint32_t c
             vpi_error("LLG_VPI_MODEL", "a nested array disagrees with its layout");
             return 0;
         }
-        int exists;
+        int32_t exists;
         llg_value_t* element = dyn_locate_step(&t->level, &step, &exists);
         if (!exists) {
             vpi_error("LLG_VPI_INDEX", "this element no longer exists (decision A19-D23)");
@@ -1133,7 +1133,7 @@ static LLG_OUTLYING int dyn_resolve_steps(const llg_vpi_slot_t* slot, uint32_t c
 }
 
 /* Resolve every selection of `slot` (dyn_resolve_steps). */
-static LLG_OUTLYING int dyn_resolve(const llg_vpi_slot_t* slot, dyn_target_t* t) {
+static LLG_OUTLYING int32_t dyn_resolve(const llg_vpi_slot_t* slot, dyn_target_t* t) {
     return dyn_resolve_steps(slot, 1u + slot->span, t);
 }
 
@@ -1150,7 +1150,7 @@ static LLG_OUTLYING uint32_t dyn_tail_first(const llg_vpi_slot_t* slot) {
 /* The array selection `first` of `slot`'s path selects in (dyn_tail_first):
  * the array the path starts in, or an array member of a structure. 0 with
  * an error when it no longer exists. */
-static LLG_OUTLYING int dyn_tail_level(const llg_vpi_slot_t* slot, uint32_t first, dyn_place_t* level) {
+static LLG_OUTLYING int32_t dyn_tail_level(const llg_vpi_slot_t* slot, uint32_t first, dyn_place_t* level) {
     if (!first) {
         if (dyn_container_place(slot->object, slot->pointer, (uint32_t)slot->aux, slot->right, level))
             return 1;
@@ -1268,7 +1268,7 @@ static void dyn_read(const llg_vpi_shape_t* shape, void* storage, p_vpi_value ou
 }
 
 /* Convert `input` for a packed or real destination of `shape`. */
-static int dyn_packed_input(const llg_vpi_shape_t* shape, const s_vpi_value* input, sv4_t* out) {
+static int32_t dyn_packed_input(const llg_vpi_shape_t* shape, const s_vpi_value* input, sv4_t* out) {
     llg_vpi_datum_t datum;
     if (!value_from_vpi(input, shape->width, shape->is_signed, 0, &datum)) return 0;
     *out = datum.is_real ? sv4_from_real(datum.real, shape->width, shape->is_signed)
@@ -1278,7 +1278,7 @@ static int dyn_packed_input(const llg_vpi_shape_t* shape, const s_vpi_value* inp
     return 1;
 }
 
-static int dyn_real_input(const llg_vpi_shape_t* shape, const s_vpi_value* input, double* out) {
+static int32_t dyn_real_input(const llg_vpi_shape_t* shape, const s_vpi_value* input, double* out) {
     llg_vpi_datum_t datum;
     if (!value_from_vpi(input, 0, 0, 1, &datum)) return 0;
     double value = datum.is_real ? datum.real : sv4_to_real(datum.packed);
@@ -1291,12 +1291,12 @@ static int dyn_real_input(const llg_vpi_shape_t* shape, const s_vpi_value* input
 /* The string a put stores: vpiStringVal text, or a vpiIntVal converted as
  * an integral cast to string (6.16: 32 bits, 8 per character, every zero
  * byte removed; decision A19-D21). Owned by the caller. */
-static int dyn_string_input(const s_vpi_value* input, llg_string_t* out) {
+static int32_t dyn_string_input(const s_vpi_value* input, llg_string_t* out) {
     if (input && input->format == vpiIntVal) {
         uint32_t bits = (uint32_t)input->value.integer;
         char bytes[4];
         size_t count = 0;
-        for (int shift = 24; shift >= 0; shift -= 8) {
+        for (int32_t shift = 24; shift >= 0; shift -= 8) {
             char byte = (char)((bits >> shift) & 0xffu);
             if (byte) bytes[count++] = byte;
         }
@@ -1315,7 +1315,7 @@ static int dyn_string_input(const s_vpi_value* input, llg_string_t* out) {
 /* The pointer a chandle put stores: a vpiIntVal zero-extended, any other
  * format as a 64-bit unsigned value with x and z bits 0 (decision
  * A19-D21). */
-static int dyn_chandle_input(const s_vpi_value* input, void** out) {
+static int32_t dyn_chandle_input(const s_vpi_value* input, void** out) {
     if (input && input->format == vpiIntVal) {
         *out = (void*)(uintptr_t)(uint32_t)input->value.integer;
         return 1;
@@ -1362,7 +1362,7 @@ static void dyn_write(const llg_vpi_shape_t* shape, void* storage, sv4_t* depend
             void* value;
             if (!dyn_chandle_input(input, &value)) return;
             void** target = (void**)storage;
-            int changed = *target != value;
+            int32_t changed = *target != value;
             *target = value;
             if (changed && dependency) llg_dependency_changed(dependency);
             return;
@@ -1470,7 +1470,7 @@ static void dyn_element_put(const llg_vpi_slot_t* slot, const s_vpi_value* input
 }
 
 /* The object a class handle place refers to (NULL: null handle or none). */
-static void* dyn_class_target(const llg_vpi_slot_t* slot, int* ok) {
+static void* dyn_class_target(const llg_vpi_slot_t* slot, int32_t* ok) {
     *ok = 0;
     if (slot->kind == SLOT_DYNELEM) {
         if (slot->object == DYN_DEFN_ROW) return NULL;
@@ -1520,7 +1520,7 @@ static const llg_vpi_shape_t* dyn_element_shape(const llg_vpi_slot_t* slot) {
 
 /* Whether the last selection of element slot `slot` is a record member
  * (37.24: a member variable, not an array element). */
-static LLG_OUTLYING int dyn_is_member(const llg_vpi_slot_t* slot) {
+static LLG_OUTLYING int32_t dyn_is_member(const llg_vpi_slot_t* slot) {
     /* A member of a record automatic has its member as its first step. */
     return slot->kind == SLOT_DYNELEM && (slot->span || slot->lsb == DYN_AT_MEMBER) &&
            dyn_step_at(slot, slot->span).at == DYN_AT_MEMBER;
@@ -1534,7 +1534,7 @@ static LLG_OUTLYING uint32_t dyn_index_count(const llg_vpi_slot_t* slot) {
 
 /* Whether element slot `slot` is an element of a fixed-size array of
  * more than one dimension. */
-static LLG_OUTLYING int dyn_multi_dimensional(const llg_vpi_slot_t* slot) {
+static LLG_OUTLYING int32_t dyn_multi_dimensional(const llg_vpi_slot_t* slot) {
     dyn_place_t place;
     return slot->object != DYN_DEFN_ROW && !dyn_is_member(slot) &&
            dyn_tail_level(slot, dyn_tail_first(slot), &place) && dyn_fixed_dim_count(&place) > 1u;
@@ -1574,7 +1574,7 @@ static LLG_OUTLYING vpiHandle dyn_prefix(const llg_vpi_slot_t* slot, uint32_t co
 
 /* Whether element handle `slot` is an array member of a structure (37.24:
  * an array variable of the structure, not a further dimension). */
-static LLG_OUTLYING int dyn_is_member_array(const llg_vpi_slot_t* slot) {
+static LLG_OUTLYING int32_t dyn_is_member_array(const llg_vpi_slot_t* slot) {
     if (slot->kind != SLOT_DYNELEM || slot->object == DYN_DEFN_ROW || !dyn_is_member(slot)) return 0;
     const llg_vpi_shape_t* shape = dyn_element_shape(slot);
     return shape && shape->shape == LLG_VPI_SHAPE_CONTAINER && !dyn_is_event_array(shape);
@@ -1582,7 +1582,7 @@ static LLG_OUTLYING int dyn_is_member_array(const llg_vpi_slot_t* slot) {
 
 /* The array an array member handle names, resolved at this access; 0 with
  * an error when it no longer exists. */
-static LLG_OUTLYING int dyn_member_array(const llg_vpi_slot_t* slot, dyn_place_t* level) {
+static LLG_OUTLYING int32_t dyn_member_array(const llg_vpi_slot_t* slot, dyn_place_t* level) {
     return dyn_tail_level(slot, 1u + slot->span, level);
 }
 
@@ -1613,7 +1613,7 @@ static LLG_OUTLYING vpiHandle dyn_truncate(const llg_vpi_slot_t* slot) {
 /* ── classification ─────────────────────────────────────────────────────── */
 
 /* Whether llg_vpi.c hands `slot` to this file. */
-static int dyn_slot(const llg_vpi_slot_t* slot) {
+static int32_t dyn_slot(const llg_vpi_slot_t* slot) {
     switch (slot->kind) {
         case SLOT_CLASSOBJ:
         case SLOT_BUILTINOBJ:
@@ -1633,7 +1633,7 @@ static int dyn_slot(const llg_vpi_slot_t* slot) {
     }
 }
 
-static int dyn_type(const llg_vpi_slot_t* slot) {
+static int32_t dyn_type(const llg_vpi_slot_t* slot) {
     switch (slot->kind) {
         case SLOT_CLASSOBJ:
         case SLOT_BUILTINOBJ: return vpiClassObj;
@@ -1655,7 +1655,7 @@ static int dyn_type(const llg_vpi_slot_t* slot) {
     }
 }
 
-static const char* dyn_type_name(int type) {
+static const char* dyn_type_name(int32_t type) {
     switch (type) {
         case vpiClassObj: return "vpiClassObj";
         case vpiClassDefn: return "vpiClassDefn";
@@ -1673,7 +1673,7 @@ static const char* dyn_type_name(int type) {
 /* Navigation from an object being reclaimed is refused (38.36.1: using
  * its handle "as a reference for purposes of navigation ... is undefined");
  * only the object's own properties stay readable. */
-static int dyn_refuse_dying(const void* owner, const char* what) {
+static int32_t dyn_refuse_dying(const void* owner, const char* what) {
     if (!dyn_is_dying(owner)) return 0;
     vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_RECLAIMED",
                    "%s: the class object is being reclaimed (decision A19-D22)", what);
@@ -1684,7 +1684,7 @@ static int dyn_refuse_dying(const void* owner, const char* what) {
 
 /* The one-to-many relations from a class defn, typespec or object to the
  * items its class declares (37.27-37.29). */
-static int dyn_class_iteration(int type) {
+static int32_t dyn_class_iteration(int32_t type) {
     return type == vpiMethods || type == vpiParameter || type == vpiInternalScope ||
            type == vpiConstraint;
 }
@@ -1692,7 +1692,7 @@ static int dyn_class_iteration(int type) {
 /* A class defn, typespec or object, or a method: scopes whose items A.1.9
  * (class_item) and 13 (tf_item_declaration) give no sequence, property or
  * assertion declarations. */
-static int dyn_is_class_scope(const llg_vpi_slot_t* slot) {
+static int32_t dyn_is_class_scope(const llg_vpi_slot_t* slot) {
     switch (slot->kind) {
         case SLOT_CLASSDEFN:
         case SLOT_CLASSTS:
@@ -1722,7 +1722,7 @@ static uint32_t dyn_class_scope(uint32_t class_index) {
 
 /* vpiInstance or vpiModule (37.10 details 2 and 3) of an object declared
  * in class `class_index`: NULL outside instances and modules. */
-static vpiHandle dyn_class_container(uint32_t class_index, int type) {
+static vpiHandle dyn_class_container(uint32_t class_index, int32_t type) {
     uint32_t scope = dyn_class_scope(class_index);
     if (scope == LLG_VPI_NONE) return NULL;
     uint32_t row = type == vpiInstance ? enclosing_instance(scope) : enclosing_module(scope);
@@ -1731,7 +1731,7 @@ static vpiHandle dyn_class_container(uint32_t class_index, int type) {
 
 /* Whether item `item` belongs to the one-to-many relation `relation`;
  * `owner` + 1 names the method whose arguments vpiIODecl selects. */
-static int dyn_item_selected(const llg_vpi_class_item_t* item, int relation, uint64_t owner) {
+static int32_t dyn_item_selected(const llg_vpi_class_item_t* item, int32_t relation, uint64_t owner) {
     switch (relation) {
         /* 37.27: the methods; they are the internal scopes of the class
          * (37.12, decision A19-D36). */
@@ -1744,7 +1744,7 @@ static int dyn_item_selected(const llg_vpi_class_item_t* item, int relation, uin
     }
 }
 
-static vpiHandle dyn_iterate_items(uint32_t class_index, int relation, uint64_t owner,
+static vpiHandle dyn_iterate_items(uint32_t class_index, int32_t relation, uint64_t owner,
                                    void* object) {
     const llg_vpi_class_t* layout = dyn_class(class_index);
     uint32_t count = 0;
@@ -1770,7 +1770,7 @@ static vpiHandle dyn_iterate_items(uint32_t class_index, int relation, uint64_t 
 
 /* Whether class `class_index` is listed by vpiClassDefn from catalog
  * scope `scope` (LLG_VPI_NONE: a NULL reference, every class). */
-static int dyn_class_in_scope(uint32_t class_index, uint32_t scope) {
+static int32_t dyn_class_in_scope(uint32_t class_index, uint32_t scope) {
     const llg_vpi_class_t* layout = dyn_class(class_index);
     if (layout->flags & LLG_VPI_CLASS_GENERIC) return 0;
     return scope == LLG_VPI_NONE || layout->scope == scope + 1u;
@@ -1807,7 +1807,7 @@ static PLI_INT64 dyn_constraint_enabled(const llg_vpi_slot_t* slot,
     if (item->flags & LLG_VPI_ITEM_STATIC) return 1;
     if (!slot->pointer) return vpiUndefined;
     if (!item->mode) return 1;
-    unsigned kind = 0;
+    uint32_t kind = 0;
     const sv4_t* off = (const sv4_t*)g_dyn.tables->field(slot->pointer, item->mode - 1u, &kind);
     if (!off || kind != LLG_VPI_FIELD_PACKED) {
         vpi_error("LLG_VPI_MODEL", "the constraint_mode state disagrees with the class layout");
@@ -1816,7 +1816,7 @@ static PLI_INT64 dyn_constraint_enabled(const llg_vpi_slot_t* slot,
     return sv4_to_u64(*off) == 0;
 }
 
-static PLI_INT64 dyn_item_get(int property, const llg_vpi_slot_t* slot, int* ok) {
+static PLI_INT64 dyn_item_get(int32_t property, const llg_vpi_slot_t* slot, int32_t* ok) {
     const llg_vpi_class_item_t* item = class_item_of(slot);
     *ok = 1;
     if (property == vpiLineNo) return item->line;
@@ -1887,7 +1887,7 @@ static PLI_INT64 dyn_item_get(int property, const llg_vpi_slot_t* slot, int* ok)
     return 0;
 }
 
-static const char* dyn_item_get_str(int property, const llg_vpi_slot_t* slot) {
+static const char* dyn_item_get_str(int32_t property, const llg_vpi_slot_t* slot) {
     const llg_vpi_class_item_t* item = class_item_of(slot);
     if (property == vpiName) return item->name;
     if (property == vpiFile && item->file) return item->file;
@@ -1897,7 +1897,7 @@ static const char* dyn_item_get_str(int property, const llg_vpi_slot_t* slot) {
     return NULL;
 }
 
-static vpiHandle dyn_item_handle(int type, const llg_vpi_slot_t* slot) {
+static vpiHandle dyn_item_handle(int32_t type, const llg_vpi_slot_t* slot) {
     const llg_vpi_class_item_t* item = class_item_of(slot);
     uint32_t class_index = (uint32_t)slot->right;
     if (dyn_item_is_method(item)) {
@@ -1958,7 +1958,7 @@ static vpiHandle dyn_item_handle(int type, const llg_vpi_slot_t* slot) {
     return NULL;
 }
 
-static vpiHandle dyn_item_iterate(int type, const llg_vpi_slot_t* slot) {
+static vpiHandle dyn_item_iterate(int32_t type, const llg_vpi_slot_t* slot) {
     const llg_vpi_class_item_t* item = class_item_of(slot);
     if (dyn_item_is_method(item)) {
         if (type == vpiIODecl)
@@ -2013,7 +2013,7 @@ static vpiHandle dyn_constant(int64_t value, uint32_t scope) {
  * in the source: a property on its declaration's line (in a class
  * definition or an object), an element on its array's (decision A19-D47),
  * an extends object on its class declaration's (decision A19-D86). */
-static int dyn_location(const llg_vpi_slot_t* slot, uint32_t* line, const char** file) {
+static int32_t dyn_location(const llg_vpi_slot_t* slot, uint32_t* line, const char** file) {
     const llg_vpi_class_field_t* field = NULL;
     switch (slot->kind) {
         case SLOT_EXTENDS: {
@@ -2072,7 +2072,7 @@ static uint32_t dyn_constant_scope(const llg_vpi_slot_t* slot) {
 }
 
 /* vpi_handle(type, slot); `*handled` is 0 when llg_vpi.c should answer. */
-static vpiHandle dyn_handle(int type, llg_vpi_slot_t* slot, int* handled) {
+static vpiHandle dyn_handle(int32_t type, llg_vpi_slot_t* slot, int32_t* handled) {
     *handled = 1;
     switch (slot->kind) {
         case SLOT_CLASSDEFN: {
@@ -2216,7 +2216,7 @@ static vpiHandle dyn_handle(int type, llg_vpi_slot_t* slot, int* handled) {
                 return dyn_constant(type == vpiLeftRange ? 0 : (int64_t)size - 1, scope);
             }
             if (type == vpiClassObj) {
-                int ok;
+                int32_t ok;
                 void* object = dyn_class_target(slot, &ok);
                 if (!ok) break;
                 return object ? make_shape_object(dyn_element_shape(slot), object) : NULL;
@@ -2326,7 +2326,7 @@ static vpiHandle dyn_handle(int type, llg_vpi_slot_t* slot, int* handled) {
 /* Whether property `field` is listed by an iteration for objects of
  * `type` (0: vpiVariables, every variable). A property without a variable
  * form (a virtual interface) is not a variable. */
-static int dyn_field_listed(uint32_t class_index, uint32_t field, int type) {
+static int32_t dyn_field_listed(uint32_t class_index, uint32_t field, int32_t type) {
     const llg_vpi_class_field_t* entry = dyn_field(class_index, field);
     if (!entry || !entry->name) return 0;
     const llg_vpi_shape_t* shape = dyn_shape(entry->shape);
@@ -2343,7 +2343,7 @@ static int dyn_field_listed(uint32_t class_index, uint32_t field, int type) {
 /* The properties an iteration lists: the instance properties from field
  * `first` on, then the static properties of the class (with `inherited`,
  * those of its base classes first, as an object lists them). */
-static uint32_t dyn_visible_fields(uint32_t class_index, uint32_t first, int type, int inherited) {
+static uint32_t dyn_visible_fields(uint32_t class_index, uint32_t first, int32_t type, int32_t inherited) {
     const llg_vpi_class_t* layout = dyn_class(class_index);
     uint32_t count = 0;
     for (uint32_t i = first; layout && i < layout->field_count; ++i)
@@ -2356,7 +2356,7 @@ static uint32_t dyn_visible_fields(uint32_t class_index, uint32_t first, int typ
     return count;
 }
 
-static vpiHandle dyn_iterator(unsigned sub_kind, uint32_t count) {
+static vpiHandle dyn_iterator(uint32_t sub_kind, uint32_t count) {
     if (count == 0) return NULL;
     uint32_t index = alloc_slot(SLOT_ITERATOR);
     if (index == LLG_VPI_NONE) return NULL;
@@ -2368,10 +2368,10 @@ static vpiHandle dyn_iterator(unsigned sub_kind, uint32_t count) {
 }
 
 static vpiHandle dyn_iterate_fields(void* object, uint32_t class_index, uint32_t first,
-                                    int type) {
+                                    int32_t type) {
     /* An object lists the static properties of its whole class chain, a
      * definition those it declares (37.27 detail 4, 37.29 detail 6). */
-    int inherited = first == 0;
+    int32_t inherited = first == 0;
     vpiHandle iterator =
         dyn_iterator(DYN_ITER_FIELDS, dyn_visible_fields(class_index, first, type, inherited));
     llg_vpi_slot_t* slot = iterator ? decode_handle(iterator, NULL) : NULL;
@@ -2419,7 +2419,7 @@ static vpiHandle dyn_event_array_ranges(const llg_vpi_shape_t* shape, uint32_t c
 
 /* 37.17 details 4 and 7: vpiReg and vpiVarSelect iterate the elements of
  * an array variable, whatever their type (decision A19-D83). */
-static int dyn_element_type_matches(const llg_vpi_shape_t* element, int type) {
+static int32_t dyn_element_type_matches(const llg_vpi_shape_t* element, int32_t type) {
     return type == vpiReg || type == vpiVarSelect || type == vpiMemoryWord || type == element->type;
 }
 
@@ -2437,7 +2437,7 @@ typedef struct {
     uintptr_t* items;
     uint32_t count;
     uint32_t capacity;
-    int failed;
+    int32_t failed;
 } dyn_list_t;
 
 static LLG_OUTLYING void dyn_list_push(dyn_list_t* list, vpiHandle handle) {
@@ -2467,7 +2467,7 @@ static LLG_OUTLYING void dyn_list_push(dyn_list_t* list, vpiHandle handle) {
 
 /* The iterator of a finished list, or NULL (an empty list, or a failure
  * whose handles are released). */
-static LLG_OUTLYING vpiHandle dyn_list_iterator(int type, dyn_list_t* list) {
+static LLG_OUTLYING vpiHandle dyn_list_iterator(int32_t type, dyn_list_t* list) {
     if (list->failed || !list->count) {
         for (uint32_t i = 0; i < list->count; ++i) vpi_release_handle((vpiHandle)list->items[i]);
         free(list->items);
@@ -2496,7 +2496,7 @@ static LLG_OUTLYING vpiHandle dyn_shape_ranges(const llg_vpi_shape_t* shape,
  * elements, each named by its path. The ranges take the source location of
  * the declaration holding the structure (37.3.3), which owns no separate
  * range object (decision A19-D86). */
-static LLG_OUTLYING vpiHandle dyn_iterate_member_array(const llg_vpi_slot_t* slot, int type) {
+static LLG_OUTLYING vpiHandle dyn_iterate_member_array(const llg_vpi_slot_t* slot, int32_t type) {
     const llg_vpi_shape_t* shape = dyn_element_shape(slot);
     if (type == vpiRange) {
         if (!shape->dim_count) {
@@ -2585,7 +2585,7 @@ static LLG_OUTLYING void dyn_collect_leaves(dyn_list_t* list, const dyn_place_t*
             dyn_list_push(list, make_dyn_path(top, field, steps, depth + 1u));
             continue;
         }
-        int exists;
+        int32_t exists;
         llg_value_t* value = dyn_locate_step(level, step, &exists);
         dyn_place_t inner;
         if (!exists || !dyn_nested_level(value, element, &inner)) {
@@ -2601,7 +2601,7 @@ static LLG_OUTLYING void dyn_collect_leaves(dyn_list_t* list, const dyn_place_t*
  * innermost elements, each named by all its indices (`qq[0][1]`), in
  * index and key order; an element whose nested container is empty adds
  * none. Listed at once: a nested walk has no position to resume from. */
-static LLG_OUTLYING vpiHandle dyn_iterate_leaves(const dyn_place_t* place, uint32_t field, int type) {
+static LLG_OUTLYING vpiHandle dyn_iterate_leaves(const dyn_place_t* place, uint32_t field, int32_t type) {
     dyn_list_t list = {0};
     dyn_step_t steps[64];
     dyn_collect_leaves(&list, place, field, place, steps, 0);
@@ -2624,7 +2624,7 @@ static LLG_OUTLYING size_t dyn_leaf_count(const dyn_place_t* level, uint32_t dep
             step.at = DYN_AT_INDEX;
             step.element = position;
         }
-        int exists;
+        int32_t exists;
         llg_value_t* value = dyn_locate_step(level, &step, &exists);
         dyn_place_t inner;
         if (exists && dyn_nested_level(value, element, &inner)) total += dyn_leaf_count(&inner, depth + 1u);
@@ -2682,7 +2682,7 @@ static LLG_OUTLYING vpiHandle dyn_iterate_indices(const llg_vpi_slot_t* slot) {
             for (uint32_t d = 0; d < count; ++d) dyn_list_push(&list, dyn_constant(indices[d], scope));
         }
         shape = dyn_shape(level.shape->element);
-        int exists;
+        int32_t exists;
         value = dyn_locate_step(&level, &step, &exists);
     }
     /* 37.17 detail 5: the element's own index first, then outward, as a
@@ -2695,7 +2695,7 @@ static LLG_OUTLYING vpiHandle dyn_iterate_indices(const llg_vpi_slot_t* slot) {
     return dyn_list_iterator(vpiIndex, &list);
 }
 
-static vpiHandle dyn_iterate(int type, llg_vpi_slot_t* slot, int* handled) {
+static vpiHandle dyn_iterate(int32_t type, llg_vpi_slot_t* slot, int32_t* handled) {
     *handled = 1;
     /* 37.12 detail 4: a class declares no import (A.1.9 class_item), so its
      * definition, typespec and objects import nothing. */
@@ -2761,7 +2761,7 @@ static vpiHandle dyn_iterate(int type, llg_vpi_slot_t* slot, int* handled) {
                  * element, leftmost first. */
                 if (dyn_index_count(slot) > 1u || dyn_multi_dimensional(slot))
                     return dyn_iterate_indices(slot);
-                int index_handled;
+                int32_t index_handled;
                 vpiHandle index = dyn_handle(vpiIndex, slot, &index_handled);
                 if (!index) return NULL;
                 uintptr_t* items = (uintptr_t*)calloc(1u, sizeof(*items));
@@ -2895,7 +2895,7 @@ static vpiHandle dyn_scan(llg_vpi_slot_t* slot, uint32_t position) {
             }
             /* Then the static properties (dyn_visible_fields). */
             while (layout) {
-                uint32_t field = dyn_class_static(class_index, (int)slot->lsb,
+                uint32_t field = dyn_class_static(class_index, (int32_t)slot->lsb,
                                                   (uint32_t)(slot->left - (int64_t)layout->field_count));
                 if (field == LLG_VPI_NONE) break;
                 ++slot->left;
@@ -2950,7 +2950,7 @@ static vpiHandle dyn_scan(llg_vpi_slot_t* slot, uint32_t position) {
 
 /* ── properties ─────────────────────────────────────────────────────────── */
 
-static PLI_INT64 dyn_size(const dyn_place_t* place, int* ok) {
+static PLI_INT64 dyn_size(const dyn_place_t* place, int32_t* ok) {
     *ok = 1;
     const llg_vpi_shape_t* shape = place->shape;
     if (shape->shape == LLG_VPI_SHAPE_STRING && place->storage)
@@ -2974,14 +2974,14 @@ static PLI_INT64 dyn_size(const dyn_place_t* place, int* ok) {
  * not a class member is public and not random; a property of a class
  * definition belongs to no object, so it is not active for randomization
  * (decision A19-D36). */
-static PLI_INT64 dyn_random_property(int property, const llg_vpi_slot_t* slot) {
+static PLI_INT64 dyn_random_property(int32_t property, const llg_vpi_slot_t* slot) {
     const llg_vpi_class_field_t* field =
         slot->kind == SLOT_PROPERTY ? dyn_field((uint32_t)slot->right, (uint32_t)slot->aux) : NULL;
     if (property == vpiRandType) return field ? field->rand : vpiNotRand;
     if (property == vpiVisibility) return field ? field->visibility : vpiPublicVis;
     if (!field || field->rand == vpiNotRand || !slot->pointer) return 0;
     if (!field->mode) return 1;
-    unsigned kind = 0;
+    uint32_t kind = 0;
     const sv4_t* off = (const sv4_t*)g_dyn.tables->field(slot->pointer, field->mode - 1u, &kind);
     if (!off || kind != LLG_VPI_FIELD_PACKED) {
         vpi_error("LLG_VPI_MODEL", "the rand_mode state disagrees with the class layout");
@@ -2995,14 +2995,14 @@ static PLI_INT64 dyn_random_property(int property, const llg_vpi_slot_t* slot) {
 /* Whether `slot` is an `event` class property (37.25). Its place's storage
  * is the handle slot naming the synchronization object (NULL for a property
  * reached from a class definition). */
-static int dyn_event_property(const llg_vpi_slot_t* slot, dyn_place_t* place) {
+static int32_t dyn_event_property(const llg_vpi_slot_t* slot, dyn_place_t* place) {
     return slot->kind == SLOT_PROPERTY && dyn_place(slot, place) &&
            place->shape->shape == LLG_VPI_SHAPE_EVENT;
 }
 
 /* The event handle of an event property of a live object; 0 when the
  * property has no object (a class definition's) or the object is dying. */
-static int dyn_property_event(const llg_vpi_slot_t* slot, llg_event_t* event, const char* what) {
+static int32_t dyn_property_event(const llg_vpi_slot_t* slot, llg_event_t* event, const char* what) {
     dyn_place_t place;
     if (!dyn_event_property(slot, &place)) return 0;
     if (!place.storage) {
@@ -3016,7 +3016,7 @@ static int dyn_property_event(const llg_vpi_slot_t* slot, llg_event_t* event, co
 }
 
 /* 37.25 properties of an event property; others are wrong-object queries. */
-static PLI_INT64 dyn_event_get(int property, const dyn_place_t* place) {
+static PLI_INT64 dyn_event_get(int32_t property, const dyn_place_t* place) {
     switch (property) {
         case vpiArray:
         case vpiArrayMember:
@@ -3034,7 +3034,7 @@ static PLI_INT64 dyn_event_get(int property, const dyn_place_t* place) {
 
 /* 37.25 properties of a named event array property, as a module-level
  * array answers them (decision A19-D69); others are wrong-object queries. */
-static PLI_INT64 dyn_event_array_get(int property, const dyn_place_t* place) {
+static PLI_INT64 dyn_event_array_get(int32_t property, const dyn_place_t* place) {
     const llg_vpi_shape_t* shape = place->shape;
     switch (property) {
         case vpiSize:
@@ -3053,14 +3053,14 @@ static PLI_INT64 dyn_event_array_get(int property, const dyn_place_t* place) {
 
 /* Whether element handle `slot` is an event of a named event array
  * property. */
-static int dyn_event_element(const llg_vpi_slot_t* slot) {
+static int32_t dyn_event_element(const llg_vpi_slot_t* slot) {
     if (slot->kind != SLOT_DYNELEM) return 0;
     const llg_vpi_shape_t* shape = dyn_element_shape(slot);
     return shape && shape->shape == LLG_VPI_SHAPE_EVENT;
 }
 
 /* The event an element of a named event array property names. */
-static int dyn_element_event(const llg_vpi_slot_t* slot, llg_event_t* event, const char* what) {
+static int32_t dyn_element_event(const llg_vpi_slot_t* slot, llg_event_t* event, const char* what) {
     if (slot->object == DYN_DEFN_ROW) {
         vpi_error("LLG_VPI_VALUE",
                   "an event of a property of a class definition names no event (37.27 detail 2)");
@@ -3072,7 +3072,7 @@ static int dyn_element_event(const llg_vpi_slot_t* slot, llg_event_t* event, con
         return 0;
     }
     if (dyn_refuse_dying(place.owner, what)) return 0;
-    int exists;
+    int32_t exists;
     llg_value_t* element = dyn_locate(&place, slot, &exists);
     if (!exists || !element || !element->desc || element->desc->kind != LLG_VALUE_EVENT) {
         vpi_error("LLG_VPI_INDEX", "this element no longer exists (decision A19-D23)");
@@ -3082,7 +3082,7 @@ static int dyn_element_event(const llg_vpi_slot_t* slot, llg_event_t* event, con
     return 1;
 }
 
-static PLI_INT64 dyn_get(int property, llg_vpi_slot_t* slot, int* handled) {
+static PLI_INT64 dyn_get(int32_t property, llg_vpi_slot_t* slot, int32_t* handled) {
     *handled = 1;
     if (property == vpiType) return dyn_type(slot);
     if (property == vpiLineNo && (slot->kind == SLOT_PROPERTY || slot->kind == SLOT_DYNELEM ||
@@ -3113,7 +3113,7 @@ static PLI_INT64 dyn_get(int property, llg_vpi_slot_t* slot, int* handled) {
                 return dyn_class((uint32_t)slot->aux)->line;
             break;
         case SLOT_CLASSITEM: {
-            int ok;
+            int32_t ok;
             if (slot->pointer && property == vpiIsConstraintEnabled &&
                 dyn_refuse_dying(slot->pointer, "vpi_get"))
                 return vpiUndefined;
@@ -3182,7 +3182,7 @@ static PLI_INT64 dyn_get(int property, llg_vpi_slot_t* slot, int* handled) {
                 }
             }
             if (property == vpiObjId && shape->shape == LLG_VPI_SHAPE_CLASS) {
-                int ok;
+                int32_t ok;
                 void* object = dyn_class_target(slot, &ok);
                 if (!ok) break;
                 llg_vpi_live_t* entry = object ? live_get(object) : NULL;
@@ -3202,7 +3202,7 @@ static PLI_INT64 dyn_get(int property, llg_vpi_slot_t* slot, int* handled) {
             }
             switch (property) {
                 case vpiSize: {
-                    int ok;
+                    int32_t ok;
                     PLI_INT64 size = dyn_size(&place, &ok);
                     if (ok) return size;
                     break;
@@ -3270,7 +3270,7 @@ static PLI_INT64 dyn_get(int property, llg_vpi_slot_t* slot, int* handled) {
 static char* dyn_text(const char* format, ...) {
     va_list arguments;
     va_start(arguments, format);
-    int length = vsnprintf(g_vpi.str_buffer, sizeof(g_vpi.str_buffer), format, arguments);
+    int32_t length = vsnprintf(g_vpi.str_buffer, sizeof(g_vpi.str_buffer), format, arguments);
     va_end(arguments);
     if (length < 0 || (size_t)length >= sizeof(g_vpi.str_buffer)) {
         vpi_error("LLG_VPI_LIMIT", "the VPI name is too long");
@@ -3284,7 +3284,7 @@ typedef struct {
     char* data;
     size_t length;
     size_t capacity;
-    int failed;
+    int32_t failed;
 } dyn_name_t;
 
 static LLG_OUTLYING void dyn_name_append(dyn_name_t* name, const char* text, size_t length) {
@@ -3306,9 +3306,9 @@ static LLG_OUTLYING void dyn_name_append(dyn_name_t* name, const char* text, siz
     name->data[name->length] = '\0';
 }
 
-static LLG_OUTLYING void dyn_name_index(dyn_name_t* name, int64_t index, int is_signed) {
+static LLG_OUTLYING void dyn_name_index(dyn_name_t* name, int64_t index, int32_t is_signed) {
     char text[32];
-    int length = is_signed ? snprintf(text, sizeof(text), "[%lld]", (long long)index)
+    int32_t length = is_signed ? snprintf(text, sizeof(text), "[%lld]", (long long)index)
                            : snprintf(text, sizeof(text), "[%llu]", (unsigned long long)index);
     dyn_name_append(name, text, (size_t)length);
 }
@@ -3349,7 +3349,7 @@ static LLG_OUTLYING const char* dyn_auto_leaf(const char* name) {
 /* `base` followed by the selections of `slot`'s path from `first` on
  * (`.member` for a member), resolving each nested container (its keys'
  * type) from the array `top`. */
-static LLG_OUTLYING int dyn_name_path(dyn_name_t* name, const llg_vpi_slot_t* slot, const dyn_place_t* top,
+static LLG_OUTLYING int32_t dyn_name_path(dyn_name_t* name, const llg_vpi_slot_t* slot, const dyn_place_t* top,
                          uint32_t first, const char* base) {
     dyn_name_append(name, base, strlen(base));
     dyn_place_t level = *top;
@@ -3382,7 +3382,7 @@ static LLG_OUTLYING int dyn_name_path(dyn_name_t* name, const llg_vpi_slot_t* sl
         }
         if (i >= first) dyn_name_step(name, &level, &step);
         shape = dyn_shape(level.shape->element);
-        int exists = 1;
+        int32_t exists = 1;
         value = i + 1u < count ? dyn_locate_step(&level, &step, &exists) : NULL;
         if (!exists) {
             vpi_error("LLG_VPI_INDEX", "this element no longer exists (decision A19-D23)");
@@ -3414,7 +3414,7 @@ static LLG_OUTLYING char* dyn_static_full_name(uint32_t field) {
  * member is named by its member name, its full name continues the
  * element's (`tb.rq[0].a`). An element of a class property has no full
  * name (37.17 detail 25). */
-static char* dyn_element_name(const llg_vpi_slot_t* slot, int full) {
+static char* dyn_element_name(const llg_vpi_slot_t* slot, int32_t full) {
     if (slot->object == DYN_DEFN_ROW) {
         const llg_vpi_class_field_t* field = dyn_field((uint32_t)slot->right, (uint32_t)slot->aux);
         const llg_vpi_shape_t* array = field && field->name ? dyn_shape(field->shape) : NULL;
@@ -3450,7 +3450,7 @@ static char* dyn_element_name(const llg_vpi_slot_t* slot, int full) {
         const llg_vpi_member_t* member = dyn_member(dyn_path_shape(slot, place.shape, first - 1u),
                                                     dyn_step_at(slot, first - 1u).element);
         if (!member) return NULL;
-        int named = dyn_name_path(&name, slot, &place, first, member->name);
+        int32_t named = dyn_name_path(&name, slot, &place, first, member->name);
         char* text = named ? dyn_text("%s", name.data) : NULL;
         free(name.data);
         return text;
@@ -3473,7 +3473,7 @@ static char* dyn_element_name(const llg_vpi_slot_t* slot, int full) {
         }
         snprintf(base, length, "%s.%s", frame, place.name);
     }
-    int ok = dyn_name_path(&name, slot, &place, 0,
+    int32_t ok = dyn_name_path(&name, slot, &place, 0,
                            !full ? (place.row == DYN_AUTO_ROW ? dyn_auto_leaf(place.name) : place.name)
                                  : base ? base : g_vpi.objects[place.row].full_name);
     free(base);
@@ -3483,7 +3483,7 @@ static char* dyn_element_name(const llg_vpi_slot_t* slot, int full) {
 }
 
 /* vpi_get_str(property, slot); `*handled` 0 when llg_vpi.c should answer. */
-static const char* dyn_get_str(int property, llg_vpi_slot_t* slot, int* handled) {
+static const char* dyn_get_str(int32_t property, llg_vpi_slot_t* slot, int32_t* handled) {
     *handled = 1;
     if (property == vpiType) {
         const char* name = dyn_type_name(dyn_type(slot));
@@ -3599,7 +3599,7 @@ static void dyn_get_value(llg_vpi_slot_t* slot, p_vpi_value output) {
 }
 
 /* vpi_put_value of a dynamic object: vpiNoDelay writes only. */
-static void dyn_put_value(llg_vpi_slot_t* slot, p_vpi_value input, int mode) {
+static void dyn_put_value(llg_vpi_slot_t* slot, p_vpi_value input, int32_t mode) {
     {
         dyn_place_t place;
         if (dyn_event_property(slot, &place)) {
@@ -3663,12 +3663,12 @@ static void dyn_put_value(llg_vpi_slot_t* slot, p_vpi_value input, int mode) {
 
 /* vpi_compare_objects of two dynamic handles: 1 same object, 0 different,
  * -1 when either is not a dynamic handle. */
-static int dyn_compare(const llg_vpi_slot_t* a, uint32_t a_index, const llg_vpi_slot_t* b,
+static int32_t dyn_compare(const llg_vpi_slot_t* a, uint32_t a_index, const llg_vpi_slot_t* b,
                        uint32_t b_index) {
     (void)a_index;
     (void)b_index;
-    int a_dynamic = a->kind == SLOT_CLASSOBJ || a->kind == SLOT_PROPERTY || a->kind == SLOT_DYNELEM;
-    int b_dynamic = b->kind == SLOT_CLASSOBJ || b->kind == SLOT_PROPERTY || b->kind == SLOT_DYNELEM;
+    int32_t a_dynamic = a->kind == SLOT_CLASSOBJ || a->kind == SLOT_PROPERTY || a->kind == SLOT_DYNELEM;
+    int32_t b_dynamic = b->kind == SLOT_CLASSOBJ || b->kind == SLOT_PROPERTY || b->kind == SLOT_DYNELEM;
     if (!a_dynamic && !b_dynamic) return -1;
     if (a->kind != b->kind) return 0;
     switch (a->kind) {
@@ -3758,7 +3758,7 @@ static vpiHandle dyn_property_by_name(void* object, const char* name, size_t len
  * dynamic array or queue index, the declared index of a one-dimensional
  * fixed-size array, an existing integral key of an associative array); 0,
  * with an error unless `quiet`, when there is none. */
-static LLG_OUTLYING int dyn_select_step(const dyn_place_t* place, int64_t index, dyn_step_t* step, int quiet) {
+static LLG_OUTLYING int32_t dyn_select_step(const dyn_place_t* place, int64_t index, dyn_step_t* step, int32_t quiet) {
     const llg_vpi_shape_t* shape = place->shape;
     memset(step, 0, sizeof(*step));
     if (shape->array_type == vpiAssocArray) {
@@ -3772,7 +3772,7 @@ static LLG_OUTLYING int dyn_select_step(const dyn_place_t* place, int64_t index,
             return 0;
         }
         sv4_t key = dyn_integral_key(place, (uint64_t)index);
-        int exists = shape->values
+        int32_t exists = shape->values
             ? llg_assoc_value_exists_integral((const llg_assoc_value_t*)place->storage, key)
             : llg_assoc_exists_integral((const llg_assoc_t*)place->storage, key);
         int64_t stored = llg_sv4_signed(key) ? sv4_to_i64(key) : (int64_t)sv4_to_u64(key);
@@ -3807,7 +3807,7 @@ static LLG_OUTLYING int dyn_select_step(const dyn_place_t* place, int64_t index,
 /* An element of container `place` at `index` (dynamic array, queue, or an
  * integral key of an associative array). */
 static LLG_OUTLYING vpiHandle dyn_element_by_index(const dyn_place_t* place, uint32_t field, int64_t index,
-                                      int quiet) {
+                                      int32_t quiet) {
     if (!place->storage && !place->owner && dyn_is_event_array(place->shape)) {
         /* An event of a class definition's event array property: named and
          * typed, with no event object (37.25, 37.27 detail 2). */
@@ -3857,7 +3857,7 @@ static LLG_OUTLYING vpiHandle dyn_element_by_index(const dyn_place_t* place, uin
  * one per dimension (vpi_handle_by_multi_index), or of a one-dimensional
  * array at its one index. */
 static LLG_OUTLYING vpiHandle dyn_element_by_indices(const dyn_place_t* place, uint32_t field,
-                                        const int64_t* indices, uint32_t count, int quiet) {
+                                        const int64_t* indices, uint32_t count, int32_t quiet) {
     uint32_t dims = dyn_fixed_dim_count(place);
     if (count == 1u && dims <= 1u) return dyn_element_by_index(place, field, indices[0], quiet);
     if (dims < 2u) {
@@ -3888,7 +3888,7 @@ static LLG_OUTLYING vpiHandle dyn_element_by_indices(const dyn_place_t* place, u
  * declared `indices`, one per dimension (a dynamic array or queue index or
  * an integral key for the others); NULL, with an error unless `quiet`. */
 static LLG_OUTLYING vpiHandle dyn_member_element(llg_vpi_slot_t* slot, const int64_t* indices,
-                                                 uint32_t count, int quiet) {
+                                                 uint32_t count, int32_t quiet) {
     dyn_place_t level;
     if (!dyn_member_array(slot, &level)) return NULL;
     if (dyn_shape(level.shape->element)->shape == LLG_VPI_SHAPE_CONTAINER) {
@@ -3945,7 +3945,7 @@ static LLG_OUTLYING vpiHandle dyn_handle_by_multi_index(llg_vpi_slot_t* slot, co
  * `\"` stands for a quote and any other backslash for itself. On success
  * `*cursor` is past the closing quote and `*key` (malloc'd, `*length`
  * bytes) holds the key. */
-static int dyn_parse_key(const char** cursor, char** key, size_t* length) {
+static int32_t dyn_parse_key(const char** cursor, char** key, size_t* length) {
     const char* p = *cursor;
     if (*p != '"') return 0;
     size_t size = 0;
@@ -3986,12 +3986,12 @@ static vpiHandle dyn_handle_by_index(llg_vpi_slot_t* slot, PLI_INT32 index) {
 
 /* The selection of the existing string key `key` (`length` bytes) of a
  * string-keyed associative array `place`; 0 when it is absent. */
-static LLG_OUTLYING int dyn_key_step(const dyn_place_t* place, const char* key, size_t length, dyn_step_t* step) {
+static LLG_OUTLYING int32_t dyn_key_step(const dyn_place_t* place, const char* key, size_t length, dyn_step_t* step) {
     const llg_vpi_shape_t* shape = place->shape;
     if (!place->storage || shape->array_type != vpiAssocArray || shape->key != LLG_VPI_KEY_STRING ||
         length > LLG_VPI_MAX_ELEMENT_KEY)
         return 0;
-    int exists = shape->values
+    int32_t exists = shape->values
         ? llg_assoc_value_exists_string((const llg_assoc_value_t*)place->storage, key, length)
         : llg_assoc_exists_string((const llg_assoc_t*)place->storage, key, length);
     memset(step, 0, sizeof(*step));
@@ -4004,13 +4004,13 @@ static LLG_OUTLYING int dyn_key_step(const dyn_place_t* place, const char* key, 
 /* The selection a `[index]` or `["key"]` at `*cursor` names in `place`;
  * on success `*cursor` is past the `]` and `*key` holds a parsed string
  * key the step points into (the caller frees it). */
-static LLG_OUTLYING int dyn_parse_step(const dyn_place_t* place, const char** cursor, dyn_step_t* step,
+static LLG_OUTLYING int32_t dyn_parse_step(const dyn_place_t* place, const char** cursor, dyn_step_t* step,
                           char** key) {
     const char* p = *cursor;
     *key = NULL;
     if (*p != '[') return 0;
     ++p;
-    int found = 0;
+    int32_t found = 0;
     if (*p == '"') {
         /* A string key (decision A19-D81). */
         size_t length = 0;
@@ -4029,7 +4029,7 @@ static LLG_OUTLYING int dyn_parse_step(const dyn_place_t* place, const char** cu
  * that container (37.17 detail 4), or NULL; fewer indices than a fixed-size
  * array member has dimensions set `*partial`. */
 static LLG_OUTLYING vpiHandle dyn_suffix_nested(const llg_vpi_slot_t* slot, const char** cursor,
-                                                int* partial) {
+                                                int32_t* partial) {
     dyn_target_t target;
     dyn_place_t level;
     if (!dyn_resolve(slot, &target) || target.packed ||
@@ -4088,7 +4088,7 @@ static LLG_OUTLYING vpiHandle dyn_suffix_member(const llg_vpi_slot_t* slot, cons
  * success `*cursor` is past them. Fewer indices than dimensions set
  * `*partial` (a subarray, decision A20-D23). */
 static LLG_OUTLYING vpiHandle dyn_first_suffix(const dyn_place_t* place, uint32_t field, const char** cursor,
-                                  int* partial) {
+                                  int32_t* partial) {
     uint32_t dims = dyn_fixed_dim_count(place);
     if (dims > 1u) {
         int64_t indices[DYN_MAX_DIMS];
@@ -4139,8 +4139,8 @@ static LLG_OUTLYING vpiHandle dyn_record_member(const dyn_place_t* place, uint32
  * property or element refers to (37.29 detail 9: `top.p.Id`). A name that
  * denotes nothing is NULL; one that names a subarray is NULL with an
  * error (decision A20-D23). */
-static LLG_OUTLYING vpiHandle dyn_walk_suffix(vpiHandle current, vpiHandle keep, const char* p, int partial) {
-    int unserved_select = 0, unserved_member = 0;
+static LLG_OUTLYING vpiHandle dyn_walk_suffix(vpiHandle current, vpiHandle keep, const char* p, int32_t partial) {
+    int32_t unserved_select = 0, unserved_member = 0;
     while (current && *p) {
         llg_vpi_slot_t* slot = decode_handle(current, NULL);
         vpiHandle next = NULL;
@@ -4170,7 +4170,7 @@ static LLG_OUTLYING vpiHandle dyn_walk_suffix(vpiHandle current, vpiHandle keep,
                     next = dyn_record_member(&place, (uint32_t)slot->aux, name, (size_t)(p - name));
             }
             if (!next) {
-                int ok;
+                int32_t ok;
                 void* object = dyn_class_target(decode_handle(current, NULL), &ok);
                 if (ok && object) next = dyn_property_by_name(object, name, (size_t)(p - name));
             }
@@ -4224,7 +4224,7 @@ static LLG_OUTLYING vpiHandle dyn_static_by_name(const char* name) {
         char* full = dyn_static_full_name(DYN_STATIC_FIELD + i);
         if (!full) return NULL;
         size_t length = strlen(full);
-        int match = strncmp(name, full, length) == 0 &&
+        int32_t match = strncmp(name, full, length) == 0 &&
                     (name[length] == '\0' || name[length] == '[' || name[length] == '.');
         free(full);
         if (!match) continue;
@@ -4279,7 +4279,7 @@ static LLG_OUTLYING vpiHandle dyn_record_suffix(const dyn_place_t* place, uint32
  * (automatic `field` of its frame): its element, a nested element, a
  * member (decisions A19-D82, A19-D83). */
 static LLG_OUTLYING vpiHandle dyn_auto_suffix(const dyn_place_t* place, uint32_t field, const char* suffix) {
-    int partial = 0;
+    int32_t partial = 0;
     vpiHandle element = dyn_first_suffix(place, field, &suffix, &partial);
     if (!element) {
         if (partial)
@@ -4300,19 +4300,19 @@ static LLG_OUTLYING vpiHandle dyn_auto_suffix(const dyn_place_t* place, uint32_t
  * change marker, which a handle store toggles once per check when the
  * value differs (T1-D11). Strings and arrays are excluded by the clause.
  * Returns -1 when `slot` is not a dynamic object. */
-static int dyn_bind_value_cb(struct llg_vpi_cb* cb, llg_vpi_slot_t* slot) {
+static int32_t dyn_bind_value_cb(struct llg_vpi_cb* cb, llg_vpi_slot_t* slot) {
     if (!dyn_slot(slot)) return -1;
     llg_vpi_model_object_t* object =
         slot->kind == SLOT_OBJECT ? row_object(slot->object) : NULL;
     const llg_vpi_shape_t* shape = object ? dyn_shape(object->shape - 1u) : NULL;
-    int handle = shape && shape->shape == LLG_VPI_SHAPE_CHANDLE;
+    int32_t handle = shape && shape->shape == LLG_VPI_SHAPE_CHANDLE;
     if (!shape || (shape->shape != LLG_VPI_SHAPE_CLASS && !handle) || !object->dependency) {
         vpi_error("LLG_VPI_CALLBACK",
                   "cbValueChange applies to class and chandle variables of a scope, not to "
                   "strings, arrays, class objects or their properties (38.36.1)");
         return 0;
     }
-    int format = cb->value.format;
+    int32_t format = cb->value.format;
     if (handle && format != vpiSuppressVal &&
         (format < vpiBinStrVal || format > vpiObjTypeVal || format == vpiStrengthVal)) {
         /* Table 38-5: vpiStrengthVal is for scalar objects only. */
@@ -4362,7 +4362,7 @@ static sv4_t* dyn_container_shape_marker(const dyn_place_t* place) {
  * runs after a check that sees a new size (37.17 detail 14). A string var,
  * another value format, a class property, a fixed array of containers and a
  * nested container are refused, so that no accepted record stays silent. */
-static int dyn_bind_size_cb(struct llg_vpi_cb* cb, llg_vpi_slot_t* slot, const s_cb_data* data) {
+static int32_t dyn_bind_size_cb(struct llg_vpi_cb* cb, llg_vpi_slot_t* slot, const s_cb_data* data) {
     if (data->value && data->value->format != vpiSuppressVal) {
         vpi_error("LLG_VPI_CALLBACK",
                   "cbSizeChange takes vpiSuppressVal; read the new size with vpiSize "
@@ -4406,7 +4406,7 @@ static int dyn_bind_size_cb(struct llg_vpi_cb* cb, llg_vpi_slot_t* slot, const s
 
 /* Whether the container of a cbSizeChange record has a new size; records
  * it. */
-static int dyn_size_cb_changed(struct llg_vpi_cb* cb) {
+static int32_t dyn_size_cb_changed(struct llg_vpi_cb* cb) {
     llg_vpi_model_object_t* object = row_object(cb->target.object);
     dyn_place_t place;
     memset(&place, 0, sizeof(place));
@@ -4430,10 +4430,10 @@ static LLG_OUTLYING void dyn_handle_cb_value(const struct llg_vpi_cb* cb, p_vpi_
  * class object; cbEndOfObject on a class object (38.36.1). The record keeps
  * the class in target.object and a watched object's address in
  * target.element. */
-static int dyn_bind_object_cb(struct llg_vpi_cb* cb, const s_cb_data* data) {
+static int32_t dyn_bind_object_cb(struct llg_vpi_cb* cb, const s_cb_data* data) {
     llg_vpi_slot_t* slot = checked_handle(data->obj, NULL);
     if (!slot) return 0;
-    int reason = data->reason;
+    int32_t reason = data->reason;
     if (slot->kind == SLOT_CLASSTS && reason != cbEndOfObject) {
         cb->target.object = (uint32_t)slot->aux;
         cb->target.element = 0;
@@ -4464,14 +4464,14 @@ static void dyn_object_cb_removed(void) {
 }
 
 typedef struct {
-    int reason;
+    int32_t reason;
     uint32_t class_index;
     const void* object;
 } dyn_cb_match_t;
 
 /* A typespec record matches objects of exactly its class (decision
  * A19-D22); an object record matches its object. */
-static int matches_object_cb(const llg_vpi_cb_t* cb, const void* context) {
+static int32_t matches_object_cb(const llg_vpi_cb_t* cb, const void* context) {
     const dyn_cb_match_t* match = (const dyn_cb_match_t*)context;
     if (cb->kind != CB_OBJECT) return 0;
     if (cb->target.element)
@@ -4483,7 +4483,7 @@ static int matches_object_cb(const llg_vpi_cb_t* cb, const void* context) {
 
 /* Run the object records matching `object` with a handle to it that is
  * released when they returned. */
-static void dyn_run_object_cbs(int reason, void* object, uint32_t class_index) {
+static void dyn_run_object_cbs(int32_t reason, void* object, uint32_t class_index) {
     dyn_cb_match_t match = { reason, class_index, object };
     llg_vpi_cb_t* buffer[LLG_VPI_DISPATCH_INLINE];
     size_t count;
@@ -4527,7 +4527,7 @@ void llg_vpi_object_created(void* handle) {
 static void dyn_reclaimed(void* const* objects, size_t count) {
     if (!g_vpi.indexed || (!g_dyn.live_count && !g_dyn.object_cbs)) return;
     g_dyn.reclaiming = 1;
-    int named = 0;
+    int32_t named = 0;
     for (size_t i = 0; i < count; ++i) {
         llg_vpi_live_t* entry = live_find(objects[i]);
         if (!entry) continue;
@@ -4550,7 +4550,7 @@ static void dyn_reclaimed(void* const* objects, size_t count) {
     if (named) {
         for (size_t i = g_vpi.static_count; i < g_vpi.slot_count; ++i) {
             llg_vpi_slot_t* slot = &g_vpi.slots[i];
-            int bound = slot->kind == SLOT_CLASSOBJ || slot->kind == SLOT_BUILTINOBJ ||
+            int32_t bound = slot->kind == SLOT_CLASSOBJ || slot->kind == SLOT_BUILTINOBJ ||
                         slot->kind == SLOT_PROPERTY ||
                         slot->kind == SLOT_DYNELEM || slot->kind == SLOT_CLASSITEM ||
                         (slot->kind == SLOT_ITERATOR && slot->iter_kind == ITER_DYN);

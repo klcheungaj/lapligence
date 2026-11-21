@@ -89,7 +89,7 @@ uint32_t llg_rng_state_uniform(llg_rng_state_t* state,
 llg_string_t llg_rng_state_get(const llg_rng_state_t* state) {
     if (!state) rng_fail("serializing a null stream");
     char text[64];
-    int length = snprintf(text, sizeof(text), "LLG_RNG_V1:%016" PRIx64
+    int32_t length = snprintf(text, sizeof(text), "LLG_RNG_V1:%016" PRIx64
                           ":%016" PRIx64 ":%016" PRIx64,
                           state->state, state->increment, state->child_count);
     if (length < 0 || (size_t)length >= sizeof(text))
@@ -97,14 +97,14 @@ llg_string_t llg_rng_state_get(const llg_rng_state_t* state) {
     return llg_string_bytes(text, (size_t)length);
 }
 
-static int parse_hex(const char* text, size_t length, uint64_t* result) {
+static int32_t parse_hex(const char* text, size_t length, uint64_t* result) {
     uint64_t value = 0;
     for (size_t index = 0; index < length; index++) {
-        unsigned digit;
-        unsigned char c = (unsigned char)text[index];
-        if (c >= '0' && c <= '9') digit = (unsigned)(c - '0');
-        else if (c >= 'a' && c <= 'f') digit = (unsigned)(c - 'a' + 10);
-        else if (c >= 'A' && c <= 'F') digit = (unsigned)(c - 'A' + 10);
+        uint32_t digit;
+        uint8_t c = (uint8_t)text[index];
+        if (c >= '0' && c <= '9') digit = (uint32_t)(c - '0');
+        else if (c >= 'a' && c <= 'f') digit = (uint32_t)(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F') digit = (uint32_t)(c - 'A' + 10);
         else return 0;
         value = (value << 4) | digit;
     }
@@ -112,7 +112,7 @@ static int parse_hex(const char* text, size_t length, uint64_t* result) {
     return 1;
 }
 
-int llg_rng_state_set(llg_rng_state_t* state, const llg_string_t* encoded) {
+int32_t llg_rng_state_set(llg_rng_state_t* state, const llg_string_t* encoded) {
     static const char prefix[] = "LLG_RNG_V1:";
     const size_t field = 16;
     const size_t prefix_length = sizeof(prefix) - 1;

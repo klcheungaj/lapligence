@@ -10,8 +10,8 @@ typedef struct {
     llg_frame_t* capture;
     llg_activation_t* activation;
     uint64_t time;
-    int index;
-    int flag;
+    int32_t index;
+    int32_t flag;
 } llg_selftest_frame_t;
 LLG_CO_ROOT_FRAME_OK(llg_selftest_frame_t);
 
