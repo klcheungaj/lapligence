@@ -212,6 +212,17 @@ MSVC compiler:
   `CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded`, CMP0141).
 - Debug (`/Od /RTC1`) runs call-heavy probes 6-14x slower than GCC `-O0`; keep
   per-bit reference work in plain arrays, not calls into the runtime under test.
+- MSVC 19.52.37029 (runner image 20261116; 19.51.36260 built the same source
+  correctly) at `/O2` compiled the compact backend's small `<<` stream loop,
+  inlined into `llg_stream_unpack_source` and the fixed-array stream copy, as
+  if each block's destination `width - bit - count` read `width - bit`, so
+  every block landed one slice too high; the same loop inlined into
+  `sv4_stream_to` stayed right (master a8fe1963, 11 failures). The loop now
+  steps whole blocks by a constant and places the short block after it
+  (`value_gmp/selection_inline.h`), and
+  `sim_syn015_stream_contexts::reverse_slices_keep_block_boundaries_in_runtime_unpack_and_array_copy`
+  reaches both callers. No GCC or Clang build shows such a code generation
+  defect; only the Windows lane, which builds models with MSVC, can.
 
 CMake:
 

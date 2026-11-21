@@ -16,6 +16,19 @@ Coverage: untagged and finite packed tagged unions/structs, streaming and
 - Its source header follows IEEE 1800-2009 §§6.24.1, 6.24.3, 7.2, 11.4.14,
   and 13.5.2; the section index is
   [`docs/specification/spec-reference-sv.md`](../../../../docs/specification/spec-reference-sv.md).
+- `syn_015_reverse_slice_boundaries.sv` checks `<<` re-ordering at every
+  consumed width 1..64 under slice sizes around each block boundary, with X
+  and Z bits, through a runtime `with` target and whole descriptor-backed
+  arrays. IEEE 1800-2009 11.4.14.2 (`SystemVerilog-1800-2009.txt`
+  lines 15542-15546): "Right-to-left streaming using << shall reverse the
+  order of blocks in the stream, preserving the order of bits within each
+  block. For right-to-left streaming using <<, the stream is sliced into
+  blocks with the specified number of bits, starting with the right-most bit.
+  If as a result of slicing the last (left-most) block has fewer bits than the
+  block size, the last block has the size of the remaining bits; there is no
+  padding or truncation." 11.4.14.3 (lines 15563-15565): "If the source
+  expression contains more bits than are needed, the appropriate number of
+  bits shall be consumed from its left (most significant) end."
 - Runs: each self-checking fixture runs in both optimizer modes.
 - Oracle: exact fixture `PASS` markers are required, except explicit rejection
   cases, which must produce their expected diagnostics.

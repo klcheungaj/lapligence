@@ -192,6 +192,12 @@ static inline g4_t llg_gmp_sv4_repeat_count(g4_t value) {
     value.is_signed = 0;
     return value;
 }
+/* Whole blocks, sliced from the right, move with a constant step; the short
+ * leftmost block, if any, lands at bit 0 after the loop. A loop stepping by
+ * the block size min(slice, rest) and placing each block at
+ * `width - bit - count` came out of MSVC 19.52 /O2, inlined into some runtime
+ * callers, as if it read `width - bit`: every block one slice too high
+ * (docs/cross_platform.md, MSVC compiler). */
 static inline g4_t g4_selection_small_stream(g4_t v, uint32_t slice, int reverse) {
     if (!slice)
         llg_gmp_sv4_fail("zero streaming slice size");
@@ -200,13 +206,17 @@ static inline g4_t g4_selection_small_stream(g4_t v, uint32_t slice, int reverse
         return v;
     }
     g4_t r = g4_small(0, 0, v.width, 0);
-    for (uint32_t bit = 0; bit < v.width;) {
-        uint32_t count = v.width - bit < slice ? v.width - bit : slice;
-        uint32_t other = v.width - bit - count;
-        uint64_t mask = g4_mask(count);
-        r.data.small.a |= ((v.data.small.a >> bit) & mask) << other;
-        r.data.small.b |= ((v.data.small.b >> bit) & mask) << other;
-        bit += count;
+    uint32_t blocks = v.width / slice, rest = v.width % slice;
+    uint64_t mask = g4_mask(slice);
+    for (uint32_t block = 0; block < blocks; ++block) {
+        uint32_t low = block * slice, high = v.width - low - slice;
+        r.data.small.a |= ((v.data.small.a >> low) & mask) << high;
+        r.data.small.b |= ((v.data.small.b >> low) & mask) << high;
+    }
+    if (rest) {
+        uint32_t low = blocks * slice;
+        r.data.small.a |= (v.data.small.a >> low) & g4_mask(rest);
+        r.data.small.b |= (v.data.small.b >> low) & g4_mask(rest);
     }
     return r;
 }
