@@ -3771,6 +3771,46 @@ fn a21_d3_actual_written_through_virtual_interface() {
 }
 
 #[test]
+fn a21_d7_input_port_variable_written_through_virtual_interface() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(include_str!(
+        "fixtures/sim/lrm_decisions/A21-D7_input_port_variable_written_through_virtual_interface.out"
+    )
+    .is_empty());
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "A21-D7_input_port_variable_written_through_virtual_interface",
+        "CODEGEN-002",
+        Some("18:8"),
+        "`v.a` writes `a`, an input port variable of interface `ifc`, through a virtual interface",
+    );
+}
+
+#[test]
+fn a21_d8_class_method_writes_output_actual() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(include_str!(
+        "fixtures/sim/lrm_decisions/A21-D8_class_method_writes_output_actual.out"
+    )
+    .is_empty());
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "A21-D8_class_method_writes_output_actual",
+        "CODEGEN-002",
+        Some("21:11"),
+        "and a procedural assignment in class method `D::run`",
+    );
+}
+
+#[test]
+fn a21_d8_uncalled_method_write_runs() {
+    run_decision(
+        "A21-D8_uncalled_method_write_runs",
+        include_str!("fixtures/sim/lrm_decisions/A21-D8_uncalled_method_write_runs.out"),
+    );
+}
+
+#[test]
 fn a21_d4_port_nets_merge_like_inout() {
     run_decision(
         "A21-D4_port_nets_merge_like_inout",

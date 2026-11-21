@@ -1,6 +1,7 @@
 //! Virtual interfaces.
 
 use super::*;
+use crate::sim::codegen::error::located;
 
 impl<'a> Codegen<'a> {
     /// Return the leaf virtual-interface spelling of a declaration. Fixed
@@ -323,6 +324,7 @@ impl<'a> Codegen<'a> {
             })
             .collect::<Vec<_>>();
 
+        self.validate_virtual_interface_input_port_writes(&interfaces)?;
         for identity in identities {
             self.add_virtual_interface_descriptor(identity, &interfaces)?;
         }
@@ -466,15 +468,7 @@ impl<'a> Codegen<'a> {
     /// groups the instances by the type identity the descriptors use; a
     /// path the descriptors cannot resolve fails its own lowering.
     pub(super) fn virtual_interface_written_variables(&self, nodes: &[NodeId]) -> HashSet<NodeId> {
-        let mut paths = Vec::new();
-        let mut targets = Vec::new();
-        for id in self.db.node_ids() {
-            targets.clear();
-            self.written_targets(id, &mut targets);
-            for target in &targets {
-                self.handle_member_writes(*target, &mut paths);
-            }
-        }
+        let paths = self.virtual_interface_write_paths();
         let mut written = HashSet::new();
         if paths.is_empty() {
             return written;
@@ -526,6 +520,114 @@ impl<'a> Codegen<'a> {
         written
     }
 
+    /// The member paths through a virtual-interface handle that an
+    /// assignment target, output or inout actual or non-`const` `ref` actual
+    /// in the owned database writes ([`Self::written_targets`],
+    /// [`Self::handle_member_writes`]), in node order.
+    fn virtual_interface_write_paths(&self) -> Vec<NodeId> {
+        let mut paths = Vec::new();
+        let mut targets = Vec::new();
+        for id in self.db.node_ids() {
+            targets.clear();
+            self.written_targets(id, &mut targets);
+            for target in &targets {
+                self.handle_member_writes(*target, &mut paths);
+            }
+        }
+        paths
+    }
+
+    /// "Assignments to variables declared as input ports shall be illegal"
+    /// (IEEE 1800-2009 23.3.3.2), also through a virtual-interface handle.
+    /// The handle's interface type decides, not the instance it holds at run
+    /// time: every instance of a type declares the same ports, so a write
+    /// (procedural or nonblocking assignment, output, inout or `ref` actual)
+    /// whose member is an input port variable of the type of the handle (or
+    /// of its last nested instance) is rejected where it is written, whether
+    /// or not it runs. A clocking drive cannot reach such a member: its
+    /// clocking output declaration is already a frontend error. Input ports
+    /// of a net type are not variables and are not checked here.
+    fn validate_virtual_interface_input_port_writes(
+        &self,
+        interfaces: &[NodeId],
+    ) -> Result<(), String> {
+        let mut inputs: HashMap<String, HashSet<&str>> = HashMap::new();
+        let mut instances: HashMap<String, Vec<NodeId>> = HashMap::new();
+        for interface in interfaces {
+            let Some(identity) = self.concrete_virtual_interface_identity(*interface) else {
+                continue;
+            };
+            for child in &self.node(*interface).children {
+                if let NodeKind::Port {
+                    direction: DbDirection::Input,
+                    low: Some(formal),
+                    ..
+                } = self.kind(*child)
+                {
+                    if self.is_variable_declaration(*formal) {
+                        inputs
+                            .entry(identity.clone())
+                            .or_default()
+                            .insert(self.node(*formal).name.as_str());
+                    }
+                }
+            }
+            instances.entry(identity).or_default().push(*interface);
+        }
+        if inputs.is_empty() {
+            return Ok(());
+        }
+        for path in self.virtual_interface_write_paths() {
+            let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = self.kind(path) else {
+                continue;
+            };
+            let Some((position, spelling)) =
+                refs.iter().enumerate().find_map(|(position, target)| {
+                    self.virtual_interface_spelling((*target)?)
+                        .map(|spelling| (position, spelling))
+                })
+            else {
+                continue;
+            };
+            if self
+                .virtual_interface_generate_scope(parts, refs, position)
+                .is_some()
+            {
+                continue;
+            }
+            let steps = self.virtual_interface_nested_steps(parts, refs, position);
+            let member =
+                self.virtual_interface_member_name(path, parts, refs, position + steps.len());
+            // A clockvar member (`cb.x`) names a clocking block, never a port.
+            let Some(name) = member.split('.').next().filter(|name| !name.is_empty()) else {
+                continue;
+            };
+            let identity = Self::normalize_virtual_interface_identity(
+                &Self::virtual_interface_identity_from_spelling(&spelling),
+            );
+            let Some(bound) = self.nested_identity(&identity, &steps, &instances) else {
+                continue;
+            };
+            if inputs.get(&bound).is_some_and(|names| names.contains(name)) {
+                let written = parts
+                    .iter()
+                    .filter(|part| !part.is_empty())
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(".");
+                return Err(located(
+                    &self.source_location(path),
+                    format!(
+                        "semantic error: `{written}` writes `{name}`, an input port variable of \
+                         interface `{bound}`, through a virtual interface; assignments to \
+                         variables declared as input ports are illegal (IEEE 1800-2009 23.3.3.2)"
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// The type identity of the nested instances `steps` select from every
     /// instance of type `identity`, as the nested descriptor slots resolve
     /// them (`add_virtual_interface_nested`): `None` when there is no such
@@ -558,7 +660,7 @@ impl<'a> Codegen<'a> {
     /// assignment, increment or decrement operation (the frontend wraps an
     /// output or inout actual in an assignment whose first operand is the
     /// actual); and the actuals of a call's non-`const` `ref` formals.
-    fn written_targets(&self, id: NodeId, out: &mut Vec<NodeId>) {
+    pub(super) fn written_targets(&self, id: NodeId, out: &mut Vec<NodeId>) {
         match self.kind(id) {
             NodeKind::Stmt(StmtKind::Assign { .. }) | NodeKind::ContAssign { .. } => {
                 out.extend(self.node(id).children.first().copied());
@@ -637,7 +739,7 @@ impl<'a> Codegen<'a> {
     /// assignment target `target` writes: the path itself, the base of a
     /// select of it, and each member of a concatenation, assignment pattern
     /// or streaming target. Selector expressions are reads, not followed.
-    fn handle_member_writes(&self, target: NodeId, out: &mut Vec<NodeId>) {
+    pub(super) fn handle_member_writes(&self, target: NodeId, out: &mut Vec<NodeId>) {
         match self.kind(target) {
             NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
                 if refs

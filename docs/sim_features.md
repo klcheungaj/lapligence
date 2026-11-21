@@ -1558,7 +1558,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟦 **Continuous drivers** — Explicit, comma-form and net-declaration
   assignments evaluate from RHS dependencies; constant RHSs run once. Writes by
   functions called from the RHS are procedural (SV §6.5): they may share storage
-  with procedural writers but not with a continuous driver. A variable target
+  with procedural writers but not with a continuous driver. So are writes in a
+  class method or other subroutine a process calls: a write to a variable that
+  a continuous assignment or an output port drives is a located error at the
+  write (SV §23.3.3.2, decision A21-D8,
+  [ki_illegal_port_writes](../tests/fixtures/sim/feature_completion/ki_illegal_port_writes/readme.md)).
+  A variable target
   may use runtime element, bit, indexed-part and member-element selects (SV
   §10.3, A.8.5, a local frontend patch): a selector change re-evaluates and
   retargets the write, the previous element keeps its value, an unknown or
@@ -2645,6 +2650,9 @@ These are bounded implementations, not full verification-infrastructure support.
   the port's continuous assignment when a handle writes it: the write holds
   until the port's formal changes value (decision A21-D3,
   [ki_uvm_run](../tests/fixtures/sim/feature_completion/ki_uvm_run/readme.md)).
+  A write through a handle to a variable declared as an input port of the
+  interface is a located compile error (SV §23.3.3.2, decision A21-D7,
+  [ki_illegal_port_writes](../tests/fixtures/sim/feature_completion/ki_illegal_port_writes/readme.md)).
   Elements of unpacked array members (`v.mem[i]`, `v.grid[i][j]`, and their
   bit, part and indexed part selects) are read and written with `=` or `<=`
   through a handle on the array of the instance bound when the access

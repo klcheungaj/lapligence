@@ -40,6 +40,23 @@ fn render(source: &str) -> String {
     render_with(source, &CodegenOptions::default(), &[])
 }
 
+/// The generation error of a design whose lowering must fail.
+fn render_error(source: &str) -> String {
+    let compiled = compile_sources_checked(
+        &[OwnedSource::compilation_unit("ports.sv", source)],
+        &CompileOpts {
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        },
+    )
+    .expect("valid in-memory port fixture");
+    let database = Db::from_slang(&compiled.snapshot).expect("owned database");
+    match generate_from_db_with_codegen_options(&database, &CodegenOptions::default()) {
+        Ok(_) => panic!("lowering must fail"),
+        Err(error) => error.to_string(),
+    }
+}
+
 /// Link processes of instance `tb.u`: one coroutine descriptor each.
 fn links(model: &str) -> usize {
     links_named(model, "\"tb.u.link\"")
@@ -859,9 +876,10 @@ endmodule
 }
 
 /// A write through a virtual interface is another writer of a port's sink
-/// that the instance tree does not show: an output actual or an input formal
-/// of an interface written through a handle keeps its link (decision
-/// A21-D3), while a member the handle only reads still shares its source.
+/// that the instance tree does not show: an output actual written through a
+/// handle keeps its link (decision A21-D3), while a member the handle only
+/// reads still shares its source. Writing an input formal through a handle
+/// is an error (A21-D7).
 #[test]
 fn ports_written_through_a_virtual_interface_keep_their_link() {
     let design = |access: &str| {
@@ -886,10 +904,14 @@ endmodule
 "
         )
     };
+    let error = render_error(&design("v.a = 1'b1"));
+    assert!(
+        error.contains("`v.a` writes `a`, an input port variable of interface `ifc`"),
+        "{error}"
+    );
     for (access, output_links, input_links) in [
         ("v.q <= 1'b1", 1, 0),
         ("$display(\"%b\", v.q)", 0, 0),
-        ("v.a = 1'b1", 0, 1),
         ("$display(\"%b\", v.a)", 0, 0),
     ] {
         let model = render(&design(access));

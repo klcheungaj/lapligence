@@ -1,0 +1,25 @@
+// A class task called from a module task writes `s`. See readme.md.
+`timescale 1ns/1ps
+module drv(input logic clk, output logic o);
+  always @(posedge clk) o <= 1'b0;
+endmodule
+module tb;
+  logic clk = 1'b0;
+  logic s;
+  drv d(clk, s);
+  class D;
+    task run();
+      #12 s = 1'b1;
+    endtask
+  endclass
+  task automatic t(D x);
+    x.run();
+  endtask
+  always #5 clk = ~clk;
+  initial begin
+    static D h = new;
+    fork t(h); join_none
+    #13 $display("s=%b", s);
+    $finish;
+  end
+endmodule

@@ -1566,6 +1566,10 @@ impl<'a> Codegen<'a> {
             }
         }
 
+        if !continuous.is_empty() {
+            self.validate_called_subroutine_writes(&continuous)?;
+        }
+
         for restricted in writers.iter().filter(|writer| {
             matches!(
                 self.kind(writer.node),
@@ -1816,6 +1820,151 @@ impl<'a> Codegen<'a> {
 
     /// Physical `file:line:col` of a node; a `` `line``-mapped position, when
     /// one applies, follows it and never replaces it.
+    /// A write in a subroutine body is a procedural assignment of the
+    /// process that calls it, also where the walk of the process's own
+    /// writes does not follow the call: a class method, and what it calls.
+    /// A write that [`Self::subroutine_body_writes`] finds in a subroutine
+    /// that [`Self::called_subroutines`] reaches, to storage that an output
+    /// port or a continuous assignment drives, is an error at the write
+    /// (IEEE 1800-2009 23.3.3.2, 6.5; decision A21-D8). Subroutines nothing
+    /// calls are not checked, as the industry-standard behaviour does not.
+    fn validate_called_subroutine_writes(
+        &mut self,
+        continuous: &[&ProcessWriter],
+    ) -> Result<(), String> {
+        let nodes = self.design_nodes();
+        for (subroutine, body) in self.called_subroutines(&nodes) {
+            for (target, writes) in self.subroutine_body_writes(subroutine, body) {
+                for driver in continuous {
+                    let Some(storage) = writes.iter().find(|write| {
+                        driver
+                            .writes
+                            .iter()
+                            .any(|driven| self.same_storage(write, driven))
+                    }) else {
+                        continue;
+                    };
+                    return Err(located(
+                        &self.source_location(target),
+                        format!(
+                            "semantic error: variable storage `{}` has both a continuous assignment by `{}` at {} and a procedural assignment in {}",
+                            self.dependency_label(storage),
+                            driver.label,
+                            self.source_location(driver.node),
+                            self.subroutine_label(subroutine),
+                        ),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Every subroutine, with its body, that a process, a continuous
+    /// assignment's right-hand side or a variable initializer among `nodes`
+    /// reaches through calls whose callee is known statically (a virtual
+    /// method through the class its handle names), each once.
+    pub(super) fn called_subroutines(&self, nodes: &[NodeId]) -> Vec<(NodeId, NodeId)> {
+        let mut pending = Vec::new();
+        for node in nodes {
+            match self.kind(*node) {
+                NodeKind::Process { .. } | NodeKind::ContAssign { .. } => pending.push(*node),
+                NodeKind::Var { .. } | NodeKind::Array { .. } => {
+                    pending.extend(self.db.var_initializer(*node));
+                }
+                _ => {}
+            }
+        }
+        let mut called = Vec::new();
+        let mut seen = HashSet::new();
+        while let Some(node) = pending.pop() {
+            if let NodeKind::FuncCall {
+                callee: Some(callee),
+                ..
+            }
+            | NodeKind::MethodCall {
+                callee: Some(callee),
+                ..
+            } = self.kind(node)
+            {
+                let callee = *callee;
+                if matches!(self.kind(callee), NodeKind::FuncTask { .. }) && seen.insert(callee) {
+                    if let Some(body) = self.func_body(callee) {
+                        called.push((callee, body));
+                        pending.push(body);
+                    }
+                }
+            }
+            pending.extend(self.node(node).children.iter().copied());
+        }
+        called
+    }
+
+    /// The assignment targets in the body of `subroutine` (assignments,
+    /// increments, output and inout actuals), each with the storage it
+    /// writes. Force, release and deassign are overrides, not competing
+    /// assignments (6.5); a `ref` actual writes only through the callee,
+    /// whose own body is checked when it is reached; and a target that
+    /// names a member through a virtual-interface handle may reach any
+    /// instance of its type (A21-D3, A21-D7). Those are left out.
+    pub(super) fn subroutine_body_writes(
+        &mut self,
+        subroutine: NodeId,
+        body: NodeId,
+    ) -> Vec<(NodeId, HashSet<IrDependency>)> {
+        if let Some(inst) = self.owning_inst(subroutine) {
+            self.inst = inst;
+        }
+        let mut found = Vec::new();
+        let mut targets = Vec::new();
+        let mut handle_paths = Vec::new();
+        let mut stack = vec![body];
+        while let Some(node) = stack.pop() {
+            match self.kind(node) {
+                NodeKind::Stmt(
+                    StmtKind::Force { .. } | StmtKind::Release { .. } | StmtKind::Deassign { .. },
+                ) => continue,
+                NodeKind::FuncCall { .. } | NodeKind::MethodCall { .. } => {
+                    stack.extend(self.node(node).children.iter().copied());
+                    continue;
+                }
+                _ => {}
+            }
+            stack.extend(self.node(node).children.iter().copied());
+            targets.clear();
+            self.written_targets(node, &mut targets);
+            for target in &targets {
+                handle_paths.clear();
+                self.handle_member_writes(*target, &mut handle_paths);
+                if !handle_paths.is_empty() {
+                    continue;
+                }
+                let mut writes = HashSet::new();
+                self.add_process_lhs_write(*target, &mut writes);
+                if !writes.is_empty() {
+                    found.push((*target, writes));
+                }
+            }
+        }
+        found
+    }
+
+    /// `class method `C::m``, `task `t`` or `function `f``.
+    fn subroutine_label(&self, subroutine: NodeId) -> String {
+        let name = &self.node(subroutine).name;
+        if let Some(class) = self
+            .node(subroutine)
+            .parent
+            .filter(|parent| matches!(self.kind(*parent), NodeKind::ClassDef))
+        {
+            return format!("class method `{}::{name}`", self.node(class).name);
+        }
+        match self.kind(subroutine) {
+            NodeKind::FuncTask { is_task: true, .. } => format!("task `{name}`"),
+            _ => format!("function `{name}`"),
+        }
+    }
+
     pub(in super::super) fn source_location(&self, id: NodeId) -> String {
         let node = self.node(id);
         let physical = format!(

@@ -21,9 +21,10 @@
 //! side is a resolved net, the sink has its own initializer, or an output
 //! sink has another writer (a process, continuous assignment, gate or port;
 //! 6.5 then reports the conflict on the copy). A write through a virtual
-//! interface handle is such a writer too, of an output or an input sink:
-//! the sinks such writes can store to are found from the owned assignment
-//! targets before any body is lowered
+//! interface handle is such a writer too, of an output sink (writing an
+//! input port variable is illegal, 23.3.3.2, and rejected with the virtual
+//! interfaces): the sinks such writes can store to are found from the owned
+//! assignment targets before any body is lowered
 //! ([`Codegen::virtual_interface_written_variables`]) and keep their link,
 //! so the write holds until the source next changes instead of until the
 //! source is next written (a source rewritten with its own value would
@@ -362,8 +363,9 @@ impl Codegen<'_> {
     }
 
     /// The output ports among `outputs` whose sink variable another writer
-    /// also writes: a process, continuous assignment, gate or port. All of
-    /// them when a writer cannot be analyzed.
+    /// also writes: a process (also in a subroutine it calls), continuous
+    /// assignment, gate or port. All of them when a writer cannot be
+    /// analyzed.
     fn port_sinks_written_elsewhere(
         &mut self,
         nodes: &[NodeId],
@@ -441,6 +443,24 @@ impl Codegen<'_> {
                 for port in sinks.get(name).into_iter().flatten() {
                     if *port != *id {
                         written.insert(*port);
+                    }
+                }
+            }
+        }
+        // A write in a subroutine a process calls is that process's write,
+        // also where the walks above do not follow the call (a class method;
+        // decision A21-D8).
+        if !failed {
+            for (subroutine, body) in self.called_subroutines(nodes) {
+                for (_, writes) in self.subroutine_body_writes(subroutine, body) {
+                    for write in &writes {
+                        let mut storage = write;
+                        while let IrDependency::PackedRange { storage: inner, .. } = storage {
+                            storage = inner;
+                        }
+                        if let IrDependency::Scalar(name) | IrDependency::Real(name) = storage {
+                            written.extend(sinks.get(name).into_iter().flatten().copied());
+                        }
                     }
                 }
             }
