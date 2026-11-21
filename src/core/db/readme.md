@@ -69,6 +69,12 @@ definition of a parameterized class) and whether it names the `class`
 keyword, from `LLG_SLANG_EDGE_FORWARD_DECLARATION` (simulation captures); the
 typedef stays a member of its scope, so consumers find where a class is first
 declared.
+A generate block that elaboration did not instantiate (an untaken if or case
+branch, IEEE 1800-2009 27.3, 27.5) is no scope's child; its nodes stay in the
+arena for navigation and `Db::is_uninstantiated` marks them and the block.
+Its classes are not in `Db::classes` and have no `Db::class_metadata`, so
+nothing of them is simulated; consumers that scan the whole arena instead of
+walking the roots skip marked nodes.
 `Db::instance_array_range` keeps the declared `(left, right)` of every
 instance array level (`NodeKind::InstanceArray`), for VPI instance array
 objects (37.11).

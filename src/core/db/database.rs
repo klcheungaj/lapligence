@@ -352,6 +352,12 @@ pub struct Db {
     /// parent): the nearest enclosing class, package, compilation unit,
     /// module instance, generate block or definition.
     class_declaring_scopes: HashMap<NodeId, NodeId>,
+    /// Every node of a generate block that elaboration did not instantiate
+    /// (an untaken if or case generate branch, IEEE 1800-2009 27.3, 27.5),
+    /// the block included. Such nodes stay in the arena for navigation but
+    /// are no scope's children and no root; nothing in them exists in the
+    /// model.
+    uninstantiated_nodes: HashSet<NodeId>,
     /// The class each forward typedef names (IEEE 1800-2009 6.18, 8.25), by
     /// typedef node.
     forward_typedefs: HashMap<NodeId, ForwardTypedef>,
@@ -560,6 +566,7 @@ impl Db {
             source_libraries: HashMap::new(),
             declaration_time_scales: HashMap::new(),
             class_declaring_scopes: HashMap::new(),
+            uninstantiated_nodes: HashSet::new(),
             forward_typedefs: HashMap::new(),
             source_map: super::SourceMap::default(),
             legacy_directives: Vec::new(),
@@ -670,6 +677,7 @@ impl Db {
             source_libraries: HashMap::new(),
             declaration_time_scales: HashMap::new(),
             class_declaring_scopes: HashMap::new(),
+            uninstantiated_nodes: HashSet::new(),
             forward_typedefs: HashMap::new(),
             source_map: super::SourceMap::default(),
             legacy_directives: Vec::new(),
@@ -856,6 +864,14 @@ impl Db {
     /// databases have none.
     pub fn class_declaring_scope(&self, id: NodeId) -> Option<NodeId> {
         self.class_declaring_scopes.get(&id).copied()
+    }
+
+    /// Whether `id` lies in a generate block that elaboration did not
+    /// instantiate (IEEE 1800-2009 27.3, 27.5), or is that block. Consumers
+    /// that scan the whole arena rather than walking the roots skip such
+    /// nodes: they do not exist in the model.
+    pub fn is_uninstantiated(&self, id: NodeId) -> bool {
+        self.uninstantiated_nodes.contains(&id)
     }
 
     /// The class that forward typedef `id` names (`typedef class c;` or

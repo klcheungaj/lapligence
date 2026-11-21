@@ -2105,6 +2105,29 @@ fn s22_d9_initializer_finish_runs_finals() {
 }
 
 #[test]
+fn s22_d10_untaken_generate_class() {
+    run_decision(
+        "S22-D10_untaken_generate_class",
+        include_str!("fixtures/sim/lrm_decisions/S22-D10_untaken_generate_class.out"),
+    );
+}
+
+#[test]
+fn s22_d10_untaken_class_forward_typedef_rejected() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(include_str!(
+        "fixtures/sim/lrm_decisions/S22-D10_untaken_class_forward_typedef_rejected.out"
+    )
+    .is_empty());
+    sim_cli::reject_case(
+        SUITE,
+        "S22-D10_untaken_class_forward_typedef_rejected",
+        "S22-D10_untaken_class_forward_typedef_rejected.sv:14:17 forward typedef 'X' does not \
+         resolve to a data type",
+    );
+}
+
+#[test]
 fn s22_d2_static_locals_initialize_once() {
     run_decision(
         "S22-D2_static_locals_initialize_once",

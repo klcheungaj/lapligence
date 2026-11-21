@@ -705,6 +705,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   in declaration order, so a forward read sees the default value of a later
   non-constant initializer; a static local initializes at its subroutine's
   place, a constant one with its scope's constants (decision S22-D8). A
+  class of a generate block that elaboration does not instantiate (an
+  untaken if or case branch, a block nested in one) does not exist: its
+  static initializers, method static locals and covergroups never run or
+  count (decision S22-D10). A
   package defined twice (a guarded header compiled on its own and included
   again in another compilation unit; the frontend warns) is simulated once, as
   every reference binds the first definition

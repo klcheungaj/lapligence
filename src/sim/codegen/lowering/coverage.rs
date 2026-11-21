@@ -797,11 +797,13 @@ impl<'a> Codegen<'a> {
     }
 
     /// Lowered covergroups: every declaration a `new` or an instance method
-    /// call names.
+    /// call names, outside the generate blocks elaboration did not
+    /// instantiate (nothing there exists, IEEE 1800-2009 27.3).
     fn constructed_covergroups(&self) -> Vec<NodeId> {
         let mut groups = self
             .db
             .node_ids()
+            .filter(|id| !self.db.is_uninstantiated(*id))
             .filter_map(|id| match self.kind(id) {
                 NodeKind::Expr(ExprKind::NewCovergroup { group_type, .. }) => {
                     self.covergroup_of_type(*group_type)

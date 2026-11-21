@@ -1,0 +1,9 @@
+tb.cd.b 1
+tb.cd.f.s 1
+tb.y.b 1
+tb.y.f.s 1
+tb.y.initial 1
+tb.y.t.s 1
+y.b + y.f() + cd.b + cd.f() = 4
+tb.y.t 1
+tb.y final

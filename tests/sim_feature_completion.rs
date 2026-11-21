@@ -335,6 +335,9 @@ mod ki_static_init_errors;
 #[path = "sim_feature_completion/ki_initializer_order.rs"]
 mod ki_initializer_order;
 
+#[path = "sim_feature_completion/ki_untaken_generate.rs"]
+mod ki_untaken_generate;
+
 #[path = "sim_feature_completion/ki_timescale_option.rs"]
 mod ki_timescale_option;
 

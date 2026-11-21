@@ -1616,16 +1616,26 @@ impl Db {
             .filter(|node| node.kind == SemanticKind::Package)
             .map(|node| NodeId::from_index(node.id as usize))
             .collect();
-        let classes: Vec<NodeId> = snapshot
+        // A class of a generate block that elaboration did not instantiate
+        // (an untaken branch) does not exist (IEEE 1800-2009 27.3, 27.5):
+        // neither its static initializers nor anything else of it is part
+        // of the model, as for the block's other members, which the owned
+        // children already leave out.
+        let uninstantiated_nodes = uninstantiated_nodes(snapshot)?;
+        let elaborated_classes: Vec<&SemanticNode> = snapshot
             .semantic_nodes
             .iter()
-            .filter(|node| node.kind == SemanticKind::Class)
+            .filter(|node| {
+                node.kind == SemanticKind::Class
+                    && !uninstantiated_nodes.contains(&NodeId::from_index(node.id as usize))
+            })
+            .collect();
+        let classes: Vec<NodeId> = elaborated_classes
+            .iter()
             .map(|node| NodeId::from_index(node.id as usize))
             .collect();
-        let class_metadata = snapshot
-            .semantic_nodes
+        let class_metadata = elaborated_classes
             .iter()
-            .filter(|node| node.kind == SemanticKind::Class)
             .map(|node| -> Result<(NodeId, ClassMetadata), DbError> {
                 let id = NodeId::from_index(node.id as usize);
                 let mut scope = None;
@@ -1690,6 +1700,7 @@ impl Db {
             source_libraries,
             declaration_time_scales,
             class_declaring_scopes,
+            uninstantiated_nodes,
             forward_typedefs,
             source_map,
             legacy_directives,
@@ -1824,6 +1835,59 @@ const LEGACY_DIRECTIVES: [&str; 6] = [
     "delay_mode_unit",
     "delay_mode_zero",
 ];
+
+/// Every node in a generate block that elaboration did not instantiate (an
+/// untaken if or case generate branch, or a block nested in one), the block
+/// included. Each node's answer is memoized for the ancestors its walk
+/// passes, so the pass is linear; the walk is bounded by the node count, so a
+/// malformed parent cycle is an error, not a hang.
+fn uninstantiated_nodes(snapshot: &SlangSnapshot) -> Result<HashSet<NodeId>, DbError> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum State {
+        Unknown,
+        Instantiated,
+        Uninstantiated,
+    }
+    let nodes = &snapshot.semantic_nodes;
+    let mut states = vec![State::Unknown; nodes.len()];
+    let mut path = Vec::new();
+    for start in 0..nodes.len() {
+        path.clear();
+        let mut current = Some(start);
+        let mut result = State::Instantiated;
+        while let Some(index) = current {
+            let Some(node) = nodes.get(index) else {
+                return Err(DbError::InvalidSnapshot(format!(
+                    "semantic node {start} has unknown ancestor {index}"
+                )));
+            };
+            if states[index] != State::Unknown {
+                result = states[index];
+                break;
+            }
+            if path.len() == nodes.len() {
+                return Err(DbError::InvalidSnapshot(format!(
+                    "semantic node {start} has a cyclic parent chain"
+                )));
+            }
+            path.push(index);
+            if node.kind == SemanticKind::GenerateScope && node.is_uninstantiated() {
+                result = State::Uninstantiated;
+                break;
+            }
+            current = node.parent_id().map(|parent| parent as usize);
+        }
+        for index in &path {
+            states[*index] = result;
+        }
+    }
+    Ok(states
+        .iter()
+        .enumerate()
+        .filter(|(_, state)| **state == State::Uninstantiated)
+        .map(|(index, _)| NodeId::from_index(index))
+        .collect())
+}
 
 /// The definition facts of every module, interface and program instance:
 /// its definition's location (the node its target names), `` `celldefine``,
