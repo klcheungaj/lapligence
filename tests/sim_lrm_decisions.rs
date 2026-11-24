@@ -5490,10 +5490,13 @@ fn s26_d23_integral_file_names() {
 }
 
 #[test]
-fn s26_d18_start_after_finish_descends() {
-    run_decision(
-        "S26-D18_start_after_finish_descends",
-        include_str!("fixtures/sim/lrm_decisions/S26-D18_start_after_finish_descends.out"),
+fn s26_d24_empty_plusarg_strings() {
+    sim_cli::run_case_with_runtime_args(
+        SUITE,
+        "S26-D24_empty_plusarg_strings",
+        include_str!("fixtures/sim/lrm_decisions/S26-D24_empty_plusarg_strings.out"),
+        "INFO: S26-D24_empty_plusarg_strings.sv:40:5: [SIM-001] (tb @ 0 ps) $finish called\n",
+        &["+abc=5", "+77"],
     );
 }
 

@@ -2302,11 +2302,13 @@ int32_t llg_assertion_register_property(
 // prefix matching after the leading '+'. Value queries accept the standard
 // %d/%o/%h/%x/%b/%e/%f/%g/%s conversions (including uppercase and leading-0
 // forms); an unmatched query returns zero and leaves its destination unchanged.
-int32_t llg_test_plusargs(const char* pattern);
-int32_t llg_value_plusargs_packed(const char* format, sv4_t* out, uint32_t width,
-                              int32_t is_signed, int32_t two_state);
-int32_t llg_value_plusargs_real(const char* format, double* out);
-int32_t llg_value_plusargs_string(const char* format, llg_string_t* out);
+// A pattern or format is a byte count: an integral one can hold NUL characters,
+// which match nothing.
+int32_t llg_test_plusargs(const char* pattern, size_t length);
+int32_t llg_value_plusargs_packed(const char* format, size_t format_len, sv4_t* out,
+                              uint32_t width, int32_t is_signed, int32_t two_state);
+int32_t llg_value_plusargs_real(const char* format, size_t format_len, double* out);
+int32_t llg_value_plusargs_string(const char* format, size_t format_len, llg_string_t* out);
 // Execute one `$system` command in the generated simulator process. This
 // host boundary is disabled unless LLG_ALLOW_SYSTEM is set to 1, true, yes,
 // or on. When disabled, the runtime diagnoses the attempted command, marks

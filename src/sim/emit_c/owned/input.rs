@@ -52,6 +52,11 @@ impl Frame<'_, '_> {
         )
     }
 
+    /// The data pointer and byte count of a text.
+    fn text_arguments(value: &NativeValue) -> String {
+        format!("{}, ({})->len", Self::text_pointer(value), value.address)
+    }
+
     fn file_reference(
         &mut self,
         lhs: &IrLhs,
@@ -578,7 +583,7 @@ impl Frame<'_, '_> {
         let pattern = self.input_text(pattern)?;
         let result = self.integer_result(format!(
             "llg_test_plusargs({})",
-            Self::text_pointer(&pattern)
+            Self::text_arguments(&pattern)
         ));
         self.native_discard(pattern);
         Ok(result)
@@ -593,7 +598,7 @@ impl Frame<'_, '_> {
             return Err(pending("plusarg writes in read-only callbacks"));
         }
         let format = self.input_text(format)?;
-        let code = Self::text_pointer(&format);
+        let code = Self::text_arguments(&format);
         let status = match destination {
             IrPlusArgTarget::String { address } => {
                 let address = self.native_address(address, NativeKind::String)?.address;

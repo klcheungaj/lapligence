@@ -17,7 +17,7 @@ fn render_plusarg_text(
                 format!("llg_string_destroy(&{name}); "),
             ))
         }
-        IrPlusArgText::Packed(_) => Err("packed scan text outside an owned frame".to_owned()),
+        IrPlusArgText::Packed(_) => Err("packed input text outside an owned frame".to_owned()),
     }
 }
 
@@ -394,11 +394,25 @@ pub(super) fn render_file_input(
     Ok(result(code))
 }
 
+/// [`render_plusarg_text`] with the byte count after the pointer.
+fn render_plusarg_bytes(
+    ctx: &RCtx<'_>,
+    text: &IrPlusArgText,
+    name: &str,
+) -> Result<(String, String, String), String> {
+    let (pointer, setup, cleanup) = render_plusarg_text(ctx, text, name)?;
+    let length = match text {
+        IrPlusArgText::Literal(text) => text.len().to_string(),
+        IrPlusArgText::Dynamic(_) | IrPlusArgText::Packed(_) => format!("{name}.len"),
+    };
+    Ok((format!("{pointer}, {length}"), setup, cleanup))
+}
+
 pub(super) fn render_test_plusargs(
     ctx: &RCtx<'_>,
     pattern: &IrPlusArgText,
 ) -> Result<RenderedExpr, String> {
-    let (pattern, setup, cleanup) = render_plusarg_text(ctx, pattern, "_llg_plusarg_pattern")?;
+    let (pattern, setup, cleanup) = render_plusarg_bytes(ctx, pattern, "_llg_plusarg_pattern")?;
     let code = if setup.is_empty() {
         format!("sv4_from_u64((uint64_t)llg_test_plusargs({pattern}), 32, 1)")
     } else {
@@ -421,7 +435,7 @@ pub(super) fn render_value_plusargs(
     result_width: u32,
     result_signed: bool,
 ) -> Result<RenderedExpr, String> {
-    let (format, setup, cleanup) = render_plusarg_text(ctx, format, "_llg_plusarg_format")?;
+    let (format, setup, cleanup) = render_plusarg_bytes(ctx, format, "_llg_plusarg_format")?;
     let mut code = String::from("({ int _llg_plusarg_ok = 0; ");
     code.push_str(&setup);
     match target {
