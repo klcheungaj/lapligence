@@ -19,7 +19,7 @@ build has smaller frames and fails later, at depths that were not measured:
 
 | Input | `--lint-only` | generation |
 | --- | --- | --- |
-| `a + a + ... + a`, 300 to 10,000 terms | passes | aborts from 300 terms |
+| `a + a + ... + a`, 60 to 10,000 terms | passes | aborts from 70 terms |
 | the same with 30,000 terms | aborts in the frontend | aborts |
 | `if (1) begin ... end` generate blocks nested 200 deep | passes | passes |
 | the same nested 500 to 5,000 deep | passes | aborts |
@@ -39,25 +39,18 @@ passes and emission. Nested generate blocks recurse through scope lowering
 in the same way. Nothing bounds the depth and nothing sizes the stack for
 it.
 
-Depth is not only a matter of stack. With an unlimited stack
-(`ulimit -s unlimited`, unoptimized `quick` profile, `--gen-only`) the chain
-`a + a + ... + a` takes 5.6 s and 225 MiB for 1,000 terms, 39 s and 520 MiB
-for 2,000, 280 s and 1.5 GiB for 4,000, and with 16,000 terms had used 17 GiB
-after five minutes; `--lint-only` takes 0.4 s and 37 MiB for 4,000 terms.
-The time grows with about the cube of the depth and the memory faster
-than the depth. In three interruptions of the 2,000-term compile the running
-stage was IR validation (`src/sim/ir/validate/`): every visited node
-formats the diagnostic path of its children
-(`format!("{path}.lhs")`, about 490 such sites), so a node at depth `d`
-costs a string of length proportional to `d` whether or not anything fails.
-Other stages were not measured separately.
+Only the stack is in the way: with an unlimited stack (`ulimit -s
+unlimited`, unoptimized `quick` profile, `--gen-only`) the chain
+`a + a + ... + a` takes 0.17 s and 165 MiB for 1,000 terms, 0.7 s and 520 MiB
+for 4,000, and 4.4 s and 1.9 GiB for 16,000, of which about 120 KiB per term
+are stack frames. The frontend's own walks of the chain
+(`Expression::isImplicitString`, `ValuePath::overlaps`,
+`SyntaxNode::getFirstToken`) are quadratic in its length and are a fifth of
+the instructions at 4,000 terms.
 
 ### Intended direction
 
-Three parts. Validation carries its path as a chain of borrowed segments and
-renders it only when a check fails, which also removes one allocation per
-node from every compile; until then no depth limit that long generated
-chains need can be compiled in useful time. A depth limit with a located
+Two parts. A depth limit with a located
 error at the first layer that can see it: the wrapper, by an iterative walk
 of each syntax tree before elaboration (or a counter in the frontend's
 operator loop, as a tracked patch), with the limit a named constant well
