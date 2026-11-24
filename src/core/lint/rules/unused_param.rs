@@ -15,8 +15,16 @@
 //!
 //! Type parameters are captured as `Param` nodes too and are checked alike.
 //! Flat (never-instantiated) module definitions carry no captured children in
-//! the db, so their parameters are not checked; neither are the parameters of
-//! packages and classes.
+//! the db, so their parameters are not checked.
+//!
+//! The parameters of packages and classes are not checked either. Those of a
+//! package or a class body are localparams whatever their keyword (IEEE
+//! 1800-2009 6.20.1) and are mostly names offered to importers: of UVM 1.2's 45
+//! package constants 7 are read by nothing in the package, all of them such
+//! names (`UVM_ALL_ON`). A class parameter that nothing reads still selects
+//! the specialization, whose static members are its own (8.24): the only
+//! two that the fixture tree leaves unread (of 43) do that, and all 62 of UVM
+//! 1.2 are read.
 
 use std::collections::HashSet;
 
@@ -290,6 +298,17 @@ mod tests {
         let source = "module sub #(parameter type T = int) ();\nendmodule\n\
                       module t;\n  sub #(.T(logic)) u();\nendmodule\n";
         assert_eq!(reported(source, "t"), ["T"]);
+    }
+
+    /// The module docs say why; `U` shows that the rule ran.
+    #[test]
+    fn package_and_class_parameters_are_not_checked() {
+        let source = "package p;\n  parameter int A = 1;\n  parameter type B = int;\nendpackage\n\
+                      class tag #(int C = 1, type D = int);\n  parameter int E = 2;\n\
+                      \x20 static int count;\nendclass\n\
+                      module t #(parameter int U = 5) ();\n\
+                      \x20 initial tag #(3)::count = tag #(4)::count;\nendmodule\n";
+        assert_eq!(reported(source, "t"), ["U"]);
     }
 
     /// The declaration is read although this instance does not elaborate the
