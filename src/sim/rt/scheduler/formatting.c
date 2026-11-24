@@ -460,6 +460,32 @@ static size_t llg_format_char(sv4_t value, char* raw, size_t cap) {
     return 1;
 }
 
+// `%s` of a packed vector: its bytes from the most significant one, x and z
+// bits read as 0. A zero byte prints as a space wherever it stands, so the
+// text fills the width of the vector as a value of any other format does
+// (SV 21.2.1.3: "string values are expanded with leading spaces"), unless
+// `drop_zero_bytes` removes it, as `%0s` and a left-justified field do
+// (decision S24-D4). A vector of one byte has no such width.
+static size_t llg_format_vector_string(sv4_t value, int32_t drop_zero_bytes,
+                                       char* raw, size_t cap) {
+    size_t bytes = ((size_t)llg_sv4_width(value) + 7u) / 8u;
+    if (bytes <= 1u) drop_zero_bytes = 1;
+    size_t len = 0;
+    for (size_t i = bytes; i > 0 && len < cap; --i) {
+        size_t bit = (i - 1u) * 8u;
+        size_t word = bit / 64u;
+        uint64_t known = llg_sv4_word(value, word, LLG_SV4_BITS) &
+                         ~(llg_sv4_word(value, word, LLG_SV4_X) |
+                           llg_sv4_word(value, word, LLG_SV4_Z));
+        uint8_t byte = (uint8_t)(known >> (bit % 64u));
+        if (byte)
+            raw[len++] = (char)byte;
+        else if (!drop_zero_bytes)
+            raw[len++] = ' ';
+    }
+    return len;
+}
+
 static sv4_t llg_string_to_display_packed(const llg_string_t* value) {
     size_t max_bytes = (size_t)(LLG_SUPPORTED_WIDTH_LIMIT - 1u) / 8u;
     if (value->len > max_bytes) {
@@ -707,9 +733,15 @@ static void llg_emit_field(char* out, size_t cap, size_t* len,
 
 }
 
-// The `%l` text of the run-time format being expanded; formatting neither
-// yields nor nests, so `llg_string_format_bound` holds it for one call.
-static const char* llg_format_binding;
+// The run-time format being expanded, if any (see `llg_string_format_bound`,
+// which holds it for one call; formatting neither yields nor nests).
+static struct {
+    const char* binding;
+    const char* defaults;
+} llg_format_run_time;
+
+// Bytes of one conversion in `llg_format_run_time.defaults` (`%d`).
+#define LLG_FORMAT_DEFAULT_LENGTH 2
 
 static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
                                const llg_fmt_arg_t* args, int32_t n,
@@ -741,9 +773,9 @@ static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
             // `%l` has no width-bearing form in the Slang grammar, so append
             // the library-qualified HDL scope directly and avoid allocating a
             // model-width temporary on the coroutine stack.
-            if (llg_format_binding) {
-                llg_append_text(out, cap, &len, llg_format_binding,
-                                strlen(llg_format_binding));
+            if (llg_format_run_time.binding) {
+                llg_append_text(out, cap, &len, llg_format_run_time.binding,
+                                strlen(llg_format_run_time.binding));
                 continue;
             }
             llg_append_text(out, cap, &len, "work.", 5);
@@ -852,11 +884,9 @@ static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
                                            ? (size_t)written
                                            : raw_cap - 1;
         } else if (conversion == 's' && arg->kind == LLG_FMT_PACKED) {
-            llg_string_t value = llg_string_from_packed(arg->value.packed);
-            raw_len = value.len;
-            if (raw_len > raw_cap) raw_len = raw_cap;
-            if (raw_len) memcpy(raw, value.data, raw_len);
-            llg_string_destroy(&value);
+            raw_len = llg_format_vector_string(
+                arg->value.packed, spec.left || (spec.zero && !spec.has_width),
+                raw, raw_cap);
         } else if (conversion == 's' && arg->kind == LLG_FMT_STRING) {
             raw_len = arg->value.string.len;
             if (raw_len > raw_cap) raw_len = raw_cap;
@@ -878,6 +908,20 @@ static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
         }
         llg_emit_field(out, cap, &len, raw, raw_len, spec, conversion);
         if (raw != inline_raw) free(raw);
+    }
+    if (argi < n && llg_format_run_time.defaults) {
+        // The arguments the format does not consume print in their default
+        // formats, as lowering does for a literal format, with a warning (SV
+        // 21.3.3), reported once. The defaults consume every argument.
+        static int32_t reported_extra_argument;
+        if (!reported_extra_argument) {
+            reported_extra_argument = 1;
+            llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "format `%s` has fewer specifications than arguments; the rest are printed in their default formats", fmt);
+        }
+        return len + llg_format_typed(out + len, cap - len,
+                                      llg_format_run_time.defaults +
+                                          argi * LLG_FORMAT_DEFAULT_LENGTH,
+                                      args + argi, n - argi, scope);
     }
     out[len] = 0;
     return len;

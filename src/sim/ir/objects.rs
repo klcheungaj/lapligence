@@ -157,6 +157,16 @@ pub struct IrObject {
     pub initial: Option<IrStringExpr>,
 }
 
+/// What the formatter needs for a format known only at run time.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrRunTimeFormat {
+    /// The `%l` text; lowering expands `%l` in a literal format.
+    pub binding: String,
+    /// One two-character default conversion (`%d`) per argument, for the
+    /// arguments the format does not consume.
+    pub defaults: String,
+}
+
 /// String expression results own their bytes; reading storage creates a copy.
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrStringExpr {
@@ -240,9 +250,9 @@ pub enum IrStringExpr {
         format: Box<IrStringExpr>,
         args: Vec<IrDisplayArg>,
         scope: String,
-        /// The `%l` text of a format known only at run time; lowering expands
-        /// `%l` in a literal format, which has none.
-        binding: Option<String>,
+        /// Set for a format known only at run time; a literal format is
+        /// checked against its arguments and completed during lowering.
+        run_time: Option<Box<IrRunTimeFormat>>,
         /// The calling scope's time unit, which `%t` reads its values in
         /// (21.3.3, 20.4.2); 0, the design precision, for a literal format
         /// without a `%t` conversion (including `%p` templates), whose text

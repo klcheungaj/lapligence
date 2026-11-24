@@ -906,7 +906,8 @@ static char* llg_typed_line_alloc(const char* fmt, llg_fmt_arg_t* args, int32_t 
         cap = llg_format_size_add(cap, (size_t)spec.width);
         cap = llg_format_size_add(cap, (size_t)spec.precision);
         cap = llg_format_size_add(cap, scope ? strlen(scope) : 0);
-        cap = llg_format_size_add(cap, llg_format_binding ? strlen(llg_format_binding) : 0);
+        cap = llg_format_size_add(cap, llg_format_run_time.binding
+                                           ? strlen(llg_format_run_time.binding) : 0);
         if (*p) ++p;
     }
     char* out = llg_checked_malloc(cap, 1, "typed formatted line");
@@ -915,10 +916,12 @@ static char* llg_typed_line_alloc(const char* fmt, llg_fmt_arg_t* args, int32_t 
 }
 
 llg_string_t llg_string_format_bound(llg_string_t format, llg_fmt_arg_t* args,
-                                     int32_t n, const char* scope, const char* binding) {
-    llg_format_binding = binding;
+                                     int32_t n, const char* scope, const char* binding,
+                                     const char* defaults) {
+    llg_format_run_time.binding = binding;
+    llg_format_run_time.defaults = defaults;
     llg_string_t result = llg_string_format_typed(format, args, n, scope);
-    llg_format_binding = NULL;
+    memset(&llg_format_run_time, 0, sizeof(llg_format_run_time));
     return result;
 }
 

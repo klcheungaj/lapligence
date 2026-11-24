@@ -175,9 +175,9 @@ pub(super) fn string(ctx: &RCtx<'_>, value: &IrStringExpr) -> Result<String, Str
             format,
             args,
             scope,
-            binding,
+            run_time,
             time_unit_fs,
-        } => render_string_format(ctx, format, args, scope, binding.as_deref(), *time_unit_fs)?,
+        } => render_string_format(ctx, format, args, scope, run_time.as_deref(), *time_unit_fs)?,
         IrStringExpr::Case(value, upper) => format!(
             "llg_string_case({}, {})",
             string(ctx, value)?,
@@ -197,15 +197,19 @@ fn render_string_format(
     format: &IrStringExpr,
     args: &[IrDisplayArg],
     scope: &str,
-    binding: Option<&str>,
+    run_time: Option<&IrRunTimeFormat>,
     time_unit_fs: u64,
 ) -> Result<String, String> {
     let format = string(ctx, format)?;
     let scope = c_string_literal(scope);
-    let (formatter, trailing) = match binding {
-        Some(binding) => (
+    let (formatter, trailing) = match run_time {
+        Some(run_time) => (
             "llg_string_format_bound",
-            format!(", {}", c_string_literal(binding)),
+            format!(
+                ", {}, {}",
+                c_string_literal(&run_time.binding),
+                c_string_literal(&run_time.defaults)
+            ),
         ),
         None => ("llg_string_format_typed", String::new()),
     };

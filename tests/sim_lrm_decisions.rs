@@ -970,6 +970,22 @@ fn s24_d3_unformatted_real() {
 }
 
 #[test]
+fn s24_d4_vector_string_padding() {
+    run_decision(
+        "S24-D4_vector_string_padding",
+        include_str!("fixtures/sim/lrm_decisions/S24-D4_vector_string_padding.out"),
+    );
+}
+
+#[test]
+fn s24_d5_run_time_format_extra_arguments() {
+    run_decision(
+        "S24-D5_run_time_format_extra_arguments",
+        include_str!("fixtures/sim/lrm_decisions/S24-D5_run_time_format_extra_arguments.out"),
+    );
+}
+
+#[test]
 fn s26_d1_scan_selector_snapshot() {
     run_decision(
         "S26-D1_scan_selector_snapshot",
@@ -6563,5 +6579,13 @@ fn tn_d1_typename_spacing() {
     run_decision(
         "TN-D1_typename_spacing",
         include_str!("fixtures/sim/lrm_decisions/TN-D1_typename_spacing.out"),
+    );
+}
+
+#[test]
+fn tn_d2_typename_resolved() {
+    run_decision(
+        "TN-D2_typename_resolved",
+        include_str!("fixtures/sim/lrm_decisions/TN-D2_typename_resolved.out"),
     );
 }

@@ -488,11 +488,8 @@ fn uvm_example_difference_forms_are_located_limits() {
     );
 }
 
-/// A known difference, pinned: the industry-standard behaviour prints the
-/// resolved type (`class tb.mine`); a fix of the known issue updates the
-/// expected output.
 #[test]
-fn typename_of_a_type_parameter_prints_the_first_spelling() {
+fn typename_of_a_type_parameter_prints_the_resolved_type() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/ki_audit/typename_type_parameter.out");
     sim_cli::run_case(SUITE, "typename_type_parameter", expected, "", &[]);

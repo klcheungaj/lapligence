@@ -119,6 +119,12 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
             ev.c_name, ev.c_name, ev.c_name,
         ));
     }
+}
+
+/// The select tables of each event array, with the identifier prefix of their
+/// names.
+pub(super) fn event_array_tables(model: &IrModel) -> Vec<(String, String)> {
+    let mut tables = Vec::new();
     for ev in &model.events {
         let Some(dims) = ev.array_dims() else {
             continue;
@@ -139,18 +145,22 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
             .map(|index| format!("&{}", model.event(*index).c_name()))
             .collect::<Vec<_>>()
             .join(", ");
-        out.push_str(&format!(
-            "static const int32_t {}__left[] = {{ {} }};\n\
-             static const int32_t {}__right[] = {{ {} }};\n\
-             static llg_event_t* const {}__elements[] = {{ {} }};\n",
-            ev.c_name(),
-            left,
-            ev.c_name(),
-            right,
-            ev.c_name(),
-            elements
+        tables.push((
+            format!("{}__", ev.c_name()),
+            format!(
+                "static const int32_t {}__left[] = {{ {} }};\n\
+                 static const int32_t {}__right[] = {{ {} }};\n\
+                 static llg_event_t* const {}__elements[] = {{ {} }};\n",
+                ev.c_name(),
+                left,
+                ev.c_name(),
+                right,
+                ev.c_name(),
+                elements
+            ),
         ));
     }
+    tables
 }
 
 /// Persistent subprogram locals are model storage, not C lexical locals. A

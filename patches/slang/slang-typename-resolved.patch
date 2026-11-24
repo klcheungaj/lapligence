@@ -1,0 +1,121 @@
+diff --git a/include/slang/ast/types/TypePrinter.h b/include/slang/ast/types/TypePrinter.h
+index b27e95a95..ec78919a2 100644
+--- a/include/slang/ast/types/TypePrinter.h
++++ b/include/slang/ast/types/TypePrinter.h
+@@ -39,6 +39,12 @@ struct SLANG_EXPORT TypePrintingOptions {
+     /// Include the enum's base type.
+     bool fullEnumType = false;
+ 
++    /// Name each type by the declaration that creates it: a structure, union
++    /// or enumeration by the innermost typedef, whichever typedef or type
++    /// parameter it was reached through, and a class or covergroup with its
++    /// scope (IEEE 1800-2009 20.6.1 a and f).
++    bool resolvedTypeNames = false;
++
+     /// Print typedefs as links instead of their expanded type details.
+     bool typedefsAsLinks = false;
+ 
+@@ -67,6 +73,9 @@ public:
+     TypePrinter();
+     ~TypePrinter();
+ 
++    /// @returns the text `$typename` gives for @a type (IEEE 1800-2009 20.6.1).
++    static std::string typenameText(const Type& type);
++
+     /// Append the given type to the printer's string buffer.
+     void append(const Type& type);
+ 
+@@ -117,6 +126,7 @@ private:
+     void printUnpackedArray(const Type& type);
+     void printUnpackedArrayDim(const Type& type);
+     void printScope(const Scope* scope);
++    void printClassScope(const Type& type);
+     void printAKA(const Type& type);
+ 
+     std::unique_ptr<FormatBuffer> buffer;
+diff --git a/source/ast/builtins/QueryFuncs.cpp b/source/ast/builtins/QueryFuncs.cpp
+index 6d94e688c..216c3fd7e 100644
+--- a/source/ast/builtins/QueryFuncs.cpp
++++ b/source/ast/builtins/QueryFuncs.cpp
+@@ -104,10 +104,7 @@ public:
+         if (!noHierarchical(context, *args[0]))
+             return nullptr;
+ 
+-        TypePrinter printer;
+-        printer.append(*args[0]->type);
+-
+-        return printer.toString();
++        return TypePrinter::typenameText(*args[0]->type);
+     }
+ };
+ 
+diff --git a/source/ast/types/TypePrinter.cpp b/source/ast/types/TypePrinter.cpp
+index 998d44602..79b8e2182 100644
+--- a/source/ast/types/TypePrinter.cpp
++++ b/source/ast/types/TypePrinter.cpp
+@@ -35,6 +35,13 @@ TypePrinter::TypePrinter() : buffer(std::make_unique<FormatBuffer>()) {
+ 
+ TypePrinter::~TypePrinter() = default;
+ 
++std::string TypePrinter::typenameText(const Type& type) {
++    TypePrinter printer;
++    printer.options.resolvedTypeNames = true;
++    printer.append(type);
++    return printer.toString();
++}
++
+ void TypePrinter::append(const Type& type) {
+     if (options.addSingleQuotes)
+         buffer->append("'");
+@@ -350,6 +357,7 @@ void TypePrinter::visit(const PropertyType& type, std::string_view) {
+ void TypePrinter::visit(const ClassType& type, std::string_view) {
+     if (options.classesAsLinks)
+         buffer->format("{} ", uintptr_t(&type));
++    printClassScope(type);
+     buffer->append(type.name);
+     if (type.genericClass)
+         appendParameters(type.genericParameters, false);
+@@ -360,8 +368,10 @@ void TypePrinter::visit(const CovergroupType& type, std::string_view) {
+         buffer->format("{} ", uintptr_t(&type));
+     if (type.name.empty())
+         buffer->append("<unnamed covergroup>");
+-    else
++    else {
++        printClassScope(type);
+         buffer->append(type.name);
++    }
+ }
+ 
+ void TypePrinter::visit(const VirtualInterfaceType& type, std::string_view) {
+@@ -388,7 +398,15 @@ void TypePrinter::visit(const VirtualInterfaceType& type, std::string_view) {
+ 
+ void TypePrinter::visit(const TypeAliasType& type, std::string_view overrideName) {
+     std::string downstreamOverrideName;
+-    if (!overrideName.empty()) {
++    if (options.resolvedTypeNames) {
++        // A type parameter names no type of its own.
++        auto syntax = type.getSyntax();
++        if (syntax && syntax->kind == syntax::SyntaxKind::TypeAssignment)
++            downstreamOverrideName = overrideName;
++        else
++            downstreamOverrideName = getLexicalPath(type.getParentScope()).append(type.name);
++    }
++    else if (!overrideName.empty()) {
+         downstreamOverrideName = overrideName;
+     }
+     else if (options.elideScopeNames ||
+@@ -539,6 +557,14 @@ void TypePrinter::printScope(const Scope* scope) {
+     buffer->append(getLexicalPath(scope));
+ }
+ 
++// Only a user-defined class is named with its scope (20.6.1 f); the classes of
++// the std package are built in.
++void TypePrinter::printClassScope(const Type& type) {
++    auto scope = type.getParentScope();
++    if (options.resolvedTypeNames && scope && scope != &scope->getCompilation().getStdPackage())
++        printScope(scope);
++}
++
+ void TypePrinter::printAKA(const Type& type) {
+     // Only print the AKA if the target type has a real name.
+     // The typedefs can chain, so we want to walk down the chain

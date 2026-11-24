@@ -1,5 +1,5 @@
 // V 17.1.1.7 / SV 21.2.1.8: `%s` prints a packed value as 8-bit ASCII codes,
-// right-justified, and never prints leading zero bytes. The first three lines
+// right-justified, its zero bytes as spaces (decision S24-D4). The first lines
 // are the standards' own examples (V 2.6.3 / SV 11.10 and V 17.1.1).
 module tb;
   reg [8*14:1] stringvar;
