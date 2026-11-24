@@ -702,6 +702,100 @@ fn lint_only_stops_before_code_generation() {
     assert_eq!(String::from_utf8_lossy(&out.stdout), "value=1 time=3000\n");
 }
 
+/// One source construct, elaborated once per instance and generate iteration,
+/// is one finding unless its message tells the copies apart: by the elaborated
+/// width (`leaf`) or by the scope (`dead`). The summary, the JSON counts and
+/// `-Werror` follow what is reported.
+const REPEATED_SV: &str = r#"module leaf #(parameter int W = 2) (input logic [W-1:0] a);
+    logic [7:0] t;
+    initial begin
+        t = a;
+        $display("%0d", t);
+    end
+endmodule
+module repeated;
+    logic [3:0] d = 4'd1;
+    leaf #(.W(2)) u0(.a(d[1:0]));
+    leaf #(.W(3)) u1(.a(d[2:0]));
+    leaf #(.W(3)) u2(.a(d[2:0]));
+    for (genvar g = 0; g < 4; g++) begin : gen
+        logic BadName;
+        logic [1:0] narrow;
+        logic dead;
+        initial begin
+            narrow = 8'd3;
+            BadName = narrow[0];
+            $display("%b", BadName);
+        end
+    end
+endmodule
+"#;
+
+#[test]
+fn equal_findings_of_elaborated_copies_are_reported_once() {
+    let dir = TempDir::new("repeated");
+    dir.write("design.sv", REPEATED_SV);
+    let args = [
+        "--lint-only",
+        "--timescale",
+        "1ns/1ps",
+        "--top",
+        "repeated",
+        "design.sv",
+    ];
+    let out = run_llg(&dir.path, &args);
+    let err = stderr(&out);
+    assert!(out.status.success(), "{err}");
+    let findings: Vec<_> = err
+        .lines()
+        .filter_map(report::parse)
+        .filter(|message| message.id.starts_with("LINT-") && message.id != report::id("LINT", 0))
+        .collect();
+    let count = |text: &str| {
+        findings
+            .iter()
+            .filter(|message| message.text.contains(text))
+            .count()
+    };
+    assert_eq!(count("`BadName`"), 1, "{err}");
+    assert_eq!(count("LHS `narrow` is 2 bits"), 1, "{err}");
+    assert_eq!(count("LHS `t` is 8 bits, RHS is 2 bits"), 1, "{err}");
+    assert_eq!(count("LHS `t` is 8 bits, RHS is 3 bits"), 1, "{err}");
+    assert_eq!(count("signal `dead` in"), 4, "{err}");
+    let of = |severity| {
+        findings
+            .iter()
+            .filter(|message| message.severity == severity)
+            .count()
+    };
+    let (warnings, infos) = (of(Severity::Warning), of(Severity::Info));
+    assert_eq!(
+        lint_summary(&err),
+        Some(format!(
+            "0 error(s), {warnings} warning(s), {infos} info(s)"
+        )),
+        "{err}"
+    );
+
+    let json = run_llg(&dir.path, &[&args[1..], &["--lint-json"]].concat());
+    let text = String::from_utf8_lossy(&json.stdout).into_owned();
+    assert!(
+        text.contains(&format!("\"total\": {}", findings.len())),
+        "{text}"
+    );
+
+    let out = run_llg(&dir.path, &[&args[..], &["-Werror"]].concat());
+    let err = stderr(&out);
+    assert_eq!(out.status.code(), Some(1), "{err}");
+    assert_eq!(
+        lint_summary(&err),
+        Some(format!(
+            "{warnings} error(s), 0 warning(s), {infos} info(s)"
+        )),
+        "{err}"
+    );
+}
+
 /// A lint error (default severity) stops the run before codegen.
 #[test]
 fn default_lint_errors_stop_the_run() {

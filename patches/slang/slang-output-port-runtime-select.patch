@@ -22,7 +22,7 @@ index b00c007df..965a0a0cc 100644
  /// Various flags that can be applied to a constant expression evaluation.
  enum class SLANG_EXPORT EvalFlags : uint8_t {
 diff --git a/source/ast/expressions/SelectExpressions.cpp b/source/ast/expressions/SelectExpressions.cpp
-index 412ab537a..252f9da51 100644
+index 412ab537a..322151fe8 100644
 --- a/source/ast/expressions/SelectExpressions.cpp
 +++ b/source/ast/expressions/SelectExpressions.cpp
 @@ -80,6 +80,33 @@ static void checkForVectoredSelect(const Expression& value, SourceRange range,
@@ -111,6 +111,19 @@ index 412ab537a..252f9da51 100644
              scope = &ct;
              break;
          }
+@@ -1214,6 +1277,12 @@ ConstantValue MemberAccessExpression::evalImpl(EvalContext& context) const {
+     if (!cv)
+         return nullptr;
+ 
++    // A handle can be constant (null); what it refers to never is.
++    if (member.kind != SymbolKind::Field) {
++        context.addDiag(diag::ConstEvalNonConstVariable, sourceRange) << member.name;
++        return nullptr;
++    }
++
+     auto& field = member.as<FieldSymbol>();
+     auto& valueType = value().type->getCanonicalType();
+     if (valueType.isUnpackedStruct()) {
 diff --git a/tests/unittests/ast/MemberTests.cpp b/tests/unittests/ast/MemberTests.cpp
 index a84550224..c12de195b 100644
 --- a/tests/unittests/ast/MemberTests.cpp

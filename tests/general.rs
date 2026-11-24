@@ -21,6 +21,7 @@ mod sim_harness;
 mod support;
 
 mod adversarial_inputs;
+mod broken_sources;
 mod compilation_units;
 mod compile_errors;
 mod compiler_cache;

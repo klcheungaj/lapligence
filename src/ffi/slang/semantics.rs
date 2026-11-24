@@ -464,8 +464,14 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
         // A `PATHPULSE$` specparam carries its error-limit constant id plus
         // one; the Db checks that the constant exists.
         (12, super::SEMANTIC_PARAMETER_PATHPULSE, _) => true,
-        // Parameter auxiliary metadata carries the frontend's override bit.
-        (12, _, _) => node.auxiliary <= 1,
+        (12, super::SEMANTIC_PARAMETER_SPECPARAM, _) => {
+            node.auxiliary & !super::SEMANTIC_PARAMETER_REFERENCED == 0
+        }
+        (12, _, _) => {
+            node.auxiliary
+                & !(super::SEMANTIC_PARAMETER_OVERRIDDEN | super::SEMANTIC_PARAMETER_REFERENCED)
+                == 0
+        }
         // Subroutine qualifiers carry method and DPI-C metadata. Context and
         // DPI purity are meaningful only for imports.
         (16, _, _) => {

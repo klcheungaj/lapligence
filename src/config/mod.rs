@@ -53,7 +53,7 @@ use crate::sim::build::ModelOptLevel;
 
 pub use load::{load_config_file, parse_config_detailed, ConfigLoad, ParsedConfig};
 pub use paths::is_compilation_unit;
-pub use resolve::discover_sources;
+pub use resolve::{discover_sources, no_sources_message};
 
 /// The only supported `llg.toml` schema version.
 pub const SCHEMA_VERSION: u32 = 1;

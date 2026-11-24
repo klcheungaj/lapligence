@@ -173,8 +173,13 @@ the native snapshot is released.
 - Frontend-rejected input (editor analysis only; the simulator stops on the
   Slang error first): an instance of an unresolved definition (an unknown
   module, a black box) is `Other` with its parameter and connection expressions
-  as children, and a continuous assignment Slang replaced with an invalid
-  expression is `Other` instead of failing construction.
+  as children. A node the frontend marked bad is neutral instead of failing
+  construction: a continuous assignment without a target and value is `Other`, a
+  statement `Unsupported`, an assertion with a rejected clock
+  `AssertionExprKind::Invalid`; a rejected event control has no event and is not
+  implicit, a rejected delay or skew has no expression, a clocking variable
+  without a signal has no clocking metadata and a primitive without a table no
+  UDP. An unknown code on any other node still fails construction.
 
 The DB is the common semantic source for model/lint/LSP projections and simulator
 lowering. Invalid IDs, table windows, ranges, cycles or relationship metadata fail

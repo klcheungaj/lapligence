@@ -2027,7 +2027,9 @@ impl Codegen<'_> {
                         ..IrVpiObject::default()
                     }));
                 }
-                NodeKind::Param { ty, value, local } => {
+                NodeKind::Param {
+                    ty, value, local, ..
+                } => {
                     let Some(value) = value else {
                         continue;
                     };

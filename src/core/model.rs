@@ -414,7 +414,9 @@ fn instance_from_db(db: &db::Db, id: NodeId) -> InstanceModel {
         .children
         .iter()
         .filter_map(|c| match db.node_kind(*c) {
-            db::NodeKind::Param { ty, value, local } => Some(ParamModel {
+            db::NodeKind::Param {
+                ty, value, local, ..
+            } => Some(ParamModel {
                 name: db.node(*c).name.clone(),
                 value: value.clone(),
                 ty: ty.clone(),
@@ -567,7 +569,9 @@ fn package_from_db(db: &db::Db, id: NodeId) -> PackageDef {
         .children
         .iter()
         .filter_map(|c| match db.node_kind(*c) {
-            db::NodeKind::Param { ty, value, local } => Some(ParamModel {
+            db::NodeKind::Param {
+                ty, value, local, ..
+            } => Some(ParamModel {
                 name: db.node(*c).name.clone(),
                 value: value.clone(),
                 ty: ty.clone(),
@@ -723,7 +727,9 @@ fn gen_scope_from_db(db: &db::Db, scope_id: NodeId, array: Option<NodeId>) -> Ge
         .children
         .iter()
         .filter_map(|c| match db.node_kind(*c) {
-            db::NodeKind::Param { ty, value, local } => Some(ParamModel {
+            db::NodeKind::Param {
+                ty, value, local, ..
+            } => Some(ParamModel {
                 name: db.node(*c).name.clone(),
                 value: value.clone(),
                 ty: ty.clone(),

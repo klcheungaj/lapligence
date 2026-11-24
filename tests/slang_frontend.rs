@@ -1413,3 +1413,51 @@ fn parameter_override_rejections_name_the_override() {
         );
     }
 }
+
+/// The specializations of a generic class elaborate in order of creation, so
+/// the diagnostics they repeat with different arguments keep their order and
+/// number between runs (the frontend kept them in a table keyed by addresses).
+#[test]
+fn class_specialization_diagnostics_are_deterministic() {
+    const CLASSES: usize = 24;
+    let mut source = String::from("package p;\n");
+    for class in 0..CLASSES {
+        source.push_str(&format!("  class k{class}; endclass\n"));
+    }
+    source.push_str(
+        "  class inner #(type T = int);\n\
+         static function int f(); return T::missing; endfunction\n  endclass\n\
+         class outer #(type T = int);\n\
+         static function int f(); return inner#(T)::f(); endfunction\n  endclass\n\
+         endpackage\nmodule m;\n  initial begin\n",
+    );
+    for class in 0..CLASSES {
+        source.push_str(&format!("    void'(p::outer#(p::k{class})::f());\n"));
+    }
+    source.push_str("  end\nendmodule\n");
+    let expected: Vec<String> = (0..CLASSES)
+        .map(|class| format!("no member named 'missing' in class 'k{class}'"))
+        .collect();
+    // Snapshots kept alive move the heap between runs.
+    let mut kept = Vec::new();
+    for run in 0..4 {
+        let sources = [Source {
+            name: "order.sv",
+            text: &source,
+            raw: None,
+            is_compilation_unit: true,
+            is_library_map: false,
+            macro_file_name: None,
+        }];
+        let options = CompileOptions::default();
+        let snapshot = slang::compile(&request(&sources, &options)).expect("compile");
+        let messages: Vec<&str> = snapshot
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.message.contains("'missing'"))
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect();
+        assert_eq!(messages, expected, "run {run}");
+        kept.push(snapshot);
+    }
+}

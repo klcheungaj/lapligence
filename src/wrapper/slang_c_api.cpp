@@ -668,11 +668,15 @@ struct Capture {
                           kHardMaxTypeMembers);
   }
 
+  // A user-defined primitive with fewer than two ports has no table to
+  // evaluate; Slang reports it (PrimitiveTwoPorts), so capture must not fail
+  // first.
+  static bool hasUdpTable(const PrimitiveSymbol& primitive) {
+    return primitive.ports.size() >= 2;
+  }
+
   void captureUdpTable(uint64_t primitiveId, const PrimitiveSymbol& primitive) {
-    // A primitive with fewer than two ports has no table to evaluate; Slang
-    // reports it (PrimitiveTwoPorts), so capture must not fail first.
-    if (primitive.primitiveKind != PrimitiveSymbol::UserDefined ||
-        primitive.ports.size() < 2)
+    if (primitive.primitiveKind != PrimitiveSymbol::UserDefined || !hasUdpTable(primitive))
       return;
     if (output.udp_tables.size() >= maxSemanticNodes())
       throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
@@ -1663,6 +1667,14 @@ struct Capture {
   // Attach a checked SequenceRange to a SequenceConcat operand. The edge
   // remains an ordinary owned identity edge; scalar metadata is copied
   // alongside it and never exposes a native Slang object to Rust.
+  // A descending range is an error (SeqRangeMinMax); it is exported as its
+  // minimum, so that one diagnosed range does not reject the whole capture.
+  static uint32_t sequenceRangeMax(const SequenceRange& range) {
+    if (!range.max)
+      return LLG_SLANG_ASSERTION_RANGE_UNBOUNDED;
+    return std::max(*range.max, range.min);
+  }
+
   void semanticSequenceRole(uint64_t source, const void* targetIdentity,
                             uint32_t role, uint32_t index,
                             const SequenceRange& range) {
@@ -1672,7 +1684,7 @@ struct Capture {
       throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
                           "sequence edge metadata has no edge");
     edge->sequence_delay_min = range.min;
-    edge->sequence_delay_max = range.max.value_or(LLG_SLANG_ASSERTION_RANGE_UNBOUNDED);
+    edge->sequence_delay_max = sequenceRangeMax(range);
     edge->sequence_delay_valid = 1;
   }
 
@@ -1727,7 +1739,7 @@ struct Capture {
         continue;
       auto& node = output.semantic_nodes[static_cast<size_t>(it->second)];
       if (node.kind == LLG_SLANG_SEMANTIC_PARAMETER)
-        node.auxiliary = 1;
+        node.auxiliary |= LLG_SLANG_PARAMETER_OVERRIDDEN;
     }
   }
 
@@ -1961,13 +1973,31 @@ uint64_t specifyPathAuxiliary(const TimingPathSymbol& path) {
 
 // A pulse-limit specparam (30.7.1). Slang marks only the two-value form
 // (`isPathPulse`); `PATHPULSE$name = r;` declared in a specify block is a
-// pulse limit as well, with the error limit equal to the reject limit.
+// pulse limit as well, with the error limit equal to the reject limit. The
+// two-value form outside a specify block is an error (PulseControlSpecifyParent)
+// and stays an ordinary specparam.
 bool isPulseLimitSpecparam(const SpecparamSymbol& symbol) {
-  if (symbol.isPathPulse)
-    return true;
   const Scope* parent = symbol.getParentScope();
-  return symbol.name.starts_with("PATHPULSE$") && parent != nullptr &&
-         parent->asSymbol().kind == SymbolKind::SpecifyBlock;
+  return (symbol.isPathPulse || symbol.name.starts_with("PATHPULSE$")) &&
+         parent != nullptr && parent->asSymbol().kind == SymbolKind::SpecifyBlock;
+}
+
+// Whether the source reads the declaration of a parameter or specparam.
+template<typename T>
+bool isParameterRead(const T& parameter) {
+  // An overridden type parameter has no syntax of its own; its alias has.
+  const syntax::SyntaxNode* declaration = nullptr;
+  if constexpr (std::same_as<T, TypeParameterSymbol>)
+    declaration = parameter.getTypeAlias().getSyntax();
+  else
+    declaration = parameter.getSyntax();
+  const Scope* scope = parameter.getParentScope();
+  if (declaration == nullptr || scope == nullptr)
+    return false;
+  // A read in the target of an assignment (`c #(P)::v = 1`) inherits its
+  // lvalue context.
+  const auto [read, written] = scope->getCompilation().isReferenced(*declaration);
+  return read || written;
 }
 
 // The input (`source`) or output terminal named by a pulse-limit specparam
@@ -2506,8 +2536,11 @@ uint32_t semanticTimingKind(TimingControlKind kind) {
     case TimingControlKind::ImplicitEvent: return LLG_SLANG_TIMING_IMPLICIT_EVENT;
     case TimingControlKind::RepeatedEvent: return LLG_SLANG_TIMING_REPEATED_EVENT;
     case TimingControlKind::CycleDelay: return LLG_SLANG_TIMING_CYCLE_DELAY;
-    default: return LLG_SLANG_SUBKIND_NONE;
+    // The node is marked BAD, so the importer tells it from a kind this
+    // bridge does not know.
+    case TimingControlKind::Invalid: return LLG_SLANG_SUBKIND_NONE;
   }
+  return LLG_SLANG_SUBKIND_NONE;
 }
 
 uint32_t semanticNetKind(NetType::NetKind kind) {
@@ -2581,11 +2614,13 @@ void addTimeScale(LlgSlangSemanticNode& node,
                   const std::optional<TimeScale>& timeScale) {
   if (!timeScale)
     return;
+  // A precision coarser than the unit is an error (InvalidTimeScalePrecision,
+  // InvalidInferredTimeScale); the unit stands.
+  const TimeScaleValue precision = std::min(timeScale->precision, timeScale->base);
   node.time_unit = semanticTimeUnit(timeScale->base.unit);
   node.time_unit_magnitude = static_cast<uint32_t>(timeScale->base.magnitude);
-  node.time_precision_unit = semanticTimeUnit(timeScale->precision.unit);
-  node.time_precision_magnitude =
-      static_cast<uint32_t>(timeScale->precision.magnitude);
+  node.time_precision_unit = semanticTimeUnit(precision.unit);
+  node.time_precision_magnitude = static_cast<uint32_t>(precision.magnitude);
 }
 
 // The Slang time scale of a request's LLG_SLANG_TIME_UNIT_* codes and
@@ -2746,8 +2781,7 @@ bool isSyntheticLValue(const Expression& expression) {
 // different scopes. A type parameter contributes its canonical type only:
 // Slang keys a specialization by matching types, and the spelling it keeps
 // (`CB` of an enclosing specialization or the class name itself) is
-// whichever reference created the specialization first, an order that
-// follows Slang's hash maps and so changes between runs.
+// whichever reference created the specialization first.
 std::string specializationOrderKey(const Type& specialization) {
   std::string key;
   if (specialization.kind != SymbolKind::ClassType)
@@ -2774,9 +2808,9 @@ std::string specializationOrderKey(const Type& specialization) {
   return key;
 }
 
-// Slang keeps a generic class's specializations in a hash map keyed by type
-// and value addresses, so its iteration order changes between runs. Capture
-// numbers the nodes it visits in order, so it visits them sorted instead.
+// Slang iterates a generic class's specializations in order of creation, which
+// follows the references of the whole design. Capture numbers the nodes it
+// visits in order, so it visits them sorted by their own parameters instead.
 std::vector<const Type*> orderedSpecializations(const GenericClassDefSymbol& generic) {
   std::vector<std::pair<std::string, const Type*>> keyed;
   keyed.reserve(generic.numSpecializations());
@@ -3128,6 +3162,15 @@ public:
   void handle(const T& symbol) {
     if (!capture.declarationOnly && omittedFromFullCapture(symbol, capture.simulationFacts()))
       return;
+    if constexpr (std::same_as<T, InstanceSymbol>) {
+      // `mod u;` in a statement block is an error (InstanceMissingParens), yet
+      // the frontend creates the instance. Its two owners, the block and the
+      // statement, would make a recursive one a graph with exponentially many
+      // paths.
+      const Scope* scope = symbol.getParentScope();
+      if (scope && scope->asSymbol().kind == SymbolKind::StatementBlock)
+        return;
+    }
     if constexpr (std::same_as<T, InstanceBodySymbol>) {
       // Every mode records the reached definition bodies so shadowed
       // duplicates are found (captureShadowedDefinitions); library-unit
@@ -3224,7 +3267,7 @@ public:
     if constexpr (std::same_as<T, ParameterSymbol>) {
       result.constant_id = capture.constant(symbol.getValue());
       if (symbol.isOverridden())
-        result.auxiliary = 1;
+        result.auxiliary |= LLG_SLANG_PARAMETER_OVERRIDDEN;
       if (symbol.isFromGenvar()) {
         result.flags |= LLG_SLANG_SEMANTIC_IMPLICIT;
         const Scope* blockScope = symbol.getParentScope();
@@ -3272,6 +3315,8 @@ public:
                   std::same_as<T, TypeParameterSymbol>) {
       if (symbol.isLocalParam())
         result.flags |= LLG_SLANG_SEMANTIC_LOCAL;
+      if (isParameterRead(symbol))
+        result.auxiliary |= LLG_SLANG_PARAMETER_REFERENCED;
     }
     if constexpr (std::same_as<T, InstanceSymbol>) {
       result.subkind = LLG_SLANG_INSTANCE_SINGLE;
@@ -3541,24 +3586,22 @@ public:
       result.auxiliary = specifyTimingCheckAuxiliary(symbol);
     }
     if constexpr (std::same_as<T, SpecparamSymbol>) {
-      if (symbol.isPathPulse) {
-        result.subkind = LLG_SLANG_PARAMETER_PATHPULSE;
-        const ConstantValue& reject = symbol.getPulseRejectLimit();
-        if (!reject.bad())
-          result.constant_id = capture.constant(reject);
-        const ConstantValue& error = symbol.getPulseErrorLimit();
-        if (!error.bad())
-          result.auxiliary = capture.constant(error) + 1;
-      }
-      else if (isPulseLimitSpecparam(symbol)) {
+      if (isPulseLimitSpecparam(symbol)) {
         result.subkind = LLG_SLANG_PARAMETER_PATHPULSE;
         const ConstantValue& reject = symbol.getValue();
         if (!reject.bad())
           result.constant_id = capture.constant(reject);
+        if (symbol.isPathPulse) {
+          const ConstantValue& error = symbol.getPulseErrorLimit();
+          if (!error.bad())
+            result.auxiliary = capture.constant(error) + 1;
+        }
       }
       else {
         result.subkind = LLG_SLANG_PARAMETER_SPECPARAM;
         result.constant_id = capture.constant(symbol.getValue());
+        if (isParameterRead(symbol))
+          result.auxiliary |= LLG_SLANG_PARAMETER_REFERENCED;
       }
     }
     if constexpr (std::same_as<T, RandSeqProductionSymbol>) {
@@ -4062,6 +4105,8 @@ public:
     auto result = capture.output.semantic_nodes[static_cast<size_t>(id)];
     result.kind = LLG_SLANG_SEMANTIC_EXPRESSION;
     result.subkind = semanticExpressionKind(expression.kind);
+    if (expression.kind == ExpressionKind::Invalid)
+      result.flags |= LLG_SLANG_SEMANTIC_BAD;
     result.detail = storeString(capture.output, toString(expression.kind));
     result.range = capture.span(expression.sourceRange);
     result.type_id = capture.type(*expression.type);
@@ -4104,10 +4149,16 @@ public:
     if constexpr (std::same_as<T, ReplicationExpression>)
       result.operation = LLG_SLANG_OP_REPLICATE;
     if constexpr (std::same_as<T, StreamingConcatenationExpression>) {
-      result.operation = expression.getSliceSize() == 0
-          ? LLG_SLANG_OP_STREAM_LEFT
-          : LLG_SLANG_OP_STREAM_RIGHT;
-      result.auxiliary = expression.getSliceSize();
+      // `{<<{}}` has no operand to stream (ExpectedStreamExpression).
+      if (expression.streams().empty()) {
+        result.flags |= LLG_SLANG_SEMANTIC_BAD;
+      }
+      else {
+        result.operation = expression.getSliceSize() == 0
+            ? LLG_SLANG_OP_STREAM_LEFT
+            : LLG_SLANG_OP_STREAM_RIGHT;
+        result.auxiliary = expression.getSliceSize();
+      }
     }
     if constexpr (std::same_as<T, InsideExpression>)
       result.operation = LLG_SLANG_OP_INSIDE;
@@ -4571,6 +4622,8 @@ public:
       return;
     bindInvalidChildNames(node);
     auto& result = capture.output.semantic_nodes[static_cast<size_t>(id)];
+    if (node.bad())
+      result.flags |= LLG_SLANG_SEMANTIC_BAD;
     if constexpr (std::derived_from<T, TimingControl>) {
       result.kind = LLG_SLANG_SEMANTIC_TIMING_CONTROL;
       result.subkind = semanticTimingKind(node.kind);
@@ -4607,7 +4660,7 @@ public:
         result.auxiliary |= LLG_SLANG_ASSERTION_PARENTHESIZED;
       auto setRange = [&](const SequenceRange& range, uint32_t repetitionKind) {
         result.assertion_range_min = range.min;
-        result.assertion_range_max = range.max.value_or(LLG_SLANG_ASSERTION_RANGE_UNBOUNDED);
+        result.assertion_range_max = Capture::sequenceRangeMax(range);
         result.assertion_repetition_kind = repetitionKind;
       };
       if constexpr (std::same_as<T, SimpleAssertionExpr>) {
@@ -6131,6 +6184,9 @@ private:
     if (!scope)
       return;
     for (const AttributeSymbol* attribute : scope->getCompilation().getAttributes(symbol)) {
+      // An attribute value that is not a constant is a reported error.
+      if (attribute->getValue().bad())
+        continue;
       uint32_t flags = 0;
       const syntax::SyntaxNode* spec = attribute->getSyntax();
       if (spec && spec->kind == syntax::SyntaxKind::AttributeSpec) {
@@ -7099,6 +7155,10 @@ private:
       }
     }
     if constexpr (std::same_as<T, ClockVarSymbol>) {
+      // `input ghost;` names no signal (UndeclaredIdentifier).
+      if (!symbol.getInitializer())
+        capture.output.semantic_nodes[static_cast<size_t>(id)].flags |=
+            LLG_SLANG_SEMANTIC_BAD;
       if (symbol.inputSkew.delay) {
         symbol.inputSkew.delay->visit(*this);
         capture.semanticRole(id, symbol.inputSkew.delay, LLG_SLANG_EDGE_DELAY, 0);
@@ -7285,11 +7345,21 @@ private:
       if (!symbol.getSyntax())
         capture.output.semantic_nodes[static_cast<size_t>(id)].subkind =
             LLG_SLANG_CONTINUOUS_ASSIGN_NET_DECL;
-      capture.semanticRole(id, &symbol.getAssignment(), LLG_SLANG_EDGE_BODY);
+      // An assignment that failed to bind, or an expression the parser took
+      // for one (`assign x 1;`), has no target and value.
+      const Expression& assignment = symbol.getAssignment();
+      if (assignment.kind != ExpressionKind::Assignment)
+        capture.output.semantic_nodes[static_cast<size_t>(id)].flags |=
+            LLG_SLANG_SEMANTIC_BAD;
+      capture.semanticRole(id, &assignment, LLG_SLANG_EDGE_BODY);
       if (const TimingControl* delay = symbol.getDelay())
         capture.semanticRole(id, delay, LLG_SLANG_EDGE_DELAY);
     }
     if constexpr (std::same_as<T, PrimitiveInstanceSymbol>) {
+      if (symbol.primitiveType.primitiveKind == PrimitiveSymbol::UserDefined &&
+          !Capture::hasUdpTable(symbol.primitiveType))
+        capture.output.semantic_nodes[static_cast<size_t>(id)].flags |=
+            LLG_SLANG_SEMANTIC_BAD;
       uint32_t index = 0;
       const auto ports = symbol.getPortConnections();
       for (const Expression* port : ports) {
@@ -7433,6 +7503,12 @@ private:
           capture.ensureSemantic(group.port))].auxiliary |=
           LLG_SLANG_PORT_CONNECTED_BY_NAME;
     };
+    // A port connected twice (MixingOrderedAndNamedPorts) keeps its first actual.
+    std::unordered_set<const Symbol*> actualPorts;
+    auto captureActual = [&](const Symbol& port, const syntax::PropertyExprSyntax& actual) {
+      if (actualPorts.insert(&port).second)
+        captureMultiPortActual(symbol, port, actual);
+    };
     std::vector<bool> namedGroups(groups.size(), false);
     bool wildcard = false;
     uint32_t orderedIndex = 0;
@@ -7449,7 +7525,7 @@ private:
               syntaxConnection->as<syntax::OrderedPortConnectionSyntax>();
           capture.connectionActual(ordered.expr->sourceRange());
           if (orderedIndex < groups.size())
-            captureMultiPortActual(symbol, *groups[orderedIndex].port, *ordered.expr);
+            captureActual(*groups[orderedIndex].port, *ordered.expr);
         }
         else if (syntaxConnection->kind !=
                  syntax::SyntaxKind::EmptyPortConnection) {
@@ -7474,7 +7550,7 @@ private:
           if (!capture.declarationOnly)
             markByName(group);
           if (named.expr && namedSeen.find(name) == namedSeen.end())
-            captureMultiPortActual(symbol, *group.port, *named.expr);
+            captureActual(*group.port, *named.expr);
           namedGroups[index] = true;
           connected = true;
           break;

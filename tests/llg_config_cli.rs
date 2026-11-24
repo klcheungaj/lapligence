@@ -492,6 +492,29 @@ fn a_missing_explicit_config_is_an_error() {
     assert_prints(&output, "mode=fast depth=4 inc=1\n");
 }
 
+/// Include patterns are relative to each source directory; the error for a
+/// config that selects nothing names both.
+#[test]
+fn a_config_that_selects_no_files_names_its_directories_and_patterns() {
+    let project = Project::new();
+    project.write(
+        "llg.toml",
+        "schema_version = 1\n[sources]\ndirectories = [\"rtl\"]\ninclude = [\"rtl/**/*.sv\"]\n",
+    );
+    let output = project.run(&["--config", "llg.toml"]);
+    let error = stderr(&output);
+    assert_eq!(output.status.code(), Some(2), "{error}");
+    for part in [
+        "no source files given",
+        "`[sources]` selects no files",
+        "rtl`",
+        "`rtl/**/*.sv`",
+        "relative to each of these directories",
+    ] {
+        assert!(error.contains(part), "{part}: {error}");
+    }
+}
+
 #[test]
 fn no_arguments_without_a_config_prints_usage() {
     let project = Project::new();

@@ -567,9 +567,6 @@ impl LanguageServer for Backend {
                 }
             }
         }
-        if !config_roots.is_empty() {
-            self.publish_config_diagnostics().await;
-        }
         if !reloaded.is_empty() {
             // An effective llg.toml reload changed backend state (e.g.
             // `[compile] defines`): tell the client so config-derived client
@@ -596,6 +593,10 @@ impl LanguageServer for Backend {
         if !source_roots.is_empty() || !config_roots.is_empty() {
             // Source/config events can change discovery; rescan first.
             let mut schedule = self.rescan().await;
+            // The diagnostics of a config include that it selects no files.
+            if !config_roots.is_empty() || !schedule.is_empty() {
+                self.publish_config_diagnostics().await;
+            }
             schedule.extend(source_roots);
             schedule.extend(config_roots);
             schedule.extend(dep_roots);

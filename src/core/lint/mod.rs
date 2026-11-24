@@ -18,13 +18,13 @@
 
 pub mod rules;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::core::db::Db;
 use crate::core::model::DesignModel;
 
 /// Severity of a lint finding, mirroring the compiler severity ladder.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LintSeverity {
     Error,
     Warning,
@@ -265,6 +265,12 @@ impl LintRegistry {
     /// Run every enabled rule over `ctx`, concatenating findings in rule order.
     /// Disabled rules are skipped; `config` severity overrides replace the
     /// rule's own severity.
+    ///
+    /// The instances, generate iterations and class specializations of one
+    /// source construct repeat its finding; a rule reports each one, and equal
+    /// findings of a rule (severity, position and message) are kept once, at
+    /// their first occurrence. A message that names the instance or an
+    /// elaborated value keeps the findings of different copies distinct.
     pub fn lint(&self, ctx: &LintCtx<'_>, config: &LintConfig) -> Vec<LintDiag> {
         let mut out = Vec::new();
         for rule in &self.rules {
@@ -273,7 +279,7 @@ impl LintRegistry {
                 continue;
             }
             let override_sev = config.severity(id);
-            for mut diag in rule.check(ctx) {
+            for mut diag in distinct_findings(rule.as_ref(), ctx) {
                 if let Some(sev) = override_sev {
                     diag.severity = sev;
                 }
@@ -292,6 +298,28 @@ impl LintRegistry {
         }
         out
     }
+}
+
+/// The findings of one rule, without the repeats of an equal finding
+/// ([`LintRegistry::lint`]).
+fn distinct_findings(rule: &dyn LintRule, ctx: &LintCtx<'_>) -> Vec<LintDiag> {
+    let mut findings = rule.check(ctx);
+    let mut seen = HashSet::with_capacity(findings.len());
+    let first: Vec<bool> = findings
+        .iter()
+        .map(|finding| {
+            seen.insert((
+                finding.severity,
+                finding.file.as_deref(),
+                finding.line,
+                finding.col,
+                finding.message.as_str(),
+            ))
+        })
+        .collect();
+    let mut first = first.into_iter();
+    findings.retain(|_| first.next().unwrap_or(true));
+    findings
 }
 
 /// Convenience: run all default rules over a db + model.

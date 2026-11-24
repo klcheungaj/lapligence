@@ -42,7 +42,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 79;
+const ABI_VERSION: u32 = 81;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -1108,6 +1108,11 @@ pub const SEMANTIC_VARIABLE_PATTERN_BINDING: u32 = 234;
 pub const SEMANTIC_PARAMETER_SPECPARAM: u32 = 236;
 /// A `PATHPULSE$` pulse-limit specparam (14.6.1 / 30.7.1); no constant.
 pub const SEMANTIC_PARAMETER_PATHPULSE: u32 = 237;
+/// Auxiliary bits of a parameter node that is no pulse-limit specparam
+/// (`LLG_SLANG_PARAMETER_*`): an elaboration override replaced its value.
+pub const SEMANTIC_PARAMETER_OVERRIDDEN: u64 = 1 << 0;
+/// The source reads the parameter's declaration, in any instance.
+pub const SEMANTIC_PARAMETER_REFERENCED: u64 = 1 << 1;
 pub const CLOCKING_BLOCK_DEFAULT: u64 = 1 << 0;
 pub const CLOCKING_BLOCK_GLOBAL: u64 = 1 << 1;
 pub const CLOCKING_INPUT_EDGE_SHIFT: u32 = 2;

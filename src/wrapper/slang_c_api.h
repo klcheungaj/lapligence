@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 79u
+#define LLG_SLANG_ABI_VERSION 81u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -424,6 +424,16 @@ enum {
   LLG_SLANG_PARAMETER_PORT = 1u << 1
 };
 
+/* Auxiliary bits of a PARAMETER node that is no pulse-limit specparam. */
+enum {
+  /* An elaboration override replaced the declared value. */
+  LLG_SLANG_PARAMETER_OVERRIDDEN = 1u << 0,
+  /* An expression, range, type or name in the source reads the parameter's
+   * declaration, in any instance and also where elaboration folds the read
+   * away. An override of the parameter is no read. */
+  LLG_SLANG_PARAMETER_REFERENCED = 1u << 1
+};
+
 typedef struct {
   uint64_t owner_instance_id;
   uint32_t kind;
@@ -579,6 +589,8 @@ enum {
 };
 
 enum {
+  /* The frontend rejected the construct: its subkind may be NONE and operands
+   * its kind promises may be missing. */
   LLG_SLANG_SEMANTIC_BAD = 1u << 0,
   LLG_SLANG_SEMANTIC_UNINSTANTIATED = 1u << 1,
   LLG_SLANG_SEMANTIC_AUTOMATIC = 1u << 2,
