@@ -76,7 +76,8 @@ fn compile(source: &str, label: &str) {
     );
 }
 
-fn lowered(source: &str) -> IrModel {
+/// The IR model of the module `tb` of `source`.
+pub(super) fn lowered(source: &str) -> IrModel {
     let compiled = crate::core::compile::compile_sources_checked(
         &[crate::core::compile::OwnedSource::compilation_unit(
             "tb.sv", source,

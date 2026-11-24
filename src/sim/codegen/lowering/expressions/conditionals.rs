@@ -912,9 +912,10 @@ impl Codegen<'_> {
         let (a, b) = if width == REAL_EXPR_WIDTH {
             (a, b)
         } else {
+            let context = "conditional context";
             (
-                checked_operand_with_context(a, width, signed, scope_path, "conditional context")?,
-                checked_operand_with_context(b, width, signed, scope_path, "conditional context")?,
+                self.context_operand(scope_path, if_true, a, width, signed, context)?,
+                self.context_operand(scope_path, if_false, b, width, signed, context)?,
             )
         };
         Ok(IrExpr::new(

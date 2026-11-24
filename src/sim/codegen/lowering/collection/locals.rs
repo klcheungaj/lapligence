@@ -289,8 +289,7 @@ impl<'a> Codegen<'a> {
             return Some((reference, name));
         }
         let name = self.node(reference).name.as_str();
-        let mut parent = self.node(reference).parent;
-        while let Some(scope) = parent {
+        for scope in self.lexical_scopes(reference) {
             if matches!(self.kind(scope), NodeKind::Stmt(StmtKind::Begin)) {
                 if let Some(variable) = self.node(scope).children.iter().find(|child| {
                     self.is_mailbox_expr("", **child) && self.node(**child).name == name
@@ -321,7 +320,6 @@ impl<'a> Codegen<'a> {
                     return Some((variable, c_name));
                 }
             }
-            parent = self.node(scope).parent;
         }
         None
     }
@@ -526,8 +524,7 @@ impl<'a> Codegen<'a> {
         reference: NodeId,
     ) -> Option<NodeId> {
         let name = self.node(reference).name.as_str();
-        let mut parent = self.node(reference).parent;
-        while let Some(scope) = parent {
+        for scope in self.lexical_scopes(reference) {
             if matches!(self.kind(scope), NodeKind::Stmt(StmtKind::Begin)) {
                 if let Some(variable) = self.node(scope).children.iter().find(|child| {
                     matches!(
@@ -569,7 +566,6 @@ impl<'a> Codegen<'a> {
             if variable.is_some() {
                 return variable;
             }
-            parent = self.node(scope).parent;
         }
         None
     }
@@ -578,8 +574,7 @@ impl<'a> Codegen<'a> {
     /// including static declarations whose storage is model-backed.
     pub(in super::super) fn lexical_proc_process_decl(&self, reference: NodeId) -> Option<NodeId> {
         let name = self.node(reference).name.as_str();
-        let mut parent = self.node(reference).parent;
-        while let Some(scope) = parent {
+        for scope in self.lexical_scopes(reference) {
             if matches!(self.kind(scope), NodeKind::Stmt(StmtKind::Begin)) {
                 if let Some(variable) = self.node(scope).children.iter().find(|child| {
                     matches!(self.kind(**child), NodeKind::Var { ty } if ty.kind == "class" && ty.type_name.as_deref() == Some("process"))
@@ -604,9 +599,26 @@ impl<'a> Codegen<'a> {
                     return Some(*variable);
                 }
             }
-            parent = self.node(scope).parent;
         }
         None
+    }
+
+    /// The blocks and loops around `node` whose declarations its procedural
+    /// names can resolve to, innermost first. One table holds the nearest scope
+    /// of every node: resolving each operand of a deep expression over the
+    /// parent links would pass every operator around it.
+    fn lexical_scopes(&self, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+        let table = self
+            .lexical_scopes
+            .get_or_init(|| nearest_ancestors(self.db, |id| self.is_lexical_scope(id)));
+        std::iter::successors(table[node.index()], |scope| table[scope.index()])
+    }
+
+    fn is_lexical_scope(&self, node: NodeId) -> bool {
+        matches!(
+            self.kind(node),
+            NodeKind::Stmt(StmtKind::Begin | StmtKind::For { .. } | StmtKind::Foreach { .. })
+        )
     }
 
     pub(in super::super) fn is_foreach_iterator(&self, node: NodeId) -> bool {
@@ -642,8 +654,7 @@ impl<'a> Codegen<'a> {
             }
         }
         let name = self.node(reference).name.as_str();
-        let mut parent = self.node(reference).parent;
-        while let Some(scope) = parent {
+        for scope in self.lexical_scopes(reference) {
             if matches!(self.kind(scope), NodeKind::Stmt(StmtKind::Begin)) {
                 if let Some(variable) = self.node(scope).children.iter().find(|child| {
                     matches!(self.kind(**child), NodeKind::Var { .. })
@@ -671,7 +682,6 @@ impl<'a> Codegen<'a> {
                     return Some((variable, c_name));
                 }
             }
-            parent = self.node(scope).parent;
         }
         // A string a fork branch captured: the branch of a function has no
         // enclosing function context to read it from, so it names the
@@ -741,8 +751,7 @@ impl<'a> Codegen<'a> {
         reference: NodeId,
     ) -> Option<(NodeId, &ProcLocalInfo)> {
         let name = self.node(reference).name.as_str();
-        let mut parent = self.node(reference).parent;
-        while let Some(scope) = parent {
+        for scope in self.lexical_scopes(reference) {
             if matches!(self.kind(scope), NodeKind::Stmt(StmtKind::Begin)) {
                 if let Some(variable) = self.node(scope).children.iter().find(|child| {
                     matches!(self.kind(**child), NodeKind::Var { .. })
@@ -775,15 +784,13 @@ impl<'a> Codegen<'a> {
                     return Some((*variable, info));
                 }
             }
-            parent = self.node(scope).parent;
         }
         None
     }
 
     pub(in super::super) fn proc_local_is_shadowed(&self, reference: NodeId) -> bool {
         let name = self.node(reference).name.as_str();
-        let mut parent = self.node(reference).parent;
-        while let Some(scope) = parent {
+        for scope in self.lexical_scopes(reference) {
             if matches!(self.kind(scope), NodeKind::Stmt(StmtKind::Begin))
                 && self.node(scope).children.iter().any(|child| {
                     matches!(self.kind(*child), NodeKind::Var { .. })
@@ -805,7 +812,6 @@ impl<'a> Codegen<'a> {
             if is_loop_var {
                 return false;
             }
-            parent = self.node(scope).parent;
         }
         false
     }

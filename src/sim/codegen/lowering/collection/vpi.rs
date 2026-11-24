@@ -1488,17 +1488,6 @@ impl Codegen<'_> {
     ) -> Result<(), String> {
         use std::collections::BTreeMap;
 
-        fn reachable(db: &Db, node: NodeId, tops: &[NodeId]) -> bool {
-            let mut current = Some(node);
-            while let Some(id) = current {
-                if tops.contains(&id) {
-                    return true;
-                }
-                current = db.node(id).parent;
-            }
-            false
-        }
-
         /// Whether `id` is a named statement block of a process, or of a
         /// task or function of an instance (not the frontend's declaration
         /// scope of the same name, nor an instance body), so every named
@@ -1581,10 +1570,11 @@ impl Codegen<'_> {
                     .filter(|id| self.vpi_package_name(*id).is_some()),
             )
             .collect();
+        let enclosing_roots = nearest_ancestors(self.db, |id| roots.contains(&id));
         // The nodes of an untaken generate block keep their parent chain but
         // are no objects: the block does not exist (27.3).
         for id in self.db.instantiated_node_ids() {
-            if !reachable(self.db, id, &roots) {
+            if enclosing_roots[id.index()].is_none() && !roots.contains(&id) {
                 continue;
             }
             attribute_owner.set((!self.db.attributes(id).is_empty()).then_some(id));
