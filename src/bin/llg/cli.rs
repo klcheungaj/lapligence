@@ -259,9 +259,9 @@ Options:
       --no-lint-only         Generate and run after lint (overrides llg.toml)
       --lint-json [<path>]   Report lint as JSON and exit (implies --lint-only)
       -Werror                Treat lint warnings, a virtual-method override
-                              that changes visibility and a derived-class
-                              handle array assigned to a base-class array,
-                              as errors
+                              that changes visibility, a derived-class
+                              handle array assigned to a base-class array
+                              and $warning elaboration tasks as errors
       -Wno-error             Keep lint warnings as warnings (overrides llg.toml)
       --wave <file>          Dump every signal from time 0 into this .vcd or .fst
                               file; replaces the $dumpfile name and $dumpvars

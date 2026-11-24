@@ -2339,6 +2339,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   which a `$fatal` executed exits with status 1, as does one ended by a run-time
   error; `$error`, `$warning`, failing assertions and `$finish` leave the
   status 0 ([exit statuses](../readme.md#using-llg), decision ES-D1).
+  Outside procedures the tasks run at elaboration, once per call left after
+  generate expansion, and name the scope of the call; `$error` and `$fatal`
+  stop before generation (exit 1), `$warning` (an error under `-Werror`) and
+  `$info` do not
+  ([fixtures](../tests/fixtures/sim/feature_completion/ki_elab_tasks/readme.md)).
   V §17.4.1; SV §§20.2, 20.9–20.10 **[1995/SV-2005]**.
 - 🟨 **Stop/resume** — `$stop` preserves pending work, activations, output and
   time. `--stop-policy resume` is the noninteractive default; `exit` returns

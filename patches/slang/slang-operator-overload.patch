@@ -321,10 +321,10 @@ index d03210214..a901f920e 100644
                                                                     : diag::ShadowHierarchy;
  
 diff --git a/source/ast/ElabVisitors.h b/source/ast/ElabVisitors.h
-index 5058df7d0..d10fc6c00 100644
+index 5058df7d0..6ce05ba65 100644
 --- a/source/ast/ElabVisitors.h
 +++ b/source/ast/ElabVisitors.h
-@@ -145,6 +145,13 @@ struct DiagnosticVisitor : public ASTVisitor<DiagnosticVisitor> {
+@@ -145,10 +145,22 @@ struct DiagnosticVisitor : public ASTVisitor<DiagnosticVisitor> {
          symbol.getNetReferences();
      }
  
@@ -338,6 +338,15 @@ index 5058df7d0..d10fc6c00 100644
      void handle(const ElabSystemTaskSymbol& symbol) {
          if (!handleDefault(symbol))
              return;
+         symbol.issueDiagnostic();
++
++        // Each call that remains after generate expansion is executed (IEEE
++        // 1800-2009 20.10), so an identical instance must not reuse this visit.
++        if (auto scope = symbol.getParentScope(); !scope->isUninstantiated())
++            compilation.noteCannotCache(*scope);
+     }
+ 
+     void handle(const MethodPrototypeSymbol& symbol) {
 diff --git a/source/ast/Expression.cpp b/source/ast/Expression.cpp
 index 2f0389a41..13dd6c9d1 100644
 --- a/source/ast/Expression.cpp

@@ -345,7 +345,8 @@ lint errors stop the run (exit 1), warnings are printed and the run continues.
   a virtual-method override that changes visibility
   (`SLANG-VirtualVisibilityMismatch`, decision S08-D1) and for an unpacked
   array of derived-class handles assigned to one of base-class handles
-  (`SLANG-DerivedClassArrayAssignment`, decision UVB-D1) as errors; other
+  (`SLANG-DerivedClassArrayAssignment`, decision UVB-D1), and `$warning`
+  elaboration tasks (`SLANG-WarningTask`, 1800-2009 20.10), as errors; other
   frontend warnings stay warnings.
 - `json` (bool, `llg` only) — report lint as JSON on stdout and exit
   (`--lint-json`); implies `only`.

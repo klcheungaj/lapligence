@@ -305,6 +305,65 @@ fn analyze_full_pipeline_counts_declaration_initializer_reads_in_lint() {
     assert_eq!(unused, ["signal `self_ref` in `tb` is never used"]);
 }
 
+/// An elaboration system task is one diagnostic at its call per executed
+/// call, with the scope (IEEE 1800-2009 20.10), and a lone `;` a warning.
+#[test]
+fn analyze_full_pipeline_reports_elaboration_tasks() {
+    let _guards = analysis_guards();
+    let dir = resolved_temp_dir(&format!("llg_llg_bin_elab_tasks_{}", std::process::id()));
+    let orig_cwd = std::env::current_dir().expect("current dir");
+    let _restore = TempDirGuard {
+        dir: dir.clone(),
+        orig: orig_cwd,
+    };
+    std::env::set_current_dir(&dir).expect("chdir to temp dir");
+    let sv = dir.join("elab_tasks_fixture.sv");
+    std::fs::write(
+        &sv,
+        "module sub;\n  $info(\"hi\");\n  ;\nendmodule\nmodule tb;\n  sub u();\n\
+         \x20 $warning(\"W=%0d\", 3);\n  if (0) begin : g $error(\"no\"); end\nendmodule\n",
+    )
+    .expect("write design");
+    let opts = CompileOpts {
+        files: vec![sv.to_string_lossy().into_owned()],
+        top: Some("tb".to_owned()),
+        ..Default::default()
+    };
+    let a = analyze(&opts);
+    assert_eq!(a.model.top_instances.len(), 1, "the design elaborates");
+    let map = lsp_diagnostics(&a);
+    let diags = map
+        .iter()
+        .find(|(f, _)| f.ends_with("elab_tasks_fixture.sv"))
+        .map(|(_, v)| v)
+        .expect("diagnostics for the fixture file");
+    let found: Vec<_> = diags
+        .iter()
+        .filter(|d| d.message.contains("encountered") || d.message.contains("';'"))
+        .map(|d| (d.range.start.line, d.severity, d.message.as_str()))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            (
+                1,
+                Some(DiagnosticSeverity::INFORMATION),
+                "$info encountered in tb.u: hi"
+            ),
+            (
+                2,
+                Some(DiagnosticSeverity::WARNING),
+                "extra ';' has no effect"
+            ),
+            (
+                6,
+                Some(DiagnosticSeverity::WARNING),
+                "$warning encountered in tb: W=3"
+            ),
+        ]
+    );
+}
+
 /// `undriven-signal` ignores an untaken generate block (the shared rule): its
 /// assignment does not drive `driven_in_block`, and its initializer does not
 /// read `read_in_block`.
