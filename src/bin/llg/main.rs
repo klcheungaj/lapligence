@@ -114,7 +114,10 @@ fn main() -> std::process::ExitCode {
         say(Message::new(&catalog::CLI_UNSUPPORTED_PLATFORM, reason));
         return std::process::ExitCode::from(2);
     }
-    let code = match start(std::env::args().skip(1).collect()) {
+    let Some(arguments) = command_line() else {
+        return std::process::ExitCode::from(2);
+    };
+    let code = match start(arguments) {
         Ok(options) => {
             let memory_report = llg::memory_limit::install();
             let _memory_guard = memory_report.guard;
@@ -123,6 +126,30 @@ fn main() -> std::process::ExitCode {
         Err(code) => code,
     };
     std::process::ExitCode::from(code as u8)
+}
+
+/// The arguments after the program name, or `None` after a usage error for
+/// one that is not valid UTF-8 (`std::env::args` would panic on it). Options,
+/// source paths and plusargs are all text to the driver and the model.
+fn command_line() -> Option<Vec<String>> {
+    let mut arguments = Vec::new();
+    for (index, argument) in std::env::args_os().skip(1).enumerate() {
+        match argument.into_string() {
+            Ok(argument) => arguments.push(argument),
+            Err(raw) => {
+                say(Message::new(
+                    &catalog::CLI_OPTION_VALUE,
+                    format!(
+                        "argument {} is not valid UTF-8: `{}`",
+                        index + 1,
+                        raw.to_string_lossy()
+                    ),
+                ));
+                return None;
+            }
+        }
+    }
+    Some(arguments)
 }
 
 /// Parse the command line, apply `llg.toml` and return the effective options,
