@@ -347,7 +347,7 @@ pub fn project_slang(
 fn declaration_detail(node: &crate::ffi::slang::SemanticNode, snapshot: &Snapshot) -> String {
     let ty = node
         .type_id()
-        .and_then(|id| snapshot.types.iter().find(|ty| ty.id == id))
+        .and_then(|id| snapshot.types.get(usize::try_from(id).ok()?))
         .map(|ty| ty.display_name.as_str())
         .filter(|name| !name.is_empty());
     let name = node.name.as_str();

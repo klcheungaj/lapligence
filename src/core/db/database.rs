@@ -298,6 +298,9 @@ pub struct Db {
     /// syntax remains a separate side table because `NodeKind` intentionally
     /// does not expose native frontend pattern variants.
     conditional_patterns: HashMap<NodeId, ConditionalPatternInfo>,
+    /// The `binding` declarations of [`conditional_patterns`], indexed because
+    /// activity queries test every reference against them.
+    conditional_pattern_bindings: HashSet<NodeId>,
     /// Resolved field and nested-pattern roles for structure conditional
     /// patterns. These metadata edges are kept out of executable children.
     conditional_pattern_fields: HashMap<NodeId, Vec<ConditionalPatternField>>,
@@ -552,6 +555,7 @@ impl Db {
             semantic_kinds: Vec::new(),
             semantic_details: DenseShared::default(),
             conditional_patterns: HashMap::new(),
+            conditional_pattern_bindings: HashSet::new(),
             conditional_pattern_fields: HashMap::new(),
             program_instances: HashSet::new(),
             checker_instances: HashMap::new(),
@@ -663,6 +667,7 @@ impl Db {
             semantic_kinds: Vec::new(),
             semantic_details: DenseShared::default(),
             conditional_patterns: HashMap::new(),
+            conditional_pattern_bindings: HashSet::new(),
             conditional_pattern_fields: HashMap::new(),
             program_instances: HashSet::new(),
             checker_instances: HashMap::new(),
@@ -809,9 +814,7 @@ impl Db {
     /// a conditional pattern. These temporaries use variable-shaped nodes for
     /// lowering, but they are not module or process signals for lint activity.
     pub fn is_conditional_pattern_binding(&self, id: NodeId) -> bool {
-        self.conditional_patterns
-            .values()
-            .any(|pattern| pattern.binding == Some(id))
+        self.conditional_pattern_bindings.contains(&id)
     }
 
     /// Whether an elaborated instance or definition has program-block
@@ -889,8 +892,7 @@ impl Db {
     /// `class` keyword. The typedef is a member of the scope that declares
     /// the class, before or after the definition. `None` for any other node
     /// and for a forward typedef of a type other than a class; synthetic
-    /// test databases and declaration-only (language server) captures have
-    /// none.
+    /// test databases and editor (language server) captures have none.
     pub fn forward_typedef(&self, id: NodeId) -> Option<ForwardTypedef> {
         self.forward_typedefs.get(&id).copied()
     }
