@@ -2207,7 +2207,11 @@ static void path_queue_advance(llg_inertial_t* driver) {
 // edge, or with showcancelled turns the interval into x. With the default
 // limits (both equal to the delay) every overlap is rejected, which is the
 // inertial update: a changed value replaces the pending one and a return
-// to the committed value cancels it.
+// to the committed value cancels it. The new transition is timed once, from
+// the last scheduled value: when that update is cancelled or rejected and
+// the new value still differs from the one before it, the transition stays
+// where it was scheduled (30.7.4.2 cancels the leading edge only; decision
+// CS-D1).
 static void path_bit_schedule(llg_module_path_set_t* set,
                               llg_module_path_dest_t* dest, uint32_t bit,
                               llg_inertial_t* driver, uint32_t state,
@@ -2219,6 +2223,8 @@ static void path_bit_schedule(llg_module_path_set_t* set,
     int32_t show_cancelled = path_pulse.show_cancelled >= 0
                              ? path_pulse.show_cancelled == 1
                              : (flags & LLG_PATH_STYLE_SHOW_CANCELLED) != 0u;
+    path_choice_t choice = {g.now, 0, 0};
+    int32_t timed = 0;
     for (;;) {
         llg_path_queue_t* queue = driver->queue;
         int32_t queued = queue && queue->count;
@@ -2226,13 +2232,15 @@ static void path_bit_schedule(llg_module_path_set_t* set,
                              : driver->pending ? llg_sv4_state(driver->value, 0)
                                                : llg_sv4_state(driver->current, 0);
         if (state == projected) return;
-        path_choice_t choice = {g.now, 0, 0};
-        int32_t transition = path_transition_index(projected, state);
-        if (transition < 0 ||
-            !path_choose(set, dest, bit, transition, evaluated, &choice)) {
-            choice.due = g.now;
-            choice.reject = 0;
-            choice.error = 0;
+        if (!timed) {
+            int32_t transition = path_transition_index(projected, state);
+            if (transition < 0 ||
+                !path_choose(set, dest, bit, transition, evaluated, &choice)) {
+                choice.due = g.now;
+                choice.reject = 0;
+                choice.error = 0;
+            }
+            timed = 1;
         }
         if (!driver->pending) {
             path_head_schedule(driver, choice.due, state);
@@ -2258,8 +2266,8 @@ static void path_bit_schedule(llg_module_path_set_t* set,
                 path_queue_push(driver, choice.due, state);
             return;
         }
-        // The last scheduled update is cancelled or rejected; the new value
-        // is then weighed against the update before it.
+        // The last scheduled update is cancelled or rejected; the new
+        // transition, as timed, is then weighed against the update before it.
         if (queued) {
             queue->count--;
         } else {

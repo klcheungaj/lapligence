@@ -1213,6 +1213,16 @@ text: the clauses below favour waking at each write.
 | --- | --- | --- | --- | --- |
 | K2-D1 | **A clockvar bound to a part-select keeps the selected range of its signal.** `output x = s[5:2]` gives `cb.x` the range `[5:2]` (`$left` 5, `$right` 2), and `output u = a[2:5]` on `logic [0:7] a` the range `[2:5]`: a synchronous drive of `cb.x[4]` drives `s[4]`, a select outside the range (`cb.x[0]`) drives nothing, and a whole drive writes `s[5:2]`. Directly and through a virtual interface alike. | 14.5 L19589-19590 "any expression assigned to a signal in its declaration shall be an expression that would be legal in a port connection to a port of appropriate direction"; 14.16 L20091-20092 "The clockvar_expression is a bit-select, slice, or the entire clocking block output whose corresponding signal is to be driven" (the text gives such a clockvar no declared type or range) | `K2-D1_clockvar_select_keeps_bound_range` | industry-standard behaviour (text silent) |
 
+## Composed scenarios (FIN-002)
+
+Decisions the composed testbench and gate-level scenarios of
+[`fin_002`](../tests/fixtures/sim/feature_completion/fin_002/readme.md)
+needed. Line numbers refer to `SystemVerilog-1800-2009.txt`.
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| CS-D1 | **A path transition keeps its time when the transition before it goes away.** A module path transition is timed when it is scheduled, from the value the destination was last scheduled to (Table 30-3 for x). When that earlier transition is then cancelled (the new one is due no later) or rejected as a pulse and the new value still differs from the destination's, the new transition stays at its time; llg previously timed it again as a transition from the destination's present value, which moved transitions to x and z (and any transition of a path with six or twelve delays) that follow a pending opposite transition. | 30.7 L50256-50257, L50268-50269; 30.7.4.2 L50483-50485; 30.5.2 Table 30-3 L50112-50133 | `CS-D1_cancelled_leading_edge_keeps_trailing_time` | industry-standard behaviour (the text cancels the leading edge and does not say when a different final state is taken) |
+
 ## Exit status of the run (small-fixes-2)
 
 The status is not visible in a portable case's stdout, so these rows name the

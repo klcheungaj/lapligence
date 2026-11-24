@@ -1816,7 +1816,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   least significant bit (A8-D4; `edge` is SystemVerilog only). Each pair of
   consecutive scheduled destination transitions is a pulse (A8-D8): below the
   reject limit it vanishes, below the error limit it becomes x, otherwise it
-  passes. Limits come from `PATHPULSE$` specparams (path-specific, then
+  passes. A transition is timed from the value last scheduled and keeps that
+  time when the transition before it is cancelled or rejected (CS-D1). Limits
+  come from `PATHPULSE$` specparams (path-specific, then
   module-wide, first-terminal rule; A8-D5) or from `--pulse-reject` /
   `--pulse-error` percentages (default 100). `pulsestyle_onevent/ondetect`
   and `showcancelled/noshowcancelled` declarations, or `--pulse-style` and

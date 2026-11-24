@@ -355,7 +355,9 @@ the enabled paths whose input time is latest (A7-D1, A8-D1): conditions come
 from the set's generated evaluator, read lazily once per publication; edge
 paths use per-bit rise/fall stamps (allocated only for sets with edge paths);
 an `ifnone` path yields to an active path of its group. `path_bit_schedule`
-then filters pulses (30.7): the record's pending event is the head and further
+then filters pulses (30.7): a transition is timed once, from the last
+scheduled value, and keeps that time when the update before it is cancelled
+or rejected (CS-D1); the record's pending event is the head and further
 events live in its `llg_path_queue_t` (allocated on the first passed or
 x-filtered overlap, freed at cleanup); reject/error limits come from the path's
 `limits` table or the `llg_module_paths_configure` percentages; styles from

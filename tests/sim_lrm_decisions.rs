@@ -6505,3 +6505,13 @@ fn s07_d3_comb_reads_element_member() {
         include_str!("fixtures/sim/lrm_decisions/S07-D3_comb_reads_element_member.out"),
     );
 }
+
+#[test]
+fn cs_d1_cancelled_leading_edge_keeps_trailing_time() {
+    run_decision(
+        "CS-D1_cancelled_leading_edge_keeps_trailing_time",
+        include_str!(
+            "fixtures/sim/lrm_decisions/CS-D1_cancelled_leading_edge_keeps_trailing_time.out"
+        ),
+    );
+}
