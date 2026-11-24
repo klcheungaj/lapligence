@@ -5223,10 +5223,11 @@ private:
       bindValueSteps(names, names.size() - 1, receiver);
   }
 
-  // The formal argument names of a call (`f(.a(x))`, IEEE 1800-2009 13.5.4).
+  // The formal argument names of a call (`f(.a(x))`, IEEE 1800-2009 13.5.4), in
+  // editor capture.
   void bindArgumentNames(const syntax::ArgumentListSyntax* list,
                          const SubroutineSymbol& callee) {
-    if (!capture.editor || !list)
+    if (!list)
       return;
     for (const syntax::ArgumentSyntax* argument : list->parameters) {
       if (argument->kind != syntax::SyntaxKind::NamedArgument)
@@ -5581,7 +5582,7 @@ private:
         bindReference(token, *target);
       }
       bindReceiver(*name, expression.thisClass());
-      if (written->kind == syntax::SyntaxKind::InvocationExpression)
+      if (capture.editor && written->kind == syntax::SyntaxKind::InvocationExpression)
         bindArgumentNames(
             written->template as<syntax::InvocationExpressionSyntax>().arguments,
             *target);
