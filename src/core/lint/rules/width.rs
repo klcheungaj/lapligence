@@ -3,11 +3,17 @@
 //! For every procedural assignment, continuous assignment and port link, the
 //! LHS width is compared with the RHS width.  Severity follows the LRM:
 //! truncation (RHS wider than LHS) is a Warning, zero/sign extension (RHS
-//! narrower) is allowed and reported as Info.  Widths that cannot be computed
-//! (unsized literals, unknown types, function calls, …) are skipped.
+//! narrower) is allowed and reported as Info.  An element of an unpacked
+//! array, queue or associative array and a structure member have the width of
+//! their declared packed type, so reading one into a narrower target warns.
+//! Widths that cannot be computed (unsized literals, unknown types, unpacked
+//! slices and rows, function calls, …) are skipped, and so is an assignment
+//! whose target is no signal or packed select of one (an element or a member).
 
 use crate::core::db::{Db, Direction, NodeId, NodeKind, StmtKind};
-use crate::core::lint::rules::analysis::{all_nodes, expr_width, object_width, signal_of_ref};
+use crate::core::lint::rules::analysis::{
+    all_nodes, expr_width, object_width, signal_of_ref, ElementWidths,
+};
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
 /// Warns when an assignment's LHS and RHS widths differ.
@@ -34,9 +40,13 @@ impl LintRule for WidthMismatchRule {
                         else {
                             continue; // concat/other non-signal LHS: not named
                         };
-                        if let Some(diag) =
-                            width_diag(db, id, &name, expr_width(db, *lhs), expr_width(db, *rhs))
-                        {
+                        if let Some(diag) = width_diag(
+                            db,
+                            id,
+                            &name,
+                            expr_width(db, *lhs, ElementWidths::Declared),
+                            expr_width(db, *rhs, ElementWidths::Declared),
+                        ) {
                             out.push(diag);
                         }
                     }
@@ -73,7 +83,7 @@ impl LintRule for WidthMismatchRule {
                         continue;
                     }
                     let actual_width = if high_expr.is_some() {
-                        expr_width(db, actual)
+                        expr_width(db, actual, ElementWidths::Declared)
                     } else {
                         object_width(db, actual)
                     };
@@ -81,7 +91,7 @@ impl LintRule for WidthMismatchRule {
                         Some(low) => object_width(db, *low),
                         None => db
                             .port_internal_expression(id)
-                            .and_then(|expr| expr_width(db, expr))
+                            .and_then(|expr| expr_width(db, expr, ElementWidths::Declared))
                             .or(ty.width),
                     };
                     let port_name = low
@@ -140,7 +150,7 @@ fn multi_port_diag(
             continue;
         }
         let width = match (high_expr, high) {
-            (Some(expr), _) => expr_width(db, *expr)?,
+            (Some(expr), _) => expr_width(db, *expr, ElementWidths::Declared)?,
             (None, Some(high)) => object_width(db, *high)?,
             (None, None) => continue,
         };
@@ -281,6 +291,121 @@ mod tests {
                 .contains("`s` is 4 bits, RHS is 6 bits (truncation)"),
             "{got:?}"
         );
+    }
+
+    /// The declarations the element-select tests share.
+    const ELEMENTS: &str = "module we;\n\
+        \x20 logic [7:0] m[4], m2[2][3], d[], dq[$][], b;\n  logic [15:0] aa[string], w;\n\
+        \x20 logic [3:0] s;\n  int q[$];\n  logic [1:0][11:0] pk[2];\n\
+        \x20 typedef struct { logic [7:0] f; logic [7:0] g[3]; real r; string t; } st;\n\
+        \x20 typedef struct packed { logic [2:0] a; logic [8:0] b; } ps;\n\
+        \x20 st sa[2], s1;\n  ps pa[2];\n  enum logic [4:0] {E0, E1} en[2];\n\
+        \x20 real ra[2];\n  string sq[$];\n";
+
+    /// The severity and message of each `width-mismatch` finding of
+    /// `statement` inside the module of [`ELEMENTS`].
+    fn element_findings(statement: &str) -> Vec<(LintSeverity, String)> {
+        let source = format!("{ELEMENTS}  initial begin {statement} end\nendmodule\n");
+        let diags = lint_design(&source, "we");
+        rule_diags(&diags, "width-mismatch")
+            .iter()
+            .map(|d| (d.severity, d.message.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn elements_and_members_have_their_declared_width() {
+        for (statement, rhs) in [
+            ("s = m[1];", 8),
+            ("s = d[0];", 8),
+            ("s = q[0];", 32),
+            ("s = q[$];", 32),
+            ("s = aa[\"x\"];", 16),
+            ("s = m2[0][1];", 8),
+            ("s = dq[0][1];", 8),
+            ("s = pk[1];", 24),
+            ("s = pk[1][0];", 12),
+            ("s = en[0];", 5),
+            ("s = pa[1];", 12),
+            ("s = pa[1].b;", 9),
+            ("s = sa[0].f;", 8),
+            ("s = sa[0].g[1];", 8),
+            ("s = s1.f;", 8),
+            ("s = s1.g[w];", 8),
+            ("s = sq[0][1];", 8),
+            ("s = m[1] + m[2];", 8),
+            ("s = {m[1], m[2]};", 16),
+            ("s = 1'b1 ? m[1] : b;", 8),
+        ] {
+            assert_eq!(
+                element_findings(statement),
+                [(
+                    LintSeverity::Warning,
+                    format!(
+                        "assignment width mismatch: LHS `s` is 4 bits, RHS is {rhs} bits \
+                         (truncation)"
+                    )
+                )],
+                "{statement}"
+            );
+        }
+        assert_eq!(
+            element_findings("w = m[1];"),
+            [(
+                LintSeverity::Info,
+                "assignment width mismatch: LHS `w` is 16 bits, RHS is 8 bits (extension)"
+                    .to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn elements_without_a_packed_width_and_equal_widths_are_quiet() {
+        for statement in [
+            // Equal widths.
+            "b = m[1];",
+            "b = m2[1][2];",
+            "b = sa[1].f;",
+            "b = m[1] + m[2];",
+            "w = {m[1], m[2]};",
+            "w = aa[\"x\"];",
+            "b = sq[0][1];",
+            // Rows, records, containers and whole arrays are not packed.
+            "m2[0] = m2[1];",
+            "dq[0] = dq[1];",
+            "d = dq[0];",
+            "sa[0] = sa[1];",
+            "s1 = sa[1];",
+            "s1.g = sa[0].g;",
+            "m = m;",
+            "q = q[1:$];",
+            "m2[0] = '{default: 0};",
+            "m[0:1] = m[2:3];",
+            // Reals and strings have no width.
+            "s = ra[0];",
+            "s = sa[0].r;",
+            "sq[0] = sa[0].t;",
+        ] {
+            assert_eq!(element_findings(statement), [], "{statement}");
+        }
+    }
+
+    #[test]
+    fn element_port_actuals_have_their_declared_width() {
+        let diags = lint_design(
+            "module c(input wire [3:0] i, output wire [15:0] o);\n  assign o = {4{i}};\n\
+             endmodule\nmodule top;\n  logic [7:0] m[2];\n  logic [3:0] n[2];\n\
+             \x20 wire [15:0] x[2];\n  wire [7:0] y[2];\n\
+             \x20 c u0(.i(m[0]), .o(x[0]));\n  c u1(.i(n[0]), .o(y[1]));\nendmodule\n",
+            "top",
+        );
+        let got: Vec<_> = rule_diags(&diags, "width-mismatch")
+            .iter()
+            .map(|d| d.message.clone())
+            .collect();
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert!(got[0].contains("`i` is 4 bits, RHS is 8 bits (truncation)"));
+        assert!(got[1].contains("`y` is 8 bits, RHS is 16 bits (truncation)"));
     }
 
     #[test]

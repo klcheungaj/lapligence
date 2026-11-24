@@ -348,11 +348,12 @@ fn spec_is_abbreviated(spec: &[u8]) -> bool {
 }
 
 /// Append the default conversion of an argument without a format: `%s` for
-/// strings, `%f` for reals and the task radix for packed values.
+/// strings, the `%g` form that `%p` gives a real (decision S24-D3) and the
+/// task radix for packed values.
 fn push_default_conversion(format: &mut Vec<u8>, value: &IrDisplayArg, radix: IrDisplayRadix) {
     format.push(b'%');
     format.push(match value {
-        IrDisplayArg::Real(_) => b'f',
+        IrDisplayArg::Real(_) => b'p',
         IrDisplayArg::String(_) | IrDisplayArg::Text(_) => b's',
         IrDisplayArg::Packed(_) | IrDisplayArg::Strength(_) => radix.specifier() as u8,
     });

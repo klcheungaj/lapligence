@@ -608,12 +608,14 @@ static size_t llg_format_pattern_string(const char* data, size_t length,
     return len;
 }
 
-// `%p` of a real prints the shortest form of C's `%g`: six significant
-// digits, an exponent outside 1e-4..1e6 and no trailing zeros (`1.5`, `2`,
-// `1e+20`), with `inf`, `-inf`, `nan` and `-nan` spelled the same on every
-// C library (decision S24-D2, industry-standard behaviour; 21.2.1.7 leaves
-// the white space and form of a legal pattern to the implementation).
-static size_t llg_format_pattern_real(double value, char* raw, size_t cap) {
+// A real under `%p`, and one no format specification consumes (which lowers to
+// `%p`), prints the shortest form of C's `%g`: six significant digits, an
+// exponent outside 1e-4..1e6 and no trailing zeros (`1.5`, `2`, `1e+20`), with
+// `inf`, `-inf`, `nan` and `-nan` spelled the same on every C library
+// (decisions S24-D2 and S24-D3, industry-standard behaviour; 21.2.1.7 leaves
+// the form of a legal pattern to the implementation and 21.2.1.2 names no form
+// for an unformatted real).
+static size_t llg_format_general_real(double value, char* raw, size_t cap) {
     if (isnan(value) || isinf(value)) {
         const char* text = isnan(value) ? (signbit(value) ? "-nan" : "nan")
                                         : (value < 0 ? "-inf" : "inf");
@@ -868,7 +870,7 @@ static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
             raw_len = llg_format_pattern_string(arg->value.string.data,
                                                 arg->value.string.len, raw, raw_cap);
         } else if (conversion == 'p' && arg->kind == LLG_FMT_REAL) {
-            raw_len = llg_format_pattern_real(arg->value.real, raw, raw_cap);
+            raw_len = llg_format_general_real(arg->value.real, raw, raw_cap);
         } else {
             if (raw != inline_raw) free(raw);
             llg_append_text(out, cap, &len, start, (size_t)(p - start));

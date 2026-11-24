@@ -50,7 +50,7 @@ fn fatal_real_first_message_uses_default_finish_level() {
     run_case_with_stderr(
         "severity_fatal_real",
         "stdout final\n",
-        "FATAL: severity_fatal_real.sv:6:5: [SIM-006] (tb @ 0 ps) 1.250000\nINFO: severity_fatal_real.sv:6:5: [SIM-001] (tb @ 0 ps) $finish called\nINFO: [SIM-000] 1 fatal, 0 error(s), 0 warning(s), 1 info(s)\n",
+        "FATAL: severity_fatal_real.sv:6:5: [SIM-006] (tb @ 0 ps) 1.25\nINFO: severity_fatal_real.sv:6:5: [SIM-001] (tb @ 0 ps) $finish called\nINFO: [SIM-000] 1 fatal, 0 error(s), 0 warning(s), 1 info(s)\n",
     );
 }
 

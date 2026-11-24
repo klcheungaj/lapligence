@@ -5,16 +5,18 @@
 //! and representable module-port flow, then reports each declared object at
 //! its declaration when it is read but has no driver. A member written
 //! through a virtual interface counts as driven in every instance of the
-//! interface.
+//! interface. Nothing in an untaken generate block reads or drives
+//! (SV 27.3, 27.5): the owned children and instance walks leave its members
+//! out, and the declaration initializers skip it explicitly.
 
 use std::collections::HashSet;
 
 use crate::core::db::{ConstraintKind, Db, NodeId, NodeKind, RandQualifier};
 use crate::core::lint::rules::analysis::{
     all_nodes, black_box_connection_signals, collect_driver_writes, collect_reads,
-    connected_port_link_drivers, extend_virtual_interface_members, gate_terminal_drivers,
-    gate_terminal_reads, is_signal, port_link_reads, signal_scope_path, subroutine_body,
-    timing_check_activity, top_external_port_signals, unconnected_port_signals,
+    connected_port_link_drivers, declaration_initializers, extend_virtual_interface_members,
+    gate_terminal_drivers, gate_terminal_reads, is_signal, port_link_reads, signal_scope_path,
+    subroutine_body, timing_check_activity, top_external_port_signals, unconnected_port_signals,
     virtual_interface_members,
 };
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
@@ -151,16 +153,12 @@ fn design_activity(db: &Db) -> (HashSet<NodeId>, HashSet<NodeId>) {
 
     // Variable and array declaration initializers are not process or
     // continuous-assignment nodes.  They are still active drivers, and their
-    // expressions can contain reads of other captured signals.
-    for (signal, init) in db.var_initializers() {
-        drivers.insert(*signal);
-        reads.extend(collect_reads(db, *init));
-    }
-    for (signal, meta) in db.arrays() {
-        if let Some(init) = meta.init {
-            drivers.insert(*signal);
-            reads.extend(collect_reads(db, init));
-        }
+    // expressions can contain reads of other captured signals.  The
+    // initializer maps also hold declarations of untaken generate blocks,
+    // which do not exist (SV 27.3); the shared helper leaves them out.
+    for (signal, init) in declaration_initializers(db) {
+        drivers.insert(signal);
+        reads.extend(collect_reads(db, init));
     }
 
     // A member access through a virtual interface may read or drive the
@@ -797,5 +795,89 @@ mod tests {
             "top",
         );
         assert_eq!(names, ["e"], "{names:?}");
+    }
+
+    #[test]
+    fn drivers_in_untaken_generate_blocks_do_not_count() {
+        // Nothing of an untaken generate block exists (SV 27.3, 27.5,
+        // S22-D10): each signal below has its only driver in a block, one
+        // driver form each, and is read outside it. The taken block is the
+        // control.
+        let source = |taken: u8| {
+            format!(
+                "module sub(output logic o, input wire i); assign o = i; endmodule\n\
+                 interface ifc; logic d; endinterface\n\
+                 module top;\n  logic clk = 0;\n  wire w_gate, w_tran;\n\
+                 \x20 logic by_assign, by_initial, by_nba, by_force, by_port, by_task, by_function;\n\
+                 \x20 logic by_method, by_element[2], by_case, by_loop, by_scan, by_nested;\n\
+                 \x20 ifc i0();\n  virtual ifc v = i0;\n  if (1) begin : h logic x; end\n\
+                 \x20 initial $display(by_assign, by_initial, by_nba, by_force, by_port, by_task,\n\
+                 \x20   by_function, by_method, by_element[0], by_case, by_loop, by_scan, by_nested,\n\
+                 \x20   w_gate, w_tran, i0.d, h.x);\n\
+                 \x20 if ({taken}) begin : g\n\
+                 \x20   assign by_assign = clk;\n    initial by_initial = 1;\n\
+                 \x20   always @(posedge clk) by_nba <= 1;\n    initial force by_force = 1;\n\
+                 \x20   sub u (.o(by_port), .i(clk));\n    buf b (w_gate, clk);\n\
+                 \x20   tran t (w_tran, w_gate);\n    assign by_element[0] = clk;\n\
+                 \x20   task set; by_task = 1; endtask\n\
+                 \x20   function void put(); by_function = 1; endfunction\n\
+                 \x20   class C; function void m(); by_method = 1; endfunction endclass\n\
+                 \x20   C c = new;\n    initial begin set(); put(); c.m(); end\n\
+                 \x20   initial void'($sscanf(\"1\", \"%d\", by_scan));\n\
+                 \x20   initial v.d = 1;\n    initial h.x = 1;\n\
+                 \x20   if (1) begin : n assign by_nested = clk; end\n  end\n\
+                 \x20 case ({taken})\n    1: begin : k assign by_case = clk; end\n\
+                 \x20   default: ;\n  endcase\n\
+                 \x20 for (genvar i = 0; i < {taken}; i++) begin : l assign by_loop = clk; end\n\
+                 endmodule\n"
+            )
+        };
+        assert_eq!(
+            undriven_names(&source(0), "top"),
+            [
+                "by_assign",
+                "by_case",
+                "by_element",
+                "by_force",
+                "by_function",
+                "by_initial",
+                "by_loop",
+                "by_method",
+                "by_nba",
+                "by_nested",
+                "by_port",
+                "by_scan",
+                "by_task",
+                "d",
+                "w_gate",
+                "w_tran",
+                "x",
+            ]
+        );
+        assert_eq!(
+            undriven_names(&source(1), "top"),
+            Vec::<String>::new(),
+            "every driver in a taken block counts"
+        );
+    }
+
+    #[test]
+    fn reads_in_untaken_declaration_initializers_do_not_count() {
+        // A signal that only an untaken block's initializer reads is not
+        // read at all (SV 27.3); `unused-signal` reports it instead.
+        let source = |taken: u8| {
+            format!(
+                "module top;\n  int by_var, by_array, by_static;\n\
+                 \x20 if ({taken}) begin : g\n    int a = by_var;\n\
+                 \x20   int b[2] = '{{by_array, 0}};\n\
+                 \x20   class C; static int s = by_static; endclass\n\
+                 \x20   initial $display(a, b[0], C::s);\n  end\nendmodule\n"
+            )
+        };
+        assert_eq!(undriven_names(&source(0), "top"), Vec::<String>::new());
+        assert_eq!(
+            undriven_names(&source(1), "top"),
+            ["by_array", "by_static", "by_var"]
+        );
     }
 }

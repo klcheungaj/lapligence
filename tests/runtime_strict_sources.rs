@@ -181,8 +181,11 @@ const RUNTIME_UNITS: &[&str] = &[
 const RUNTIME_CONFIGURATIONS: &[&[&str]] = &[
     &[],
     &["-DLLG_WAVEFORM=1", "-DLLG_CO_DEBUG=1"],
-    &["-DLLG_SV4_USE_GMP=1"],
+    &[COMPACT_VALUES],
 ];
+
+/// Selects compact values, the shipped value backend.
+const COMPACT_VALUES: &str = "-DLLG_SV4_USE_GMP=1";
 
 fn c_sources_under(directory: &Path) -> Vec<PathBuf> {
     let mut pending = vec![directory.to_path_buf()];
@@ -287,7 +290,7 @@ fn runtime_units(root: &Path, scratch: &Path) -> Vec<NarrowingUnit> {
     .expect("write the VPI unit");
     let mut units = Vec::new();
     for &defines in RUNTIME_CONFIGURATIONS {
-        let compact = defines.contains(&"-DLLG_SV4_USE_GMP=1");
+        let compact = defines.contains(&COMPACT_VALUES);
         let mut sources: Vec<PathBuf> = RUNTIME_UNITS.iter().map(|unit| rt.join(unit)).collect();
         sources.push(vpi_unit.clone());
         if compact {
@@ -368,6 +371,30 @@ fn gcc_driver() -> Option<String> {
         .then(|| "gcc".to_owned())
 }
 
+/// The arguments that make GCC report uninitialized uses of one unit as
+/// errors under `flags`. Only the diagnostics count (these checks never run on
+/// Windows).
+fn uninitialized_use_arguments(flags: &[&'static str]) -> Vec<&'static str> {
+    let mut arguments = vec![
+        "-std=c11",
+        "-Wuninitialized",
+        "-Wmaybe-uninitialized",
+        "-Werror=uninitialized",
+        "-Werror=maybe-uninitialized",
+    ];
+    arguments.extend_from_slice(flags);
+    arguments.extend(["-c", "-o", "/dev/null"]);
+    arguments
+}
+
+/// The arguments of the GCC 11 check: the CMake Release level without the
+/// jump threading of newer GCC.
+fn gcc11_arguments() -> Vec<&'static str> {
+    let mut flags = vec!["-O3"];
+    flags.extend_from_slice(c_compiler::GCC11_MAYBE_UNINITIALIZED_FLAGS);
+    uninitialized_use_arguments(&flags)
+}
+
 /// The runtime units in each backend under GCC's flow-sensitive
 /// uninitialized-use errors at `-O3` (CMake Release), with the jump threading
 /// that hides GCC 11's findings from GCC 13+ turned off
@@ -386,24 +413,139 @@ fn runtime_units_have_no_gcc11_maybe_uninitialized_use() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let dir = sim_harness::TempDir::new("runtime-gcc11-uninit").expect("create temp directory");
     let units = runtime_units(root, dir.path());
-    let mut arguments = vec![
-        "-std=c11",
-        "-O3",
-        "-Wuninitialized",
-        "-Wmaybe-uninitialized",
-        "-Werror=uninitialized",
-        "-Werror=maybe-uninitialized",
-    ];
-    arguments.extend_from_slice(c_compiler::GCC11_MAYBE_UNINITIALIZED_FLAGS);
-    // Only the diagnostics count (this check never runs on Windows).
-    arguments.extend(["-c", "-o", "/dev/null"]);
-    let findings = check_units(&gcc, root, &units, &arguments);
+    let findings = check_units(&gcc, root, &units, &gcc11_arguments());
     assert!(
         findings.is_empty(),
         "initialize each local at its declaration when an out-parameter call \
          fills it only on success (GCC 11 -Wmaybe-uninitialized; see \
          docs/cross_platform.md, Compiler versions):\n{}",
         findings.join("\n")
+    );
+}
+
+/// The oldest GCC the heavier-inlining pass runs under: GCC 13 reports false
+/// positives for flags like these (`docs/cross_platform.md`, Compiler
+/// versions).
+const HEAVY_INLINING_MIN_GCC: u32 = 14;
+
+/// GCC options of the heavier-inlining pass. More inlining exposes a local
+/// filled through an out-parameter that only another compiler or target would
+/// inline (CI: GCC 13 on AArch64 rejected `coverage/database.c:999 'types'`),
+/// and without jump threading, dominator optimization and VRP the failure path
+/// on which it looks unset stays. `-O1` with the inliners finds as much as
+/// `-O3` (15 of the 15 sites of the sweep that added this, against 14) in less
+/// than half the time.
+const HEAVY_INLINING_FLAGS: &[&str] = &[
+    "-O1",
+    "-finline-functions",
+    "-finline-small-functions",
+    "-findirect-inlining",
+    "-fpartial-inlining",
+    "--param=max-inline-insns-single=2000",
+    "--param=max-inline-insns-auto=500",
+    "--param=inline-unit-growth=200",
+    "-fno-thread-jumps",
+    "-fno-tree-dominator-opts",
+    "-fno-tree-vrp",
+];
+
+/// A GCC driver new enough for the heavier-inlining pass, or `None` after
+/// saying why there is none.
+fn heavy_inlining_gcc() -> Option<String> {
+    let gcc = gcc_driver();
+    let found = gcc.as_deref().and_then(c_compiler::gnu_gcc_major);
+    if found.is_some_and(|major| major >= HEAVY_INLINING_MIN_GCC) {
+        return gcc;
+    }
+    eprintln!(
+        "SKIP: the heavier-inlining maybe-uninitialized pass needs GCC \
+         {HEAVY_INLINING_MIN_GCC} or newer (found {})",
+        found.map_or_else(|| "none".to_owned(), |major| format!("GCC {major}"))
+    );
+    None
+}
+
+/// A second maybe-uninitialized pass over the runtime units with the inlining
+/// that other compilers and targets choose ([`HEAVY_INLINING_FLAGS`]), so a
+/// GCC 14 host finds sites that only their inlining shows. Only the shipped
+/// configuration (compact values) is compiled: it holds every site the other
+/// configurations show, and the pass is the costliest of this file (about
+/// 15 s; one `llg_rt.c` compile is most of it). Skipped without GCC 14, so no
+/// CI job runs it (`tests/ci.md`).
+#[test]
+fn runtime_units_have_no_maybe_uninitialized_use_under_heavy_inlining() {
+    let Some(gcc) = heavy_inlining_gcc() else {
+        return;
+    };
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dir = sim_harness::TempDir::new("runtime-inline-uninit").expect("create temp directory");
+    let mut units = runtime_units(root, dir.path());
+    units.retain(|unit| unit.defines.contains(&COMPACT_VALUES));
+    assert!(!units.is_empty(), "no unit of the compact configuration");
+    let findings = check_units(
+        &gcc,
+        root,
+        &units,
+        &uninitialized_use_arguments(HEAVY_INLINING_FLAGS),
+    );
+    assert!(
+        findings.is_empty(),
+        "initialize each local at its declaration when an out-parameter call \
+         fills it only on success, and let helpers write their out-parameter \
+         on every path (see docs/cross_platform.md, Compiler versions):\n{}",
+        findings.join("\n")
+    );
+}
+
+/// The flags name the shape they were chosen for: a local filled, on success
+/// only, by a helper that GCC inlines only with the larger limits. The flags
+/// of the GCC 11 check accept it.
+#[test]
+fn heavy_inlining_flags_report_a_local_a_large_helper_leaves_unset() {
+    let Some(gcc) = heavy_inlining_gcc() else {
+        return;
+    };
+    let dir = sim_harness::TempDir::new("runtime-inline-probe").expect("create temp directory");
+    let source = dir.path().join("maybe_unset.c");
+    let body: String = (0..80)
+        .map(|step| format!("    total += (cursor[{step}] ^ total) * {}u;\n", step + 3))
+        .collect();
+    let caller = |name: &str| {
+        format!(
+            "uint32_t {name}(const uint8_t *cursor) {{\n    uint32_t field;\n\
+             \x20   read_field(cursor, &field);\n    return sink(field);\n}}\n"
+        )
+    };
+    std::fs::write(
+        &source,
+        format!(
+            "#include <stdint.h>\nuint32_t sink(uint32_t value);\n\
+             static int32_t read_field(const uint8_t *cursor, uint32_t *out) {{\n\
+             \x20   uint32_t total = 0;\n{body}\
+             \x20   if (total & 1u) return 0;\n    *out = total;\n    return 1;\n}}\n\
+             {}{}",
+            caller("first"),
+            caller("second")
+        ),
+    )
+    .expect("write the probe");
+    let compile = |arguments: &[&str]| {
+        let mut command = Command::new(&gcc);
+        command.args(arguments).arg(&source);
+        sim_harness::run_command(&mut command, Duration::from_secs(120))
+            .unwrap_or_else(|error| panic!("run `{gcc}`: {error}"))
+    };
+    let accepted = compile(&gcc11_arguments());
+    assert!(
+        accepted.status.success(),
+        "{}",
+        c_compiler::compiler_diagnostics(&accepted)
+    );
+    let rejected = compile(&uninitialized_use_arguments(HEAVY_INLINING_FLAGS));
+    let diagnostics = c_compiler::compiler_diagnostics(&rejected);
+    assert!(
+        !rejected.status.success() && diagnostics.contains("maybe-uninitialized"),
+        "{diagnostics}"
     );
 }
 

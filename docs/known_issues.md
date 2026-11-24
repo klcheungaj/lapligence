@@ -3788,6 +3788,11 @@ in a `--config` file) generation continues.
 of the parameter where the frontend first met the type (`lib::registry::T`),
 where the industry-standard simulator returns the resolved type
 (`class tb.mine`).
+The same spelling reaches other arguments of that type: with
+`P #(logic signed [4095:0])` anywhere in the design, `$typename` of a plain
+`logic signed [4095:0]` variable may return `pk::P::T`, and a typedef name may
+stand for the element type (`tb.byte_t$[0:3]` for `logic[7:0]$[0:3]`), where
+20.6.1 a) asks for the resolved type.
 
 **Cause.** The owned type table keeps one spelling per canonical type, the
 first reference's; `$typename` reads it.

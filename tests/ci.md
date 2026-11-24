@@ -64,6 +64,11 @@ the rules a change must keep. Platform pitfalls are in
   paths (`CARGO_MANIFEST_DIR`, `CARGO_BIN_EXE_*`) resolve; they need no Rust
   toolchain but apply the libfst patch to the fresh checkout.
 - A caller may split its test job with `test_shards`; no platform does now.
+- No `test` or lint job has GCC 14 or newer: GCC 11 on Rocky Linux 9, the Ubuntu
+  22.04 lint and the GCC sanitizer job, GCC 13 on Ubuntu 24.04; the Alpine
+  container's newer GCC only builds. So
+  `runtime_strict_sources::runtime_units_have_no_maybe_uninitialized_use_under_heavy_inlining`
+  skips in CI: it is a local check.
 - Windows-only diagnostics (`scripts/ci_windows_runner.py measure`,
   `scripts/ci_resource_sampler.py`, `report` steps, the uploaded resource samples
   and per-build timings, each line naming its nextest test) are read-only and

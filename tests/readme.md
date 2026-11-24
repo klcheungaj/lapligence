@@ -1619,7 +1619,8 @@ Clang (the Linux Clang CI row).
 Default-suite tests that fail on Linux/macOS for classes that otherwise surface
 only in Windows CI; the rules they enforce are in
 [cross-platform handling](../docs/cross_platform.md#windows-msvc). Each takes
-seconds; the Clang checks skip without a Clang driver and on Windows.
+seconds; the Clang checks skip without a Clang driver and on Windows, the GCC
+checks without GCC.
 
 - `runtime_strict_sources::runtime_and_companion_c_has_no_narrowing_or_uninitialized_use`:
   Clang `-Werror=implicit-int-conversion,shorten-64-to-32,…` (MSVC C4244/C4267)
@@ -1637,6 +1638,9 @@ seconds; the Clang checks skip without a Clang driver and on Windows.
 - `vendor_patches::…::test_repositories_check_out_lf_under_a_host_autocrlf_setting`:
   Git repositories created by tests check out LF under a host
   `core.autocrlf=true`.
+- `runtime_strict_sources::runtime_units_have_no_maybe_uninitialized_use_under_heavy_inlining`:
+  GCC `-Wmaybe-uninitialized` with heavy inlining over the compact units (GCC 14
+  or newer; about 15 s).
 
 ```sh
 scripts/run-tests.sh --test-work-dir /build -E 'test(/^runtime_strict_sources::/) | test(/vendor_patches::/)'

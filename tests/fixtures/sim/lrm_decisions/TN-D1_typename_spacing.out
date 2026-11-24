@@ -1,0 +1,47 @@
+logic signed[4095:0]
+logic[4095:0]
+logic signed[4095:0]$[0:2]
+logic signed[7:0]$[$]
+bit signed[3:0][7:0]
+logic signed[0:3]
+logic[7:4]
+logic[-1:-4]
+logic[0:0]
+logic[1:0][2:0][3:0]
+reg signed[8:1]
+reg
+logic signed
+bit signed[31:0]
+logic signed[3:0]
+logic[2:0]
+integer
+integer unsigned
+byte
+byte unsigned$[0:1]
+int unsigned$[$:3]
+shortint unsigned$[]
+longint unsigned
+time$[$]
+real$[][0:1]
+shortreal$[0:2]
+string$[int]
+string$[string]
+int$[*]
+logic[3:0]$[0:1][0:2]
+logic[3:0]$[3:1]
+logic signed[3:0]$[logic signed[7:0]]
+int$[][]
+int$[string][$]
+chandle$[$]
+mailbox#(logic signed[4095:0])
+logic signed[4095:0]
+logic[3:0]$[0:2]
+bit[7:0]
+logic[5:2]
+logic signed[7:0]$[$]
+logic signed[4095:0]
+logic[8191:0]
+bit signed[4:0]
+logic signed[15:0]
+bit[7:0]
+int

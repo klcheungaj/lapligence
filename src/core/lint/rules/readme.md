@@ -31,7 +31,13 @@ See [shared lint](../readme.md).
   is as wide as its elaborated type: whole elements when it selects a dimension
   above the last packed one (`pk[i -: 2]` of `logic [0:3][7:0]` is 16 bits).
   A slice of an unpacked dimension (`m[1:2]` of `logic [7:0] m[4]`) has no
-  packed width and is skipped; the frontend checks unpacked assignments.
+  packed width and is skipped; the frontend checks unpacked assignments. An
+  element of an unpacked array, queue or associative array (`s = m[1]`, nested
+  selects included) and a structure member or class property read as the width
+  of their own packed type; rows, records, reals, strings and handles have none.
+  The target must be a signal or a packed select of one, so `m[1] = w` is not
+  compared. `comparison-width-mismatch` and `wide-index` skip element and member
+  operands (`ElementWidths`).
 - `multi-driver` (`multidriver.rs`): writes resolve through unpacked element
   selects (`collect_element_writes`); a bit range inside an element still counts
   as disjoint. Each assignment of a checker procedure drives only its constant
@@ -59,7 +65,9 @@ See [shared lint](../readme.md).
   signals connected to a black box (an instance of an unknown module),
   implicit nets and intrinsic pull/supply nets. Input/inout actuals are read
   through the owned port `high_expr`; the direct `high` target stays for
-  model/codegen consumers.
+  model/codegen consumers. Nothing in an untaken generate block reads or
+  drives: its declaration initializers, processes, continuous assignments,
+  primitives and instances do not exist (SV 27.3, 27.5).
 - `incomplete-sensitivity-list` (`sensitivity.rs`): partial/selected writes keep
   the signal as an input; identical findings from cloned instances are
   source-deduplicated. Edge, named-event, mixed/complex, `@*`, `always_*` and

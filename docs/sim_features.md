@@ -2128,7 +2128,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   explicit widths are minimums; X/Z digits follow SV §21.2.1.4. Real arguments of integral
   conversions round to 64-bit integers and integral `%e/%f/%g` arguments
   convert to real. String literals in argument lists start format segments;
-  empty arguments print a space. `%m` names the enclosing named block,
+  empty arguments print a space. A real without a format specification prints
+  in C's shortest `%g` form (`1.5`, `2`, [S24-D3](lrm_decisions.md#display-formatting-sim-024)). `%m` names the enclosing named block,
   subroutine or generate block; in a class method it names the method below its
   class and the scope that declares the class (`C.f`, `p.D.g`, `tb.L.k`,
   S99-D10), followed by its named blocks (`C.f.fb`); a named `fork`-`join`
@@ -2361,7 +2362,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟨 **Data/array queries** — `$typename/$isunbounded/$bits`,
   `$left/$right/$low/$high/$increment/$size/$dimensions/$unpacked_dimensions`
   use represented packed, fixed-array, dynamic/queue, associative-integral and
-  string metadata. Fixed queries cover selected rows, declared formal bounds and
+  string metadata. `$typename` spacing is
+  [TN-D1](lrm_decisions.md#type-names-small-decisions). Fixed queries cover selected rows, declared formal bounds and
   descriptor-backed arrays; an out-of-range or unknown dimension yields X.
   `$size/$left/$right/$low/$high/$increment` of a nested dynamic or queue
   element (`qq[i]`) read its runtime size

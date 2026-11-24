@@ -305,6 +305,55 @@ fn analyze_full_pipeline_counts_declaration_initializer_reads_in_lint() {
     assert_eq!(unused, ["signal `self_ref` in `tb` is never used"]);
 }
 
+/// `undriven-signal` ignores an untaken generate block (the shared rule): its
+/// assignment does not drive `driven_in_block`, and its initializer does not
+/// read `read_in_block`.
+#[test]
+fn analyze_full_pipeline_ignores_untaken_blocks_in_undriven_lint() {
+    let _guards = analysis_guards();
+    let dir = resolved_temp_dir(&format!("llg_llg_bin_untaken_{}", std::process::id()));
+    let orig_cwd = std::env::current_dir().expect("current dir");
+    let _restore = TempDirGuard {
+        dir: dir.clone(),
+        orig: orig_cwd,
+    };
+    std::env::set_current_dir(&dir).expect("chdir to temp dir");
+    let sv = dir.join("untaken_fixture.sv");
+    std::fs::write(
+        &sv,
+        "module tb;\n  int driven_in_block, read_in_block, by_taken;\n\
+         \x20 if (0) begin : g\n    int x = read_in_block;\n\
+         \x20   assign driven_in_block = 1;\n    initial $display(x);\n  end\n\
+         \x20 if (1) begin : h\n    int y = by_taken;\n    initial $display(y);\n  end\n\
+         \x20 initial $display(driven_in_block);\nendmodule\n",
+    )
+    .expect("write design");
+    let opts = CompileOpts {
+        files: vec![sv.to_string_lossy().into_owned()],
+        top: Some("tb".to_owned()),
+        ..Default::default()
+    };
+    let a = analyze(&opts);
+    let map = lsp_diagnostics(&a);
+    let diags = map
+        .iter()
+        .find(|(f, _)| f.ends_with("untaken_fixture.sv"))
+        .map(|(_, v)| v)
+        .expect("diagnostics for the fixture file");
+    let undriven: Vec<&str> = diags
+        .iter()
+        .filter(|d| d.code == Some(NumberOrString::String("undriven-signal".to_owned())))
+        .map(|d| d.message.as_str())
+        .collect();
+    assert_eq!(
+        undriven,
+        [
+            "signal `driven_in_block` in `tb` is read but has no known driver",
+            "signal `by_taken` in `tb` is read but has no known driver",
+        ]
+    );
+}
+
 /// Full pipeline over a syntax-broken project: one clean unit plus one file
 /// with a real syntax error. The outcome stays Parse with unchanged diagnostics,
 /// while Slang's lexical snapshot retains declaration-level navigation data.
