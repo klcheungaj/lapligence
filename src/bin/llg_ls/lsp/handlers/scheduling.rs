@@ -564,14 +564,6 @@ impl Backend {
                         .or_default()
                         .extend(files);
                 }
-                // A configured source/include directory that does not exist
-                // yet is reported ONCE as a config-load warning against the
-                // TOML URI; repeating it on every scan would be noise.
-                Err(error)
-                    if matches!(
-                        error.kind(),
-                        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
-                    ) => {}
                 Err(error) => {
                     crate::llg_debug!(
                         "event=workspace.discovery.root.end outcome=error root={} error={}",

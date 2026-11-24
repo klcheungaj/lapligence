@@ -129,8 +129,9 @@ file atomically in both tools; a misspelled key cannot silently change a run
 or an analysis. Entry-level problems (a malformed `defines` entry, an invalid
 `param_overrides` name) are dropped with a warning (`llg` prints
 `WARNING: [CONFIG-003] <file>: …` to stderr; the server publishes them against the TOML
-URI). Missing configured directories also warn. The file read is bounded to
-1 MiB.
+URI). A configured directory that is missing also warns, once, and so does a
+source directory that is a file or a symbolic link; both tools then use the
+other directories. The file read is bounded to 1 MiB.
 
 In the language server a rejected file produces one diagnostic per error on
 the TOML URI whose message is `invalid <path>: <error>` (key and line

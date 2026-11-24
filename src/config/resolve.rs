@@ -63,7 +63,7 @@ pub(super) fn resolve(
 }
 
 /// Discover the `.v`/`.sv` compilation units below every configured source
-/// directory, applying the include/exclude filters. Deduplicated and sorted by
+/// directory that can be scanned, applying the include/exclude filters. Deduplicated and sorted by
 /// normalized path.
 pub fn discover_sources(config: &LlgConfig) -> io::Result<Vec<PathBuf>> {
     let filters = DiscoveryFilters::new(&config.sources.include, &config.sources.exclude);

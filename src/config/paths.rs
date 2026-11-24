@@ -237,7 +237,30 @@ pub struct DiscoveredFile {
     pub kind: SourceFileKind,
 }
 
-/// Discover supported regular files under one directory.
+/// Why a discovery directory cannot be scanned, as the end of a sentence about
+/// it. `None` also for a directory whose state cannot be read: reading it
+/// then fails with that error.
+pub(super) fn scan_obstacle(directory: &Path) -> Option<&'static str> {
+    match fs::symlink_metadata(directory) {
+        Ok(metadata) if metadata.is_dir() => None,
+        Ok(metadata) if metadata.is_symlink() => {
+            Some("is a symbolic link, which discovery does not follow")
+        }
+        Ok(_) => Some("is not a directory"),
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+            ) =>
+        {
+            Some("does not exist")
+        }
+        Err(_) => None,
+    }
+}
+
+/// Discover supported regular files under one directory, none under one that
+/// cannot be scanned ([`scan_obstacle`], reported when the config is loaded).
 ///
 /// Directory entries are inspected with [`fs::DirEntry::file_type`], so
 /// symlinked directories and symlinked files are skipped rather than followed.
@@ -249,15 +272,8 @@ pub fn discover_files(root: &Path, filters: &DiscoveryFilters) -> io::Result<Vec
             "workspace discovery root must be an absolute path",
         )
     })?;
-    let metadata = fs::symlink_metadata(&root)?;
-    if !metadata.file_type().is_dir() {
-        return Err(io::Error::new(
-            io::ErrorKind::NotADirectory,
-            format!(
-                "workspace discovery root is not a directory: {}",
-                root.display()
-            ),
-        ));
+    if scan_obstacle(&root).is_some() {
+        return Ok(Vec::new());
     }
 
     let mut pending = vec![(root.clone(), PathBuf::new())];

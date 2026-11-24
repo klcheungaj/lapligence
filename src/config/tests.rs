@@ -1024,6 +1024,46 @@ fn discover_sources_walks_every_directory_with_filters() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// A source directory that cannot be scanned is a warning of the config and
+/// leaves the discovery of the others alone.
+#[test]
+fn discovery_skips_and_reports_unscannable_directories() {
+    let root = std::env::temp_dir().join(format!("llg_cfg_unscannable_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("rtl")).unwrap();
+    std::fs::write(root.join("rtl/a.sv"), "").unwrap();
+    std::fs::write(root.join("file.sv"), "").unwrap();
+    let path = root.join(CONFIG_FILE);
+    std::fs::write(
+        &path,
+        "schema_version = 1\n[sources]\n\
+         directories = [\"gone\", \"./gone\", \"file.sv\", \"rtl\"]\n",
+    )
+    .unwrap();
+    let load = load_config_file(&path).unwrap();
+    let warnings: Vec<String> = load
+        .warnings
+        .iter()
+        .map(|warning| warning.to_string())
+        .collect();
+    assert_eq!(
+        warnings,
+        [
+            format!(
+                "configured source directory does not exist: {}",
+                native(&root, "gone").display()
+            ),
+            format!(
+                "configured source directory is not a directory: {}",
+                native(&root, "file.sv").display()
+            ),
+        ]
+    );
+    let units = discover_sources(&load.config.unwrap()).unwrap();
+    assert_eq!(units, vec![native(&root, "rtl/a.sv")]);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn stop_policy_names_round_trip() {
     for (name, policy) in [("resume", StopPolicy::Resume), ("exit", StopPolicy::Exit)] {
