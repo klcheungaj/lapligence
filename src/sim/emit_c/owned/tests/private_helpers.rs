@@ -152,7 +152,9 @@ fn callback_composite_cannot_hide_a_visible_or_reference_target() {
             slice: 1,
             direction: IrStreamDirection::LeftToRight,
         };
-        assert!(!super::super::pure_calls::private_callback_target(&target));
+        assert!(!super::super::pure_calls::private_callback_target(
+            &target, None
+        ));
     }
     assert!(!super::super::pure_calls::private_callback_target(
         &IrLhs::Stream {
@@ -160,7 +162,8 @@ fn callback_composite_cannot_hide_a_visible_or_reference_target() {
             width: 0,
             slice: 1,
             direction: IrStreamDirection::LeftToRight,
-        }
+        },
+        None,
     ));
 }
 

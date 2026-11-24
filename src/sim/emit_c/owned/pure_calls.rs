@@ -16,16 +16,16 @@ const PURE_CALL_LIMIT: usize = 32;
 /// are private locals and structured control flow. Qualified branches are
 /// retained: their runtime diagnostic is part of the function's observable
 /// behavior even though the selected body remains private to the callback.
-fn callback_safe_statements(body: &[IrStmt]) -> Result<(), String> {
+fn callback_safe_statements(body: &[IrStmt], result: Option<usize>) -> Result<(), String> {
     for statement in body {
         match statement.unlocated() {
             IrStmt::Nop | IrStmt::Label(_) | IrStmt::Goto(_) => {}
             // A statement coverage hit only counts in model storage.
             statement if statement.is_statement_hit() => {}
-            IrStmt::Block(body) => callback_safe_statements(body)?,
+            IrStmt::Block(body) => callback_safe_statements(body, result)?,
             IrStmt::DeclLocal { init, .. } | IrStmt::SharedLocal { init, .. } => {
                 if let Some(init) = init {
-                    callback_safe_expression(init)?;
+                    callback_safe_expression(init, result)?;
                 }
             }
             IrStmt::Assign { lhs, rhs, nba } => {
@@ -34,21 +34,21 @@ fn callback_safe_statements(body: &[IrStmt]) -> Result<(), String> {
                         "side-effect-capable evaluator expressions: callback helper uses a nonblocking assignment",
                     ));
                 }
-                if !private_callback_target(lhs) {
+                if !private_callback_target(lhs, result) {
                     return Err(pending(
                         "side-effect-capable evaluator expressions: callback helper writes visible state",
                     ));
                 }
                 let mut failure = None;
                 lhs.expressions(&mut |value| {
-                    if let Err(error) = callback_safe_expression(value) {
+                    if let Err(error) = callback_safe_expression(value, result) {
                         failure = Some(error);
                     }
                 });
                 if let Some(error) = failure {
                     return Err(error);
                 }
-                callback_safe_expression(rhs)?;
+                callback_safe_expression(rhs, result)?;
             }
             IrStmt::If {
                 cond,
@@ -56,19 +56,19 @@ fn callback_safe_statements(body: &[IrStmt]) -> Result<(), String> {
                 els,
                 check: _,
             } => {
-                callback_safe_expression(cond)?;
-                callback_safe_statements(then_)?;
+                callback_safe_expression(cond, result)?;
+                callback_safe_statements(then_, result)?;
                 if let Some(els) = els {
-                    callback_safe_statements(els)?;
+                    callback_safe_statements(els, result)?;
                 }
             }
             IrStmt::While { cond, body } => {
-                callback_safe_expression(cond)?;
-                callback_safe_statements(body)?;
+                callback_safe_expression(cond, result)?;
+                callback_safe_statements(body, result)?;
             }
             IrStmt::Repeat { count, body } => {
-                callback_safe_expression(count)?;
-                callback_safe_statements(body)?;
+                callback_safe_expression(count, result)?;
+                callback_safe_statements(body, result)?;
             }
             IrStmt::For {
                 init,
@@ -76,21 +76,21 @@ fn callback_safe_statements(body: &[IrStmt]) -> Result<(), String> {
                 incr,
                 body,
             } => {
-                callback_safe_statements(init)?;
-                callback_safe_expression(cond)?;
-                callback_safe_statements(incr)?;
-                callback_safe_statements(body)?;
+                callback_safe_statements(init, result)?;
+                callback_safe_expression(cond, result)?;
+                callback_safe_statements(incr, result)?;
+                callback_safe_statements(body, result)?;
             }
-            IrStmt::Forever { body } => callback_safe_statements(body)?,
+            IrStmt::Forever { body } => callback_safe_statements(body, result)?,
             IrStmt::Case { sel, items, .. } => {
-                callback_safe_expression(sel)?;
+                callback_safe_expression(sel, result)?;
                 for item in items {
-                    callback_safe_statements(&item.body)?;
+                    callback_safe_statements(&item.body, result)?;
                 }
             }
             IrStmt::Return { value } => {
                 if let Some(value) = value {
-                    callback_safe_expression(value)?;
+                    callback_safe_expression(value, result)?;
                 }
             }
             other => return Err(callback_effect(other)),
@@ -99,35 +99,45 @@ fn callback_safe_statements(body: &[IrStmt]) -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn private_callback_target(lhs: &IrLhs) -> bool {
+/// Whether a write goes to private storage: a local, or the function's
+/// result variable when it is signal `result`, which the callback replaces by
+/// its private result cell.
+pub(super) fn private_callback_target(lhs: &IrLhs, result: Option<usize>) -> bool {
     match lhs {
         IrLhs::WholeRef { .. } => true,
-        IrLhs::PackedSelect { target, .. } => private_callback_target(target),
+        IrLhs::Whole(signal)
+        | IrLhs::Bit(signal, ..)
+        | IrLhs::Part(signal, ..)
+        | IrLhs::IdxPart(signal, ..) => result == Some(*signal),
+        IrLhs::PackedSelect { target, .. } => private_callback_target(target, result),
         IrLhs::Stream { parts, .. } => {
-            !parts.is_empty() && parts.iter().all(|(part, _)| private_callback_target(part))
+            !parts.is_empty()
+                && parts
+                    .iter()
+                    .all(|(part, _)| private_callback_target(part, result))
         }
         _ => false,
     }
 }
 
-fn callback_safe_expression(expr: &IrExpr) -> Result<(), String> {
+fn callback_safe_expression(expr: &IrExpr, result: Option<usize>) -> Result<(), String> {
     match &expr.kind {
         IrExprKind::Mutation(mutation) => {
-            if !private_callback_target(&mutation.lhs) {
+            if !private_callback_target(&mutation.lhs, result) {
                 return Err(pending(
                     "side-effect-capable evaluator expressions: mutation writes visible state",
                 ));
             }
             let mut failure = None;
             mutation.lhs.expressions(&mut |value| {
-                if let Err(error) = callback_safe_expression(value) {
+                if let Err(error) = callback_safe_expression(value, result) {
                     failure = Some(error);
                 }
             });
             if let Some(error) = failure {
                 return Err(error);
             }
-            callback_safe_expression(&mutation.value)
+            callback_safe_expression(&mutation.value, result)
         }
         IrExprKind::Pattern(_) => Err(pending(
             "side-effect-capable evaluator expressions: conditional pattern binding",
@@ -308,7 +318,7 @@ impl Frame<'_, '_> {
             })
             .cloned()
             .collect();
-        callback_safe_statements(&body)?;
+        callback_safe_statements(&body, function.return_signal)?;
         let ty = function
             .ret
             .ok_or_else(|| pending("void evaluator calls"))?;
@@ -533,6 +543,7 @@ impl Frame<'_, '_> {
                 .copied()
                 .collect(),
         );
+        self.callback_results.push(function.return_signal);
         // A nested or repeated inline of this function rebinds the same formal,
         // so the caller's name returns when this frame ends.
         let shadowed: Vec<_> = container_aliases
@@ -552,6 +563,7 @@ impl Frame<'_, '_> {
                 None => self.containers.remove(&formal),
             };
         }
+        self.callback_results.pop();
         self.callback_signal_overrides.pop();
         self.formal_overrides.pop();
         outcome?;

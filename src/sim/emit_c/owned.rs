@@ -173,6 +173,10 @@ pub(super) struct Frame<'a, 'm> {
     native_bindings: Vec<HashMap<String, native::NativeBinding>>,
     formal_overrides: Vec<Vec<Binding>>,
     callback_signal_overrides: Vec<HashMap<usize, usize>>,
+    /// Per active inline call, the signal that is the function's result
+    /// variable: the callback writes its private `_ret` cell instead, so an
+    /// evaluation changes nothing a wait, dump or foreign reader can see.
+    callback_results: Vec<Option<usize>>,
     marks: Vec<String>,
     mark_blocks: Vec<usize>,
     labels: Vec<HashMap<String, bool>>,
@@ -503,6 +507,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             native_bindings: vec![HashMap::new()],
             formal_overrides: Vec::new(),
             callback_signal_overrides: Vec::new(),
+            callback_results: Vec::new(),
             marks: Vec::new(),
             mark_blocks: Vec::new(),
             labels: Vec::new(),

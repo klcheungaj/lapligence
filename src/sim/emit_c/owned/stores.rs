@@ -363,13 +363,18 @@ impl<'a, 'm> Frame<'a, 'm> {
                 } else {
                     format!("&{}", signal.c_name)
                 };
-                let mut binding = Binding {
-                    address,
-                    width: signal.ty.width(),
-                    signed: signal.ty.signed(),
-                    two_state: signal.ty.two_state(),
-                    shortreal: matches!(signal.ty, IrType::Real { shortreal: true }),
-                    automatic: false,
+                let mut binding = if self.callback_results.last() == Some(&Some(*index)) {
+                    self.lookup("_ret")
+                        .ok_or("the private result cell is not declared")?
+                } else {
+                    Binding {
+                        address,
+                        width: signal.ty.width(),
+                        signed: signal.ty.signed(),
+                        two_state: signal.ty.two_state(),
+                        shortreal: matches!(signal.ty, IrType::Real { shortreal: true }),
+                        automatic: false,
+                    }
                 };
                 let selection = match lhs {
                     IrLhs::Bit(_, index, two_state) => {

@@ -260,6 +260,23 @@ fn stateless_static_qualified_and_legacy_helpers_remain_controls() {
     }
 }
 
+/// A dump or a VPI application can observe the result variable of a static
+/// function; evaluators of an event control or a monitor still call it.
+#[test]
+fn static_helpers_with_an_observable_result_stay_private() {
+    let expected = "fr\nfr\nfr\n4 2 2 part=5\nmon 2 0\nfr\nmon 1 11\n";
+    for extra in [&[][..], &["--vpi"], &["--wave", "observed.vcd"]] {
+        sim_cli::run_case_with_args(
+            "syn011_rtl_helper_events",
+            "observed_result",
+            expected,
+            "",
+            &[],
+            extra,
+        );
+    }
+}
+
 #[test]
 fn private_helper_graph_lowers_after_native_teardown() {
     use llg::core::{compile, db};

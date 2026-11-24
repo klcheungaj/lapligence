@@ -201,8 +201,9 @@ Freeze output targets/indices before calls. Keep arguments/copy-out temporaries
 alive across suspension; do not admit native-real NBA targets without equivalent
 retention. Inline numeric calls reserve escaping results in the caller before
 private callee storage and rename internal labels. Static callback returns require
-the lowering proof of independence from prior calls; ordinary static calls retain
-persistent return storage. Static output temporaries retain prior values unless
+the lowering proof of independence from prior calls; a callback writes its private
+result cell even when the result variable is a model signal (VPI or a dump). Ordinary
+static calls retain persistent return storage. Static output temporaries retain prior values unless
 inout initialization supplies a value; automatic ones receive typed defaults.
 
 `UdpEval` references one typed model-level definition. `owned/udp.rs` emits one
