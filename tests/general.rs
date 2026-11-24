@@ -7,6 +7,8 @@
 
 #[path = "support/c_compiler.rs"]
 mod c_compiler;
+#[path = "support/fuzz.rs"]
+mod fuzz;
 #[path = "support/generated_c_lint.rs"]
 mod generated_c_lint;
 #[allow(dead_code)]
@@ -18,6 +20,7 @@ mod sim_cli;
 mod sim_harness;
 mod support;
 
+mod adversarial_inputs;
 mod compilation_units;
 mod compile_errors;
 mod compiler_cache;
