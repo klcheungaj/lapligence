@@ -157,10 +157,12 @@ pub(super) fn node_kind_from_slang(
                 })
                 .collect::<Result<Vec<_>, DbError>>()?;
             let prim_type = primitive_type_from_subkind(node.subkind);
+            // A primitive the frontend rejected for its port list has no table.
             let udp = if matches!(
                 prim_type,
                 PrimitiveType::Combinational | PrimitiveType::Sequential
-            ) {
+            ) && !node.is_bad()
+            {
                 let primitive_id = node.target_id().ok_or_else(|| {
                     DbError::InvalidSnapshot(format!(
                         "UDP instance `{}` has no declaration identity",

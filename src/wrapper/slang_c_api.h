@@ -579,6 +579,8 @@ enum {
 };
 
 enum {
+  /* The frontend rejected the construct: its subkind may be NONE and operands
+   * its kind promises may be missing. */
   LLG_SLANG_SEMANTIC_BAD = 1u << 0,
   LLG_SLANG_SEMANTIC_UNINSTANTIATED = 1u << 1,
   LLG_SLANG_SEMANTIC_AUTOMATIC = 1u << 2,

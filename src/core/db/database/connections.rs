@@ -125,12 +125,19 @@ pub(super) fn driver_delay(
     if semantic.kind != SemanticKind::TimingControl {
         return Ok(Some(DriverDelay::Single(delay)));
     }
+    // A delay that failed to bind (`assign #ghost y = a;`) delays nothing.
+    if semantic.is_bad() {
+        return Ok(None);
+    }
     let expressions = edge_targets(
         ids,
         semantic_edges(snapshot, semantic)?,
         SemanticEdgeRole::Delay,
     )?;
     Ok(Some(match expressions.as_slice() {
+        // A `#1step` control has no expression; its own node, which is none
+        // either, makes the driver unsupported where it is lowered.
+        [] if semantic.subkind == SEMANTIC_TIMING_ONE_STEP_DELAY => DriverDelay::Single(delay),
         [delay] => DriverDelay::Single(*delay),
         [rise, fall] => DriverDelay::RiseFall(*rise, *fall),
         [rise, fall, turn_off] => DriverDelay::RiseFallTurnOff(*rise, *fall, *turn_off),

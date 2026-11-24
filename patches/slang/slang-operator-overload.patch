@@ -294,10 +294,21 @@ index 4f1fbb325..52ea8f8a0 100644
  token externKeyword
  list<AttributeInstance> actualAttributes
 diff --git a/source/analysis/AnalysisScopeVisitor.h b/source/analysis/AnalysisScopeVisitor.h
-index d03210214..a901f920e 100644
+index d03210214..616627997 100644
 --- a/source/analysis/AnalysisScopeVisitor.h
 +++ b/source/analysis/AnalysisScopeVisitor.h
-@@ -401,7 +401,8 @@ struct AnalysisScopeVisitor {
+@@ -61,7 +61,9 @@ struct AnalysisScopeVisitor {
+         visitExprs(symbol);
+ 
+         for (auto& conn : symbol.getPortConnections()) {
+-            if (conn.formal.kind == SymbolKind::FormalArgument && conn.actual.index() == 0) {
++            // A formal without an actual, which has been reported, has no expression.
++            if (conn.formal.kind == SymbolKind::FormalArgument && conn.actual.index() == 0 &&
++                std::get<0>(conn.actual)) {
+                 manager.driverTracker.add(state.context, state.driverAlloc,
+                                           *std::get<0>(conn.actual), symbol);
+             }
+@@ -401,7 +403,8 @@ struct AnalysisScopeVisitor {
                           ModportClockingSymbol, ElabSystemTaskSymbol, UninstantiatedDefSymbol,
                           DefParamSymbol, PrimitivePortSymbol, CoverageBinSymbol, TimingPathSymbol,
                           PulseStyleSymbol, SystemTimingCheckSymbol, NetAliasSymbol,
@@ -307,7 +318,7 @@ index d03210214..a901f920e 100644
                   std::is_base_of_v<Type, T>)
      void visit(const T& symbol) {
          // Everything else doesn't need to be analyzed (except visiting expressions, if necessary).
-@@ -559,6 +560,12 @@ private:
+@@ -559,6 +562,12 @@ private:
                  break;
  
              if (auto found = scope->find(symbol.name)) {
@@ -1232,7 +1243,7 @@ index 019ef7596..b568f77a7 100644
              diag << *operand->type << *type;
              diag << targetExpr.sourceRange << operand->sourceRange;
 diff --git a/source/ast/statements/LoopStatements.cpp b/source/ast/statements/LoopStatements.cpp
-index c18d6b8ff..4523b0870 100644
+index c18d6b8ff..e04142131 100644
 --- a/source/ast/statements/LoopStatements.cpp
 +++ b/source/ast/statements/LoopStatements.cpp
 @@ -138,7 +138,11 @@ Statement& ForLoopStatement::fromSyntax(Compilation& compilation,
@@ -1247,6 +1258,15 @@ index c18d6b8ff..4523b0870 100644
          steps.push_back(&expr);
          anyBad |= expr.bad();
  
+@@ -328,7 +332,7 @@ const Expression* ForeachLoopStatement::buildLoopDims(const ForeachLoopListSynta
+     for (auto loopVar : loopList.loopVariables) {
+         // If type is null, we've run out of dimensions so there were too many
+         // loop variables supplied.
+-        if (!type || type->isScalar()) {
++        if (!type || !type->isIterable()) {
+             context.addDiag(diag::TooManyForeachVars, loopList.loopVariables.sourceRange())
+                 << *arrayRef.type;
+             return nullptr;
 diff --git a/source/parsing/Parser_members.cpp b/source/parsing/Parser_members.cpp
 index 152b324a5..fa9af6482 100644
 --- a/source/parsing/Parser_members.cpp

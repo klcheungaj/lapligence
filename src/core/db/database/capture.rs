@@ -322,7 +322,9 @@ impl Db {
                     instance,
                     default: edge.index & crate::ffi::slang::CHECKER_ACTUAL_DEFAULT != 0,
                 };
-                if checker_actuals.insert(expression, actual).is_some() {
+                // An event actual passed where no event is allowed (an
+                // EventExprAssertionArg error) is expanded by each use.
+                if checker_actuals.insert(expression, actual).is_some() && !snapshot.has_errors() {
                     return Err(DbError::InvalidSnapshot(
                         "checker actual names an expression twice".into(),
                     ));
@@ -900,8 +902,11 @@ impl Db {
                     default_clockings.insert(id, block);
                 }
             }
+            // A clocking variable the frontend found no signal for stays a plain
+            // variable.
             if semantic.kind == SemanticKind::Variable
                 && semantic.subkind == SEMANTIC_VARIABLE_CLOCKING
+                && !semantic.is_bad()
             {
                 let initializer = edge_target(&ids, edges, SemanticEdgeRole::Initializer)?
                     .ok_or_else(|| {
@@ -1288,10 +1293,7 @@ impl Db {
                             "continuous assignment has no assignment expression".into(),
                         )
                     })?;
-                let assignment_node = &snapshot.semantic_nodes[assignment.index()];
-                if assignment_node.kind == SemanticKind::Expression
-                    && assignment_node.detail == "Invalid"
-                {
+                if semantic.is_bad() {
                     // Slang replaces an assignment it has already diagnosed
                     // (an undeclared name, or a reference into an unknown
                     // module's black box) with an operand-less invalid
@@ -1302,6 +1304,7 @@ impl Db {
                     kind = NodeKind::Other;
                     children = vec![assignment];
                 } else {
+                    let assignment_node = &snapshot.semantic_nodes[assignment.index()];
                     let assignment_edges = semantic_edges(snapshot, assignment_node)?;
                     children = [SemanticEdgeRole::Lhs, SemanticEdgeRole::Rhs]
                         .into_iter()

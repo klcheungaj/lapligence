@@ -57,7 +57,7 @@ inherits = "ci"
 default-filter = """
     binary_id(=llg::bin/llg_ls)
     or (binary_id(=llg) and test(/^(core|config|ffi|memory_limit)::/))
-    or (binary_id(=llg::general) and test(/^(lsp_stdio|shadowing|dump_tokens|config_effect|compilation_units|include_dir_search|parse_only|probe_bindings|slang_frontend|slang_static_function_return|elab_resolve)::/))
+    or (binary_id(=llg::general) and test(/^(lsp_stdio|shadowing|dump_tokens|config_effect|broken_sources|compilation_units|include_dir_search|parse_only|probe_bindings|slang_frontend|slang_static_function_return|elab_resolve)::/))
 """
 
 # Frontend-heavy suites (see the group below) get their own concurrency cap;

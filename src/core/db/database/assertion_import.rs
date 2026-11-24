@@ -151,6 +151,14 @@ pub(super) fn assertion_expr_from_slang(
                 .semantic_nodes
                 .get(control.index())
                 .ok_or_else(|| DbError::InvalidSnapshot("assertion clocking is missing".into()))?;
+            let body = required(SemanticEdgeRole::Body, "clocked assertion body")?;
+            // A clocking event that failed to bind (`@(posedge ghost) a`)
+            // clocks nothing, so the assertion itself is invalid.
+            if timing.is_bad() {
+                return Ok(NodeKind::AssertionExpr(AssertionExprKind::Invalid {
+                    child: Some(body),
+                }));
+            }
             let timing_edges = semantic_edges(snapshot, timing)?;
             let signal = edge_target(ids, timing_edges, SemanticEdgeRole::Event)?
                 .ok_or_else(|| DbError::InvalidSnapshot("assertion clock has no signal".into()))?;
@@ -160,7 +168,7 @@ pub(super) fn assertion_expr_from_slang(
                 signal,
                 posedge: timing.is_posedge(),
                 gate: edge_target(ids, timing_edges, SemanticEdgeRole::Condition)?,
-                expr: required(SemanticEdgeRole::Body, "clocked assertion body")?,
+                expr: body,
                 specs,
             }
         }
