@@ -6515,3 +6515,12 @@ fn cs_d1_cancelled_leading_edge_keeps_trailing_time() {
         ),
     );
 }
+
+#[test]
+fn cs_d2_ambiguous_known_strength() {
+    run_vpi_decision(
+        "CS-D2_ambiguous_known_strength",
+        &["task $d2()"],
+        include_str!("fixtures/sim/lrm_decisions/CS-D2_ambiguous_known_strength.out"),
+    );
+}

@@ -3239,7 +3239,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   fatal error report, `cbPLIError` for each VPI routine error once the
   routine returned, `cbSignal` at the next safe point after a caught signal;
   `cbValueChange` with `vpiStrengthVal` reports net strengths and runs on
-  strength-only changes (A20-D21). Assertion handles,
+  strength-only changes (A20-D21; a known value with a strength range gives
+  both ends, CS-D2). Assertion handles,
   their coverage counters and the coverage operations of `vpi_control`
   (SIM-046) are described under the coverage control API. Assertion
   callbacks and control (SV 39.4, 39.5, ADV-017): `vpi_register_assertion_cb`
