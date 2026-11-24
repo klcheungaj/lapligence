@@ -4017,8 +4017,6 @@ public:
       if (symbol.iterExpression)
         symbol.iterExpression->visit(*this);
     }
-    if constexpr (std::same_as<T, GenerateBlockSymbol>)
-      bindGenerateConditions(symbol);
     if constexpr (std::same_as<T, TypeAliasType>) {
       const Type& target = symbol.targetType.getType().getCanonicalType();
       if (target.kind == SymbolKind::EnumType) {
@@ -4144,35 +4142,13 @@ public:
         handle(*component);
     }
     captureSourceReferences(symbol);
-    if (capture.editor) {
-      if (const Scope* scope = symbol.getParentScope())
-        bindAttributeNames(scope->getCompilation().getAttributes(symbol),
-                           ASTContext(*scope, LookupLocation::before(symbol)));
-    }
-    if constexpr (std::same_as<T, ClassType>)
-      bindClassHeader(symbol);
-    if constexpr (std::same_as<T, ParameterSymbol> ||
-                  std::same_as<T, TypeParameterSymbol>)
-      bindParameterDefault(symbol);
-    if constexpr (std::same_as<T, SubroutineSymbol> ||
-                  std::same_as<T, ConstraintBlockSymbol>)
-      bindDefinitionQualifiers(symbol);
+    if (capture.editor)
+      bindEditorNames(symbol);
     if constexpr (std::same_as<T, InterfacePortSymbol>)
       bindInterfacePortType(symbol);
-    if constexpr (std::same_as<T, CoverCrossSymbol>)
-      bindCrossItems(symbol);
-    if constexpr (std::same_as<T, DefParamSymbol>)
-      bindDefParam(symbol);
-    if constexpr (std::derived_from<T, InstanceSymbolBase>)
-      bindDirectiveTarget(symbol);
     if constexpr (std::same_as<T, InstanceBodySymbol> ||
                   std::same_as<T, GenerateBlockSymbol>)
       captureScopeConnections(symbol);
-    if constexpr (std::same_as<T, PackageSymbol> || std::same_as<T, CompilationUnitSymbol>) {
-      // Holds no instances, but DPI exports.
-      if (capture.editor)
-        captureScopeConnections(symbol);
-    }
     if (!capture.declarationOnly)
       addSymbolRoles(symbol, id);
     else if constexpr (std::same_as<T, InstanceSymbol>)
@@ -5168,8 +5144,7 @@ private:
   // parameter assignments, looked up in the scope of the class.
   void bindClassHeader(const ClassType& type) {
     const syntax::SyntaxNode* declaration = type.getSyntax();
-    if (!capture.editor || !declaration ||
-        declaration->kind != syntax::SyntaxKind::ClassDeclaration)
+    if (!declaration || declaration->kind != syntax::SyntaxKind::ClassDeclaration)
       return;
     const auto* extends =
         declaration->as<syntax::ClassDeclarationSyntax>().extendsClause;
@@ -5187,7 +5162,7 @@ private:
   template<typename T>
   void bindDefinitionQualifiers(const T& symbol) {
     const syntax::SyntaxNode* definition = symbol.getSyntax();
-    if (!capture.editor || !definition)
+    if (!definition)
       return;
     const syntax::NameSyntax* name = nullptr;
     if (syntax::FunctionDeclarationSyntax::isKind(definition->kind))
@@ -5266,12 +5241,39 @@ private:
     }
   }
 
+  // The names of a symbol that only editor capture binds.
+  template<std::derived_from<Symbol> T>
+  LLG_NOINLINE void bindEditorNames(const T& symbol) {
+    if (const Scope* scope = symbol.getParentScope())
+      bindAttributeNames(scope->getCompilation().getAttributes(symbol),
+                         ASTContext(*scope, LookupLocation::before(symbol)));
+    if constexpr (std::same_as<T, ClassType>)
+      bindClassHeader(symbol);
+    if constexpr (std::same_as<T, ParameterSymbol> ||
+                  std::same_as<T, TypeParameterSymbol>)
+      bindParameterDefault(symbol);
+    if constexpr (std::same_as<T, SubroutineSymbol> ||
+                  std::same_as<T, ConstraintBlockSymbol>)
+      bindDefinitionQualifiers(symbol);
+    if constexpr (std::same_as<T, GenerateBlockSymbol>)
+      bindGenerateConditions(symbol);
+    if constexpr (std::same_as<T, CoverCrossSymbol>)
+      bindCrossItems(symbol);
+    if constexpr (std::same_as<T, DefParamSymbol>)
+      bindDefParam(symbol);
+    if constexpr (std::derived_from<T, InstanceSymbolBase>)
+      bindDirectiveTarget(symbol);
+    // Holds no instances, but DPI exports.
+    if constexpr (std::same_as<T, PackageSymbol> || std::same_as<T, CompilationUnitSymbol>)
+      captureScopeConnections(symbol);
+  }
+
   // The names in the conditions that select a generate block (IEEE 1800-2009
   // 27.5): no expression of the block holds them, and Slang evaluates none in
   // a scope that is not instantiated. The blocks of one construct share them.
   void bindGenerateConditions(const GenerateBlockSymbol& block) {
     const Scope* scope = block.getParentScope();
-    if (!capture.editor || !scope)
+    if (!scope)
       return;
     const ASTContext context(*scope, LookupLocation::before(block));
     const auto bind = [&](const syntax::SyntaxNode& node) {
@@ -5307,7 +5309,7 @@ private:
   template<typename T>
   void bindParameterDefault(const T& parameter) {
     const Scope* scope = parameter.getParentScope();
-    if (!capture.editor || !scope || !parameter.defaultValSyntax ||
+    if (!scope || !parameter.defaultValSyntax ||
         !(namesByText || parameter.isOverridden()) ||
         !boundNames.insert(parameter.defaultValSyntax).second)
       return;
@@ -5634,7 +5636,7 @@ private:
   // The coverpoints of a cross (IEEE 1800-2009 19.6).
   void bindCrossItems(const CoverCrossSymbol& cross) {
     const syntax::SyntaxNode* syntaxNode = cross.getSyntax();
-    if (!capture.editor || !syntaxNode || syntaxNode->kind != syntax::SyntaxKind::CoverCross)
+    if (!syntaxNode || syntaxNode->kind != syntax::SyntaxKind::CoverCross)
       return;
     for (const syntax::NameSyntax* item : syntaxNode->as<syntax::CoverCrossSyntax>().items) {
       const parsing::Token token = item->getLastToken();
@@ -5652,7 +5654,7 @@ private:
   void bindDefParam(const DefParamSymbol& symbol) {
     const syntax::SyntaxNode* syntaxNode = symbol.getSyntax();
     const Scope* scope = symbol.getParentScope();
-    if (!capture.editor || !scope || !syntaxNode ||
+    if (!scope || !syntaxNode ||
         syntaxNode->kind != syntax::SyntaxKind::DefParamAssignment)
       return;
     const ASTContext context(*scope, LookupLocation::before(symbol));
@@ -5667,7 +5669,7 @@ private:
   void bindDirectiveTarget(const InstanceSymbolBase& instance) {
     const syntax::SyntaxNode* syntaxNode = instance.getSyntax();
     const Scope* scope = instance.getParentScope();
-    if (!capture.editor || !syntaxNode || !scope ||
+    if (!syntaxNode || !scope ||
         syntaxNode->kind != syntax::SyntaxKind::HierarchicalInstance || !syntaxNode->parent ||
         !syntaxNode->parent->parent ||
         syntaxNode->parent->parent->kind != syntax::SyntaxKind::BindDirective)
@@ -6252,66 +6254,71 @@ private:
   void captureNames(const syntax::SyntaxNode& syntaxNode, const ASTContext& context) {
     auto visitor = syntax::makeSyntaxVisitor(
         [&](auto&, const syntax::NameSyntax& name) {
-          if (capture.editor && name.kind == syntax::SyntaxKind::ClassName) {
-            captureClassName(name.as<syntax::ClassNameSyntax>(), context);
+          if (capture.editor) {
+            captureEditorName(name, context);
             return;
           }
           LookupResult result;
           Lookup::name(name, context, LookupFlags::None, result);
-          if (capture.editor && captureEditorName(name, result, context))
-            return;
           if (!result.found || result.hasError() || !result.selectors.empty())
             return;
           const auto token = name.getLastToken();
-          if (token.valueText() == result.found->name) {
-            capture.lexicalBinding(token, captureReferenceTarget(*result.found),
-                                   LLG_SLANG_LEXICAL_ROLE_REFERENCE);
-            bindScopeQualifiers(name, *result.found);
-          }
+          if (token.valueText() == result.found->name)
+            bindFoundName(name, token, *result.found);
         });
     syntaxNode.visit(visitor);
   }
 
-  // The lookup of a generic class name alone makes no specialization.
-  LLG_NOINLINE void captureClassName(const syntax::ClassNameSyntax& name,
-                                     const ASTContext& context) {
-    const auto token = name.identifier;
-    const Symbol* found = Lookup::unqualifiedAt(*context.scope, token.valueText(),
-                                                context.getLocation(), token.range());
-    if (found && found->name == token.valueText())
-      capture.nameReference(token, *found);
-    captureClassArguments(name, context);
+  void bindFoundName(const syntax::NameSyntax& name, parsing::Token token,
+                     const Symbol& found) {
+    capture.lexicalBinding(token, captureReferenceTarget(found),
+                           LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+    bindScopeQualifiers(name, found);
   }
 
-  // What only editor capture makes of a name it looked up. Whether that is all.
-  LLG_NOINLINE bool captureEditorName(const syntax::NameSyntax& name, LookupResult& result,
+  LLG_NOINLINE void captureEditorName(const syntax::NameSyntax& name,
                                       const ASTContext& context) {
+    // The lookup of a generic class name alone makes no specialization.
+    if (name.kind == syntax::SyntaxKind::ClassName) {
+      const auto token = name.as<syntax::ClassNameSyntax>().identifier;
+      const Symbol* found = Lookup::unqualifiedAt(*context.scope, token.valueText(),
+                                                  context.getLocation(), token.range());
+      if (found && found->name == token.valueText())
+        capture.nameReference(token, *found);
+      captureClassArguments(name, context);
+      return;
+    }
+    LookupResult result;
+    Lookup::name(name, context, LookupFlags::None, result);
     captureClassArguments(name, context);
     if (!result.found) {
       if (!namesByText && name.kind == syntax::SyntaxKind::ScopedName)
         unelaboratedNames.emplace_back(&name, context.scope.get());
-      return true;
+      return;
     }
     if (result.hasError())
-      return true;
+      return;
     if (!result.selectors.empty()) {
       bindSelectedName(name, result, context);
-      return true;
+      return;
     }
     const auto token = name.getLastToken();
-    if (token.valueText() != result.found->name) {
-      // `pkg::C #(...)` ends in its parameter assignments.
-      if (result.found->isType())
-        bindByText([&] { bindTypeName(name, result.found->as<Type>(), context); });
-      return true;
+    const Symbol& found = *result.found;
+    if (token.valueText() == found.name) {
+      if (!visibleAt(token, found))
+        return;
+      if (namesByText) {
+        capture.nameReference(token, found);
+        bindScopeQualifiers(name, found);
+      }
+      else {
+        bindFoundName(name, token, found);
+      }
     }
-    if (!visibleAt(token, *result.found))
-      return true;
-    if (!namesByText)
-      return false;
-    capture.nameReference(token, *result.found);
-    bindScopeQualifiers(name, *result.found);
-    return true;
+    else if (found.isType()) {
+      // `pkg::C #(...)` ends in its parameter assignments.
+      bindByText([&] { bindTypeName(name, found.as<Type>(), context); });
+    }
   }
 
   // A hierarchical name through an instance that is not elaborated (`u.x` in
