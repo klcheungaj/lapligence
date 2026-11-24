@@ -986,6 +986,14 @@ fn s24_d5_run_time_format_extra_arguments() {
 }
 
 #[test]
+fn s24_d6_string_argument_is_text() {
+    run_decision(
+        "S24-D6_string_argument_is_text",
+        include_str!("fixtures/sim/lrm_decisions/S24-D6_string_argument_is_text.out"),
+    );
+}
+
+#[test]
 fn s26_d1_scan_selector_snapshot() {
     run_decision(
         "S26-D1_scan_selector_snapshot",
