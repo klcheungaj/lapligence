@@ -683,6 +683,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Parameters declared in procedural blocks, subroutines and methods are read
   like module parameters
   ([ki_block_parameters](../tests/fixtures/sim/feature_completion/ki_block_parameters/readme.md)).
+  A `string` parameter is an argument of a user system task like any other
+  parameter
+  ([ki_vpi_string_parameters](../tests/fixtures/sim/feature_completion/ki_vpi_string_parameters/readme.md)).
   [Elaboration regression sources](../tests/sim_syn016_elaboration.rs) exercise
   bounded function/type/namespace cases; source presence is not fresh acceptance.
   Constant functions reading `defparam`-affected parameters have

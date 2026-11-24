@@ -747,7 +747,8 @@ mod tests {
                typedef struct { int n; string s; st_t k[2]; } us_t;\n\
                localparam st_t ST = '{a: 4'h3, b: 4'h9};\n\
                localparam un_t UN = 8'h5a;\n  us_t us; st_t st, never;\n";
-        let uses = "us = '{n: 9, s: \"z\", k: '{'{a: 1, b: 2}, '{a: 3, b: 4}}}; st = '{a: 1, b: 2};\n\
+        let uses =
+            "us = '{n: 9, s: \"z\", k: '{'{a: 1, b: 2}, '{a: 3, b: 4}}}; st = '{a: 1, b: 2};\n\
                $display(UN.w, UN.s.b, ST.a, us.n, us.s, us.k[1].a, st.b, never.a);\n";
         for source in [
             format!("module top;\n  {body}  initial begin {uses} end\nendmodule\n"),

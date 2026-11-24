@@ -3139,7 +3139,9 @@ mod tests {
                 &mut effects,
                 &mut CallVisits::default(),
             );
-            assert!(effects.into_vec().contains(&ExecutionEffect::RuntimeService));
+            assert!(effects
+                .into_vec()
+                .contains(&ExecutionEffect::RuntimeService));
         }
     }
 

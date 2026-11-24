@@ -3092,7 +3092,8 @@ impl Codegen<'_> {
     /// "task" or "function"). A scope actual (`$list(tb)`)
     /// passes its catalog object, so the value is a placeholder; a string
     /// literal converted to a `string` formal (`$input("cmds")`) passes its
-    /// packed image, which `vpi_get_value(vpiStringVal)` reads as the text.
+    /// packed image, which `vpi_get_value(vpiStringVal)` reads as the text,
+    /// and so does a `string` parameter.
     /// A string variable or expression has no fixed-width image and stays a
     /// located error.
     pub(in super::super) fn lower_vpi_argument(
@@ -3132,11 +3133,27 @@ impl Codegen<'_> {
                     .lower_expr(path, literal)
                     .map_err(|error| located(self, error));
             }
+            // A `string` parameter is a constant too; the argument itself is
+            // its catalog object (`vpi_argument_reference`).
+            if let Some(Val::Str(value)) = self
+                .vpi_reference_target(arg)
+                .and_then(|target| self.parameter_value(target))
+                .as_deref()
+            {
+                let constant = string_to_const(value).map_err(|error| located(self, error))?;
+                let (width, signed) = (constant.width, constant.signed);
+                return Ok(IrExpr::new(
+                    IrExprKind::Const(constant),
+                    width,
+                    signed,
+                    None,
+                ));
+            }
             return Err(located(
                 self,
                 format!(
                     "a string variable or expression is not supported (only string literals \
-                     reach VPI applications) in `{path}`"
+                     and string parameters reach VPI applications) in `{path}`"
                 ),
             ));
         }

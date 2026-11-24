@@ -710,8 +710,8 @@ fn vpi_string_and_scope_arguments() {
         SUITE,
         "neg_vpi_string_variable",
         "neg_vpi_string_variable.sv:5:18 argument of VPI system task `$input`: a string \
-         variable or expression is not supported (only string literals reach VPI applications) \
-         in `tb`",
+         variable or expression is not supported (only string literals and string parameters \
+         reach VPI applications) in `tb`",
     );
 }
 
