@@ -334,6 +334,33 @@ the declared or written delays.
   `$setuphold` sees none (`one-check=0`); one on a net is refused
   (decision A20-D15).
 
+## path_pairs (30.4.6, 37.35, 38.10, 38.32)
+
+`path_pairs.sv` declares `(a, b, c *> y, z)`, `if (en) (d, e *> w)` and
+`ifnone (d, e *> w)` in a cell with two instances; `path_pairs.sdf` annotates
+three pairs of `tb.u`. 30.4.6 (L49866-L49868): "(a, b, c *> q1, q2) = 10;" "is
+equivalent to the following six individual module path assignments:", so
+every input and output pair is a path of its own (decision A19-D9).
+
+- Order. The first pair of each declaration, then the other pairs of each
+  declaration: `a$y`, `d$w` (`?`: the `if` path), `d$w` (`!`: the `ifnone`
+  path), `a$z`, `b$y`, `b$z`, `c$y`, `c$z`, `e$w?`, `e$w!`.
+- Annotation. `IOPATH b y`, `IOPATH c z` and `COND en (IOPATH e w)` change
+  `b$y` to 11,12, `c$z` to 13,14 and `e$w?` to 15,16 in `tb.u` only; the
+  other pairs read the declared 20,30, 4,5 and 6,7.
+- Writes. `$pairs(1)` writes `a$y` = 1,2, `b$z` = 3,4, `d$w?` = 7,8 and
+  `e$w!` = 9,10 and appends 5,6 to `c$z` (13 + 5 = 18, 14 + 6 = 20). Each
+  measured round raises and drops one input at a time, so `y` and `z` (`z` is
+  the parity) show the rise and fall delays of that input's two pairs, `w`
+  those of the `if` paths (`en=1`) and the `ifnone` paths (`en=0`): the first
+  round shows the annotated delays, the second the written ones, and no
+  delay of an unwritten pair or of `tb.v` changes.
+- Pulse limits. `$pairs(2)` writes 10 with reject limit 3 and error limit 6
+  to `c$y`; `b$y` keeps 11 and 12 for all three. 30.7 (L50266-L50269): a pulse
+  of 2 on `c` is rejected, one of 4 is an x from 3222 (3212 + 10) to 3226, one
+  of 8 passes (3420 + 10 and 3428 + 10); the pulses on `b` (2, 4 and 8, all
+  below 11) are rejected.
+
 ## actions (38.36.3)
 
 `actions.c` registers `cbError`, a `cbSignal` record for `SIGTERM` and, last,

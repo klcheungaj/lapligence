@@ -162,6 +162,30 @@ fn delays_read_and_write_paths_checks_primitives_and_assignments() {
     );
 }
 
+/// Every input and output pair of a multiple path declaration has delays of
+/// its own, annotated, read and written alone.
+#[test]
+fn delays_of_one_path_pair_change_alone() {
+    let directory = sim_harness::TempDir::new("adv020-pairs").expect("temporary directory");
+    let archive = super::sim_041::static_archive(SUITE, &directory, "path_pairs", &[]);
+    sim_cli::run_case_backend_parity_with_files(
+        SUITE,
+        "path_pairs",
+        include_str!("../fixtures/sim/feature_completion/adv_020/path_pairs.out"),
+        &[
+            "--define-system-task",
+            "task $pairs(input integer stage)",
+            "--dpi-lib",
+            archive.as_str(),
+        ],
+        &[],
+        &[(
+            "path_pairs.sdf",
+            include_str!("../fixtures/sim/feature_completion/adv_020/path_pairs.sdf"),
+        )],
+    );
+}
+
 const ACTIONS: &[&str] = &[
     "--define-system-task",
     "task $act_register()",

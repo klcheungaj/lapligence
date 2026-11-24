@@ -68,9 +68,9 @@ pub enum IrVpiObjectKind {
     InstanceArray,
     /// A modport of an interface instance (37.7).
     Modport,
-    /// A module path declaration (37.35); unnamed for lookup by name, its
-    /// `name` the reported `<scope>.<in>$<out>`; `conns` holds its
-    /// terminals and condition, [`IrVpiObject::timing`] its delays.
+    /// A module path (37.35), one input and output terminal pair of a path
+    /// declaration; unnamed for lookup by name, its `name` the reported
+    /// `<scope>.<in>$<out>`; `conns` holds its terminals and condition, [`IrVpiObject::timing`] its delays.
     ModPath,
     /// A timing check (37.36); unnamed, `conns` holds its arguments and
     /// terminal conditions, [`IrVpiObject::timing`] its limits.
@@ -425,7 +425,7 @@ pub struct IrVpiInstance {
 pub struct IrVpiTiming {
     /// The model values back-annotation writes, each with the index of the
     /// timing check limit it holds (0 for paths and primitives): the path
-    /// rows of a module path, the check rows or combined pairs of each
+    /// row of a module path, the check rows or combined pairs of each
     /// limit of a timing check, the delay slot of a primitive.
     pub(in crate::sim) targets: Vec<(u32, super::IrSdfTarget)>,
     /// The values as elaborated, in design-precision ticks: the twelve

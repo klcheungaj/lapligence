@@ -947,7 +947,12 @@ fn lower_model_with(
         cg.collect_wave_variables(&mut model);
     }
     check_wave_variable_targets(&cg.wave_variable_targets, &model)?;
-    let timing = cg.vpi_timing_metadata(&tops);
+    // The timing rows serve only the catalog.
+    let timing = if keeps_vpi_catalog(options, &model) {
+        cg.vpi_timing_metadata(&tops)
+    } else {
+        Default::default()
+    };
     model.vpi_delays_writable = options.vpi;
     model.vpi_delay_select = match db.delay_selection() {
         crate::ffi::slang::DelaySelection::Min => 0,
@@ -1640,6 +1645,10 @@ enum OverloadCurrent {
     /// is read again, like the statement form `A = f(A, B)`.
     Target(NodeId),
 }
+
+/// A specify path declaration and the indices of one of its input and one of
+/// its output terminals: one module path.
+type PathPair = (NodeId, u32, u32);
 
 struct Codegen<'a> {
     origins: Vec<crate::sim::semantic::Origin>,
@@ -2349,6 +2358,9 @@ struct Codegen<'a> {
     /// targets (`collection/sdf_targets.rs`): the declaration node and its
     /// row (terminal pair and model path indices).
     sdf_path_rows: Vec<(NodeId, crate::sim::sdf::SdfPathRow)>,
+    /// The terminal pairs of specify path declarations that an `ifnone`
+    /// declaration of the same path replaces (decision A8-D3).
+    dropped_path_pairs: HashSet<PathPair>,
     /// Model rows of each timing check declaration.
     sdf_check_rows: Vec<(NodeId, crate::sim::sdf::SdfCheckRow)>,
     /// `$setuphold`/`$recrem` declarations whose limits set the delays of
@@ -2814,6 +2826,7 @@ impl<'a> Codegen<'a> {
             structural_drivers: Vec::new(),
             structural_driver_terminal_sites: HashMap::new(),
             sdf_path_rows: Vec::new(),
+            dropped_path_pairs: HashSet::new(),
             sdf_check_rows: Vec::new(),
             sdf_delayed_checks: HashSet::new(),
             sdf: None,

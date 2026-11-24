@@ -52,7 +52,8 @@ static void delays(vpiHandle scope, PLI_INT32 type, const char* label, int limit
         delay.time_type = vpiScaledRealTime;
         vpi_get_delays(object, &delay);
         if (limits == 2)
-            vpi_printf("  %s: %.2f %.2f\n", label, times[0].real, times[1].real);
+            vpi_printf("  %s %s: %.2f %.2f\n", label, vpi_get_str(vpiName, object),
+                       times[0].real, times[1].real);
         else vpi_printf("  %s: %.2f\n", label, times[0].real);
     }
 }

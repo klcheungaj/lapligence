@@ -6,7 +6,7 @@
 // reference model; a late scan input makes one flip-flop x and the x
 // travels down the chain and through the majority cells. A VPI application
 // (gl_scan_chain_vpi.c) inspects the primitives, paths and timing checks of
-// a cell instance. Every expected line is derived in readme.md.
+// three cell instances. Every expected line is derived in readme.md.
 `timescale 1ns / 1ps
 
 primitive udp_mux2(y, a, b, s);
@@ -169,6 +169,8 @@ module tb;
     #20 se = 1'b0;
     d = 4'b0110;
     #1 $inspect("tb.dut.ff[2]");
+    $inspect("tb.dut.v[0].m");
+    $inspect("tb.dut.v[1].m");
     // Capture at 50, then shift again; the scan input changes 0.2 before
     // the edge at 60.
     #9 se = 1'b1;

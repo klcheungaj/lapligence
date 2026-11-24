@@ -2597,18 +2597,20 @@ impl Codegen<'_> {
                 });
             }
         }
-        if code {
-            for (key, scope, delays) in timing.row_delays {
-                owners.push((key, scope, CodeOwner::Delay(delays)));
-            }
-        }
         let class_bodies = self.vpi_dynamic_classes(model, &mut dynamic, &mut typespecs);
         self.vpi_frame_automatics(model, &mut dynamic, &mut typespecs);
         let mut rows = objects.into_values().collect::<Vec<_>>();
         rows.sort_unstable_by_key(|(order, _)| *order);
         model.vpi_objects = rows.into_iter().map(|(_, object)| object).collect();
         if code {
-            self.populate_vpi_code(model, &mut typespecs, owners, &mut dynamic, class_bodies);
+            self.populate_vpi_code(
+                model,
+                &mut typespecs,
+                owners,
+                timing.row_delays,
+                &mut dynamic,
+                class_bodies,
+            );
         }
         model.vpi_typespecs = typespecs.entries;
         model.vpi_scope_typedefs = scope_typedefs;
@@ -2641,12 +2643,14 @@ impl Codegen<'_> {
     }
 
     /// Build the expression and statement objects of the catalog rows in
-    /// `owners` and of the VPI call arguments, and link them to their rows.
+    /// `owners` and `row_delays` and of the VPI call arguments, and link them
+    /// to their rows.
     fn populate_vpi_code(
         &self,
         model: &mut IrModel,
         typespecs: &mut TypespecTable,
         owners: Vec<(String, String, CodeOwner)>,
+        row_delays: Vec<timing::VpiRowDelays>,
         dynamic: &mut crate::sim::ir::IrVpiDynamic,
         class_bodies: Vec<(usize, usize, NodeId)>,
     ) {
@@ -2801,6 +2805,20 @@ impl Codegen<'_> {
                             }
                         }
                     }
+                }
+            }
+            for group in row_delays {
+                let rows = group
+                    .rows
+                    .iter()
+                    .filter_map(|key| tables.row(key))
+                    .collect::<Vec<_>>();
+                if rows.is_empty() {
+                    continue;
+                }
+                let scope = tables.row(&group.scope);
+                if let Some(entry) = tables.delay_root(&group.expressions, scope) {
+                    delays.extend(rows.into_iter().map(|row| (row, entry)));
                 }
             }
             // The constraint items of class constraints (37.30) and the
@@ -3203,7 +3221,6 @@ impl Codegen<'_> {
         }
     }
 
-    /// An index fixed at elaboration: a literal or a parameter reference.
     /// The spelling of a module path terminal (30.4.3: a net or port, or a
     /// constant bit- or part-select of one), or `None` for another form.
     fn vpi_terminal_text(&self, node: NodeId) -> Option<String> {
@@ -3230,10 +3247,23 @@ impl Codegen<'_> {
                 self.vpi_constant_index(*left)?,
                 self.vpi_constant_index(*right)?
             )),
+            NodeKind::Expr(ExprKind::IndexedPartSelect {
+                base,
+                base_expr,
+                width_expr,
+                neg,
+            }) => Some(format!(
+                "{}[{}{}:{}]",
+                self.vpi_terminal_text(*base)?,
+                self.vpi_constant_index(*base_expr)?,
+                if *neg { '-' } else { '+' },
+                self.vpi_constant_index(*width_expr)?
+            )),
             _ => None,
         }
     }
 
+    /// An index fixed at elaboration: a literal or a parameter reference.
     fn vpi_constant_index(&self, index: NodeId) -> Option<i64> {
         match self.kind(index) {
             NodeKind::Expr(ExprKind::Constant { value, size, .. }) => {
