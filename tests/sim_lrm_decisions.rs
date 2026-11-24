@@ -962,6 +962,14 @@ fn s24_d2_pattern_singular_and_real() {
 }
 
 #[test]
+fn s24_d3_unformatted_real() {
+    run_decision(
+        "S24-D3_unformatted_real",
+        include_str!("fixtures/sim/lrm_decisions/S24-D3_unformatted_real.out"),
+    );
+}
+
+#[test]
 fn s26_d1_scan_selector_snapshot() {
     run_decision(
         "S26-D1_scan_selector_snapshot",

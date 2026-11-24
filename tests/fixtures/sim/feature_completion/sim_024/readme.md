@@ -46,8 +46,8 @@ Section numbers refer to IEEE 1800-2009.
 - A `\0` in a string literal assigned to a string is dropped (6.16): `"a\000b"`
   is `ab` with length 2.
 - `%f`/`%e`/`%g` follow C `printf` with default precision 6. `%p` of a real
-  prints the shortest form of C's `%g` (decision S24-D2; the clause does not
-  define the text of an unformatted real): `3.14159`, `2.5`, `0.1`, `1e+06`,
+  prints the shortest form of C's `%g` (decision S24-D2), and so does a real
+  no format specification consumes (S24-D3): `3.14159`, `2.5`, `0.1`, `1e+06`,
   `-0`, `0.333333`.
 - A format held in a string variable is interpreted when the call runs
   (21.3.3); `$sformat` with a literal format and `$swrite` argument lists use
