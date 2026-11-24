@@ -2355,7 +2355,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟨 **Data/array queries** — `$typename/$isunbounded/$bits`,
   `$left/$right/$low/$high/$increment/$size/$dimensions/$unpacked_dimensions`
   use represented packed, fixed-array, dynamic/queue, associative-integral and
-  string metadata. Fixed queries cover selected rows, declared formal bounds and
+  string metadata. `$typename` spacing is
+  [TN-D1](lrm_decisions.md#type-names-small-decisions). Fixed queries cover selected rows, declared formal bounds and
   descriptor-backed arrays; an out-of-range or unknown dimension yields X.
   `$size/$left/$right/$low/$high/$increment` of a nested dynamic or queue
   element (`qq[i]`) read its runtime size

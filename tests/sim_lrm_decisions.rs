@@ -6513,3 +6513,11 @@ fn s07_d3_comb_reads_element_member() {
         include_str!("fixtures/sim/lrm_decisions/S07-D3_comb_reads_element_member.out"),
     );
 }
+
+#[test]
+fn tn_d1_typename_spacing() {
+    run_decision(
+        "TN-D1_typename_spacing",
+        include_str!("fixtures/sim/lrm_decisions/TN-D1_typename_spacing.out"),
+    );
+}
