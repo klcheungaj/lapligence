@@ -32,7 +32,6 @@ logic[3:0]$[3:1]
 logic signed[3:0]$[logic signed[7:0]]
 int$[][]
 int$[string][$]
-event$[0:1]
 chandle$[$]
 mailbox#(logic signed[4095:0])
 logic signed[4095:0]

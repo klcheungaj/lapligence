@@ -47,7 +47,6 @@ module tb;
   logic [3:0] a2[2][0:2], rev[3:1];
   logic signed [3:0] am[logic signed [7:0]];
   int dd[][], qa[string][$];
-  event ev[2];
   chandle chq[$];
   mailbox #(logic signed [4095:0]) mb;
   initial begin
@@ -85,7 +84,6 @@ module tb;
     $display("%s", $typename(am));
     $display("%s", $typename(dd));
     $display("%s", $typename(qa));
-    $display("%s", $typename(ev));
     $display("%s", $typename(chq));
     $display("%s", $typename(mb));
     // Expressions and data types.
