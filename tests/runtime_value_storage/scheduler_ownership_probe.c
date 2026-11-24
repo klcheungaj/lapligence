@@ -302,6 +302,43 @@ static void check_sampling_mailboxes_and_reinit(void) {
     }
 }
 
+/* A string-literal message matches a string target and its own packed type;
+ * each delivery leaves no owner behind (decision AB-O4). */
+static void check_string_literal_messages(void) {
+    llg_rt_init();
+    g.current_region = LLG_REGION_ACTIVE;
+    sv4_t bound = sv4_zero(32, 0);
+    sv4_t literal = sv4_from_u64(UINT64_C(0x006162), 24, 0); // NUL, "ab"
+    sv4_t target = sv4_zero(24, 0);
+    sv4_t other = sv4_zero(32, 0);
+    llg_string_t text = {0};
+    llg_mailbox_t* mailbox = llg_mailbox_new(bound, LLG_MAILBOX_UNTYPED, 0, 0, 0, 0);
+    size_t retained = probe_live_values();
+    for (unsigned i = 0; i < 100; ++i) {
+        CHECK(llg_mailbox_try_put_value(mailbox, llg_mailbox_value_string_literal(literal, 24)));
+        CHECK(llg_mailbox_try_get_value(mailbox, llg_mailbox_target_string(&text), 1) == 1);
+        CHECK(text.len == 2 && !memcmp(text.data, "ab", 2));
+        CHECK(llg_mailbox_try_get_value(mailbox, llg_mailbox_target_packed(&other, 32, 0, 1), 0) < 0);
+        CHECK(llg_mailbox_try_get_value(mailbox, llg_mailbox_target_packed(&target, 24, 0, 0), 0) < 0);
+        CHECK(llg_mailbox_try_get_value(mailbox, llg_mailbox_target_string(&text), 0) == 1);
+        CHECK(text.len == 2 && !memcmp(text.data, "ab", 2));
+        CHECK(llg_mailbox_try_put_value(mailbox, llg_mailbox_value_string_literal(literal, 24)));
+        CHECK(llg_mailbox_try_get_value(mailbox, llg_mailbox_target_packed(&target, 24, 0, 1), 0) == 1);
+        CHECK(PROBE_BITS(target, 0) == UINT64_C(0x6162));
+        CHECK(llg_mailbox_try_put_value(mailbox, llg_mailbox_value_packed(literal, 24, 0, 1)));
+        CHECK(llg_mailbox_try_get_value(mailbox, llg_mailbox_target_string(&text), 0) < 0);
+        CHECK(llg_mailbox_try_get_value(mailbox, llg_mailbox_target_packed(&target, 24, 0, 1), 0) == 1);
+        CHECK(probe_live_values() == retained);
+    }
+    llg_string_destroy(&text);
+    llg_rt_cleanup();
+    sv4_destroy(&literal);
+    sv4_destroy(&target);
+    sv4_destroy(&other);
+    sv4_destroy(&bound);
+    CHECK(probe_live_values() == 0);
+}
+
 
 static void check_time_and_io(void) {
     llg_rt_init();
@@ -512,6 +549,7 @@ int main(void) {
     check_inertial_and_force();
     check_sequence_snapshots();
     check_sampling_mailboxes_and_reinit();
+    check_string_literal_messages();
     CHECK(probe_live_values() == 0 && value_test_bytes() == 0);
     puts("scheduler owners, captures, cancellation and reinit: OK");
     return 0;

@@ -478,6 +478,14 @@ fn ab_o3_kill_woken_receiver() {
 }
 
 #[test]
+fn ab_o4_mailbox_string_literal() {
+    run_decision(
+        "AB-O4_mailbox_string_literal",
+        include_str!("fixtures/sim/lrm_decisions/AB-O4_mailbox_string_literal.out"),
+    );
+}
+
+#[test]
 fn ab_n1_suspended_queue_waiter() {
     run_decision(
         "AB-N1_suspended_queue_waiter",

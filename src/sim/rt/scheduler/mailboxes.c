@@ -70,6 +70,12 @@ llg_mailbox_value_t llg_mailbox_value_packed(sv4_t value, uint32_t width,
     return result;
 }
 
+llg_mailbox_value_t llg_mailbox_value_string_literal(sv4_t value, uint32_t width) {
+    llg_mailbox_value_t result = llg_mailbox_value_packed(value, width, 0, 1);
+    result.string_literal = 1;
+    return result;
+}
+
 llg_mailbox_value_t llg_mailbox_value_real(double value, int32_t shortreal) {
     llg_mailbox_value_t result = {0};
     result.kind = LLG_MAILBOX_REAL;
@@ -167,8 +173,9 @@ static int32_t mailbox_message_kind_matches(const llg_mailbox_t* mailbox,
 
 static int32_t mailbox_target_matches(const llg_mailbox_value_t* value,
                                   const llg_mailbox_target_t* target) {
-    if (!value || !target || value->kind != target->kind ||
-        value->type_id != target->type_id) return 0;
+    if (!value || !target || value->type_id != target->type_id) return 0;
+    if (value->kind != target->kind)
+        return value->string_literal && target->kind == LLG_MAILBOX_STRING;
     switch (value->kind) {
     case LLG_MAILBOX_PACKED:
         return value->width == target->width &&
@@ -219,7 +226,9 @@ static void mailbox_deliver(const llg_mailbox_value_t* value,
         break;
     case LLG_MAILBOX_STRING:
         llg_string_move(target->target.string,
-                        llg_string_clone(&value->value.string));
+                        value->string_literal
+                            ? llg_string_from_packed(value->value.packed)
+                            : llg_string_clone(&value->value.string));
         break;
     case LLG_MAILBOX_HANDLE: {
         void* previous = *target->target.handle;
@@ -238,7 +247,8 @@ static void mailbox_deliver(const llg_mailbox_value_t* value,
 static void mailbox_deliver_owned(llg_mailbox_value_t* value,
                                   const llg_mailbox_target_t* target) {
     if (mailbox_target_matches(value, target)) {
-        if (target->kind == LLG_MAILBOX_STRING && target->target.string) {
+        if (target->kind == LLG_MAILBOX_STRING && target->target.string &&
+            !value->string_literal) {
             llg_string_move(target->target.string, value->value.string);
             memset(&value->value.string, 0, sizeof(value->value.string));
         } else if (target->kind == LLG_MAILBOX_VALUE &&

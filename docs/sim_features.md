@@ -2822,7 +2822,8 @@ These are bounded implementations, not full verification-infrastructure support.
   string, record (string/real/queue/class members, nested), queue, dynamic-array
   and pattern-built unpacked-array messages as deep copies, and class, event,
   process, virtual-interface and mailbox handles by identity; untyped mailboxes
-  match nominal and SV 6.22 equivalent types. Empty, full and mismatch differ;
+  match nominal and SV 6.22 equivalent types, and a string literal put into one
+  matches a string variable (AB-O4). Empty, full and mismatch differ;
   failed calls preserve message and destination, peek does not consume. Element,
   member and select destinations keep the selectors of the call. The put that
   wakes a blocked receiver completes its get: whole packed, real and string

@@ -28,12 +28,13 @@ use crate::ffi::slang::{
     SEMANTIC_ASSERTION_RANGE, SEMANTIC_ASSERTION_REPETITION, SEMANTIC_ASSERTION_STRONG,
     SEMANTIC_EXPR_CLOCKING_EVENT, SEMANTIC_EXPR_COPY_CLASS, SEMANTIC_EXPR_DIST,
     SEMANTIC_EXPR_TAGGED_UNION, SEMANTIC_EXPR_UPDATE_CURRENT, SEMANTIC_PARAMETER_OVERRIDDEN,
-    SEMANTIC_PARAMETER_PATHPULSE, SEMANTIC_PARAMETER_REFERENCED, SEMANTIC_SCOPE_CLOCKING_BLOCK,
-    SEMANTIC_STMT_CONCURRENT_ASSERT, SEMANTIC_STMT_CONCURRENT_ASSUME,
-    SEMANTIC_STMT_CONCURRENT_COVER, SEMANTIC_STMT_CONCURRENT_COVER_SEQUENCE,
-    SEMANTIC_STMT_CONCURRENT_EXPECT, SEMANTIC_STMT_CONCURRENT_RESTRICT,
-    SEMANTIC_STMT_IMMEDIATE_ASSERT, SEMANTIC_STMT_IMMEDIATE_ASSUME, SEMANTIC_STMT_IMMEDIATE_COVER,
-    SEMANTIC_TIMING_CYCLE_DELAY, SEMANTIC_TIMING_ONE_STEP_DELAY, SEMANTIC_VARIABLE_CLOCKING,
+    SEMANTIC_PARAMETER_PATHPULSE, SEMANTIC_PARAMETER_REFERENCED, SEMANTIC_PARAMETER_STRING_LITERAL,
+    SEMANTIC_SCOPE_CLOCKING_BLOCK, SEMANTIC_STMT_CONCURRENT_ASSERT,
+    SEMANTIC_STMT_CONCURRENT_ASSUME, SEMANTIC_STMT_CONCURRENT_COVER,
+    SEMANTIC_STMT_CONCURRENT_COVER_SEQUENCE, SEMANTIC_STMT_CONCURRENT_EXPECT,
+    SEMANTIC_STMT_CONCURRENT_RESTRICT, SEMANTIC_STMT_IMMEDIATE_ASSERT,
+    SEMANTIC_STMT_IMMEDIATE_ASSUME, SEMANTIC_STMT_IMMEDIATE_COVER, SEMANTIC_TIMING_CYCLE_DELAY,
+    SEMANTIC_TIMING_ONE_STEP_DELAY, SEMANTIC_VARIABLE_CLOCKING,
 };
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
@@ -288,6 +289,7 @@ pub struct Db {
     default_time_scale_elements: Vec<TimeScaleElement>,
     declared_time_scale_element: Option<TimeScaleElement>,
     overridden_parameters: HashSet<NodeId>,
+    string_literal_parameters: HashSet<NodeId>,
     /// Native semantic categories retained for coverage checks when the
     /// frontend-neutral [`NodeKind`] intentionally has no direct variant.
     semantic_kinds: Vec<CapturedSemanticKind>,
@@ -555,6 +557,7 @@ impl Db {
             default_time_scale_elements: Vec::new(),
             declared_time_scale_element: None,
             overridden_parameters: HashSet::new(),
+            string_literal_parameters: HashSet::new(),
             semantic_kinds: Vec::new(),
             semantic_details: DenseShared::default(),
             conditional_patterns: HashMap::new(),
@@ -668,6 +671,7 @@ impl Db {
             default_time_scale_elements: Vec::new(),
             declared_time_scale_element: None,
             overridden_parameters: HashSet::new(),
+            string_literal_parameters: HashSet::new(),
             semantic_kinds: Vec::new(),
             semantic_details: DenseShared::default(),
             conditional_patterns: HashMap::new(),
@@ -1774,6 +1778,12 @@ impl Db {
     /// an explicit elaboration override.
     pub fn parameter_is_overridden(&self, id: NodeId) -> bool {
         self.overridden_parameters.contains(&id)
+    }
+
+    /// Whether this parameter has no declared type and its final value is a
+    /// string literal or a concatenation of string literals.
+    pub fn parameter_is_string_literal(&self, id: NodeId) -> bool {
+        self.string_literal_parameters.contains(&id)
     }
 }
 

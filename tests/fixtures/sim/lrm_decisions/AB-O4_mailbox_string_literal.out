@@ -1,0 +1,17 @@
+blocked get <late> 4
+peek <seven>
+try_peek 1 <seven>
+get <seven> 0
+parentheses 1 <paren>
+concatenation 1 <concat>
+replication 1 <abab>
+empty 1 <>
+untyped parameter 1 <untyped>
+concatenated parameter 1 <joined>
+try_put 1 <tried>
+packed variable -1
+mixed concatenation -1
+mixed parameter -1
+typed parameter -1
+conditional -1
+integer -1

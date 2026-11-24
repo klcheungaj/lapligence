@@ -130,17 +130,21 @@ impl Db {
         // Placeholder until hierarchical names are assigned after the node
         // loop; one shared value avoids a temporary allocation per node.
         let unnamed: std::sync::Arc<str> = std::sync::Arc::from("");
-        let overridden_parameters = snapshot
-            .semantic_nodes
-            .iter()
-            .enumerate()
-            .filter(|(_, semantic)| {
-                semantic.kind == SemanticKind::Parameter
-                    && semantic.subkind == 0
-                    && semantic.auxiliary & SEMANTIC_PARAMETER_OVERRIDDEN != 0
-            })
-            .map(|(index, _)| NodeId::from_index(index))
-            .collect();
+        let parameters_with = |flag: u64| {
+            snapshot
+                .semantic_nodes
+                .iter()
+                .enumerate()
+                .filter(move |(_, semantic)| {
+                    semantic.kind == SemanticKind::Parameter
+                        && semantic.subkind == 0
+                        && semantic.auxiliary & flag != 0
+                })
+                .map(|(index, _)| NodeId::from_index(index))
+                .collect()
+        };
+        let overridden_parameters = parameters_with(SEMANTIC_PARAMETER_OVERRIDDEN);
+        let string_literal_parameters = parameters_with(SEMANTIC_PARAMETER_STRING_LITERAL);
         let semantic_kinds = snapshot
             .semantic_nodes
             .iter()
@@ -1693,6 +1697,7 @@ impl Db {
             default_time_scale_elements,
             declared_time_scale_element,
             overridden_parameters,
+            string_literal_parameters,
             semantic_kinds,
             semantic_details,
             conditional_patterns,

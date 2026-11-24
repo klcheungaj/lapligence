@@ -469,7 +469,9 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
         }
         (12, _, _) => {
             node.auxiliary
-                & !(super::SEMANTIC_PARAMETER_OVERRIDDEN | super::SEMANTIC_PARAMETER_REFERENCED)
+                & !(super::SEMANTIC_PARAMETER_OVERRIDDEN
+                    | super::SEMANTIC_PARAMETER_REFERENCED
+                    | super::SEMANTIC_PARAMETER_STRING_LITERAL)
                 == 0
         }
         // Subroutine qualifiers carry method and DPI-C metadata. Context and

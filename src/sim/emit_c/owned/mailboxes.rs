@@ -82,6 +82,15 @@ impl Frame<'_, '_> {
                 message.numeric.push(value);
                 code
             }
+            IrMailboxValue::StringLiteral(value) => {
+                let value = self.expression(value)?;
+                let code = format!(
+                    "llg_mailbox_value_string_literal({}, {})",
+                    value.code, value.width
+                );
+                message.numeric.push(value);
+                code
+            }
             IrMailboxValue::Real { value, shortreal } => {
                 let value = self.expression(value)?;
                 let code = format!(

@@ -2563,7 +2563,9 @@ fn collect_mailbox_value_effects(
     visited_calls: &mut CallVisits,
 ) {
     match value {
-        IrMailboxValue::Packed { value, .. } | IrMailboxValue::Real { value, .. } => {
+        IrMailboxValue::Packed { value, .. }
+        | IrMailboxValue::Real { value, .. }
+        | IrMailboxValue::StringLiteral(value) => {
             collect_expression_effects(ir, value, effects, visited_calls)
         }
         IrMailboxValue::String(value) => collect_string_effects(ir, value, effects, visited_calls),

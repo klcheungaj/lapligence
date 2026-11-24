@@ -567,6 +567,9 @@ pub enum IrMailboxValue {
         shortreal: bool,
     },
     String(IrStringExpr),
+    /// A string literal: a message of its packed type that a string variable
+    /// retrieves too (decision AB-O4).
+    StringLiteral(IrExpr),
     Handle(IrChandleExpr),
     /// A deep copy of lexical native value `value`, an aggregate of the
     /// equivalence class `type_id` (SIM-017).
@@ -1402,11 +1405,13 @@ impl IrMailboxValue {
         string_return: Option<bool>,
     ) -> Result<(), super::IrValidationError> {
         match self {
-            Self::Packed { value, .. } if value.is_real() => Err(super::IrValidationError::new(
-                "mailbox value",
-                "packed mailbox value cannot be real",
-            )),
-            Self::Packed { .. } => Ok(()),
+            Self::Packed { value, .. } | Self::StringLiteral(value) if value.is_real() => {
+                Err(super::IrValidationError::new(
+                    "mailbox value",
+                    "packed mailbox value cannot be real",
+                ))
+            }
+            Self::Packed { .. } | Self::StringLiteral(_) => Ok(()),
             Self::Real { value, .. } if !value.is_real() => Err(super::IrValidationError::new(
                 "mailbox value",
                 "real mailbox value must be real",
@@ -1437,7 +1442,9 @@ impl IrMailboxValue {
 
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
         match self {
-            Self::Packed { value, .. } | Self::Real { value, .. } => visit(value),
+            Self::Packed { value, .. } | Self::Real { value, .. } | Self::StringLiteral(value) => {
+                visit(value)
+            }
             Self::String(value) => value.expressions(visit),
             Self::Handle(value) => value.expressions(visit),
             Self::Typed { value, .. } => value.expressions(visit),
@@ -1447,7 +1454,9 @@ impl IrMailboxValue {
 
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
         match self {
-            Self::Packed { value, .. } | Self::Real { value, .. } => visit(value),
+            Self::Packed { value, .. } | Self::Real { value, .. } | Self::StringLiteral(value) => {
+                visit(value)
+            }
             Self::String(value) => value.expressions_mut(visit),
             Self::Handle(value) => value.expressions_mut(visit),
             Self::Typed { value, .. } => value.expressions_mut(visit),
