@@ -2113,8 +2113,8 @@ fn attribute_instances(
 }
 
 /// The text of a string literal held as packed bits, eight per character
-/// with the first character most significant (IEEE 1800-2009 5.9); the
-/// zero bytes of padding are dropped.
+/// with the first character most significant (IEEE 1800-2009 5.9); leading
+/// zero bytes are padding.
 fn string_literal_val(bit_width: u64, words: &[u64]) -> Option<Val> {
     let bytes = (0..bit_width.div_ceil(8))
         .rev()
@@ -2126,8 +2126,11 @@ fn string_literal_val(bit_width: u64, words: &[u64]) -> Option<Val> {
             u8::try_from((word >> ((byte % 8) * 8)) & 0xff).ok()
         })
         .collect::<Option<Vec<u8>>>()?;
-    let text: Vec<u8> = bytes.into_iter().filter(|byte| *byte != 0).collect();
-    Val::from_string_bytes(&text)
+    let start = bytes
+        .iter()
+        .position(|byte| *byte != 0)
+        .unwrap_or(bytes.len());
+    Some(Val::from_string_bytes(&bytes[start..]))
 }
 
 fn legacy_directives(

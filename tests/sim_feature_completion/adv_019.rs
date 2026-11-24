@@ -451,6 +451,24 @@ fn array_members_of_structure_values_and_fixed_class_properties_are_served() {
 }
 
 #[test]
+fn string_literals_keep_every_character() {
+    let directory = sim_harness::TempDir::new("adv019-literals").expect("temporary directory");
+    let archive = super::sim_041::static_archive(SUITE, &directory, "string_literals", &[]);
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "string_literals",
+        include_str!("../fixtures/sim/feature_completion/adv_019/string_literals.out"),
+        &[
+            "--define-system-task",
+            "$lit",
+            "--dpi-lib",
+            archive.as_str(),
+        ],
+        &[],
+    );
+}
+
+#[test]
 fn class_methods_are_found_by_name_and_give_their_statements() {
     let directory = sim_harness::TempDir::new("adv019-methods").expect("temporary directory");
     let archive = super::sim_041::static_archive(SUITE, &directory, "methods", &[]);

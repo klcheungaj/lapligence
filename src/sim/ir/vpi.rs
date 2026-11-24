@@ -266,6 +266,8 @@ pub enum IrVpiConstant {
     /// Four-state digits, most significant first (`0`, `1`, `x`, `z`).
     Bits(String),
     Real(f64),
+    /// The body of a string literal ([`crate::core::elab::string_literal_body`]),
+    /// or a C linkage name.
     Text(String),
 }
 
@@ -557,8 +559,9 @@ pub struct IrVpiCode {
     pub(in crate::sim) scope: Option<usize>,
     pub(in crate::sim) first: u32,
     pub(in crate::sim) count: u32,
-    /// Constant digits (`0`/`1`/`x`/`z`, most significant first), string
-    /// or real text; the name of a call, a reference or a label.
+    /// Constant digits (`0`/`1`/`x`/`z`, most significant first), the body
+    /// of a string literal ([`crate::core::elab::string_literal_body`]) or
+    /// real text; the name of a call, a reference or a label.
     pub(in crate::sim) text: Option<String>,
     /// Declared `(left, right)` of the dimension a select indexes.
     pub(in crate::sim) range: Option<(i64, i64)>,
@@ -586,7 +589,7 @@ impl IrVpiCode {
     pub const USER: u32 = 0x80;
     pub const LOCALS: u32 = 0x100;
     pub const TWO_STATE: u32 = 0x200;
-    /// A constant whose text is the characters of a string.
+    /// A constant whose text is the body of a string literal.
     pub const STRING: u32 = 0x400;
     /// An assertion whose clocking event is inferred, not written in it
     /// (37.46 `vpiIsClockInferred`).

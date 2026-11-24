@@ -21,6 +21,15 @@ use crate::sim::sdf::{
     SdfTargets, SdfTimebase, SdfTimingCheckKind, SdfWarning,
 };
 
+/// The text of a string argument: leading NUL characters are padding.
+fn sdf_text(bytes: Vec<u8>) -> Option<String> {
+    let start = bytes
+        .iter()
+        .position(|byte| *byte != 0)
+        .unwrap_or(bytes.len());
+    String::from_utf8(bytes[start..].to_vec()).ok()
+}
+
 /// Warnings a file reports on standard error before they are summarized;
 /// the log file has them all.
 const SHOWN_FILE_WARNINGS: usize = 100;
@@ -285,21 +294,15 @@ impl Codegen<'_> {
     fn sdf_constant_text(&self, node: NodeId) -> Option<String> {
         match self.kind(node) {
             NodeKind::Expr(ExprKind::Constant { value, .. }) => {
-                decoded_string_bytes(value).ok().and_then(|bytes| {
-                    let start = bytes
-                        .iter()
-                        .position(|byte| *byte != 0)
-                        .unwrap_or(bytes.len());
-                    String::from_utf8(bytes[start..].to_vec()).ok()
-                })
+                decoded_string_bytes(value).ok().and_then(sdf_text)
             }
             NodeKind::Expr(ExprKind::Cast { operand, .. }) => self.sdf_constant_text(*operand),
             NodeKind::Expr(ExprKind::Ref {
                 target: Some(target),
-            }) => self
-                .param_vals
-                .get(target)
-                .and_then(|value| value.to_string_val()),
+            }) => match self.param_vals.get(target)? {
+                Val::Str(text) => decode_verilog_string(text).ok().and_then(sdf_text),
+                Val::Bits(_) | Val::Real(_) => None,
+            },
             _ => None,
         }
     }

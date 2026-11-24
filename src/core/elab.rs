@@ -260,12 +260,6 @@ impl Value {
         }
     }
 
-    /// Always `None`: string payloads live in `Val::Str`, keeping bit math
-    /// free of string cases.
-    pub fn to_string_val(&self) -> Option<String> {
-        None
-    }
-
     fn hex_str(&self) -> String {
         let mut out = String::new();
         let n = self.bits.len();
@@ -304,6 +298,7 @@ impl Value {
 #[derive(Clone, PartialEq, Debug)]
 pub enum Val {
     Bits(Value),
+    /// The body of a string literal: text whose escapes consumers decode.
     Str(String),
     Real(f64),
 }
@@ -319,23 +314,41 @@ impl Val {
         }
     }
 
-    /// The string payload, if this is a string value.
-    pub fn to_string_val(&self) -> Option<String> {
-        match self {
-            Val::Str(s) => Some(s.clone()),
-            Val::Bits(_) | Val::Real(_) => None,
+    /// The string value of exact SystemVerilog string bytes. `Val::Str`
+    /// holds source-spelled text whose escapes consumers decode.
+    pub fn from_string_bytes(bytes: &[u8]) -> Val {
+        Val::Str(string_literal_body(bytes))
+    }
+}
+
+/// The body of a string literal (IEEE 1800-2009 5.9) whose characters are
+/// `bytes`: backslashes and double quotes are escaped, and newlines, other
+/// control characters (NUL included) and bytes that are not UTF-8 are
+/// written as `\n` or three-digit octal escapes. The text holds no NUL and
+/// decodes back to exactly `bytes`.
+pub fn string_literal_body(bytes: &[u8]) -> String {
+    let mut body = String::with_capacity(bytes.len());
+    for chunk in bytes.utf8_chunks() {
+        for character in chunk.valid().chars() {
+            match character {
+                '\\' | '"' => {
+                    body.push('\\');
+                    body.push(character);
+                }
+                '\n' => body.push_str("\\n"),
+                // The other ASCII control characters; the C1 range is not
+                // one byte in UTF-8 and stays as it is.
+                control if control.is_ascii_control() => {
+                    body.push_str(&format!("\\{:03o}", u32::from(control)));
+                }
+                _ => body.push(character),
+            }
+        }
+        for byte in chunk.invalid() {
+            body.push_str(&format!("\\{byte:03o}"));
         }
     }
-
-    /// The string value of exact SystemVerilog string bytes, or `None` for
-    /// non-UTF-8 bytes. `Val::Str` holds source-spelled text whose escapes
-    /// consumers decode, so backslashes are escaped to decode back to
-    /// themselves.
-    pub fn from_string_bytes(bytes: &[u8]) -> Option<Val> {
-        std::str::from_utf8(bytes)
-            .ok()
-            .map(|text| Val::Str(text.replace('\\', "\\\\")))
-    }
+    body
 }
 
 // ── Pure value math (IEEE 1364 / 1800 semantics) ─────────────────────────────
@@ -1280,8 +1293,7 @@ pub fn decode_value_data(value: &ValueData, size: i32) -> Result<Val, ElabError>
             Ok(Val::Bits(Value::from_u64(*val, width, false)))
         }
         ValueData::Str(s) => Ok(Val::Str(s.clone())),
-        ValueData::Bytes(bytes) => Val::from_string_bytes(bytes)
-            .ok_or_else(|| ElabError::Unsupported("non-UTF-8 string value".to_string())),
+        ValueData::Bytes(bytes) => Ok(Val::from_string_bytes(bytes)),
         ValueData::Real(v) => Ok(Val::Real(*v)),
         ValueData::None => Err(ElabError::NoValue("object has no stored value".to_string())),
         ValueData::Vector {

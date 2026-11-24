@@ -1667,23 +1667,47 @@ static void export_words(sv4_t value, s_vpi_vecval* words) {
     llg_sv4_export_vpi32(value, words, word_count(llg_sv4_width(value)), sizeof(*words));
 }
 
-/* A value from four-state digit text (MSB first), or from string text. */
+/* The character at *at of a string literal body, whose escapes are `\n`,
+ * `\ddd` with three octal digits and a backslash before any other
+ * character (`string_literal_body` in elab.rs); *at moves past it. */
+static uint8_t literal_char(const char** at) {
+    const char* c = *at;
+    uint8_t ch = (uint8_t)*c++;
+    if (ch == '\\' && *c) {
+        ch = (uint8_t)*c++;
+        if (ch == 'n') {
+            ch = '\n';
+        } else if (ch >= '0' && ch <= '3' && c[0] >= '0' && c[0] <= '7' && c[1] >= '0' &&
+                   c[1] <= '7') {
+            ch = (uint8_t)((ch - '0') << 6 | (c[0] - '0') << 3 | (c[1] - '0'));
+            c += 2;
+        }
+    }
+    *at = c;
+    return ch;
+}
+
+/* A value from four-state digit text (MSB first), or from the body of a
+ * string literal (8 zero bits when it is empty, as an empty string var). */
 static sv4_t digits_value(const char* text, uint32_t width, int32_t is_signed, int32_t string) {
-    width = width ? width : 1u;
+    if (!width) width = string ? 8u : 1u;
     sv4_t value = sv4_zero(width, (int8_t)is_signed);
     s_vpi_vecval* words = scratch_words(word_count(width));
     if (!words) return value;
     if (!text) text = "";
-    size_t length = strlen(text);
     if (string) {
-        for (size_t i = 0; i < length && i * 8u < width; ++i) {
-            uint8_t ch = (uint8_t)text[length - 1u - i];
-            for (uint32_t bit = 0; bit < 8u && i * 8u + bit < width; ++bit) {
-                size_t position = i * 8u + bit;
+        size_t characters = 0;
+        for (const char* at = text; *at; ++characters) (void)literal_char(&at);
+        for (const char* at = text; *at;) {
+            uint8_t ch = literal_char(&at);
+            --characters;
+            for (uint32_t bit = 0; bit < 8u && characters * 8u + bit < width; ++bit) {
+                size_t position = characters * 8u + bit;
                 if ((ch >> bit) & 1u) words[position / 32u].aval |= 1u << (position % 32u);
             }
         }
     } else {
+        size_t length = strlen(text);
         for (size_t i = 0; i < length && i < width; ++i) {
             char digit = text[length - 1u - i];
             uint32_t mask = 1u << (i % 32u);
@@ -3410,8 +3434,10 @@ static char* format_decimal(const s_vpi_vecval* source, uint32_t width, int32_t 
     return text;
 }
 
-/* Each 8-bit group from the most significant end is one character; zero
- * groups (and X/Z bits, read as 0) produce no character. */
+/* Each 8-bit group from the most significant end is one character, X and Z
+ * bits reading as 0. A C string cannot hold a NUL character: it prints as a
+ * space, and alone in a vector of at most 8 bits as no character (decision
+ * A19-D92). */
 static char* format_string(const s_vpi_vecval* words, uint32_t width) {
     size_t groups = ((size_t)width + 7u) / 8u;
     char* text = text_buffer(groups + 1u);
@@ -3423,7 +3449,8 @@ static char* format_string(const s_vpi_vecval* words, uint32_t width) {
             uint32_t position = (uint32_t)(group * 8u + bit);
             if (position < width && word_state(words, position) == 1u) ch |= 1u << bit;
         }
-        if (ch) text[at++] = (char)ch;
+        if (!ch && (width == 1u || width > 8u)) ch = ' ';
+        text[at++] = (char)ch;
     }
     text[at] = '\0';
     return text;
@@ -6902,14 +6929,7 @@ static void decompile_constant(llg_vpi_text_t* text, const llg_vpi_code_t* node)
     }
     if (node->flags & LLG_VPI_CODE_STRING) {
         text_put(text, "\"");
-        for (const char* c = digits; *c; ++c) {
-            if (*c == '"' || *c == '\\') text_put(text, "\\");
-            if (*c == '\n') {
-                text_put(text, "\\n");
-                continue;
-            }
-            text_append(text, c, 1);
-        }
+        text_put(text, digits);
         text_put(text, "\"");
         return;
     }

@@ -1,0 +1,18 @@
+PN [ab] 6162 size=16
+PB [back\slash"q"] 6261636b5c736c617368227122 size=104
+PX [<ff>z] ff7a size=16
+PE [] 00 size=0
+CN [cd\] 63645c size=24
+CV [e f] 650066 size=24
+attribute text [x "y\]
+line 17 ["a\000b"] [a b] 610062 size=24
+line 18 [""] [] 00 size=8
+line 19 ["\000"] [] 00 size=8
+line 20 ["\000007"] [ 007] 00303037 size=32
+line 21 ["q\"b\\n\nt\011v\013f\014a\007d\177"] [q"b\n<0a>t<09>v<0b>f<0c>a<07>d<7f>] 7122625c6e0a7409760b660c6107647f size=128
+line 22 ["\377\200"] [<ff><80>] ff80 size=16
+line 23 ["<c3><a9>"] [<c3><a9>] c3a9 size=16
+line 24 [{"a\000b", 8'h41}]
+2 <ab> <back\slash"q"> ff 0000000000610062
+put [ a b a b] 0061006200610062 size=64
+0061006200610062
