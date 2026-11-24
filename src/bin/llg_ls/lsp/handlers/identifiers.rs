@@ -197,7 +197,7 @@ impl Backend {
         max_file_bytes: u64,
         request_id: u64,
     ) -> (Option<Arc<features::DocumentIdentifiers>>, &'static str) {
-        // Checked before key construction, flight admission, staging and
+        // Checked before key construction, flight admission and
         // spawn_blocking: an obsolete revision must not consume a bounded
         // flight slot, and an oversized one must not be parsed.
         if !open_document_is_current(&self.state, uri, &document.text) {

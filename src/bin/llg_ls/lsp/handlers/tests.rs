@@ -1703,32 +1703,61 @@ fn staging_never_touches_the_project_tree() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// A document of one module for an isolated parse.
+fn isolated_document(name: &str) -> OpenTokenDocument {
+    OpenTokenDocument {
+        real: temp_root(name).join("top.sv"),
+        text: Arc::new("module top; endmodule\n".to_owned()),
+        defines: Vec::new(),
+        includes: Arc::default(),
+        epoch: 0,
+    }
+}
+
 #[test]
-fn semantic_staging_guard_does_not_recreate_shadow_state_after_shutdown() {
+fn an_isolated_parse_never_creates_shadow_state() {
     // Arrange
     let _guard = SHADOW_TESTS_LOCK
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     features::cleanup_process_shadow();
     let base = features::process_shadow_base();
-    let source = temp_root("semantic_shutdown_guard").join("top.sv");
+    let document = isolated_document("semantic_shutdown_guard");
     assert!(!base.exists(), "precondition: shadow base is absent");
 
     // Act
-    let document = OpenTokenDocument {
-        real: source,
-        text: Arc::new("module top; endmodule\n".to_owned()),
-        defines: Vec::new(),
-        includes: Arc::default(),
-        epoch: 0,
-    };
-    let result = open_document_identifiers_if_current(&document, || false, None);
+    let stale = open_document_identifiers_if_current(&document, || false, None);
+    let current = open_document_identifiers_if_current(&document, || true, None);
 
     // Assert
-    assert!(result.is_err(), "stale semantic work must be rejected");
+    assert!(stale.is_err(), "stale semantic work must be rejected");
+    assert!(current.is_ok_and(|identifiers| identifiers.token_count() > 0));
+    assert!(!base.exists(), "an isolated parse created shadow state");
+}
+
+/// A project analysis holds the staging lock until it ends, and a token or
+/// definition request of an edited buffer must not wait for it.
+#[test]
+fn an_isolated_parse_does_not_wait_for_a_project_analysis() {
+    let _guard = SHADOW_TESTS_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let _analysis = shadow_staging_lock()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let (done, finished) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let document = isolated_document("semantic_beside_analysis");
+        let _ = done.send(open_document_identifiers_if_current(
+            &document,
+            || true,
+            None,
+        ));
+    });
+    let result = finished.recv_timeout(std::time::Duration::from_secs(60));
     assert!(
-        !base.exists(),
-        "rejected semantic work recreated the process shadow base"
+        result.is_ok_and(|result| result.is_ok()),
+        "the isolated parse waited for the staging lock"
     );
 }
 

@@ -152,8 +152,8 @@ pub(super) struct OpenTokenDocument {
 /// Bound the number of open-document parses that can be retained in the
 /// single-flight table.  Entries live while the detached coordinator owns the
 /// parse and through cache publication, then are removed on success/failure;
-/// absent keys are refused and degraded to the fallback while the table is
-/// saturated.
+/// absent keys are refused while the table is saturated, and the committed
+/// table answers.
 pub(super) const OPEN_TOKEN_FLIGHT_CAPACITY: usize = 32;
 pub(super) type OpenTokenResult =
     std::result::Result<Arc<features::DocumentIdentifiers>, OpenTokenError>;
@@ -180,7 +180,7 @@ impl OpenTokenError {
 }
 
 /// Check a captured open-buffer revision without retaining the backend state
-/// lock across any staging or frontend work.  The request can only use the
+/// lock across any frontend work.  The request can only use the
 /// isolated path while the same text is still the document's current
 /// snapshot; shutdown also makes an otherwise matching revision ineligible.
 pub(super) fn open_document_is_current(
@@ -446,34 +446,6 @@ impl ShadowPaths {
     }
 }
 
-static NEXT_SEMANTIC_STAGE_ID: AtomicU64 = AtomicU64::new(0);
-
-/// One request-local isolated parse guarded by a unique private directory so
-/// cleanup stays isolated from project-analysis shadow state. Slang receives
-/// the buffer text unchanged: the preprocessor runs with the configured
-/// defines and the committed include context, so directives, macro usages and
-/// inactive branches are handled exactly as in the project compile.
-pub(super) struct SemanticStage {
-    pub(super) directory: PathBuf,
-}
-
-impl SemanticStage {
-    pub(super) fn new() -> std::io::Result<Self> {
-        let id = NEXT_SEMANTIC_STAGE_ID.fetch_add(1, Ordering::Relaxed);
-        let directory = features::process_shadow_base()
-            .join("semantic")
-            .join(format!("{}-{id}", std::process::id()));
-        std::fs::create_dir_all(&directory)?;
-        Ok(Self { directory })
-    }
-}
-
-impl Drop for SemanticStage {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.directory);
-    }
-}
-
 pub(super) fn empty_semantic_tokens() -> SemanticTokens {
     SemanticTokens {
         result_id: None,
@@ -522,104 +494,49 @@ pub(super) fn open_document_identifiers_if_current(
         defines.len(),
         parent_id
     );
-    // Reject an obsolete request before it waits for the staging lock.  The
-    // check after acquiring the lock closes the race with didChange while the
-    // request was waiting; both checks happen before any stage or frontend
-    // work is admitted.
+    // Reject an obsolete request before it waits for the lock.  The check
+    // after acquiring it closes the race with didChange while the request was
+    // waiting; both happen before any frontend work is admitted.
     if !current() {
         crate::llg_debug!(
-            "event=semantic_tokens.open_parse.end outcome=stale-before-staging file={} elapsed_us={}",
+            "event=semantic_tokens.open_parse.end outcome=stale-before-lock file={} elapsed_us={}",
             real.display(),
             started.elapsed().as_micros()
         );
         return Err(OpenTokenError::stale());
     }
-    // Project jobs acquire these locks in the same order.  Holding the
-    // staging lock through parse and cleanup also prevents shutdown from
-    // deleting the process shadow base while Slang reads this copy.
-    let staging_wait_started = std::time::Instant::now();
-    crate::llg_debug!(
-        "event=semantic_tokens.staging_lock.begin file={} parent_id={:?}",
-        real.display(),
-        parent_id
-    );
-    let _staging = shadow_staging_lock()
+    let wait_started = std::time::Instant::now();
+    let _parse = isolated_parse_lock()
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     crate::llg_debug!(
-        "event=semantic_tokens.staging_lock.end outcome=acquired file={} elapsed_us={}",
+        "event=semantic_tokens.parse_lock.end outcome=acquired file={} elapsed_us={}",
         real.display(),
-        staging_wait_started.elapsed().as_micros()
+        wait_started.elapsed().as_micros()
     );
     if !current() {
         crate::llg_debug!(
-            "event=semantic_tokens.open_parse.end outcome=stale-after-staging file={} elapsed_us={}",
+            "event=semantic_tokens.open_parse.end outcome=stale-after-lock file={} elapsed_us={}",
             real.display(),
             started.elapsed().as_micros()
         );
         return Err(OpenTokenError::stale());
     }
-    let stage_started = std::time::Instant::now();
-    // Held until the parse and scratch cleanup finish; dropping it removes the
-    // private directory.
-    let _stage = match SemanticStage::new() {
-        Ok(stage) => stage,
-        Err(error) => {
-            let error = format!("failed to stage open document: {error}");
-            crate::llg_debug!(
-                "event=semantic_tokens.open_stage.end outcome=error file={} elapsed_us={} error={}",
-                real.display(),
-                stage_started.elapsed().as_micros(),
-                error
-            );
-            crate::llg_debug!(
-                "event=semantic_tokens.open_parse.end outcome=error file={} token_count=0 elapsed_us={}",
-                real.display(),
-                started.elapsed().as_micros()
-            );
-            return Err(OpenTokenError::transient(error));
-        }
-    };
-    crate::llg_debug!(
-        "event=semantic_tokens.open_stage.end outcome=ok file={} elapsed_us={}",
-        real.display(),
-        stage_started.elapsed().as_micros()
-    );
-    clean_analysis_scratch();
-    crate::llg_trace!(
-        "event=semantic_tokens.open_stage.cleanup outcome=ok file={}",
-        real.display()
-    );
+    // Slang consumes the admitted buffer and never reads this path. The
+    // snapshot keeps the real document identity, so includes resolve beside
+    // the real file exactly as in the project compile. A frontend refusal is
+    // as much a function of the inputs as a table is.
     let result = real
         .to_str()
         .ok_or_else(|| OpenTokenError::transient("semantic source path is not UTF-8"))
         .and_then(|path| {
-            // A revision can change while the request-local stage is being
-            // written.  Check again immediately before entering Slang so a
-            // stale buffer cannot start the expensive parse.
-            if !current() {
-                crate::llg_debug!(
-                    "event=semantic_tokens.open_parse.frontend outcome=stale-before-slang file={} elapsed_us={}",
-                    real.display(),
-                    started.elapsed().as_micros()
-                );
-                Err(OpenTokenError::stale())
-            } else {
-                // Slang consumes the admitted buffer and never reads this
-                // path. Preserve the real document identity in its snapshot,
-                // so includes resolve beside the real file exactly as in the
-                // project compile; the private stage only serializes cleanup.
-                // A frontend refusal is as much a function of the inputs as a
-                // table is.
-                features::open_document_identifiers(path, defines, text, includes)
-                    .map(Arc::new)
-                    .map_err(|error| OpenTokenError {
-                        message: error.to_string(),
-                        transient: false,
-                    })
-            }
+            features::open_document_identifiers(path, defines, text, includes)
+                .map(Arc::new)
+                .map_err(|error| OpenTokenError {
+                    message: error.to_string(),
+                    transient: false,
+                })
         });
-    clean_analysis_scratch();
     crate::llg_debug!(
         "event=semantic_tokens.open_parse.end outcome={} file={} token_count={} elapsed_us={}",
         if result.is_ok() { "ok" } else { "error" },
@@ -647,6 +564,15 @@ pub(super) fn shadow_staging_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+/// Runs one isolated parse at a time, so that they hold the memory of one
+/// frontend.  A parse uses admitted text only and neither reads nor writes
+/// staged files: it runs beside a project analysis, which holds
+/// [`shadow_staging_lock`] until it ends.
+fn isolated_parse_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
 /// Last-resort removal of the whole per-process shadow base, run on the LSP
 /// `exit` path (see `main.rs`).  Idempotent; the staging lock is acquired
 /// here so the sweep never races a running compile job.
@@ -658,11 +584,15 @@ pub(crate) fn emergency_shadow_cleanup() {
 }
 
 /// Perform the final shadow sweep and terminate while still holding the
-/// staging lock. Keeping the lock through process exit closes the small race
-/// where a queued analysis could recreate the shadow base after cleanup but
-/// before [`std::process::exit`].
+/// staging and parse locks. Keeping the staging lock through process exit
+/// closes the small race where a queued analysis could recreate the shadow
+/// base after cleanup but before [`std::process::exit`]; holding both keeps
+/// the frontend off every thread while the process runs its exit handlers.
 pub(crate) fn emergency_shadow_cleanup_and_exit(code: i32) -> ! {
     let _staging = shadow_staging_lock()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let _parse = isolated_parse_lock()
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     features::cleanup_process_shadow();

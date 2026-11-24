@@ -53,7 +53,8 @@ Components: [readme](readme.md), [handlers](handlers/readme.md). Server rules:
   the committed analysis, or the isolated parse of an uncommitted text. Never
   answer one of the two requests from anything else.
 - An isolated parse uses captured revisions, admitted text and the committed
-  analysis' include and package context (never a file read); recheck staleness
+  analysis' include and package context (never a file access), so it runs beside
+  a project analysis, one at a time (`isolated_parse_lock`); recheck staleness
   before cache lookup, flight admission and the blocking compile. Saturated
   single-flight tables refuse new work; the committed table answers.
 - Record each token request's inputs under the capture lock; a commit that
