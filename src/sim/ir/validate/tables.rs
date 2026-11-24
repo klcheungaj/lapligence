@@ -348,6 +348,64 @@ impl Validator<'_> {
             }
         }
 
+        for (idx, redrive) in self.model.redrives.iter().enumerate() {
+            let path = format!("redrives[{idx}]");
+            let signal_in_bounds = |signal: usize| signal < self.model.signals.len();
+            let targets_in_bounds = redrive.targets.iter().all(|target| match target {
+                crate::sim::ir::IrRedriveTarget::Signal(signal) => signal_in_bounds(*signal),
+                crate::sim::ir::IrRedriveTarget::Array(array) => *array < self.model.arrays.len(),
+            });
+            if redrive.targets.is_empty() || !targets_in_bounds {
+                return self.fail(path, "redrive names no variable");
+            }
+            match &redrive.action {
+                crate::sim::ir::IrRedriveAction::Copy(source) => {
+                    let packed = |signal: usize| {
+                        self.model
+                            .signals
+                            .get(signal)
+                            .and_then(|signal| match signal.ty {
+                                crate::sim::ir::IrType::Packed { .. } => Some(signal.ty),
+                                crate::sim::ir::IrType::Real { .. } => None,
+                            })
+                    };
+                    let [crate::sim::ir::IrRedriveTarget::Signal(target)] =
+                        redrive.targets.as_slice()
+                    else {
+                        return self.fail(path, "a copied redrive has one variable target");
+                    };
+                    if packed(*source).is_none() || packed(*source) != packed(*target) {
+                        return self
+                            .fail(path, "a copied redrive needs packed signals of one type");
+                    }
+                }
+                crate::sim::ir::IrRedriveAction::Evaluate(body) => {
+                    self.validate_stmts(body, &[], &format!("{path}.body"))?;
+                }
+                crate::sim::ir::IrRedriveAction::Constant(constant) => {
+                    let width = match redrive.targets.as_slice() {
+                        [crate::sim::ir::IrRedriveTarget::Signal(target)] => {
+                            match self.model.signals[*target].ty {
+                                crate::sim::ir::IrType::Packed { width, .. } => Some(width),
+                                crate::sim::ir::IrType::Real { .. } => None,
+                            }
+                        }
+                        _ => None,
+                    };
+                    if width != Some(constant.width)
+                        || constant.real.is_some()
+                        || constant.fill.is_some()
+                    {
+                        return self.fail(
+                            path,
+                            "a constant redrive needs one packed variable of the constant's width",
+                        );
+                    }
+                }
+                crate::sim::ir::IrRedriveAction::Committed => {}
+            }
+        }
+
         let mut storage_names = HashSet::new();
         for (idx, container) in self.model.containers.iter().enumerate() {
             if !storage_names.insert(container.c_name.as_str()) {

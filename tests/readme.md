@@ -820,6 +820,20 @@ net and gate-terminal runtime selects and writers inside a runtime select's
 longest static prefix reject. The legality ruling is in the
 [fixture readme](fixtures/sim/feature_completion/rtl_105/readme.md).
 
+FIN-002's composed scenarios use
+`-E 'binary(sim_feature_completion) & test(fin_002::)'`: six class-based
+testbench designs and six gate-level designs, each combining six or more
+features (generate hierarchies, clocking blocks, classes, mailboxes,
+randomization, assertions, a checker, covergroups, DPI-C, VPI applications;
+cell netlists, UDPs with notifiers, strengths, switches, specify paths with
+SDF, timing checks), run in both optimizer modes on all value backends with
+transcripts compared per time step; two of them are also dumped as VCD and
+FST. The gate-level features llg does not simulate reject with their
+diagnostics. Oracles and clauses are in the
+[fixture readme](fixtures/sim/feature_completion/fin_002/readme.md); its
+decisions are CS-D1 to CS-D5 in `sim_lrm_decisions`. Sanitizer and Clang
+lanes use the settings of the sections below with the same filter.
+
 ### LRM decision cases
 
 - [`fixtures/sim/lrm_decisions/`](fixtures/sim/lrm_decisions/) holds one

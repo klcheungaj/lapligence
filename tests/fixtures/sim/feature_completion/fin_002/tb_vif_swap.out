@@ -1,0 +1,13 @@
+[15] edge monitor: 11
+[15] clocking monitor: 11
+[22] monitor moved to channel 1: data=22 vpi=22
+[22] edge monitor: 22
+[25] clocking monitor: 22
+[33] edge monitor: 23
+[33] clocking monitor: 23
+[36] 3 beats reached
+[42] monitor moved to channel 0: data=12 vpi=12
+[55] edge monitor: 13
+[55] clocking monitor: 13
+[72] edges=9 ticks=9 folded=349569
+sums=36,141 beats=3,5 vpi sums=36,141

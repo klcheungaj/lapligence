@@ -2,7 +2,7 @@
 
 use super::super::collection::EventEvaluation;
 use super::*;
-use crate::sim::ir::IrRuntimeQuery;
+use crate::sim::ir::{IrRedrive, IrRedriveAction, IrRedriveTarget, IrRuntimeQuery};
 use crate::sim::legacy_unsupported::LegacyFamily;
 
 impl EmitCtx<'_, '_> {
@@ -286,41 +286,17 @@ impl EmitCtx<'_, '_> {
         released_variables(&self.cg.model, &lh, &mut released);
         let mut released_arrays = Vec::new();
         released_array_variables(&lh, &mut released_arrays);
-        let release = IrStmt::Release { lhs: lh };
-        if released.is_empty() && released_arrays.is_empty() {
-            return Ok(release);
-        }
         // IEEE 1800-2009 10.6.2: releasing a variable driven by a continuous
-        // assignment re-establishes it and schedules a reevaluation in the
-        // assignment's region. Pulse one hidden marker per released variable;
-        // `attach_release_reevaluation` makes the variable's continuous
-        // drivers sensitive to it, so they rerun as ordinary Active-region
-        // wakeups after the force is gone.
-        let mut statements = vec![release];
-        let mut markers = Vec::with_capacity(released.len() + released_arrays.len());
-        for signal in released {
-            markers.push(self.cg.release_marker(signal));
-        }
-        for array in released_arrays {
-            markers.push(self.cg.release_array_marker(array));
-        }
-        for marker in markers {
-            let read = IrExpr::new(IrExprKind::SigRead(marker), 1, false, None);
-            statements.push(IrStmt::Assign {
-                lhs: IrLhs::Whole(marker),
-                rhs: IrExpr::new(
-                    IrExprKind::Un {
-                        op: IrUnOp::BitNeg,
-                        a: Box::new(read),
-                    },
-                    1,
-                    false,
-                    None,
-                ),
-                nba: false,
-            });
-        }
-        Ok(IrStmt::Block(statements))
+        // assignment re-establishes it. The runtime does that inside the
+        // release, from the model's redrive rows; `collect_redrives` gives
+        // the variables named here their rows once every driver is lowered.
+        self.cg
+            .released_targets
+            .extend(released.into_iter().map(IrRedriveTarget::Signal));
+        self.cg
+            .released_targets
+            .extend(released_arrays.into_iter().map(IrRedriveTarget::Array));
+        Ok(IrStmt::Release { lhs: lh })
     }
 
     /// Reject force/release targets by declared type before lowering, so each
@@ -451,6 +427,12 @@ impl EmitCtx<'_, '_> {
     }
 }
 
+/// Whether signal `index` (after alias resolution) is a variable: a
+/// released variable keeps its value, a released net resolves its drivers.
+fn is_variable(model: &IrModel, index: usize) -> bool {
+    model.signal(index).is_variable()
+}
+
 /// Persistent variables (not nets) released by `lhs`, in target order.
 fn released_variables(model: &IrModel, lhs: &IrLhs, out: &mut Vec<usize>) {
     match lhs {
@@ -458,8 +440,7 @@ fn released_variables(model: &IrModel, lhs: &IrLhs, out: &mut Vec<usize>) {
         // release; with a run-time index every leaf may be the one released.
         IrLhs::Whole(index) | IrLhs::Part(index, ..) => {
             let index = model.signal(*index).alias.unwrap_or(*index);
-            let signal = model.signal(index);
-            if signal.net_driver.is_none() && signal.net_alias.is_empty() && !out.contains(&index) {
+            if is_variable(model, index) && !out.contains(&index) {
                 out.push(index);
             }
         }
@@ -491,146 +472,167 @@ fn released_array_variables(lhs: &IrLhs, out: &mut Vec<usize>) {
 }
 
 impl Codegen<'_> {
-    /// The hidden one-bit marker a release of `signal` toggles. It is two-state
-    /// so the first toggle is a real change.
-    fn release_marker(&mut self, signal: usize) -> usize {
-        if let Some(marker) = self.release_markers.get(&signal) {
-            return *marker;
+    /// Give the continuous drivers of releasable variables their redrive
+    /// rows (IEEE 1800-2009 10.6.2). Continuous assignments and port links
+    /// are the synthetic evaluate-then-wait processes; procedural writers
+    /// have no row, so a variable they write keeps its forced value until
+    /// the next procedural assignment. For the variables and arrays
+    /// `release` statements name, a row holds a copy of the driver's
+    /// statements (or names the copied source, its constant, or the
+    /// driver's committed value when it is delayed), so later process
+    /// merging or reordering cannot invalidate it and the drivers
+    /// themselves stay as they are. With `vpi_release` a VPI application
+    /// may release any variable (38.34): every continuously driven variable
+    /// then gets the rows that are data only (source, constant, committed
+    /// value); expression drivers are woken instead, through the process
+    /// rows the emitter derives from the final processes, so such a model
+    /// carries no statements for them. Runs once after every process and
+    /// subroutine body is lowered; a design without a release statement and
+    /// without a VPI application has no rows.
+    pub(in super::super) fn collect_redrives(&mut self, vpi_release: bool) -> Result<(), String> {
+        if !vpi_release && self.released_targets.is_empty() {
+            return Ok(());
         }
-        let marker = self.model.signals.len();
-        self.model.signals.push(IrSignal {
-            fixed_default: None,
-            c_name: format!("llg_release_mark_{signal}"),
-            hdl_name: None,
-            ty: IrType::Packed {
-                width: 1,
-                signed: false,
-                two_state: true,
-            },
-            net_driver: None,
-            net_alias: Vec::new(),
-            alias: None,
-            omit: false,
-        });
-        self.release_markers.insert(signal, marker);
-        marker
-    }
-
-    /// The hidden one-bit marker an element release of `array` toggles.
-    fn release_array_marker(&mut self, array: usize) -> usize {
-        if let Some(marker) = self.release_array_markers.get(&array) {
-            return *marker;
-        }
-        let marker = self.model.signals.len();
-        self.model.signals.push(IrSignal {
-            fixed_default: None,
-            c_name: format!("llg_release_array_mark_{array}"),
-            hdl_name: None,
-            ty: IrType::Packed {
-                width: 1,
-                signed: false,
-                two_state: true,
-            },
-            net_driver: None,
-            net_alias: Vec::new(),
-            alias: None,
-            omit: false,
-        });
-        self.release_array_markers.insert(array, marker);
-        marker
-    }
-
-    /// Make every continuous driver of a released variable sensitive to the
-    /// variable's release marker (IEEE 1800-2009 10.6.2). Continuous
-    /// assignments and port links are the synthetic evaluate-then-wait
-    /// processes; procedural writers are not re-run, so a variable they write
-    /// keeps its forced value until the next procedural assignment. Runs once
-    /// after every process and subroutine body is lowered; designs without a
-    /// released variable are unchanged.
-    pub(in super::super) fn attach_release_reevaluation(&mut self) {
-        if self.release_markers.is_empty() && self.release_array_markers.is_empty() {
-            return;
-        }
-        for process in &mut self.model.processes {
-            if process.kind != IrProcessKind::Synthetic
-                || !matches!(process.shape, IrShape::RunOnce | IrShape::SensLoop { .. })
-            {
+        let mut redrives = Vec::new();
+        for process in &self.model.processes {
+            let mut targets = process.redrive_targets(&self.model, &process.body);
+            if targets.is_empty() {
                 continue;
             }
-            let mut written = Vec::new();
-            let mut written_arrays = Vec::new();
-            for statement in &process.body {
-                continuous_writes(statement, &mut written, &mut written_arrays);
-            }
-            for signal in &mut written {
-                *signal = self.model.signals[*signal].alias.unwrap_or(*signal);
-            }
-            written.sort_unstable();
-            written.dedup();
-            written_arrays.sort_unstable();
-            written_arrays.dedup();
-            let markers = written
-                .iter()
-                .filter_map(|signal| self.release_markers.get(signal))
-                .chain(
-                    written_arrays
-                        .iter()
-                        .filter_map(|array| self.release_array_markers.get(array)),
+            let action = redrive_action(&self.model, process);
+            // The statements of a driver run for `release` statements only;
+            // a VPI release wakes the driver's process instead, which the
+            // emitter finds among the final processes.
+            let in_place = matches!(
+                action,
+                Some(
+                    IrRedriveAction::Copy(_)
+                        | IrRedriveAction::Constant(_)
+                        | IrRedriveAction::Committed
                 )
-                .map(|marker| IrDependency::Scalar(self.model.signals[*marker].c_name.clone()))
-                .collect::<Vec<_>>();
-            if markers.is_empty() {
+            );
+            if !(vpi_release && in_place) {
+                targets.retain(|target| self.released_targets.contains(target));
+            }
+            if targets.is_empty() {
                 continue;
             }
-            match &mut process.shape {
-                IrShape::SensLoop { reads } => reads.extend(markers),
-                shape => *shape = IrShape::SensLoop { reads: markers },
-            }
+            let Some(action) = action else {
+                return Err(format!(
+                    "release of a variable driven by `{}`: this continuous driver cannot be \
+                     re-established by a release",
+                    process.label
+                ));
+            };
+            redrives.push(IrRedrive {
+                label: process.label.clone(),
+                port_link: process.port_link(),
+                targets,
+                action,
+            });
         }
+        self.model.redrives = redrives;
+        Ok(())
     }
 }
 
-/// Whole persistent signals, and arrays, a continuous driver body assigns.
-fn continuous_writes(statement: &IrStmt, out: &mut Vec<usize>, arrays: &mut Vec<usize>) {
+/// How a `release` statement repeats the assignment of continuous driver
+/// `process`, or `None` for a driver whose statements cannot run outside its
+/// process: one with helper functions of its own.
+fn redrive_action(model: &IrModel, process: &IrProcess) -> Option<IrRedriveAction> {
+    if !process.pre_fns.is_empty() {
+        return None;
+    }
+    let mut delayed = Vec::new();
+    for statement in &process.body {
+        delayed_writes(statement, &mut delayed);
+    }
+    if !delayed.is_empty() {
+        // The runtime's record of a delayed driver holds the committed value
+        // and the bits it drives.
+        return Some(IrRedriveAction::Committed);
+    }
+    if let [statement] = process.body.as_slice() {
+        let mut statement = statement;
+        while let IrStmt::Located {
+            statement: inner, ..
+        } = statement
+        {
+            statement = inner;
+        }
+        if let IrStmt::Assign {
+            lhs: IrLhs::Whole(target),
+            rhs,
+            nba: false,
+        } = statement
+        {
+            let to = model.signal(*target);
+            let plain = |signal: &IrSignal| {
+                signal.alias.is_none() && signal.net_driver.is_none() && signal.net_alias.is_empty()
+            };
+            let packed =
+                plain(to) && matches!(to.ty, IrType::Packed { .. }) && rhs.width() == to.ty.width();
+            // A conversion to the width it already has changes no bit.
+            let mut value = rhs;
+            while let IrExprKind::Convert { a } = value.kind() {
+                if a.width() != value.width() {
+                    break;
+                }
+                value = a;
+            }
+            match value.kind() {
+                IrExprKind::SigRead(source) => {
+                    let from = model.signal(*source);
+                    if packed && plain(from) && to.ty == from.ty {
+                        return Some(IrRedriveAction::Copy(*source));
+                    }
+                }
+                IrExprKind::Const(constant) => {
+                    // A two-state variable would turn X and Z bits into 0.
+                    let two_state = matches!(
+                        to.ty,
+                        IrType::Packed {
+                            two_state: true,
+                            ..
+                        }
+                    );
+                    let unknown = constant.x.iter().chain(&constant.z).any(|limb| *limb != 0);
+                    if packed
+                        && constant.real.is_none()
+                        && constant.fill.is_none()
+                        && constant.width == to.ty.width()
+                        && !(two_state && unknown)
+                    {
+                        return Some(IrRedriveAction::Constant(constant.clone()));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Some(IrRedriveAction::Evaluate(process.body.clone()))
+}
+
+/// The targets of the delayed assignments of a continuous driver body.
+fn delayed_writes<'a>(statement: &'a IrStmt, out: &mut Vec<&'a IrLhs>) {
     match statement {
-        IrStmt::Assign { lhs, .. } | IrStmt::InertialAssign { lhs, .. } => {
-            lhs_signals(lhs, out, arrays);
-        }
+        IrStmt::InertialAssign { lhs, .. } | IrStmt::DelayedAssign { lhs, .. } => out.push(lhs),
         IrStmt::InertialEnable(enable) => {
-            lhs_signals(&enable.zero_lhs, out, arrays);
-            lhs_signals(&enable.one_lhs, out, arrays);
+            out.push(&enable.zero_lhs);
+            out.push(&enable.one_lhs);
         }
-        IrStmt::Located { statement, .. } => continuous_writes(statement, out, arrays),
+        IrStmt::Located { statement, .. } => delayed_writes(statement, out),
         IrStmt::Block(statements)
         | IrStmt::While {
             body: statements, ..
         } => {
             for statement in statements {
-                continuous_writes(statement, out, arrays);
+                delayed_writes(statement, out);
             }
         }
         IrStmt::If { then_, els, .. } => {
             for statement in then_.iter().chain(els.iter().flatten()) {
-                continuous_writes(statement, out, arrays);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn lhs_signals(lhs: &IrLhs, out: &mut Vec<usize>, arrays: &mut Vec<usize>) {
-    match lhs {
-        IrLhs::Whole(index)
-        | IrLhs::Bit(index, ..)
-        | IrLhs::Part(index, ..)
-        | IrLhs::IdxPart(index, ..) => out.push(*index),
-        IrLhs::ArrayElem { arr, .. } => arrays.push(*arr),
-        IrLhs::PackedSelect { target, .. } | IrLhs::TaggedSelect { target, .. } => {
-            lhs_signals(target, out, arrays);
-        }
-        IrLhs::Stream { parts, .. } => {
-            for (part, _) in parts {
-                lhs_signals(part, out, arrays);
+                delayed_writes(statement, out);
             }
         }
         _ => {}
@@ -783,7 +785,53 @@ mod tests {
     }
 
     #[test]
-    fn component_release_markers_follow_variables_not_nets() {
+    fn component_redrive_actions_follow_the_driver_shape() {
+        let model = model_with(vec![
+            packed("target", 4, None),
+            packed("source", 4, None),
+            packed("wide", 8, None),
+        ]);
+        let read = |signal: usize, width: u32| {
+            IrExpr::new(IrExprKind::SigRead(signal), width, false, None)
+        };
+        let driver = |body: Vec<IrStmt>| {
+            IrProcess::new(
+                "p".to_owned(),
+                "t.assign".to_owned(),
+                IrShape::SensLoop { reads: Vec::new() },
+                Vec::new(),
+                body,
+            )
+        };
+        let assign = |rhs: IrExpr| IrStmt::Assign {
+            lhs: IrLhs::Whole(0),
+            rhs,
+            nba: false,
+        };
+        // A whole signal of the same type is copied.
+        assert_eq!(
+            redrive_action(&model, &driver(vec![assign(read(1, 4))])),
+            Some(IrRedriveAction::Copy(1))
+        );
+        // Another width converts: the statements run.
+        let widened = vec![assign(read(2, 8))];
+        assert_eq!(
+            redrive_action(&model, &driver(widened.clone())),
+            Some(IrRedriveAction::Evaluate(widened))
+        );
+        let computed = vec![assign(binary(
+            IrBinOp::Add,
+            read(1, 4),
+            constant(1, 4, false),
+        ))];
+        assert_eq!(
+            redrive_action(&model, &driver(computed.clone())),
+            Some(IrRedriveAction::Evaluate(computed))
+        );
+    }
+
+    #[test]
+    fn component_released_variables_are_variables_not_nets() {
         let mut aliased = packed("alias", 4, None);
         aliased.alias = Some(1);
         let model = model_with(vec![
@@ -825,7 +873,7 @@ mod tests {
         let mut written = Vec::new();
         let mut arrays = Vec::new();
         for statement in &body {
-            continuous_writes(statement, &mut written, &mut arrays);
+            crate::sim::ir::continuous_writes(statement, &mut written, &mut arrays);
         }
         assert_eq!(written, vec![3, 5]);
         assert!(arrays.is_empty());

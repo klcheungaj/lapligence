@@ -157,7 +157,11 @@ pub use assertions::{
     IrSequenceLocal, IrSequenceRange, IrSequenceTransition, IrSeverityLevel, IrSeverityOrigin,
 };
 mod processes;
-pub use processes::{IrPreFn, IrProcess, IrProcessKind, IrShape};
+#[cfg(test)]
+pub(in crate::sim) use processes::continuous_writes;
+pub use processes::{
+    IrPreFn, IrProcess, IrProcessKind, IrRedrive, IrRedriveAction, IrRedriveTarget, IrShape,
+};
 mod functions;
 pub(in crate::sim) use functions::dimension_size;
 pub use functions::{
@@ -671,6 +675,10 @@ pub struct IrModel {
     /// Comb drivers, then links, then always/initial processes — push order
     /// equals spawn order.
     pub(in crate::sim) processes: Vec<IrProcess>,
+    /// The continuous drivers a release repeats in place (IEEE 1800-2009
+    /// 10.6.2); empty for a model that can execute no release of a
+    /// continuously driven variable.
+    pub(in crate::sim) redrives: Vec<IrRedrive>,
     pub(in crate::sim) init_steps: Vec<IrInitStep>,
     /// Spawned function names in spawn order (labels resolve through
     /// `processes`).  Final-block processes are NOT in this list; they run
@@ -913,6 +921,7 @@ impl IrModel {
             sampled_clocks: parts.sampled_clocks,
             sampled_domains: parts.sampled_domains,
             processes: parts.processes,
+            redrives: Vec::new(),
             init_steps: parts.init_steps,
             spawns: parts.spawns,
             final_spawns: parts.final_spawns,

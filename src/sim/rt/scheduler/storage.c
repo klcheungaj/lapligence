@@ -213,10 +213,15 @@ struct llg_inertial {
     int32_t pending;
     uint64_t time;
     llg_region_t region;
+    uint32_t selected_lsb;      // a selected driver of a variable drives bits
+                                // [selected_lsb, selected_lsb + selected_width)
+                                // of it; both 0: the whole target; width 0 with
+                                // UINT32_MAX: no bit. Both fill alignment padding.
     sv4_t current;
     sv4_t value;
     sv4_t mask;
     int32_t has_mask;
+    uint32_t selected_width;
     uint64_t rise;
     uint64_t fall;
     uint64_t turn_off;

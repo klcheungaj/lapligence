@@ -1548,6 +1548,17 @@ static void inertial_snapshot(llg_inertial_t* driver, const sv4_t* target) {
         sv4_copy(&driver->current, target);
 }
 
+// The bits a selected driver of a variable drives: one selection of a
+// continuous assignment, so one range. Noted once per record, for a release
+// (inertial_redrive); the mask itself lives only with a pending update.
+static LLG_OUTLYING void inertial_note_selection(llg_inertial_t* driver, const sv4_t* mask) {
+    uint32_t offset = 0, width = 0;
+    if (!nba_mask_contiguous(llg_sv4_width(*mask), *mask, *mask, &offset, &width)) return;
+    // A selection outside the variable drives no bit of it.
+    driver->selected_lsb = width ? offset : UINT32_MAX;
+    driver->selected_width = width;
+}
+
 // Schedule `value` for the driver behind `handle`. A part record (`part`)
 // drives only bits [part_lsb, part_lsb + width of value) of a net slot and
 // keeps only those bits, so a narrow contribution to a wide shared group
@@ -1569,6 +1580,7 @@ static void inertial_update(llg_inertial_t** handle, sv4_t* target,
         driver->part_lsb = part_lsb;
         driver->part_width = part_width;
         inertial_snapshot(driver, target);
+        if (mask && !net) inertial_note_selection(driver, mask);
         driver->region = region_is_reactive(g.current_region)
                              ? LLG_REGION_REACTIVE
                              : LLG_REGION_ACTIVE;
@@ -1587,6 +1599,8 @@ static void inertial_update(llg_inertial_t** handle, sv4_t* target,
         driver->part_lsb = part_lsb;
         driver->part_width = part_width;
         inertial_snapshot(driver, target);
+        driver->selected_lsb = driver->selected_width = 0;
+        if (mask && !net) inertial_note_selection(driver, mask);
     }
     driver->region = region_is_reactive(g.current_region)
                          ? LLG_REGION_REACTIVE
@@ -1634,6 +1648,28 @@ cleanup:
     sv4_destroy(&value);
     sv4_destroy(&selected_mask);
 
+}
+
+// A released variable takes the value its delayed continuous drivers last
+// committed (the value they hold now); an update still pending matures at
+// its time. A driver of selected bits gives those bits only. Records are few
+// and a release is rare, so this walks them.
+static LLG_OUTLYING void inertial_redrive(sv4_t* target) {
+    for (llg_inertial_t* driver = g.inertial_drivers; driver; driver = driver->next_all) {
+        if (driver->target != target || driver->net || driver->publication_net || driver->part)
+            continue;
+        if (!driver->selected_width) {
+            if (!driver->selected_lsb) llg_ba(target, driver->current);
+            continue;
+        }
+        int64_t left = (int64_t)driver->selected_lsb + driver->selected_width - 1;
+        sv4_t bits = sv4_part_select(driver->current, left, driver->selected_lsb);
+        sv4_t merged = sv4_clone(target);
+        sv4_part_select_set(&merged, left, driver->selected_lsb, bits);
+        llg_ba(target, merged);
+        sv4_destroy(&merged);
+        sv4_destroy(&bits);
+    }
 }
 
 void llg_inertial_assign(llg_inertial_t** handle, sv4_t* target,
@@ -2207,7 +2243,11 @@ static void path_queue_advance(llg_inertial_t* driver) {
 // edge, or with showcancelled turns the interval into x. With the default
 // limits (both equal to the delay) every overlap is rejected, which is the
 // inertial update: a changed value replaces the pending one and a return
-// to the committed value cancels it.
+// to the committed value cancels it. The new transition is timed once, from
+// the last scheduled value: when that update is cancelled or rejected and
+// the new value still differs from the one before it, the transition stays
+// where it was scheduled (30.7.4.2 cancels the leading edge only; decision
+// CS-D1).
 static void path_bit_schedule(llg_module_path_set_t* set,
                               llg_module_path_dest_t* dest, uint32_t bit,
                               llg_inertial_t* driver, uint32_t state,
@@ -2219,6 +2259,8 @@ static void path_bit_schedule(llg_module_path_set_t* set,
     int32_t show_cancelled = path_pulse.show_cancelled >= 0
                              ? path_pulse.show_cancelled == 1
                              : (flags & LLG_PATH_STYLE_SHOW_CANCELLED) != 0u;
+    path_choice_t choice = {g.now, 0, 0};
+    int32_t timed = 0;
     for (;;) {
         llg_path_queue_t* queue = driver->queue;
         int32_t queued = queue && queue->count;
@@ -2226,13 +2268,15 @@ static void path_bit_schedule(llg_module_path_set_t* set,
                              : driver->pending ? llg_sv4_state(driver->value, 0)
                                                : llg_sv4_state(driver->current, 0);
         if (state == projected) return;
-        path_choice_t choice = {g.now, 0, 0};
-        int32_t transition = path_transition_index(projected, state);
-        if (transition < 0 ||
-            !path_choose(set, dest, bit, transition, evaluated, &choice)) {
-            choice.due = g.now;
-            choice.reject = 0;
-            choice.error = 0;
+        if (!timed) {
+            int32_t transition = path_transition_index(projected, state);
+            if (transition < 0 ||
+                !path_choose(set, dest, bit, transition, evaluated, &choice)) {
+                choice.due = g.now;
+                choice.reject = 0;
+                choice.error = 0;
+            }
+            timed = 1;
         }
         if (!driver->pending) {
             path_head_schedule(driver, choice.due, state);
@@ -2258,8 +2302,8 @@ static void path_bit_schedule(llg_module_path_set_t* set,
                 path_queue_push(driver, choice.due, state);
             return;
         }
-        // The last scheduled update is cancelled or rejected; the new value
-        // is then weighed against the update before it.
+        // The last scheduled update is cancelled or rejected; the new
+        // transition, as timed, is then weighed against the update before it.
         if (queued) {
             queue->count--;
         } else {

@@ -149,6 +149,25 @@ Group `g`: `p` has bins `lo` {0..3}, `mid` {4..7}, `hi` {8..15}
 - `renamed`: set_inst_name and the `option.name`/`option.comment` and
   `type_option.comment` writes.
 
+## discarded_counts.sv
+
+19.8, L33584-33587: "The get_coverage() and get_inst_coverage() methods
+both accept an optional set of arguments, a pair of int values passed by
+reference. When the optional arguments are specified, the get_coverage() and
+get_inst_coverage() methods assign to the first argument the number of
+covered bins and to the second argument the number of coverage bins defined
+for the given coverage item." The assignment does not depend on the use of
+the result, so `void'(cov.cp.get_inst_coverage(covered, total))` stores both
+numbers like `r = cov.cp.get_inst_coverage(covered, total)`.
+
+Group `cg`: `cp_who` has 3 bins, `cp_pass` 2 automatic bins, `x` crosses
+them (6 products). Samples (1,1) and (2,0).
+
+- `point`: `cp_who` one and two of 3: 2/3 (66.67 when assigned).
+- `cross`: (one,1) and (two,0) of 6: 2/6.
+- `group`: 2 + 2 + 2 covered of 3 + 2 + 6 = 11 bins of the instance.
+- `type point`: `cp_pass` both bins, one instance: 2/2.
+
 ## database.sv
 
 Three runs in one directory. `g` (at_least 2 via the declaration) has

@@ -213,6 +213,7 @@ fn model_with(body: Vec<IrStmt>, signals: Vec<IrSignal>) -> IrModel {
             callback_host: false,
             port_link: false,
         }],
+        redrives: Vec::new(),
         init_steps: Vec::new(),
         spawns: Vec::new(),
         final_spawns: Vec::new(),

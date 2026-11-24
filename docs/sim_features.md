@@ -1057,7 +1057,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   only the named bits). Release recomputes a net from its current drivers
   immediately; a variable keeps the forced value until its next procedural
   write, except that a variable driven by a continuous assignment or an output
-  port is re-established by a scheduled reevaluation (SV §10.6.2). A force
+  port holds the driven value when the `release` statement returns: the
+  release repeats its continuous drivers in place (SV §10.6.2, CS-D3; a
+  delayed assignment gives the value it last delivered to the bits it
+  drives, CS-D5). A release through VPI does the same for port copies,
+  constants and delayed assignments and schedules an expression driver,
+  which delivers its value in the same time step (CS-D4). A force
   outlives the process that applied it (kill, `disable`, task return), and the
   model closes cleanly with forces active
   ([sim_023](../tests/fixtures/sim/feature_completion/sim_023/readme.md),
@@ -1815,7 +1820,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   least significant bit (A8-D4; `edge` is SystemVerilog only). Each pair of
   consecutive scheduled destination transitions is a pulse (A8-D8): below the
   reject limit it vanishes, below the error limit it becomes x, otherwise it
-  passes. Limits come from `PATHPULSE$` specparams (path-specific, then
+  passes. A transition is timed from the value last scheduled and keeps that
+  time when the transition before it is cancelled or rejected (CS-D1). Limits
+  come from `PATHPULSE$` specparams (path-specific, then
   module-wide, first-terminal rule; A8-D5) or from `--pulse-reject` /
   `--pulse-error` percentages (default 100). `pulsestyle_onevent/ondetect`
   and `showcancelled/noshowcancelled` declarations, or `--pulse-style` and
@@ -3248,7 +3255,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   fatal error report, `cbPLIError` for each VPI routine error once the
   routine returned, `cbSignal` at the next safe point after a caught signal;
   `cbValueChange` with `vpiStrengthVal` reports net strengths and runs on
-  strength-only changes (A20-D21). Assertion handles,
+  strength-only changes (A20-D21; a known value with a strength range gives
+  both ends, CS-D2). Assertion handles,
   their coverage counters and the coverage operations of `vpi_control`
   (SIM-046) are described under the coverage control API. Assertion
   callbacks and control (SV 39.4, 39.5, ADV-017): `vpi_register_assertion_cb`

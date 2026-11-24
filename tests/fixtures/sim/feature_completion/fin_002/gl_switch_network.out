@@ -1,0 +1,10 @@
+[5] step 0 y=St0 r=St0,Pu0,We0,We0 left=HiZ right=HiZ pwr=Pu0 tx=We0 q=x
+[15] step 1 y=St1 r=St1,Pu1,We1,We0 left=St1 right=St1 pwr=Pu0 tx=We0 q=1
+[25] step 2 y=Pu1 r=St1,Pu1,We1,We0 left=Pu1 right=Pu1 pwr=St1 tx=St0 q=1
+[35] step 3 y=Pu0 r=St0,Pu0,We0,We1 left=St1 right=St1 pwr=St1 tx=St1 q=0
+[45] step 4 y=St1 r=St0,Pu0,We0,We0 left=St1 right=St1 pwr=Pu0 tx=We0 q=1
+[55] step 5 y=56X r=St1,Pu1,We1,We1 left=St1 right=St1 pwr=56X tx=36X q=x
+[65] step 6 y=St0 r=St0,Pu0,We0,We0 left=Pu1 right=Pu1 pwr=Pu0 tx=630 q=0
+[75] step 7 y=Pu1 r=St0,Pu0,We0,We1 left=651 right=651 pwr=St1 tx=St1 q=1
+[85] step 8 y=PuX r=St1,Pu1,We1,WeX left=HiZ right=HiZ pwr=St1 tx=We0 q=x
+[95] step 9 y=St0 r=St1,Pu1,We1,We0 left=St0 right=St0 pwr=Pu0 tx=St0 q=0

@@ -1,0 +1,29 @@
+(DELAYFILE
+  (SDFVERSION "3.0")
+  (DESIGN "chain")
+  (DIVIDER .)
+  (TIMESCALE 1ns)
+  (CELL
+    (CELLTYPE "SDFFX1")
+    (INSTANCE ff[2])
+    (DELAY
+      (ABSOLUTE
+        (IOPATH (posedge CK) Q (0.50) (0.55))
+      )
+    )
+    (TIMINGCHECK
+      (SETUP SI (COND SE (posedge CK)) (0.7))
+    )
+  )
+  (CELL
+    (CELLTYPE "MAJ3X1")
+    (INSTANCE v[1].m)
+    (DELAY
+      (ABSOLUTE
+        (IOPATH A Y (0.20) (0.25))
+        (IOPATH B Y (0.21) (0.26))
+        (IOPATH C Y (0.22) (0.27))
+      )
+    )
+  )
+)

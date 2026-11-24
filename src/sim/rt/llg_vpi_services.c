@@ -293,10 +293,12 @@ static uint32_t svc_code(sv4_t view, uint32_t bit) {
 }
 
 /* One bit's code as s_vpi_strengthval. A known value reports its strength
- * in both s0 and s1; an unknown one (x, L, H) reports vpiX with the
- * strength of its 1 part in s0 and of its 0 part in s1, vpiHiZ for a
- * missing part, as industry-standard tools do (the text gives the fields no
- * meaning beyond "refer to strength coding in Annex K"; decision A20-D21). */
+ * in both s0 and s1, or the weaker end of an ambiguous strength in s0 and
+ * the stronger end in s1 (decision CS-D2); an unknown one (x, L, H) reports
+ * vpiX with the strength of its 1 part in s0 and of its 0 part in s1, vpiHiZ
+ * for a missing part, as industry-standard tools do (the text gives the
+ * fields no meaning beyond "refer to strength coding in Annex K"; decision
+ * A20-D21). */
 static void svc_strength_of(uint32_t code, s_vpi_strengthval* out) {
     static const PLI_INT32 drive[8] = {vpiHiZ,        vpiSmallCharge, vpiMediumCharge,
                                        vpiWeakDrive,  vpiLargeCharge, vpiPullDrive,
@@ -310,10 +312,12 @@ static void svc_strength_of(uint32_t code, s_vpi_strengthval* out) {
         out->s0 = out->s1 = vpiHiZ;
     } else if (lo > 0) {
         out->logic = vpi1;
-        out->s0 = out->s1 = drive[hi];
+        out->s0 = drive[lo];
+        out->s1 = drive[hi];
     } else if (hi < 0) {
         out->logic = vpi0;
-        out->s0 = out->s1 = drive[-lo];
+        out->s0 = drive[-hi];
+        out->s1 = drive[-lo];
     } else {
         out->logic = vpiX;
         out->s0 = hi > 0 ? drive[hi] : vpiHiZ;

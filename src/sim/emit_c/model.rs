@@ -1122,6 +1122,99 @@ fn share_frame_types(
     Ok(frame_types)
 }
 
+/// How the runtime finds the running process of `artifact`: its root
+/// descriptor and, for a member of a shared body class, which spawns with
+/// the class descriptor (when it has one) and its instance record
+/// (lifecycle.rs), that record and its offset in the root frame.
+fn process_identity(
+    artifact: &CoroutineArtifact,
+    spawns: &super::owned::model::SharedSpawns,
+) -> Option<(String, Option<(String, String)>)> {
+    let entry = artifact.desc_name.strip_suffix("_desc")?;
+    Some(match spawns.members.get(entry) {
+        Some((class, member)) => {
+            let class = &spawns.classes[*class];
+            (
+                class
+                    .desc
+                    .clone()
+                    .unwrap_or_else(|| artifact.desc_name.clone()),
+                Some((
+                    format!("&{}[{member}]", class.records),
+                    format!("offsetof({}, _llg_instance)", class.frame),
+                )),
+            )
+        }
+        None => (artifact.desc_name.clone(), None),
+    })
+}
+
+/// The storage each evaluate-then-wait continuous driver assigns, by process
+/// index, read from the final process bodies before rendering releases
+/// them. Only a catalog model needs it: a release through VPI wakes these
+/// processes (`redrive_process_rows`).
+fn redrive_driver_targets(
+    execution: &ExecutionModel,
+) -> Vec<(usize, Vec<crate::sim::ir::IrRedriveTarget>)> {
+    let model = execution.ir();
+    if !model.vpi_catalog {
+        return Vec::new();
+    }
+    execution
+        .processes()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, executable)| {
+            let process = &model.processes[executable.semantic_process];
+            if !matches!(process.shape, crate::sim::ir::IrShape::SensLoop { .. }) {
+                return None;
+            }
+            let targets = process.redrive_targets(
+                model,
+                executable
+                    .blocks
+                    .iter()
+                    .flat_map(|block| block.operations.iter()),
+            );
+            (!targets.is_empty()).then_some((index, targets))
+        })
+        .collect()
+}
+
+/// The continuous driver processes a release through VPI wakes (10.6.2,
+/// 38.34): for each variable or array a final evaluate-then-wait driver
+/// assigns (`redrive_driver_targets`), the process that runs it. Passes may
+/// have merged or reordered drivers; whatever process now assigns the
+/// variable is the one to wake, and waking one that assigns more is
+/// harmless. A run-once driver has no process left to wake: its constant
+/// row re-establishes it.
+fn redrive_process_rows(
+    drivers: Vec<(usize, Vec<crate::sim::ir::IrRedriveTarget>)>,
+    processes: &[Option<CoroutineArtifact>],
+    spawns: &super::owned::model::SharedSpawns,
+) -> Vec<super::owned::model::ProcessRow> {
+    let mut rows = Vec::new();
+    for (index, targets) in drivers {
+        let Some((desc, record)) = processes
+            .get(index)
+            .and_then(Option::as_ref)
+            .and_then(|artifact| process_identity(artifact, spawns))
+        else {
+            continue;
+        };
+        rows.extend(
+            targets
+                .into_iter()
+                .map(|target| super::owned::model::ProcessRow {
+                    target,
+                    desc: desc.clone(),
+                    record: record.clone(),
+                }),
+        );
+    }
+    rows
+}
+
 /// The gate process of each sequential UDP the VPI catalog lets
 /// `vpi_put_value` set (38.34), by IR process C name: the inertial handle
 /// of a delayed output and the root descriptor (and shared-body instance
@@ -1158,26 +1251,8 @@ fn udp_put_sites(
         {
             continue;
         }
-        let Some(entry) = artifact.desc_name.strip_suffix("_desc") else {
+        let Some((desc, record)) = process_identity(artifact, spawns) else {
             continue;
-        };
-        // A member of a shared body class spawns with the class descriptor
-        // (when it has one) and its instance record (lifecycle.rs).
-        let (desc, record) = match spawns.members.get(entry) {
-            Some((class, member)) => {
-                let class = &spawns.classes[*class];
-                (
-                    class
-                        .desc
-                        .clone()
-                        .unwrap_or_else(|| artifact.desc_name.clone()),
-                    Some((
-                        format!("&{}[{member}]", class.records),
-                        format!("offsetof({}, _llg_instance)", class.frame),
-                    )),
-                )
-            }
-            None => (artifact.desc_name.clone(), None),
         };
         sites.insert(
             process.c_name.clone(),
@@ -1199,6 +1274,7 @@ fn render_model(
     let artifact_stage = crate::profile::Stage::new("render.artifacts");
     let constants = super::constants::PackedConstants::default();
     let host_descs = callback_host_descs(execution.ir());
+    let redrive_drivers = redrive_driver_targets(&execution);
     let (mut coroutine_functions, frame_upper_bounds) =
         render_coroutine_functions(&execution, config.backend, &constants, threshold)?;
     let mut coroutine_processes = render_coroutine_processes(
@@ -1265,6 +1341,18 @@ fn render_model(
         },
         &names,
     )?;
+    // Redrive functions share bodies like the condition evaluators; like
+    // their processes, the ones of a generate iteration or a port link
+    // differ in literal payloads only.
+    let mut generated_evaluators = HashSet::new();
+    for (name, source, redrive) in
+        super::owned::model::redrive_sources(model, &constants, config.backend)?
+    {
+        if sharing::generate_iteration(&redrive.label) || redrive.port_link {
+            generated_evaluators.insert(name.clone());
+        }
+        evaluators.insert(name, retained(source));
+    }
     drop(artifact_stage);
     let sharing_stage = crate::profile::Stage::new("render.sharing");
     let sharing = sharing::share(
@@ -1279,6 +1367,7 @@ fn render_model(
             site_statics: &net_tables.site_statics,
             constants: &constants,
             evaluators: &mut evaluators,
+            generated_evaluators: &generated_evaluators,
         },
     )?;
     let mut sharing = sharing;
@@ -1734,12 +1823,15 @@ fn render_model(
         .chain(
             (0..model.timing_checks().len())
                 .map(|index| format!("llg_timing_set_{index}__conditions")),
-        );
+        )
+        .chain((0..model.redrives.len()).map(super::owned::model::redrive_function));
     for name in evaluator_names {
         if let Some(source) = evaluators.remove(&name) {
             out.push_str(&source);
         }
     }
+    let redrive_processes =
+        redrive_process_rows(redrive_drivers, &coroutine_processes, &sharing.spawns);
     // Every body has been moved into the model text; release the artifacts
     // and their frame layouts before the remaining sections and the
     // identifier pass.
@@ -1764,8 +1856,14 @@ fn render_model(
         &sharing.evaluators,
         &mut out,
     )?;
+    let redrives = super::owned::model::redrive_tables(
+        model,
+        &sharing.evaluators,
+        &redrive_processes,
+        &mut out,
+    );
     out.push_str(&constants.lifecycle());
-    let start = super::owned::model::main(execution, &sharing.spawns)?;
+    let start = super::owned::model::main(execution, &sharing.spawns, redrives)?;
     let unobserved = unobserved_contents(model, &out, &start);
     out.push_str(&unobserved);
     unobserved_real_columns(model, &mut out, &start);

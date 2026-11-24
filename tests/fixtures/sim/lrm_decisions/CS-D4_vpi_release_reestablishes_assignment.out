@@ -1,0 +1,8 @@
+forced: ported=90 tied=93 delayed=94 stored=92
+forced: assigned=91
+at the release: ported=8 tied=77 delayed=11 stored=92
+end of the time step: assigned=9
+one unit later: ported=8 tied=77 delayed=11 stored=92
+one unit later: assigned=9
+next operand: ported=21 tied=77 delayed=24 stored=23
+next operand: assigned=22

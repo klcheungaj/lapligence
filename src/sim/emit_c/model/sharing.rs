@@ -331,7 +331,7 @@ fn registry(
 /// `tb.g[3].always` (see the lowering's generate-scope collection); only the
 /// C identifiers encode the brackets. A false positive only turns literals
 /// of one sharing class into record fields.
-fn generate_iteration(label: &str) -> bool {
+pub(super) fn generate_iteration(label: &str) -> bool {
     label.contains('[')
 }
 
@@ -637,10 +637,15 @@ pub(super) struct AdditionalOperands<'a> {
     /// Hoisted per-site process state `(name, element type, element count)`.
     pub site_statics: &'a [(String, &'static str, Option<u64>)],
     pub constants: &'a super::super::constants::PackedConstants,
-    /// Condition evaluators (`static void <name>(sv4_t* out, void* context)`)
-    /// of module path and timing check sets, by name. Shared ones read their
+    /// Functions with a `void* context` argument, by name: the condition
+    /// evaluators (`static void <name>(sv4_t* out, void* context)`) of module
+    /// path and timing check sets and the redrive functions
+    /// (`static void <name>(void* context)`). Shared ones read their
     /// instance record through `context`.
     pub evaluators: &'a mut BTreeMap<String, String>,
+    /// The `evaluators` whose literal payloads may vary per instance: those
+    /// of a generate iteration (`generate_iteration`) or a port link.
+    pub generated_evaluators: &'a HashSet<String>,
 }
 
 fn push_candidate(
@@ -792,10 +797,16 @@ pub(super) fn share(
     // Module path and timing check conditions come from specify blocks,
     // which are module items and never inside a generate scope (1800-2009
     // A.1.4 `non_port_module_item`): their payloads are the module's parameters and stay structural.
+    // A redrive function may belong to a generate iteration or a port link.
     for (name, source) in additional.evaluators.iter() {
-        if let Some(normalized) =
-            normalize(source, name, false, &registry, &constants, &mut scalars)
-        {
+        if let Some(normalized) = normalize(
+            source,
+            name,
+            additional.generated_evaluators.contains(name),
+            &registry,
+            &constants,
+            &mut scalars,
+        ) {
             let key = format!("evaluator:{}", normalized.source);
             push_candidate(
                 Candidate {
