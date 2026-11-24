@@ -120,7 +120,7 @@ fn lsp_stdio_reports_a_config_that_selects_no_files() {
     // A removed last file brings it back, a new one removes it again.
     fs::remove_file(&path).unwrap();
     client.send_watch_event(&path, 3).unwrap();
-    wait_for_diagnostics(&mut client, &config_uri, &reported);
+    wait_for_diagnostics(&mut client, &config_uri, reported);
     fs::write(&path, text).unwrap();
     client.send_watch_event(&path, 1).unwrap();
     wait_for_diagnostics(&mut client, &config_uri, |params| !reported(params));
