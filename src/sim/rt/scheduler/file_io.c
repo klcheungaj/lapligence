@@ -459,12 +459,12 @@ int32_t llg_file_error(uint32_t descriptor, llg_string_t* message) {
     return result;
 }
 
-int32_t llg_file_error_packed(uint32_t descriptor, llg_ref_t* message) {
+int32_t llg_file_error_packed(uint32_t descriptor, llg_ref_t* target) {
     const char* text;
     int32_t result = llg_file_error_status(descriptor, &text);
-    if (message && message->width && text)
-        llg_ref_write_owned(message, llg_string_to_packed(llg_string_bytes(text, strlen(text)),
-                                                          message->width, message->is_signed));
+    if (target && target->width && text)
+        llg_ref_write_owned(target, llg_string_to_packed(llg_string_bytes(text, strlen(text)),
+                                                         target->width, target->is_signed));
     return result;
 }
 

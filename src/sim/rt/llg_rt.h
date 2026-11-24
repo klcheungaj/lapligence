@@ -2400,7 +2400,7 @@ void llg_file_rewind(uint32_t descriptor);
 int64_t llg_file_tell(uint32_t descriptor);
 int32_t llg_file_seek(uint32_t descriptor, sv4_t offset, sv4_t operation);
 int32_t llg_file_error(uint32_t descriptor, llg_string_t* message);
-int32_t llg_file_error_packed(uint32_t descriptor, llg_ref_t* message);
+int32_t llg_file_error_packed(uint32_t descriptor, llg_ref_t* target);
 int32_t llg_file_eof(uint32_t descriptor);
 void llg_file_display_typed(uint32_t descriptor, const char* fmt,
                             llg_fmt_arg_t* args, int32_t n, const char* scope,

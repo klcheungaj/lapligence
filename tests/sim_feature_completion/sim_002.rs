@@ -103,7 +103,7 @@ fn illegal_arity_and_types_remain_diagnostics() {
     sim_cli::reject_case(
         SUITE,
         "neg_timeformat_suffix_type",
-        "no implicit conversion from 'int' to 'string'",
+        "no implicit conversion from 'int$[2]' to 'string'",
     );
     sim_cli::reject_case(
         SUITE,
