@@ -1,0 +1,52 @@
+(DELAYFILE
+  (SDFVERSION "3.0")
+  (DESIGN "core")
+  (DIVIDER .)
+  (TIMESCALE 1ns)
+  (CELL
+    (CELLTYPE "MUX2X1")
+    (INSTANCE m0)
+    (DELAY
+      (ABSOLUTE
+        (IOPATH A Y (0.21) (0.22))
+        (IOPATH B Y (0.25) (0.26))
+        (COND A==1'b0&&B==1'b1 (IOPATH S Y (0.31) (0.27)))
+      )
+    )
+  )
+  (CELL
+    (CELLTYPE "DFFRX1")
+    (INSTANCE f0)
+    (DELAY
+      (ABSOLUTE
+        (IOPATH (posedge CK) Q (0.41) (0.46))
+        (IOPATH (posedge CK) QN (0.52) (0.53))
+      )
+    )
+    (TIMINGCHECK
+      (SETUP D (COND RN (posedge CK)) (0.6))
+      (WIDTH (negedge RN) (1.2))
+    )
+  )
+  (CELL
+    (CELLTYPE "DFFRX1")
+    (INSTANCE f1)
+    (DELAY
+      (INCREMENT
+        (IOPATH (posedge CK) Q (0.1) (0.1))
+      )
+    )
+    (TIMINGCHECK
+      (HOLD D (COND RN (posedge CK)) (0.45))
+    )
+  )
+  (CELL
+    (CELLTYPE "NAND2X1")
+    (INSTANCE g)
+    (DELAY
+      (ABSOLUTE
+        (IOPATH A Y (0.30) (0.20))
+      )
+    )
+  )
+)

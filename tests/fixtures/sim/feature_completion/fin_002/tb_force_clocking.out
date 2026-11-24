@@ -1,0 +1,34 @@
+vpi watch tb.bus.dout size=8
+[5] mon dout=x held=x
+[15] mon dout=0 held=0
+[25] mon dout=0 held=0
+[35] mon dout=0 held=0
+[45] mon dout=3 held=3
+[55] mon dout=5 held=5
+[58] forced bus.dout: bus=99 dut=16
+[65] mon dout=99 held=16
+[65] a_sum failed
+[69] released bus.dout: bus=26 dut=26
+[75] mon dout=26 held=26
+[78] forced stage 1: q=200 nxt2=46
+[85] mon dout=36 held=36
+[88] released stage 1: q=200
+[95] mon dout=203 held=203
+[95] a_sum failed
+[105] mon dout=203 held=203
+[105] a_sum failed
+[108] deposited stage 0: q=5 nxt1=83
+[115] mon dout=66 held=66
+[125] mon dout=76 held=76
+[135] mon dout=10 held=10
+[135] a_sum failed
+[145] mon dout=96 held=96
+[155] mon dout=106 held=106
+[165] mon dout=116 held=116
+[175] mon dout=126 held=126
+[176] samples=18 failures=4
+  failure 0 at 65
+  failure 1 at 95
+  failure 2 at 105
+  failure 3 at 135
+vpi changes=15: 0 3 5 16 99 26 36 203 66 76 10 96 106 116 126

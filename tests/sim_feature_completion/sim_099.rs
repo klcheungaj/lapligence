@@ -46,7 +46,7 @@ fn archive(directory: &sim_harness::TempDir, stem: &str) -> String {
 
 /// The lowering and run-time messages of a run in the canonical test form,
 /// without the `$finish` report and the summaries.
-fn llg_lines(output: &Output) -> Vec<String> {
+pub(super) fn llg_lines(output: &Output) -> Vec<String> {
     String::from_utf8_lossy(&output.stderr)
         .lines()
         .filter(|line| {

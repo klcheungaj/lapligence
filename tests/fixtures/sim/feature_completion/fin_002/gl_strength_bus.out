@@ -1,0 +1,40 @@
+[5] step 0 bus=Pu1 in=111 mixed=Pu0 all=St0 any=St0 low=Pu0 high=St0 maybe=We0 rail=Su0 q=x
+  vpi bus: logic=1 s0=32 s1=32
+  vpi mixed: logic=0 s0=32 s1=32
+  vpi maybe: logic=0 s0=8 s1=8
+[15] step 1 bus=St0 in=000 mixed=Pu0 all=St0 any=St0 low=Pu0 high=St0 maybe=We0 rail=Su0 q=0
+  vpi bus: logic=0 s0=64 s1=64
+  vpi mixed: logic=0 s0=32 s1=32
+  vpi maybe: logic=0 s0=8 s1=8
+[25] step 2 bus=StX in=xxx mixed=Pu1 all=St0 any=St1 low=Pu0 high=St0 maybe=We0 rail=Su1 q=x
+  vpi bus: logic=3 s0=64 s1=64
+  vpi mixed: logic=1 s0=32 s1=32
+  vpi maybe: logic=0 s0=8 s1=8
+[35] step 3 bus=St1 in=111 mixed=Pu1 all=St1 any=St1 low=Pu0 high=St0 maybe=We0 rail=Su1 q=1
+  vpi bus: logic=1 s0=64 s1=64
+  vpi mixed: logic=1 s0=32 s1=32
+  vpi maybe: logic=0 s0=8 s1=8
+[45] step 4 bus=St1 in=111 mixed=Pu0 all=St0 any=St1 low=St1 high=Pu1 maybe=St1 rail=Su0 q=1
+  vpi bus: logic=1 s0=64 s1=64
+  vpi mixed: logic=0 s0=32 s1=32
+  vpi maybe: logic=1 s0=64 s1=64
+[55] step 5 bus=Pu1 in=111 mixed=Pu0 all=St0 any=St1 low=Pu0 high=St0 maybe=36X rail=Su0 q=1
+  vpi bus: logic=1 s0=32 s1=32
+  vpi mixed: logic=0 s0=32 s1=32
+  vpi maybe: logic=3 s0=64 s1=8
+[65] step 6 bus=Pu1 in=111 mixed=Pu0 all=St0 any=St0 low=Pu0 high=St0 maybe=630 rail=Su0 q=1
+  vpi bus: logic=1 s0=32 s1=32
+  vpi mixed: logic=0 s0=32 s1=32
+  vpi maybe: logic=0 s0=8 s1=64
+[75] step 7 bus=651 in=111 mixed=Pu0 all=St0 any=St0 low=56X high=651 maybe=We0 rail=Su0 q=1
+  vpi bus: logic=1 s0=32 s1=64
+  vpi mixed: logic=0 s0=32 s1=32
+  vpi maybe: logic=0 s0=8 s1=8
+[85] step 8 bus=65X in=xxx mixed=Pu0 all=St0 any=St0 low=650 high=65X maybe=We0 rail=Su0 q=x
+  vpi bus: logic=3 s0=32 s1=64
+  vpi mixed: logic=0 s0=32 s1=32
+  vpi maybe: logic=0 s0=8 s1=8
+[95] step 9 bus=StX in=xxx mixed=Pu1 all=St1 any=St1 low=StX high=Pu1 maybe=We0 rail=Su1 q=x
+  vpi bus: logic=3 s0=64 s1=64
+  vpi mixed: logic=1 s0=32 s1=32
+  vpi maybe: logic=0 s0=8 s1=8

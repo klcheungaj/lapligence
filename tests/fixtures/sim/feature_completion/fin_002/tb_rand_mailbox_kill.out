@@ -1,0 +1,14 @@
+[23] A killed: status=KILLED took=5
+  A took packet#0 packet#1 big#2 packet#3 packet#4
+  key free=0 queued=2
+[120] B took=19 first=big#5 last=big#23
+  created=24 puts=24 gets=24 illegal=0 cost in range=1
+  kinds counted=23
+[122] after killed waiters: queued=1 key=1 value=0
+  channel instances: packet=1 int=2
+randc permutations=1 pre=16 post=16
+inline len=3 size=3 kind=DATA
+frozen len=3
+conflict returns 0 pre=1 post=0
+replay object=1 thread=1
+scope value in range=1 illegal=0

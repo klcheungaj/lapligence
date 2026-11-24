@@ -1,0 +1,31 @@
+[1.300] q=00 zero=x
+[1.560] q=00 zero=1
+[10.000] sample q=00 model=00 same=1
+[15.410] q=01 zero=1
+[15.500] q=11 zero=1
+[15.790] q=11 zero=0
+[20.000] sample q=11 model=11 same=1
+[25.000] f0 notifier
+[25.410] q=1x zero=0
+[30.000] sample q=1x model=10 same=0
+[35.460] q=10 zero=0
+[40.000] sample q=10 model=10 same=1
+[45.300] f1 notifier
+[45.550] q=x0 zero=0
+[45.710] q=x0 zero=x
+[50.000] sample q=x0 model=10 same=0
+[55.550] q=00 zero=x
+[55.710] q=00 zero=1
+[60.000] sample q=00 model=00 same=1
+[62.800] f0 notifier
+[62.800] f1 notifier
+[62.800] q=xx zero=1
+[63.090] q=xx zero=x
+[65.460] q=x0 zero=x
+[65.550] q=00 zero=x
+[65.820] q=00 zero=1
+[70.000] sample q=00 model=00 same=1
+[75.410] q=01 zero=1
+[75.950] q=01 zero=0
+[80.000] sample q=01 model=01 same=1
+[90.000] sample q=01 model=01 same=1

@@ -1,0 +1,21 @@
+[0] job0 holds the lock
+[30] job3 completed
+[35] cancel job0 -> 1
+[35] waiter saw the cancel event
+[45] kill job1 -> 1
+[55] job2 disabled
+[65] cancel job3 -> 0
+[65] joined, started=4
+job0 (0): steps=4 last=3 status=KILLED
+job1 (1): steps=5 last=4 status=KILLED
+job2 (2): steps=6 last=5 status=KILLED
+job3 (3): steps=3 last=2 status=FINISHED
+stopped job0 at 35
+stopped job1 at 45
+notice 0
+notice 1
+left='{3, 2, 1, -1, -2, -3} 
+right='{4, 3, 2, 1, -1, -2, -3, -4} 
+lock free=0
+job3 slept=30
+acknowledged=2
