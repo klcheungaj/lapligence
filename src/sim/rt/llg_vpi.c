@@ -490,10 +490,35 @@ static void vpi_fail_runtime(const char* message) {
     llg_rt_request_finish();
 }
 
+/* Every allocation of the VPI layers is checked: a request the host cannot
+ * serve ends the run with the fatal allocation report (SIM-031), as in the
+ * rest of the runtime. A routine that only returned its error value left an
+ * application that does not call vpi_chk_error() after every routine reading
+ * values the failed call never wrote, and a start-up step of the model
+ * itself has no application to report to. A request for no bytes is served
+ * as one byte, so NULL always means failure. */
+static void* vpi_malloc(size_t bytes) {
+    void* memory = malloc(bytes ? bytes : 1u);
+    if (!memory) llg_msg_abort_allocation("VPI", 1, bytes);
+    return memory;
+}
+
+static void* vpi_calloc(size_t count, size_t size) {
+    void* memory = count && size ? calloc(count, size) : calloc(1u, 1u);
+    if (!memory) llg_msg_abort_allocation("VPI", count, size);
+    return memory;
+}
+
+static void* vpi_realloc(void* old, size_t bytes) {
+    void* memory = realloc(old, bytes ? bytes : 1u);
+    if (!memory) llg_msg_abort_allocation("VPI", 1, bytes);
+    return memory;
+}
+
 static char* vpi_strdup(const char* text) {
     if (!text) return NULL;
     size_t length = strlen(text);
-    char* copy = (char*)malloc(length + 1);
+    char* copy = (char*)vpi_malloc(length + 1);
     if (!copy) return NULL;
     memcpy(copy, text, length + 1);
     return copy;
@@ -828,7 +853,7 @@ static int32_t vpi_slots_ready(void) {
         return 0;
     }
     size_t capacity = static_count + 64u;
-    g_vpi.slots = (llg_vpi_slot_t*)calloc(capacity, sizeof(*g_vpi.slots));
+    g_vpi.slots = (llg_vpi_slot_t*)vpi_calloc(capacity, sizeof(*g_vpi.slots));
     if (!g_vpi.slots) {
         vpi_set_error(vpiPLI, vpiError, "LLG_VPI_NOMEM", "VPI catalog index allocation failed");
         return 0;
@@ -871,10 +896,10 @@ static int32_t vpi_ready(void) {
     size_t static_count = g_vpi.static_count;
     /* One extra row keeps the allocations non-empty for a model built
      * without a catalog (no `--vpi`), whose applications see no objects. */
-    g_vpi.sorted = (uint32_t*)malloc((count + 1u) * sizeof(*g_vpi.sorted));
-    g_vpi.first_child = (uint32_t*)calloc(count + 1u, sizeof(*g_vpi.first_child));
-    g_vpi.next_sibling = (uint32_t*)calloc(count + 1u, sizeof(*g_vpi.next_sibling));
-    g_vpi.element_counts = (uint64_t*)calloc(count + 1u, sizeof(*g_vpi.element_counts));
+    g_vpi.sorted = (uint32_t*)vpi_malloc((count + 1u) * sizeof(*g_vpi.sorted));
+    g_vpi.first_child = (uint32_t*)vpi_calloc(count + 1u, sizeof(*g_vpi.first_child));
+    g_vpi.next_sibling = (uint32_t*)vpi_calloc(count + 1u, sizeof(*g_vpi.next_sibling));
+    g_vpi.element_counts = (uint64_t*)vpi_calloc(count + 1u, sizeof(*g_vpi.element_counts));
     if (!g_vpi.sorted || !g_vpi.first_child || !g_vpi.next_sibling || !g_vpi.element_counts) {
         free(g_vpi.sorted);
         free(g_vpi.first_child);
@@ -997,7 +1022,7 @@ static uint32_t alloc_unindexed_slot(llg_vpi_slot_kind_t kind) {
         if (g_vpi.slot_count == g_vpi.slot_capacity) {
             size_t capacity = g_vpi.slot_capacity * 2u;
             llg_vpi_slot_t* grown =
-                (llg_vpi_slot_t*)realloc(g_vpi.slots, capacity * sizeof(*grown));
+                (llg_vpi_slot_t*)vpi_realloc(g_vpi.slots, capacity * sizeof(*grown));
             if (!grown) {
                 vpi_error("LLG_VPI_NOMEM", "VPI handle allocation failed");
                 return LLG_VPI_NONE;
@@ -1136,7 +1161,7 @@ static vpiHandle make_constant(int64_t value, int32_t const_type, uint32_t scope
  * (an associative array's string key, decision A19-D23), located like
  * make_constant's. */
 static vpiHandle make_string_constant(const char* bytes, uint32_t length, uint32_t scope) {
-    char* copy = (char*)malloc((size_t)length + 1u);
+    char* copy = (char*)vpi_malloc((size_t)length + 1u);
     if (!copy) {
         vpi_error("LLG_VPI_NOMEM", "VPI constant allocation failed");
         return NULL;
@@ -1651,7 +1676,7 @@ static void datum_destroy(llg_vpi_datum_t* datum) {
 static s_vpi_vecval* scratch_words(size_t words) {
     if (words == 0) words = 1;
     if (words > g_vpi.scratch_capacity) {
-        s_vpi_vecval* grown = (s_vpi_vecval*)realloc(g_vpi.scratch, words * sizeof(*grown));
+        s_vpi_vecval* grown = (s_vpi_vecval*)vpi_realloc(g_vpi.scratch, words * sizeof(*grown));
         if (!grown) return NULL;
         g_vpi.scratch = grown;
         g_vpi.scratch_capacity = words;
@@ -2116,7 +2141,7 @@ static uint32_t instance_array_of(uint32_t row, int64_t* index, int32_t* dims) {
     const char* scope = object->parent ? object->parent->full_name : "";
     size_t scope_length = strlen(scope);
     size_t total = scope_length + 1u + base + 1u;
-    char* full = (char*)malloc(total);
+    char* full = (char*)vpi_malloc(total);
     if (!full) return LLG_VPI_NONE;
     if (scope_length) snprintf(full, total, "%s.%.*s", scope, (int32_t)base, object->name);
     else snprintf(full, total, "%.*s", (int32_t)base, object->name);
@@ -2135,7 +2160,7 @@ static uint32_t instance_element(uint32_t row, const int64_t* indices, uint32_t 
     llg_vpi_model_object_t* array = row_object(row);
     if (!array || count != array->dim_count) return LLG_VPI_NONE;
     size_t total = strlen(array->full_name) + 1u + 24u * count;
-    char* full = (char*)malloc(total);
+    char* full = (char*)vpi_malloc(total);
     if (!full) return LLG_VPI_NONE;
     size_t at = (size_t)snprintf(full, total, "%s", array->full_name);
     for (uint32_t d = 0; d < count && at < total; ++d) {
@@ -2157,7 +2182,7 @@ static vpiHandle iterate_instance_elements(uint32_t row, int32_t type) {
     llg_vpi_model_object_t* array = row_object(row);
     uint64_t total = g_vpi.element_counts[row];
     if (!total || total > UINT32_MAX || array->dim_count > 16) return NULL;
-    uintptr_t* items = (uintptr_t*)calloc((size_t)total, sizeof(*items));
+    uintptr_t* items = (uintptr_t*)vpi_calloc((size_t)total, sizeof(*items));
     if (!items) {
         vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
         return NULL;
@@ -2287,7 +2312,7 @@ static vpiHandle port_bit_conn(const llg_vpi_slot_t* slot, int32_t high) {
  * dimension, leftmost first. */
 static vpiHandle iterate_dims(uint32_t row, int32_t type) {
     llg_vpi_model_object_t* object = row_object(row);
-    uintptr_t* items = (uintptr_t*)calloc(object->dim_count + 1u, sizeof(*items));
+    uintptr_t* items = (uintptr_t*)vpi_calloc(object->dim_count + 1u, sizeof(*items));
     if (!items) return NULL;
     uint32_t count = 0;
     llg_vpi_range_origin_t origin = row_range_origin(RANGE_UNPACKED, row);
@@ -2337,7 +2362,7 @@ static vpiHandle iterate_packed_ranges(const llg_vpi_slot_t* slot) {
     if (!count) return NULL;
     /* alloc_slot may move the slot table: keep no slot pointer across it. */
     uint32_t row = slot->object;
-    uintptr_t* items = (uintptr_t*)calloc(count, sizeof(*items));
+    uintptr_t* items = (uintptr_t*)vpi_calloc(count, sizeof(*items));
     if (!items) {
         vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
         return NULL;
@@ -2392,7 +2417,7 @@ static vpiHandle iterate_indices(const llg_vpi_slot_t* slot) {
     /* make_constant may move the slot table: keep no slot pointer across it. */
     int64_t bit_index = slot->left;
     uint32_t scope = constant_scope(slot);
-    uintptr_t* items = (uintptr_t*)calloc(count, sizeof(*items));
+    uintptr_t* items = (uintptr_t*)vpi_calloc(count, sizeof(*items));
     if (!items) {
         vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
         return NULL;
@@ -2426,7 +2451,7 @@ static vpiHandle iterate_indices(const llg_vpi_slot_t* slot) {
 static vpiHandle iterate_aux(llg_vpi_slot_kind_t kind, uint32_t row, uint32_t count, int32_t type,
                              int32_t descending) {
     if (!count) return NULL;
-    uintptr_t* items = (uintptr_t*)calloc(count, sizeof(*items));
+    uintptr_t* items = (uintptr_t*)vpi_calloc(count, sizeof(*items));
     if (!items) {
         vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
         return NULL;
@@ -2480,7 +2505,7 @@ static vpiHandle role_term(uint32_t row, int32_t role) {
 static vpiHandle iterate_roles(uint32_t row, int32_t type, uint32_t roles) {
     llg_vpi_model_object_t* object = row_object(row);
     if (!object || !object->conn_count) return NULL;
-    uintptr_t* items = (uintptr_t*)calloc(object->conn_count, sizeof(*items));
+    uintptr_t* items = (uintptr_t*)vpi_calloc(object->conn_count, sizeof(*items));
     if (!items) {
         vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
         return NULL;
@@ -2974,7 +2999,7 @@ static void expand_path_values(const int64_t* values, uint32_t n, int64_t* out) 
  * (32.4.4): every source entry of the load takes them, and the load's
  * interconnect path the result. */
 static void put_port_delays(const llg_vpi_delays_t* delays, const int64_t triple[3], int32_t append) {
-    llg_sdf_op_t* ops = (llg_sdf_op_t*)calloc(delays->n_bits, sizeof(*ops));
+    llg_sdf_op_t* ops = (llg_sdf_op_t*)vpi_calloc(delays->n_bits, sizeof(*ops));
     if (!ops) {
         vpi_error("LLG_VPI_NOMEM", "vpi_put_delays: out of memory");
         return;
@@ -3100,7 +3125,7 @@ void vpi_put_delays(vpiHandle object, p_vpi_delay delay_p) {
             gate[0] = gate[1] = gate[2] = 0;
         }
     }
-    llg_sdf_op_t* ops = (llg_sdf_op_t*)calloc(tm->op_count, sizeof(*ops));
+    llg_sdf_op_t* ops = (llg_sdf_op_t*)vpi_calloc(tm->op_count, sizeof(*ops));
     if (!ops) {
         vpi_error("LLG_VPI_NOMEM", "vpi_put_delays: out of memory");
         return;
@@ -3195,7 +3220,7 @@ static vpiHandle intermodule_path(PLI_INT32 type, vpiHandle ref1, vpiHandle ref2
 
 /* 37.33: the ports of an intermodule path, its source first. */
 static vpiHandle iterate_imp_ports(const llg_vpi_slot_t* slot) {
-    uintptr_t* items = (uintptr_t*)calloc(2u, sizeof(*items));
+    uintptr_t* items = (uintptr_t*)vpi_calloc(2u, sizeof(*items));
     if (!items) {
         vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
         return NULL;
@@ -3241,7 +3266,7 @@ static void tchk_rows_build(void) {
         if (object->type == vpiTchk && object->timing) capacity += 2u * object->timing->op_count;
     }
     if (!capacity) return;
-    g_vpi_tchk_rows = (llg_vpi_tchk_row_t*)calloc(capacity, sizeof(*g_vpi_tchk_rows));
+    g_vpi_tchk_rows = (llg_vpi_tchk_row_t*)vpi_calloc(capacity, sizeof(*g_vpi_tchk_rows));
     if (!g_vpi_tchk_rows) return;
     size_t count = 0;
     for (size_t row = 0; row < g_vpi.object_count; ++row) {
@@ -3289,7 +3314,7 @@ static void tchk_rows_release(void) {
 
 static char* text_buffer(size_t need) {
     if (need > g_vpi.value_text_capacity) {
-        char* grown = (char*)realloc(g_vpi.value_text, need);
+        char* grown = (char*)vpi_realloc(g_vpi.value_text, need);
         if (!grown) return NULL;
         g_vpi.value_text = grown;
         g_vpi.value_text_capacity = need;
@@ -3353,7 +3378,7 @@ static char* format_decimal(const s_vpi_vecval* source, uint32_t width, int32_t 
     size_t count = word_count(width);
     int32_t unknown = 0;
     for (size_t i = 0; i < count && !unknown; ++i) unknown = source[i].bval != 0;
-    uint32_t* magnitude = (uint32_t*)calloc(count, sizeof(uint32_t));
+    uint32_t* magnitude = (uint32_t*)vpi_calloc(count, sizeof(uint32_t));
     if (!magnitude) return NULL;
     if (!unknown)
         for (size_t i = 0; i < count; ++i) magnitude[i] = source[i].aval;
@@ -3372,7 +3397,7 @@ static char* format_decimal(const s_vpi_vecval* source, uint32_t width, int32_t 
     }
     /* Each 32-bit word needs at most 10 decimal digits. */
     size_t capacity = count * 10u + 3u;
-    char* digits = (char*)malloc(capacity);
+    char* digits = (char*)vpi_malloc(capacity);
     if (!digits) {
         free(magnitude);
         return NULL;
@@ -3563,7 +3588,7 @@ static void fill_value(llg_vpi_datum_t* datum, int32_t is_signed, int32_t type, 
         case vpiVectorVal: {
             if (count > g_vpi.value_vector_capacity) {
                 s_vpi_vecval* grown =
-                    (s_vpi_vecval*)realloc(g_vpi.value_vector, count * sizeof(*grown));
+                    (s_vpi_vecval*)vpi_realloc(g_vpi.value_vector, count * sizeof(*grown));
                 if (!grown) {
                     vpi_error("LLG_VPI_NOMEM", "VPI vector allocation failed");
                     return;
@@ -3577,7 +3602,7 @@ static void fill_value(llg_vpi_datum_t* datum, int32_t is_signed, int32_t type, 
         }
         case vpiStrengthVal: {
             if (width > g_vpi.value_strength_capacity) {
-                s_vpi_strengthval* grown = (s_vpi_strengthval*)realloc(
+                s_vpi_strengthval* grown = (s_vpi_strengthval*)vpi_realloc(
                     g_vpi.value_strength, (size_t)width * sizeof(*grown));
                 if (!grown) {
                     vpi_error("LLG_VPI_NOMEM", "VPI strength allocation failed");
@@ -3982,7 +4007,7 @@ vpiHandle vpi_register_systf(p_vpi_systf_data data) {
     }
     if (g_vpi.registration_count == g_vpi.registration_capacity) {
         int32_t capacity = g_vpi.registration_capacity ? g_vpi.registration_capacity * 2 : 16;
-        llg_vpi_registration_t** grown = (llg_vpi_registration_t**)realloc(
+        llg_vpi_registration_t** grown = (llg_vpi_registration_t**)vpi_realloc(
             g_vpi.registrations, (size_t)capacity * sizeof(*grown));
         if (!grown) {
             vpi_set_error(vpiCompile, vpiError, "LLG_VPI_NOMEM", "VPI registration allocation failed");
@@ -3992,7 +4017,7 @@ vpiHandle vpi_register_systf(p_vpi_systf_data data) {
         g_vpi.registration_capacity = capacity;
     }
     llg_vpi_registration_t* registration =
-        (llg_vpi_registration_t*)calloc(1, sizeof(*registration));
+        (llg_vpi_registration_t*)vpi_calloc(1, sizeof(*registration));
     char* name = vpi_strdup((const char*)data->tfname);
     uint32_t slot = registration && name ? alloc_unindexed_slot(SLOT_SYSTF) : LLG_VPI_NONE;
     if (slot == LLG_VPI_NONE) {
@@ -4050,7 +4075,7 @@ static LLG_OUTLYING int32_t unserved_member(uint32_t row, const char* name, size
         const char* member = g_vpi.types->members[typespec->first_member + i].name;
         if (strlen(member) != length || strncmp(member, name, length) != 0) continue;
         size_t total = strlen(object->full_name) + 1u + length + 1u;
-        char* full = (char*)malloc(total);
+        char* full = (char*)vpi_malloc(total);
         if (!full) return 0;
         snprintf(full, total, "%s.%.*s", object->full_name, (int32_t)length, name);
         uint32_t found = find_row(full);
@@ -4065,7 +4090,7 @@ static vpiHandle lookup_full_name(const char* name, int32_t* selected) {
     uint32_t row = find_row(name);
     if (row != LLG_VPI_NONE) return object_handle(row);
     size_t length = strlen(name);
-    char* prefix = (char*)malloc(length + 1u);
+    char* prefix = (char*)vpi_malloc(length + 1u);
     if (!prefix) return NULL;
     memcpy(prefix, name, length + 1u);
     vpiHandle found = NULL;
@@ -4269,7 +4294,7 @@ vpiHandle vpi_handle_by_name(PLI_BYTE8* name, vpiHandle scope) {
             return NULL;
         }
         size_t length = strlen(parent->full_name) + 1u + strlen((const char*)name) + 1u;
-        char* full = (char*)malloc(length + 1u);
+        char* full = (char*)vpi_malloc(length + 1u);
         if (!full) {
             vpi_error("LLG_VPI_NOMEM", "VPI name allocation failed");
             return NULL;
@@ -4371,7 +4396,7 @@ static vpiHandle iterate_gen_scopes(uint32_t array) {
     uint32_t parent = object->parent ? row_of(object->parent) : LLG_VPI_NONE;
     uint32_t count = gen_scope_count(array), used = 0;
     if (count == 0 || parent == LLG_VPI_NONE) return NULL;
-    uintptr_t* items = (uintptr_t*)malloc(count * sizeof(*items));
+    uintptr_t* items = (uintptr_t*)vpi_malloc(count * sizeof(*items));
     if (!items) {
         vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
         return NULL;
@@ -4665,7 +4690,7 @@ static vpiHandle iterate_declarations(int32_t type, vpiHandle reference) {
         if (!node->role && node->type == type && node->scope == slot->object + 1u) ++count;
     }
     if (!count) return NULL;
-    uintptr_t* items = (uintptr_t*)calloc(count, sizeof(*items));
+    uintptr_t* items = (uintptr_t*)vpi_calloc(count, sizeof(*items));
     if (!items) {
         vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
         return NULL;
@@ -4702,7 +4727,7 @@ static vpiHandle iterate_scope_assertions(uint32_t row, int32_t concurrent) {
         return NULL;
     }
     size_t total = llg_acov_item_count(), count = 0;
-    uintptr_t* items = (uintptr_t*)calloc(total ? total : 1u, sizeof(*items));
+    uintptr_t* items = (uintptr_t*)vpi_calloc(total ? total : 1u, sizeof(*items));
     if (!items) {
         vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
         return NULL;
@@ -4784,7 +4809,7 @@ static vpiHandle iterate_assertions(vpiHandle reference) {
         if (instance < 0) return NULL;
     }
     size_t total = llg_acov_item_count(), count = 0;
-    uintptr_t* items = (uintptr_t*)calloc(total ? total : 1u, sizeof(*items));
+    uintptr_t* items = (uintptr_t*)vpi_calloc(total ? total : 1u, sizeof(*items));
     if (!items) {
         vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
         return NULL;
@@ -5149,7 +5174,7 @@ static vpiHandle iterate_fsms(vpiHandle reference) {
         return NULL;
     }
     size_t total = llg_fcov_count(), count = 0;
-    uintptr_t* items = (uintptr_t*)calloc(total ? total : 1u, sizeof(*items));
+    uintptr_t* items = (uintptr_t*)vpi_calloc(total ? total : 1u, sizeof(*items));
     if (!items) {
         vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
         return NULL;
@@ -5172,7 +5197,7 @@ static vpiHandle iterate_fsm_states(vpiHandle reference) {
         vpi_error("LLG_VPI_RELATION", "vpiFsmStates iterates from an FSM handle");
         return NULL;
     }
-    uintptr_t* items = (uintptr_t*)calloc(fsm->n_states ? fsm->n_states : 1u, sizeof(*items));
+    uintptr_t* items = (uintptr_t*)vpi_calloc(fsm->n_states ? fsm->n_states : 1u, sizeof(*items));
     if (!items) {
         vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
         return NULL;
@@ -5361,7 +5386,7 @@ static int32_t compare_storage(const void* left, const void* right) {
 static int32_t storage_index(void) {
     if (g_vpi.storage || !g_vpi.object_count) return 1;
     llg_vpi_storage_t* entries =
-        (llg_vpi_storage_t*)calloc(g_vpi.object_count, sizeof(*entries));
+        (llg_vpi_storage_t*)vpi_calloc(g_vpi.object_count, sizeof(*entries));
     if (!entries) {
         vpi_error("LLG_VPI_NOMEM", "VPI storage index allocation failed");
         return 0;
@@ -5813,11 +5838,11 @@ static void pack_objects(pack_reader_t* r) {
     uint64_t conns = pack_count(r), dims = pack_count(r), instances = pack_count(r);
     uint64_t timings = pack_count(r), declared = pack_count(r);
     if (r->bad) return;
-    g_vpi.pack_conns = (llg_vpi_conn_t*)calloc(conns + 1u, sizeof(llg_vpi_conn_t));
-    g_vpi.pack_dims = (int64_t*)calloc(2u * dims + 1u, sizeof(int64_t));
-    g_vpi.pack_instances = (llg_vpi_instance_t*)calloc(instances + 1u, sizeof(llg_vpi_instance_t));
-    g_vpi.pack_timings = (llg_vpi_timing_t*)calloc(timings + 1u, sizeof(llg_vpi_timing_t));
-    g_vpi.pack_declared = (int64_t*)calloc(declared + 1u, sizeof(int64_t));
+    g_vpi.pack_conns = (llg_vpi_conn_t*)vpi_calloc(conns + 1u, sizeof(llg_vpi_conn_t));
+    g_vpi.pack_dims = (int64_t*)vpi_calloc(2u * dims + 1u, sizeof(int64_t));
+    g_vpi.pack_instances = (llg_vpi_instance_t*)vpi_calloc(instances + 1u, sizeof(llg_vpi_instance_t));
+    g_vpi.pack_timings = (llg_vpi_timing_t*)vpi_calloc(timings + 1u, sizeof(llg_vpi_timing_t));
+    g_vpi.pack_declared = (int64_t*)vpi_calloc(declared + 1u, sizeof(int64_t));
     if (!g_vpi.pack_conns || !g_vpi.pack_dims || !g_vpi.pack_instances ||
         !g_vpi.pack_timings || !g_vpi.pack_declared) {
         r->bad = 1;
@@ -5946,7 +5971,7 @@ static void pack_objects(pack_reader_t* r) {
 
 /* Decode the code stream into an owned row array. */
 static void pack_code(pack_reader_t* r, const llg_vpi_code_tables_t* tables) {
-    g_vpi.pack_code = (llg_vpi_code_t*)calloc(tables->node_count, sizeof(llg_vpi_code_t));
+    g_vpi.pack_code = (llg_vpi_code_t*)vpi_calloc(tables->node_count, sizeof(llg_vpi_code_t));
     if (!g_vpi.pack_code) {
         r->bad = 1;
         return;
@@ -6043,7 +6068,7 @@ static int32_t catalog_unpack(void) {
     /* The pool is copied: the rows' names point into it and a string may
      * run across a blob row. */
     const llg_vpi_code_tables_t* code = g_vpi.code;
-    g_vpi.pack_pool = (char*)malloc((size_t)packed->pool_bytes + 1u);
+    g_vpi.pack_pool = (char*)vpi_malloc((size_t)packed->pool_bytes + 1u);
     if (!g_vpi.pack_pool) return 0;
     for (size_t at = 0, row = 0; at < packed->pool_bytes; at += PACK_PAYLOAD, ++row) {
         size_t bytes = packed->pool_bytes - at < PACK_PAYLOAD ? packed->pool_bytes - at
@@ -6762,7 +6787,7 @@ static void text_append(llg_vpi_text_t* text, const char* part, size_t length) {
     if (text->length + length + 1u > text->capacity) {
         size_t capacity = text->capacity ? text->capacity : 64u;
         while (capacity < text->length + length + 1u) capacity *= 2u;
-        char* grown = (char*)realloc(text->text, capacity);
+        char* grown = (char*)vpi_realloc(text->text, capacity);
         if (!grown) {
             text->failed = 1;
             return;
@@ -8283,7 +8308,7 @@ static void spans_push(llg_vpi_spans_t* list, uint32_t row, uint64_t element, ui
     if (list->count == list->capacity) {
         size_t capacity = list->capacity ? list->capacity * 2u : 8u;
         llg_vpi_span_t* grown =
-            (llg_vpi_span_t*)realloc(list->items, capacity * sizeof(*grown));
+            (llg_vpi_span_t*)vpi_realloc(list->items, capacity * sizeof(*grown));
         if (!grown) {
             list->failed = 1;
             return;
@@ -8475,7 +8500,7 @@ static int32_t links_add(llg_vpi_spans_t* spans, uint8_t kind, uint8_t roles, ui
         size_t capacity = g_vpi.link_capacity ? g_vpi.link_capacity : 64u;
         while (capacity < g_vpi.link_count + spans->count) capacity *= 2u;
         llg_vpi_link_t* grown =
-            (llg_vpi_link_t*)realloc(g_vpi.links, capacity * sizeof(*grown));
+            (llg_vpi_link_t*)vpi_realloc(g_vpi.links, capacity * sizeof(*grown));
         if (!grown) return 0;
         g_vpi.links = grown;
         g_vpi.link_capacity = capacity;
@@ -8574,7 +8599,7 @@ static int32_t links_ready(void) {
     for (size_t i = 0; ok && i < g_vpi.link_count; ++i)
         ports += g_vpi.links[i].kind == LINK_PORT_HIGH || g_vpi.links[i].kind == LINK_PORT_LOW;
     if (ok && ports) {
-        g_vpi.port_links = (uint32_t*)malloc(ports * sizeof(*g_vpi.port_links));
+        g_vpi.port_links = (uint32_t*)vpi_malloc(ports * sizeof(*g_vpi.port_links));
         if (!g_vpi.port_links) ok = 0;
         for (size_t i = 0; ok && i < g_vpi.link_count; ++i)
             if (g_vpi.links[i].kind == LINK_PORT_HIGH || g_vpi.links[i].kind == LINK_PORT_LOW)
@@ -8729,7 +8754,7 @@ static void forces_collect(llg_vpi_forces_t* forces) {
         if (!parts && !real) continue;
         if (forces->count == capacity) {
             capacity = capacity ? capacity * 2u : 4u;
-            size_t* grown = (size_t*)realloc(forces->starts, (capacity + 1u) * sizeof(*grown));
+            size_t* grown = (size_t*)vpi_realloc(forces->starts, (capacity + 1u) * sizeof(*grown));
             if (!grown) {
                 forces->spans.failed = 1;
                 return;
@@ -8816,7 +8841,7 @@ static void items_add(llg_vpi_link_items_t* list, uint8_t kind, uint32_t row, ui
     if (list->count == list->capacity) {
         size_t capacity = list->capacity ? list->capacity * 2u : 8u;
         llg_vpi_link_item_t* grown =
-            (llg_vpi_link_item_t*)realloc(list->items, capacity * sizeof(*grown));
+            (llg_vpi_link_item_t*)vpi_realloc(list->items, capacity * sizeof(*grown));
         if (!grown) {
             list->failed = 1;
             return;
@@ -8990,7 +9015,7 @@ static vpiHandle link_items_iterator(int32_t type, llg_vpi_link_items_t* items) 
     /* By link_order, then catalog (declaration) order; force statements
      * last. */
     qsort(items->items, items->count, sizeof(*items->items), compare_link_items);
-    uintptr_t* handles = (uintptr_t*)calloc(items->count, sizeof(*handles));
+    uintptr_t* handles = (uintptr_t*)vpi_calloc(items->count, sizeof(*handles));
     if (!handles) {
         free(items->items);
         vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
@@ -9189,8 +9214,8 @@ static int32_t resolved_net_type(const llg_vpi_slot_t* slot) {
     memset(&group, 0, sizeof(group));
     net_group(&query, &group);
     size_t count = 0;
-    uint32_t* rows = group.failed ? NULL : (uint32_t*)malloc((group.count + 1u) * sizeof(*rows));
-    int32_t* types = rows ? (int32_t*)malloc((group.count + 1u) * sizeof(*types)) : NULL;
+    uint32_t* rows = group.failed ? NULL : (uint32_t*)vpi_malloc((group.count + 1u) * sizeof(*rows));
+    int32_t* types = rows ? (int32_t*)vpi_malloc((group.count + 1u) * sizeof(*types)) : NULL;
     if (!rows || !types) {
         free(group.items);
         free(rows);
@@ -9392,7 +9417,7 @@ static int32_t attribute_owner_type(int32_t type) {
 
 static vpiHandle iterate_children(int32_t type, uint32_t parent) {
     size_t capacity = 16, count = 0;
-    uintptr_t* items = (uintptr_t*)malloc(capacity * sizeof(*items));
+    uintptr_t* items = (uintptr_t*)vpi_malloc(capacity * sizeof(*items));
     if (!items) {
         vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
         return NULL;
@@ -9402,7 +9427,7 @@ static vpiHandle iterate_children(int32_t type, uint32_t parent) {
             llg_vpi_model_object_t* object = &g_vpi.objects[row];
             if (object->parent || !child_matches(object, type)) continue;
             if (count == capacity) {
-                uintptr_t* grown = (uintptr_t*)realloc(items, capacity * 2u * sizeof(*items));
+                uintptr_t* grown = (uintptr_t*)vpi_realloc(items, capacity * 2u * sizeof(*items));
                 if (!grown) break;
                 items = grown;
                 capacity *= 2u;
@@ -9414,7 +9439,7 @@ static vpiHandle iterate_children(int32_t type, uint32_t parent) {
              child = g_vpi.next_sibling[child - 1u]) {
             if (!child_matches(&g_vpi.objects[child - 1u], type)) continue;
             if (count == capacity) {
-                uintptr_t* grown = (uintptr_t*)realloc(items, capacity * 2u * sizeof(*items));
+                uintptr_t* grown = (uintptr_t*)vpi_realloc(items, capacity * 2u * sizeof(*items));
                 if (!grown) break;
                 items = grown;
                 capacity *= 2u;
@@ -9442,7 +9467,7 @@ static vpiHandle iterate_scope_typedefs(uint32_t row) {
     uint32_t end = low;
     while (end < types->typedef_count && types->scope_typedefs[2u * end] == row) ++end;
     if (end == low) return NULL;
-    uintptr_t* items = (uintptr_t*)calloc(end - low, sizeof(*items));
+    uintptr_t* items = (uintptr_t*)vpi_calloc(end - low, sizeof(*items));
     if (!items) {
         vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
         return NULL;
@@ -9472,7 +9497,7 @@ static vpiHandle iterate_scope_imports(uint32_t row) {
     uint32_t end = low;
     while (end < types->import_count && types->scope_imports[2u * end] == row) ++end;
     if (end == low) return NULL;
-    uintptr_t* items = (uintptr_t*)calloc(end - low, sizeof(*items));
+    uintptr_t* items = (uintptr_t*)vpi_calloc(end - low, sizeof(*items));
     if (!items) {
         vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
         return NULL;
@@ -9501,7 +9526,7 @@ static vpiHandle iterate_members(const llg_vpi_slot_t* slot) {
             uint32_t children = 0;
             for (uint32_t child = g_vpi.first_child[row]; child; child = g_vpi.next_sibling[child - 1u])
                 ++children;
-            uintptr_t* items = (uintptr_t*)calloc(children + 1u, sizeof(*items));
+            uintptr_t* items = (uintptr_t*)vpi_calloc(children + 1u, sizeof(*items));
             if (!items) {
                 vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
                 return NULL;
@@ -9512,7 +9537,7 @@ static vpiHandle iterate_members(const llg_vpi_slot_t* slot) {
                     items[count++] = (uintptr_t)object_handle(child - 1u);
             return make_list_iterator(vpiMember, items, count);
         }
-        uintptr_t* items = (uintptr_t*)calloc(typespec->member_count + 1u, sizeof(*items));
+        uintptr_t* items = (uintptr_t*)vpi_calloc(typespec->member_count + 1u, sizeof(*items));
         if (!items) {
             vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
             return NULL;
@@ -9522,7 +9547,7 @@ static vpiHandle iterate_members(const llg_vpi_slot_t* slot) {
         for (uint32_t i = 0; i < typespec->member_count; ++i) {
             const char* name = g_vpi.types->members[typespec->first_member + i].name;
             size_t total = length + 1u + strlen(name) + 1u;
-            char* full = (char*)malloc(total);
+            char* full = (char*)vpi_malloc(total);
             if (!full) break;
             snprintf(full, total, "%s.%s", object->full_name, name);
             uint32_t member = find_row(full);
@@ -9627,7 +9652,7 @@ static vpiHandle iterate_typespec(const llg_vpi_slot_t* slot, int32_t type) {
         return NULL;
     }
     if (!count) return NULL;
-    uintptr_t* items = (uintptr_t*)calloc(count, sizeof(*items));
+    uintptr_t* items = (uintptr_t*)vpi_calloc(count, sizeof(*items));
     if (!items) {
         vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
         return NULL;
@@ -9791,7 +9816,7 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
         if (type == vpiNamedEvent) {
             uint64_t total = g_vpi.element_counts[slot->object];
             uint32_t row = slot->object;
-            uintptr_t* items = (uintptr_t*)calloc((size_t)total + 1u, sizeof(*items));
+            uintptr_t* items = (uintptr_t*)vpi_calloc((size_t)total + 1u, sizeof(*items));
             if (!items) {
                 vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
                 return NULL;
@@ -11534,13 +11559,13 @@ static vpiHandle schedule_put(const llg_vpi_target_t* target, llg_vpi_datum_t* d
             vpi_event_cancel(cursor);
         cursor = next;
     }
-    llg_vpi_event_t* event = (llg_vpi_event_t*)calloc(1, sizeof(*event));
+    llg_vpi_event_t* event = (llg_vpi_event_t*)vpi_calloc(1, sizeof(*event));
     if (!event) {
         vpi_error("LLG_VPI_NOMEM", "VPI scheduled event allocation failed");
         return NULL;
     }
     if (text) {
-        event->text = (llg_string_t*)malloc(sizeof(*event->text));
+        event->text = (llg_string_t*)vpi_malloc(sizeof(*event->text));
         if (!event->text) {
             free(event);
             vpi_error("LLG_VPI_NOMEM", "VPI scheduled event allocation failed");
@@ -11629,9 +11654,9 @@ static int32_t udp_resolve(void) {
     size_t capacity = 2;
     while (capacity < 2u * count) capacity *= 2u;
     udp_process_index_t index = {
-        (const llg_co_desc_t**)calloc(capacity, sizeof(const llg_co_desc_t*)),
-        (size_t*)calloc(capacity, sizeof(size_t)),
-        (llg_vpi_udp_put_t**)calloc(capacity, sizeof(llg_vpi_udp_put_t*)), capacity - 1u};
+        (const llg_co_desc_t**)vpi_calloc(capacity, sizeof(const llg_co_desc_t*)),
+        (size_t*)vpi_calloc(capacity, sizeof(size_t)),
+        (llg_vpi_udp_put_t**)vpi_calloc(capacity, sizeof(llg_vpi_udp_put_t*)), capacity - 1u};
     if (!index.descs || !index.offsets || !index.records) {
         free(index.descs);
         free(index.offsets);
@@ -12047,7 +12072,7 @@ void vpi_get_value_array(vpiHandle handle, p_vpi_arrayvalue arrayvalue_p, PLI_IN
         }
         size_t need = unit * (size_t)num;
         if (need > g_vpi.array_values_capacity) {
-            void* grown = realloc(g_vpi.array_values, need);
+            void* grown = vpi_realloc(g_vpi.array_values, need);
             if (!grown) {
                 vpi_error("LLG_VPI_NOMEM", "vpi_get_value_array allocation failed");
                 return;
@@ -12642,7 +12667,7 @@ static void fired_free(uint32_t index) {
 
 static llg_vpi_cb_done_t* cb_done_new(const s_cb_data* data) {
     if (g_vpi.fired_count >= LLG_VPI_MAX_FIRED_CALLBACKS) fired_free(g_vpi.fired_head - 1u);
-    llg_vpi_cb_done_t* done = (llg_vpi_cb_done_t*)calloc(1, sizeof(*done));
+    llg_vpi_cb_done_t* done = (llg_vpi_cb_done_t*)vpi_calloc(1, sizeof(*done));
     if (!done) return NULL;
     done->data = *data;
     if (data->time) done->time = *data->time;
@@ -12675,7 +12700,7 @@ static size_t watch_bucket(const void* key, size_t capacity) {
 static int32_t watch_insert(llg_vpi_watch_t* watch) {
     if (g_vpi.watch_count + 1u > g_vpi.watch_capacity - g_vpi.watch_capacity / 4u) {
         size_t capacity = g_vpi.watch_capacity ? g_vpi.watch_capacity * 2u : 64u;
-        llg_vpi_watch_t** table = (llg_vpi_watch_t**)calloc(capacity, sizeof(*table));
+        llg_vpi_watch_t** table = (llg_vpi_watch_t**)vpi_calloc(capacity, sizeof(*table));
         if (!table) return 0;
         for (size_t i = 0; i < g_vpi.watch_capacity; ++i) {
             for (llg_vpi_watch_t* cursor = g_vpi.watch_buckets[i]; cursor;) {
@@ -12843,7 +12868,7 @@ static llg_vpi_cb_t** collect_cbs(llg_vpi_cb_t* first, cb_match_fn match,
         if (cb->removed || !match(cb, context)) continue;
         if (*count == capacity) {
             size_t grown_capacity = capacity * 2u;
-            llg_vpi_cb_t** grown = (llg_vpi_cb_t**)malloc(grown_capacity * sizeof(*grown));
+            llg_vpi_cb_t** grown = (llg_vpi_cb_t**)vpi_malloc(grown_capacity * sizeof(*grown));
             if (!grown) {
                 llg_msg(LLG_MSG_INTERNAL, NULL, "VPI callback dispatch allocation failed");
                 abort();
@@ -12957,7 +12982,7 @@ static llg_vpi_watch_t** collect_watches(const void* key, llg_vpi_watch_t** inli
         if (watch->key != key || watch->cb->removed) continue;
         if (*count == capacity) {
             size_t grown_capacity = capacity * 2u;
-            llg_vpi_watch_t** grown = (llg_vpi_watch_t**)malloc(grown_capacity * sizeof(*grown));
+            llg_vpi_watch_t** grown = (llg_vpi_watch_t**)vpi_malloc(grown_capacity * sizeof(*grown));
             if (!grown) {
                 llg_msg(LLG_MSG_INTERNAL, NULL, "VPI callback dispatch allocation failed");
                 abort();
@@ -13625,7 +13650,7 @@ static int32_t bind_value_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
             vpi_error("LLG_VPI_CALLBACK", "this event names no synchronization object");
             return 0;
         }
-        llg_vpi_watch_t* watch = (llg_vpi_watch_t*)calloc(1, sizeof(*watch));
+        llg_vpi_watch_t* watch = (llg_vpi_watch_t*)vpi_calloc(1, sizeof(*watch));
         if (!watch) {
             vpi_error("LLG_VPI_NOMEM", "VPI value-change watch allocation failed");
             return 0;
@@ -13683,7 +13708,7 @@ static int32_t bind_value_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
                   "this array has too many elements for one cbValueChange; watch its elements");
         return 0;
     }
-    llg_vpi_watch_t* watches = (llg_vpi_watch_t*)calloc((size_t)total, sizeof(*watches));
+    llg_vpi_watch_t* watches = (llg_vpi_watch_t*)vpi_calloc((size_t)total, sizeof(*watches));
     if (!watches) {
         vpi_error("LLG_VPI_NOMEM", "VPI value-change watch allocation failed");
         return 0;
@@ -13877,7 +13902,7 @@ vpiHandle vpi_register_cb(p_cb_data data) {
         }
     }
     if (!vpi_ready()) return NULL;
-    llg_vpi_cb_t* cb = (llg_vpi_cb_t*)calloc(1, sizeof(*cb));
+    llg_vpi_cb_t* cb = (llg_vpi_cb_t*)vpi_calloc(1, sizeof(*cb));
     if (!cb) {
         vpi_error("LLG_VPI_NOMEM", "VPI callback allocation failed");
         return NULL;
@@ -14146,7 +14171,7 @@ static int32_t compile_site(llg_vpi_callsite_t* site) {
     call.is_function = site_is_function(site);
     /* Compile-time arguments carry shapes only: X values. */
     if (site->arg_count) {
-        call.args = (llg_vpi_arg_t*)calloc((size_t)site->arg_count, sizeof(*call.args));
+        call.args = (llg_vpi_arg_t*)vpi_calloc((size_t)site->arg_count, sizeof(*call.args));
         if (!call.args) {
             vpi_set_error(vpiCompile, vpiError, "LLG_VPI_NOMEM", "VPI compile-call allocation failed");
             return 0;
@@ -14187,10 +14212,10 @@ static int32_t compile_site(llg_vpi_callsite_t* site) {
 
 static llg_vpi_callsite_t* new_site(uint64_t id, const char* name, const llg_vpi_compile_arg_t* args,
                                     int32_t count, uint64_t time_unit_fs) {
-    llg_vpi_callsite_t* site = (llg_vpi_callsite_t*)calloc(1, sizeof(*site));
+    llg_vpi_callsite_t* site = (llg_vpi_callsite_t*)vpi_calloc(1, sizeof(*site));
     if (!site) return NULL;
     if (count) {
-        site->args = (llg_vpi_compile_arg_t*)malloc((size_t)count * sizeof(*args));
+        site->args = (llg_vpi_compile_arg_t*)vpi_malloc((size_t)count * sizeof(*args));
         if (!site->args) {
             free(site);
             return NULL;
@@ -14217,7 +14242,7 @@ int32_t llg_vpi_compile_call_site_at(uint64_t id, const char* name,
         size_t capacity = g_vpi.site_capacity ? g_vpi.site_capacity : 16u;
         while (capacity <= id) capacity *= 2u;
         llg_vpi_callsite_t** grown =
-            (llg_vpi_callsite_t**)realloc(g_vpi.sites, capacity * sizeof(*grown));
+            (llg_vpi_callsite_t**)vpi_realloc(g_vpi.sites, capacity * sizeof(*grown));
         if (!grown) {
             vpi_set_error(vpiCompile, vpiError, "LLG_VPI_NOMEM", "VPI call-site table allocation failed");
             return 0;
@@ -14609,7 +14634,7 @@ PLI_BYTE8* vpi_mcd_name(PLI_UINT32 cd) {
      * close before that, so the name is copied. */
     size_t length = strlen(name) + 1u;
     if (length > g_vpi.mcd_name_capacity) {
-        char* grown = (char*)realloc(g_vpi.mcd_name, length);
+        char* grown = (char*)vpi_realloc(g_vpi.mcd_name, length);
         if (!grown) {
             vpi_error("LLG_VPI_NOMEM", "vpi_mcd_name allocation failed");
             return NULL;
@@ -14640,7 +14665,7 @@ PLI_INT32 vpi_mcd_vprintf(PLI_UINT32 mcd, PLI_BYTE8* format, va_list ap) {
     }
     char* text = local;
     if ((size_t)length >= sizeof(local)) {
-        text = (char*)malloc((size_t)length + 1u);
+        text = (char*)vpi_malloc((size_t)length + 1u);
         if (!text) {
             vpi_error("LLG_VPI_NOMEM", "vpi_mcd_printf allocation failed");
             return EOF;
@@ -14786,7 +14811,7 @@ vpiHandle vpi_register_assertion_cb(vpiHandle assertion, PLI_INT32 reason,
         return NULL;
     }
     uint32_t item = (uint32_t)item_index;
-    llg_vpi_cb_t* cb = (llg_vpi_cb_t*)calloc(1, sizeof(*cb));
+    llg_vpi_cb_t* cb = (llg_vpi_cb_t*)vpi_calloc(1, sizeof(*cb));
     if (!cb) {
         vpi_error("LLG_VPI_NOMEM", "VPI callback allocation failed");
         return NULL;
@@ -14871,7 +14896,7 @@ vpiHandle vpi_create(PLI_INT32 type, vpiHandle collection, vpiHandle object) {
     }
     if (!object) return collection;
     llg_vpi_slot_t* slot = &g_vpi.slots[index];
-    uintptr_t* items = (uintptr_t*)realloc(slot->items, (slot->count + 1u) * sizeof(*items));
+    uintptr_t* items = (uintptr_t*)vpi_realloc(slot->items, (slot->count + 1u) * sizeof(*items));
     if (!items) {
         vpi_error("LLG_VPI_NOMEM", "VPI collection allocation failed");
         return NULL;
@@ -14885,8 +14910,8 @@ vpiHandle vpi_create(PLI_INT32 type, vpiHandle collection, vpiHandle object) {
 static vpiHandle iterate_collection(const llg_vpi_slot_t* slot) {
     if (!slot->count) return NULL;
     uint32_t count = slot->count;
-    uintptr_t* members = (uintptr_t*)malloc(count * sizeof(*members));
-    uintptr_t* items = (uintptr_t*)calloc(count, sizeof(*items));
+    uintptr_t* members = (uintptr_t*)vpi_malloc(count * sizeof(*members));
+    uintptr_t* items = (uintptr_t*)vpi_calloc(count, sizeof(*items));
     if (!members || !items) {
         free(members);
         free(items);
@@ -15057,7 +15082,7 @@ static PLI_INT32 assertion_control(int32_t operation, va_list ap) {
              * callback the control raises may add to the collection, so
              * the members are copied. */
             member_count = slot->count;
-            members = (uintptr_t*)malloc((member_count ? member_count : 1u) * sizeof(*members));
+            members = (uintptr_t*)vpi_malloc((member_count ? member_count : 1u) * sizeof(*members));
             if (!members) {
                 vpi_error("LLG_VPI_NOMEM", "VPI collection allocation failed");
                 return 0;

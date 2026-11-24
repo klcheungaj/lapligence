@@ -390,7 +390,7 @@ static llg_vpi_live_t* live_find(const void* object) {
 
 static int32_t live_grow(void) {
     size_t capacity = g_dyn.live_capacity ? g_dyn.live_capacity * 2u : 64u;
-    llg_vpi_live_t* table = (llg_vpi_live_t*)calloc(capacity, sizeof(*table));
+    llg_vpi_live_t* table = (llg_vpi_live_t*)vpi_calloc(capacity, sizeof(*table));
     if (!table) return 0;
     for (size_t i = 0; i < g_dyn.live_capacity; ++i) {
         llg_vpi_live_t* entry = &g_dyn.live[i];
@@ -817,7 +817,7 @@ static LLG_OUTLYING void dyn_release_path(llg_vpi_slot_t* slot) {
 /* A copy of `count` bytes of `key` with a terminating NUL, or NULL with
  * an error. */
 static LLG_OUTLYING char* dyn_key_copy(const char* key, size_t count) {
-    char* copy = (char*)malloc(count + 1u);
+    char* copy = (char*)vpi_malloc(count + 1u);
     if (!copy) {
         vpi_error("LLG_VPI_NOMEM", "VPI element key allocation failed");
         return NULL;
@@ -847,7 +847,7 @@ static LLG_OUTLYING vpiHandle make_dyn_path(const dyn_place_t* place, uint32_t f
     if (steps[0].at == DYN_AT_STRING && !(first = dyn_key_copy(steps[0].key, steps[0].length)))
         return NULL;
     if (count > 1u) {
-        rest = (dyn_step_t*)calloc(count - 1u, sizeof(*rest));
+        rest = (dyn_step_t*)vpi_calloc(count - 1u, sizeof(*rest));
         int32_t failed = rest == NULL;
         for (uint32_t i = 1; !failed && i < count; ++i) {
             rest[i - 1u] = steps[i];
@@ -2398,7 +2398,7 @@ static vpiHandle dyn_iterate_fields(void* object, uint32_t class_index, uint32_t
  * property (decision A19-D86). */
 static vpiHandle dyn_event_array_ranges(const llg_vpi_shape_t* shape, uint32_t class_index,
                                         uint32_t field) {
-    uintptr_t* items = (uintptr_t*)calloc(1u, sizeof(*items));
+    uintptr_t* items = (uintptr_t*)vpi_calloc(1u, sizeof(*items));
     if (!items) {
         vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
         return NULL;
@@ -2452,7 +2452,7 @@ static LLG_OUTLYING void dyn_list_push(dyn_list_t* list, vpiHandle handle) {
     if (list->count == list->capacity) {
         uint32_t capacity = list->capacity ? list->capacity * 2u : 8u;
         uintptr_t* grown = capacity > list->capacity
-            ? (uintptr_t*)realloc(list->items, (size_t)capacity * sizeof(*grown)) : NULL;
+            ? (uintptr_t*)vpi_realloc(list->items, (size_t)capacity * sizeof(*grown)) : NULL;
         if (!grown) {
             vpi_release_handle(handle);
             list->failed = 1;
@@ -2764,7 +2764,7 @@ static vpiHandle dyn_iterate(int32_t type, llg_vpi_slot_t* slot, int32_t* handle
                 int32_t index_handled;
                 vpiHandle index = dyn_handle(vpiIndex, slot, &index_handled);
                 if (!index) return NULL;
-                uintptr_t* items = (uintptr_t*)calloc(1u, sizeof(*items));
+                uintptr_t* items = (uintptr_t*)vpi_calloc(1u, sizeof(*items));
                 if (!items) {
                     vpi_release_handle(index);
                     vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
@@ -3292,7 +3292,7 @@ static LLG_OUTLYING void dyn_name_append(dyn_name_t* name, const char* text, siz
     if (name->length + length + 1u > name->capacity) {
         size_t capacity = name->capacity ? name->capacity : 64u;
         while (capacity < name->length + length + 1u) capacity *= 2u;
-        char* grown = (char*)realloc(name->data, capacity);
+        char* grown = (char*)vpi_realloc(name->data, capacity);
         if (!grown) {
             name->failed = 1;
             vpi_error("LLG_VPI_NOMEM", "VPI element name allocation failed");
@@ -3400,7 +3400,7 @@ static LLG_OUTLYING char* dyn_static_full_name(uint32_t field) {
     const llg_vpi_class_t* layout = entry ? dyn_class(entry->class_index) : NULL;
     if (!layout) return NULL;
     size_t length = strlen(layout->full_name) + 2u + strlen(entry->field.name) + 1u;
-    char* text = (char*)malloc(length);
+    char* text = (char*)vpi_malloc(length);
     if (!text) {
         vpi_error("LLG_VPI_NOMEM", "VPI name allocation failed");
         return NULL;
@@ -3466,7 +3466,7 @@ static char* dyn_element_name(const llg_vpi_slot_t* slot, int32_t full) {
         const char* frame = rts_auto_frame_name((uint64_t)place.serial);
         if (!frame) return NULL;
         size_t length = strlen(frame) + 1u + strlen(place.name) + 1u;
-        base = (char*)malloc(length);
+        base = (char*)vpi_malloc(length);
         if (!base) {
             vpi_error("LLG_VPI_NOMEM", "VPI element name allocation failed");
             return NULL;
@@ -3953,7 +3953,7 @@ static int32_t dyn_parse_key(const char** cursor, char** key, size_t* length) {
     for (; *q && *q != '"'; ++q, ++size)
         if (q[0] == '\\' && q[1] == '"') ++q;
     if (*q != '"') return 0;
-    char* text = (char*)malloc(size + 1u);
+    char* text = (char*)vpi_malloc(size + 1u);
     if (!text) return 0;
     size_t n = 0;
     for (; p < q; ++p) {
@@ -4319,7 +4319,7 @@ static int32_t dyn_bind_value_cb(struct llg_vpi_cb* cb, llg_vpi_slot_t* slot) {
         vpi_error("LLG_VPI_CALLBACK", "unsupported cbValueChange value format for a chandle");
         return 0;
     }
-    llg_vpi_watch_t* watch = (llg_vpi_watch_t*)calloc(1, sizeof(*watch));
+    llg_vpi_watch_t* watch = (llg_vpi_watch_t*)vpi_calloc(1, sizeof(*watch));
     if (!watch) {
         vpi_error("LLG_VPI_NOMEM", "VPI value-change watch allocation failed");
         return 0;
@@ -4385,7 +4385,7 @@ static int32_t dyn_bind_size_cb(struct llg_vpi_cb* cb, llg_vpi_slot_t* slot, con
                   "decision A19-D91");
         return 0;
     }
-    llg_vpi_watch_t* watch = (llg_vpi_watch_t*)calloc(1, sizeof(*watch));
+    llg_vpi_watch_t* watch = (llg_vpi_watch_t*)vpi_calloc(1, sizeof(*watch));
     if (!watch) {
         vpi_error("LLG_VPI_NOMEM", "VPI value-change watch allocation failed");
         return 0;
