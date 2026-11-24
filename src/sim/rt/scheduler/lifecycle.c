@@ -503,12 +503,24 @@ void llg_rt_cleanup(void) {
     free(g.force_table);
     g.force_table = NULL;
     g.force_capacity = 0;
-    free_mailboxes();
-    // Containers owned by the model may still name these objects; they only
-    // drop handles at model close and never dereference them. The handle
-    // hooks stay installed so that model teardown after this cleanup still
-    // releases counted handles held by containers.
-    free_dynamic_events();
+    // A final procedure may still use the mailboxes, semaphores and events
+    // the design created: their handles are model storage. With final
+    // procedures to run these objects only lose their waiters here (the
+    // processes are gone) and are released by the cleanup after them.
+    const int32_t finals_follow = llg_file_defer_cleanup;
+    if (finals_follow) {
+        for (llg_mailbox_t* mailbox = g.mailboxes; mailbox; mailbox = mailbox->next)
+            mailbox->get_head = mailbox->get_tail = mailbox->put_head = mailbox->put_tail = NULL;
+        for (llg_dynamic_event_t* event = g.dynamic_events; event; event = event->next)
+            llg_event_object_reset(&event->object);
+    } else {
+        free_mailboxes();
+        // Containers owned by the model may still name these objects; they
+        // only drop handles at model close and never dereference them. The
+        // handle hooks stay installed so that model teardown after this
+        // cleanup still releases counted handles held by containers.
+        free_dynamic_events();
+    }
     reap_retired_procs();
     rng_scopes_free();
     llg_container_set_rng_source(NULL);
@@ -518,17 +530,18 @@ void llg_rt_cleanup(void) {
         free(g.programs);
         g.programs = next;
     }
-    while (g.semaphores) {
-        llg_semaphore_t* semaphore = g.semaphores;
-        g.semaphores = semaphore->next_all;
+    for (llg_semaphore_t* semaphore = g.semaphores; semaphore;) {
+        llg_semaphore_t* next_semaphore = semaphore->next_all;
         while (semaphore->wait_head) {
             llg_semaphore_wait_t* next = semaphore->wait_head->next;
             free(semaphore->wait_head);
             semaphore->wait_head = next;
         }
         semaphore->wait_tail = NULL;
-        free(semaphore);
+        if (!finals_follow) free(semaphore);
+        semaphore = next_semaphore;
     }
+    if (!finals_follow) g.semaphores = NULL;
     // External HDL references may keep terminal process identities alive, but
     // no handle may retain a pointer into the context being reset below.
     // A pinned handle's permanent reference ends here; counted holders that
@@ -561,7 +574,15 @@ void llg_rt_cleanup(void) {
         free(g.wait_source_free);
         g.wait_source_free = next;
     }
+    // The objects kept for the final procedures stay registered, so that
+    // the cleanup after them finds and releases them.
+    llg_mailbox_t* const kept_mailboxes = finals_follow ? g.mailboxes : NULL;
+    llg_semaphore_t* const kept_semaphores = finals_follow ? g.semaphores : NULL;
+    llg_dynamic_event_t* const kept_events = finals_follow ? g.dynamic_events : NULL;
     memset(&g, 0, sizeof(g));
+    g.mailboxes = kept_mailboxes;
+    g.semaphores = kept_semaphores;
+    g.dynamic_events = kept_events;
     while (llg_dependency_bindings) {
         llg_dependency_binding_t* next = llg_dependency_bindings->next;
         free(llg_dependency_bindings);

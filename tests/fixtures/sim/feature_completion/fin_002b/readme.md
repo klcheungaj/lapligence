@@ -33,7 +33,7 @@ minimized from two differences the expression corpus found (variables case
 11, parameters case 1). 6.24.1, L7328-7329: "When changing the size, the
 cast shall return the value that a packed array type with a single [n-1:0]
 dimension would hold after being assigned the expression, where n is the cast
-size." 5.7.1, L3944-3946: "In a self-determined context, an unsized
+size." 5.7.1, L3945-3946 (of an unbased unsized literal): "self-determined context, an unsized
 single-bit value shall have a width of 1 bit, and the value shall be treated
 as unsigned." The operand of a size cast is therefore in an assignment
 context of the cast's size, and an unbased unsized literal in it has that
@@ -46,3 +46,17 @@ expected output is the industry-standard behaviour.
 | `not`, `shr`, `shr x`, `shl`, `cond`, `narrow`, `minus`, `sum`, `or`, `display` | `~'0`, `'1 >> 1`, `'x >> 1`, `'1 << 3`, `1 ? '1 : '0`, `-'1` evaluated at the cast's size at run time (each was one bit, then extended). |
 | `power xxxx...`, `actual xxxxxxxx`, `base 01` | The left operand of `**` has the size of the context: an unknown base gives an unknown result of that size (11.4.2, Table 11-4), and `8'hff ** 2` is `01`. |
 | `sized`, `assign` | Sized operands and the assignment form, which were right before. |
+
+## Failure matrix (step 4)
+
+Run by the `failure_*` tests; the table above them names each row. The expected outputs are the industry-standard
+behaviour. 9.2.3, L11261: "A final procedure executes when simulation ends
+due to an explicit or implicit call to $finish." 15.3.3 (semaphore `get`)
+and 15.4.5 (mailbox `get`) make a blocked caller wait in a queue; nothing in
+clause 15 returns the keys of a process that ends, so they stay taken.
+
+| Fixture | Failure and interface | Defined result |
+| --- | --- | --- |
+| `fail_cancel_sync.sv` | A semaphore holder, a process waiting for a key, a mailbox getter, a putter blocked on a full mailbox, an event waiter and a nested task call are killed or disabled; `$finish` executes in a nested call of a fork branch. | All six report `KILLED`; the holder's key stays taken (`try_get key=0`) until a `put`; a message and an event that arrive later reach nobody (`got=0`, `woke=0`, the message stays: `inbox=1`); the pending put is withdrawn; the final procedure reads the same state. |
+| `fail_stale_handles.sv` | Handles of a finished and a killed process, a closed file descriptor, deleted queue and associative entries, a cleared class handle and a drained mailbox are used again. | `kill` and `await` on an ended process do nothing; writes to and reads from the closed descriptor fail with their documented codes (0, -1) and one warning each; the containers are empty; the object lives through its second handle; `try_get` returns 0. |
+| `fail_final_handles.sv` | A final procedure uses mailboxes (plain, typed, bounded, class-owned), a semaphore and events after `$finish`. | The objects hold what they held at the end of the run and work through their functions; a new mailbox can be made. Run under the sanitizers: before the fix these were reads and writes of released storage. What a process still blocked at the end does to a put is decision CS-D6. |

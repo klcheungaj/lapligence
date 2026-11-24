@@ -6558,6 +6558,14 @@ fn cs_d3_release_takes_driven_value() {
 }
 
 #[test]
+fn cs_d6_no_waiters_at_final_procedures() {
+    run_decision(
+        "CS-D6_no_waiters_at_final_procedures",
+        include_str!("fixtures/sim/lrm_decisions/CS-D6_no_waiters_at_final_procedures.out"),
+    );
+}
+
+#[test]
 fn cs_d5_release_of_delayed_driver() {
     run_decision(
         "CS-D5_release_of_delayed_driver",

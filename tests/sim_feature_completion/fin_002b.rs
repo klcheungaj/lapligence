@@ -210,3 +210,57 @@ fn unsized_literals_take_the_size_of_a_cast() {
         &[],
     );
 }
+
+/// The failure matrix of FIN-002 step 4, as far as it is built. Each row
+/// is one test below; every transcript is the industry-standard behaviour
+/// (`fin_002b/readme.md` states the defined result of each row).
+///
+/// | Failure | Interface | Fixture |
+/// | --- | --- | --- |
+/// | kill, `disable fork`, `$finish` in a nested call | semaphore holder and waiter, mailbox get and bounded put, event waiter, nested task, final procedure | `fail_cancel_sync` |
+/// | handle used after its object is gone | finished and killed process, closed descriptor, deleted queue and associative entries, cleared class handle, drained mailbox | `fail_stale_handles` |
+/// | handle used after the run ended | mailbox, bounded mailbox, semaphore, class-owned mailbox and event in a final procedure | `fail_final_handles` |
+macro_rules! failure_fixture {
+    ($name:literal) => {
+        include_str!(concat!(
+            "../fixtures/sim/feature_completion/fin_002b/",
+            $name,
+            ".out"
+        ))
+    };
+}
+
+#[test]
+fn failure_cancelled_waiters_leave_defined_state() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "fail_cancel_sync",
+        failure_fixture!("fail_cancel_sync"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn failure_stale_handles_have_defined_results() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "fail_stale_handles",
+        failure_fixture!("fail_stale_handles"),
+        &[],
+        &[],
+    );
+}
+
+/// A final procedure used mailboxes, semaphores and events the scheduler's
+/// cleanup had already released (a read or write of freed storage).
+#[test]
+fn failure_final_procedures_use_live_objects() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "fail_final_handles",
+        failure_fixture!("fail_final_handles"),
+        &[],
+        &[],
+    );
+}

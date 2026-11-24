@@ -831,7 +831,7 @@ transcripts compared per time step; two of them are also dumped as VCD and
 FST. The gate-level features llg does not simulate reject with their
 diagnostics. Oracles and clauses are in the
 [fixture readme](fixtures/sim/feature_completion/fin_002/readme.md); its
-decisions are CS-D1 to CS-D5 in `sim_lrm_decisions`. Sanitizer and Clang
+decisions are CS-D1 to CS-D6 in `sim_lrm_decisions`. Sanitizer and Clang
 lanes use the settings of the sections below with the same filter.
 
 ### LRM decision cases
@@ -1564,6 +1564,12 @@ checked-in fixture or unit test, and the count in the tree stays as it is.
 | Sources, `llg.toml`, SDF, command lines, JSON-RPC | `--test adversarial_inputs` | Library entries return a value or an error; `llg` exits 0, 1 or 2 and `llg_ls` 0 or 1; no panic, signal or hang. |
 | Run-time readers | `-E 'binary(sim_feature_completion) & test(fin_002b::runtime_readers)'` | One built model per optimizer mode runs every generated memory image and plusarg list to its last line with status 0. |
 | Expressions | `-E 'binary(sim_feature_completion) & test(fin_002b::expressions::)'` | Random integral expressions in five contexts equal an independent evaluator of the clause text, in both optimizer modes on the three value backends. |
+
+The failure matrix of FIN-002 step 4 is the table above the `failure_*` tests of
+`sim_feature_completion/fin_002b.rs` (`-E 'binary(sim_feature_completion) &
+test(fin_002b::failure)'`): one row and one test per failure and interface, with
+the fixture that shows its defined result on the three value backends in both
+optimizer modes; run it with the generated-runtime sanitizers as well.
 
 `LLG_FUZZ_CASES=<count>` or `<first>..<end>` runs a longer local campaign of
 the selected tests (the tests that require both outcomes of a corpus check
