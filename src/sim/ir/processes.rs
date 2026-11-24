@@ -102,6 +102,20 @@ pub enum IrPreFn {
 }
 
 impl IrPreFn {
+    pub(in crate::sim) fn c_name(&self) -> &str {
+        match self {
+            Self::Branch { c_name, .. }
+            | Self::CapturedBranch { c_name, .. }
+            | Self::MonEval { c_name, .. }
+            | Self::EventAssign { c_name, .. }
+            | Self::DisplayEval { c_name, .. }
+            | Self::MonitorReads { c_name, .. }
+            | Self::RealEval { c_name, .. }
+            | Self::DeferredAssertion { c_name, .. }
+            | Self::ForceEval { c_name, .. } => c_name,
+        }
+    }
+
     /// Whether the callback of a class method binds the method's `this`.
     pub(super) fn binds_this(&self) -> bool {
         let this = |name: &str| name == "_this";

@@ -10,6 +10,7 @@ mod real_values;
 mod sequential_predicates;
 mod subroutine_containers;
 mod switch_networks;
+mod symbols;
 
 fn valid_model() -> IrModel {
     let mut model = IrModel::new("top".to_string(), 1).unwrap();

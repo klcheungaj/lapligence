@@ -19,6 +19,7 @@ mod initialization;
 mod lvalues;
 mod native_values;
 mod statements;
+mod symbols;
 mod tables;
 mod udp;
 mod values;
