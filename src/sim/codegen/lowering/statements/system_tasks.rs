@@ -369,6 +369,7 @@ impl EmitCtx<'_, '_> {
                         private_effects: private_effects || !prelude.is_empty(),
                         prelude,
                         receiver: receiver_local.clone(),
+                        origin: self.cg.origin(h),
                     });
                     // Calls, virtual-interface members and `%p` of class
                     // objects select storage no dependency can name, so those
@@ -395,6 +396,7 @@ impl EmitCtx<'_, '_> {
                             c_name: name.clone(),
                             reads: dynamic,
                             receiver: receiver_local,
+                            origin: self.cg.origin(h),
                         });
                         (name, count)
                     });

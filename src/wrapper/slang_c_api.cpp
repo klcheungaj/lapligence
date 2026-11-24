@@ -2957,6 +2957,37 @@ public:
   void handle(const InvalidExpression&) { repairable = false; }
 };
 
+// The source of an invalid statement, whose node has none: the range of the
+// innermost rejected statement it wraps, or an empty one when the frontend
+// kept no statement.
+class InvalidStatementRange : public ASTVisitor<InvalidStatementRange,
+                                                VisitFlags::Statements | VisitFlags::Bad> {
+public:
+  SourceRange range;
+
+  void handle(const InvalidStatement& statement) {
+    if (found)
+      return;
+    if (statement.child) {
+      if (statement.child->sourceRange != SourceRange())
+        range = statement.child->sourceRange;
+      statement.child->visit(*this);
+    }
+    found = true;
+  }
+
+private:
+  bool found = false;
+};
+
+SourceRange statementRange(const Statement& statement) {
+  if (!InvalidStatement::isKind(statement.kind))
+    return statement.sourceRange;
+  InvalidStatementRange source;
+  statement.visit(source);
+  return source.range;
+}
+
 bool onlyIgnoredCoverOptionWrites(const InvalidStatement& statement) {
   IgnoredCoverOptionWriteScan scan;
   statement.visit(scan);
@@ -4535,7 +4566,7 @@ public:
     result.kind = LLG_SLANG_SEMANTIC_STATEMENT;
     result.subkind = semanticStatementKind(statement.kind);
     result.detail = storeString(capture.output, toString(statement.kind));
-    result.range = capture.span(statement.sourceRange);
+    result.range = capture.span(statementRange(statement));
     if (statement.bad())
       result.flags |= LLG_SLANG_SEMANTIC_BAD;
     if constexpr (std::same_as<T, BlockStatement>) {

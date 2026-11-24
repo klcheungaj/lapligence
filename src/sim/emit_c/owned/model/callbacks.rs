@@ -194,6 +194,7 @@ fn render_with_frame(
             c_name,
             value,
             real,
+            origin: _,
         } => {
             frame.read_only_callback = true;
             // Inlined helper loops leave through `_llg_return`; keep every
@@ -230,6 +231,7 @@ fn render_with_frame(
             private_effects,
             prelude,
             receiver,
+            origin: _,
         } => {
             // Lowering proved that a private-effect helper stores only to its
             // own storage. The runtime evaluates display callbacks in a
@@ -267,6 +269,7 @@ fn render_with_frame(
             c_name,
             reads,
             receiver,
+            origin: _,
         } => {
             frame.read_only_callback = true;
             frame.postponed_reader = true;

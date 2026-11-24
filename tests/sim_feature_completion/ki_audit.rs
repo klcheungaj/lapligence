@@ -37,22 +37,22 @@ fn pattern_format_of_a_semaphore_handle_is_a_located_limit() {
     );
 }
 
-/// The two evaluator forms are refused by the C emitter, which has no source
-/// node: they stay unlocated (`docs/known_issues.md`).
+/// The two evaluator forms are refused by the C emitter, at the report
+/// statement the callback carries.
 #[test]
 fn deferred_report_limits_are_explicit() {
     sim_cli::reject_case_with_id(
         SUITE,
         "neg_monitor_computed_handle",
         "CODEGEN-001",
-        Some("7:3"),
+        Some("9:5"),
         "native or impure calls in evaluator callbacks",
     );
     sim_cli::reject_case_with_id(
         SUITE,
         "neg_strobe_printing_helper",
         "CODEGEN-001",
-        Some("9:3"),
+        Some("10:5"),
         "side-effect-capable evaluator expressions",
     );
     sim_cli::reject_case_with_id(

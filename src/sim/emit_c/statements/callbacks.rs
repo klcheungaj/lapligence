@@ -203,6 +203,7 @@ pub(in super::super) fn render_pre_fn_impl(
             private_effects,
             prelude,
             receiver,
+            origin: _,
         } => {
             if *private_effects || receiver.is_some() || !prelude.is_empty() {
                 return Err(
@@ -264,6 +265,7 @@ pub(in super::super) fn render_pre_fn_impl(
             c_name,
             value,
             real,
+            origin: _,
         } => {
             let rendered = render_expr(ctx, value)?.code;
             if *real {

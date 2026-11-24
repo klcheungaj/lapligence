@@ -1423,7 +1423,10 @@ pub(in crate::sim::emit_c) fn pre_function<'a, 'm>(
     function: Option<&'m IrFunc>,
     names: &'a StorageNames<'m>,
 ) -> Result<String, String> {
-    callbacks::render(ctx, pre, function, names)
+    callbacks::render(ctx, pre, function, names).map_err(|error| match pre.origin() {
+        Some(origin) => locate_at_origin(origin, error),
+        None => error,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]

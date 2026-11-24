@@ -160,6 +160,17 @@ fn neg_automatic_target() {
 }
 
 #[test]
+fn neg_force_printing_helper() {
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_force_printing_helper",
+        "CODEGEN-001",
+        Some("11:5"),
+        "side-effect-capable evaluator expressions",
+    );
+}
+
+#[test]
 fn neg_force_automatic_witness() {
     // FND-002 L-F05-13-02 (SV 6.21, 13.3.2).
     sim_cli::reject_case(

@@ -499,7 +499,7 @@ fn procedural_block_record_boundaries_are_rejected_explicitly() {
     sim_cli::reject_case(
         SUITE,
         "bad_block_record_fork",
-        "automatic record `r` in `tb` can be live in two activations through a `join_any`/`join_none` fork that runs again; this is not supported",
+        "bad_block_record_fork.sv:9:27 automatic record `r` in `tb` can be live in two activations through a `join_any`/`join_none` fork that runs again; this is not supported",
     );
     sim_cli::reject_case(
         SUITE,
@@ -528,12 +528,12 @@ fn procedural_block_native_boundaries_are_rejected_explicitly() {
     sim_cli::reject_case(
         SUITE,
         "bad_block_native_fork",
-        "automatic variable `name` in `tb` can be live in two activations through a `join_any`/`join_none` fork that runs again; this is not supported",
+        "bad_block_native_fork.sv:9:34 automatic variable `name` in `tb` can be live in two activations through a `join_any`/`join_none` fork that runs again; this is not supported",
     );
     sim_cli::reject_case(
         SUITE,
         "bad_block_native_always_fork",
-        "automatic variable `h` in `tb` can be live in two activations through a `join_any`/`join_none` fork that runs again; this is not supported",
+        "bad_block_native_always_fork.sv:10:23 automatic variable `h` in `tb` can be live in two activations through a `join_any`/`join_none` fork that runs again; this is not supported",
     );
 }
 

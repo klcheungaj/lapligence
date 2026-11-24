@@ -77,6 +77,8 @@ Legal but not supported by llg (located errors; see `docs/known_issues.md`):
 - `neg_native_record_member`: a member of an element of an array of records
   with a real member (a native value; also string, handle, event and
   container members). Industry-standard behaviour forces it.
+- `neg_force_printing_helper`: a force RHS that calls a function with
+  `$display`; located at the `force` statement.
 
 ## Clause text
 

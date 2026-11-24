@@ -247,12 +247,12 @@ fn neg_monitor_calls_the_postponed_evaluator_cannot_run() {
     sim_cli::reject_case(
         SUITE,
         "neg_monitor_virtual_method",
-        &format!("neg_monitor_virtual_method.sv:17:3 {PENDING}"),
+        &format!("neg_monitor_virtual_method.sv:20:5 {PENDING}"),
     );
     sim_cli::reject_case(
         SUITE,
         "neg_monitor_handle_local_helper",
-        &format!("neg_monitor_handle_local_helper.sv:13:3 {PENDING}"),
+        &format!("neg_monitor_handle_local_helper.sv:15:5 {PENDING}"),
     );
 }
 
