@@ -18,6 +18,10 @@
 module tb;
   mailbox m = new();
   string t;
+  class holder;
+    string text;
+  endclass
+  holder h = new;
   int r;
   bit [39:0] packed_text = "seven";
   localparam UNTYPED = "untyped";
@@ -27,7 +31,7 @@ module tb;
 
   task into_string(string name);
     r = m.try_get(t);
-    if (r == 1) $display("%s %0d <%s>", name, r, t);
+    if (r > 0) $display("%s 1 <%s>", name, t);
     else begin
       $display("%s %0d", name, r);
       m = new();
@@ -49,6 +53,26 @@ module tb;
     $display("try_peek %0d <%s>", r, t);
     m.get(t);
     $display("get <%s> %0d", t, m.num());
+    fork
+      begin
+        m.peek(t);
+        $display("blocked peek <%s> %0d", t, m.num());
+        m.get(h.text);
+        $display("property get <%s> %0d", h.text, m.num());
+        m.get(h.text);
+        $display("blocked property get <%s>", h.text);
+      end
+    join_none
+    #1 m.put("held");
+    #1 m.put("last");
+    #1;
+    m.put("first");
+    m.put("second");
+    m.peek(t);
+    r = m.try_peek(t);
+    $display("queued peek <%s> %0d", t, m.num());
+    into_string("queued first");
+    into_string("queued second");
     m.put(("paren"));
     into_string("parentheses");
     m.put({"con", "cat"});

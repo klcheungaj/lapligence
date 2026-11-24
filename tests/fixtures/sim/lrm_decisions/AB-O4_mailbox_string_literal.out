@@ -2,6 +2,12 @@ blocked get <late> 4
 peek <seven>
 try_peek 1 <seven>
 get <seven> 0
+blocked peek <held> 1
+property get <held> 0
+blocked property get <last>
+queued peek <first> 2
+queued first 1 <first>
+queued second 1 <second>
 parentheses 1 <paren>
 concatenation 1 <concat>
 replication 1 <abab>
