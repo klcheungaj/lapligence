@@ -59,6 +59,19 @@ pub(in super::super) enum PostponedEvaluation {
     PrivateEffects,
 }
 
+/// What evaluating an expression does besides reading storage.
+#[derive(Default)]
+struct EvaluationEffects {
+    /// Why it cannot be a read-only callback.
+    process: Option<String>,
+    /// Why it writes storage its helpers do not own.
+    external: Option<String>,
+    /// A system call it reaches, which has no effect summary.
+    system_call: Option<String>,
+    /// Whether a helper prints (a display or severity task).
+    prints: bool,
+}
+
 impl<'a> Codegen<'a> {
     pub(in super::super) fn check_event_expression_effects(
         &self,
@@ -85,12 +98,25 @@ impl<'a> Codegen<'a> {
             pending.extend(self.node(node).children.iter().copied());
             self.reject_event_comparison(scope_path, node)?;
         }
-        Ok(
-            match self.event_expression_effects(expression, scope_path)?.0 {
-                Some(reason) => EventEvaluation::Process(reason),
-                None => EventEvaluation::Callback,
-            },
-        )
+        let effects = self.event_expression_effects(expression, scope_path)?;
+        match (effects.system_call, effects.process) {
+            (Some(reason), _) => Err(reason),
+            (None, Some(reason)) => Ok(EventEvaluation::Process(reason)),
+            (None, None) => Ok(EventEvaluation::Callback),
+        }
+    }
+
+    /// Whether a process evaluates a force source instead of a read-only
+    /// callback: a helper has effects, or prints.
+    pub(in super::super) fn force_source_needs_process(
+        &self,
+        expression: NodeId,
+        scope_path: &str,
+    ) -> bool {
+        self.event_expression_effects(expression, scope_path)
+            .is_ok_and(|effects| {
+                effects.prints || (effects.system_call.is_none() && effects.process.is_some())
+            })
     }
 
     /// Classify a `$monitor`/`$strobe` argument, which the runtime evaluates
@@ -106,7 +132,13 @@ impl<'a> Codegen<'a> {
     ) -> Result<PostponedEvaluation, String> {
         // Forms without a zero-time effect summary (system and method calls,
         // timing) keep the callback path and its own diagnostics.
-        let Ok((process, external)) = self.event_expression_effects(expression, scope_path) else {
+        let Ok(EvaluationEffects {
+            process,
+            external,
+            system_call: None,
+            ..
+        }) = self.event_expression_effects(expression, scope_path)
+        else {
             return Ok(PostponedEvaluation::Callback);
         };
         // A user system function keeps the callback form there: its calltf
@@ -130,25 +162,15 @@ impl<'a> Codegen<'a> {
         )
     }
 
-    /// `(process, external)`: why the expression cannot be a read-only
-    /// callback, and why it writes storage its helpers do not own.
     fn event_expression_effects(
         &self,
         expression: NodeId,
         scope_path: &str,
-    ) -> Result<(Option<String>, Option<String>), String> {
+    ) -> Result<EvaluationEffects, String> {
         let mut visited = HashSet::new();
-        let mut process = None;
-        let mut external = None;
-        self.check_event_node(
-            expression,
-            scope_path,
-            &mut visited,
-            None,
-            &mut process,
-            &mut external,
-        )?;
-        Ok((process, external))
+        let mut effects = EvaluationEffects::default();
+        self.check_event_node(expression, scope_path, &mut visited, None, &mut effects)?;
+        Ok(effects)
     }
 
     /// Whether `expression`, or a function body it reaches, calls a user
@@ -228,21 +250,17 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         visited_functions: &mut HashSet<NodeId>,
         function: Option<NodeId>,
-        process: &mut Option<String>,
-        external: &mut Option<String>,
+        effects: &mut EvaluationEffects,
     ) -> Result<(), String> {
-        let rejected = |reason: &str| {
-            Err(format!(
+        let reason_text = |reason: &str| {
+            format!(
                 "function calls in evaluated event controls are not supported in `{scope_path}`: {reason}"
-            ))
+            )
         };
-        let needs_process = |process: &mut Option<String>, reason: &str| {
-            process.get_or_insert_with(|| {
-                format!(
-                    "function calls in evaluated event controls are not supported in `{scope_path}`: {reason}"
-                )
-            });
+        let needs_process = |effects: &mut EvaluationEffects, reason: &str| {
+            effects.process.get_or_insert_with(|| reason_text(reason));
         };
+        let rejected = |reason: &str| Err(reason_text(reason));
         match self.kind(node) {
             NodeKind::FuncCall {
                 name,
@@ -285,13 +303,13 @@ impl<'a> Codegen<'a> {
                     // with ordinary call semantics in the evaluating
                     // process. Only a context import can reach SystemVerilog
                     // storage (through exported subroutines, SV 35.5.3).
-                    needs_process(process, "foreign (DPI) functions have no effect summary");
+                    needs_process(effects, "foreign (DPI) functions have no effect summary");
                     // Without a DPI-C export there is no SystemVerilog
                     // subroutine the foreign code can call, so it cannot
                     // write SystemVerilog storage (SV 4.4.2.9 forbids only
                     // writes in Postponed).
                     if import.context && self.db.has_dpi_exports() {
-                        external.get_or_insert_with(|| {
+                        effects.external.get_or_insert_with(|| {
                             format!(
                                 "context import `{name}` in `{scope_path}` may write SystemVerilog storage through exported subroutines"
                             )
@@ -313,7 +331,7 @@ impl<'a> Codegen<'a> {
                     ) && !self.static_return_is_callback_independent(body, ft)
                     {
                         needs_process(
-                            process,
+                            effects,
                             "static function return is read or is not assigned on every path",
                         );
                     }
@@ -324,7 +342,7 @@ impl<'a> Codegen<'a> {
                         })
                     {
                         needs_process(
-                            process,
+                            effects,
                             "descriptor-transported fixed-array formals or result",
                         );
                     }
@@ -334,16 +352,9 @@ impl<'a> Codegen<'a> {
                             .iter()
                             .any(|(formal, _)| self.real_array_shape(*formal).is_some())
                     {
-                        needs_process(process, "real fixed-array formals or result");
+                        needs_process(effects, "real fixed-array formals or result");
                     }
-                    self.check_event_node(
-                        body,
-                        scope_path,
-                        visited_functions,
-                        Some(ft),
-                        process,
-                        external,
-                    )?;
+                    self.check_event_node(body, scope_path, visited_functions, Some(ft), effects)?;
                 }
             }
             NodeKind::SysCall { name } if self.user_system_functions.contains(name) => {
@@ -352,15 +363,19 @@ impl<'a> Codegen<'a> {
                 // zero-time call (IEEE 1800-2009 36.2), so the waiting
                 // process evaluates it with ordinary call semantics, like a
                 // context DPI import.
-                needs_process(process, "user system functions have no effect summary");
-                external.get_or_insert_with(|| {
+                needs_process(effects, "user system functions have no effect summary");
+                effects.external.get_or_insert_with(|| {
                     format!(
                         "user system function `{name}` in `{scope_path}` may write SystemVerilog storage through VPI"
                     )
                 });
             }
             NodeKind::SysCall { name } => {
-                return rejected(&format!("system call `{name}` has no pure effect summary"));
+                effects.prints |=
+                    function.is_some() && super::super::statements::immediate_output_task(name);
+                effects.system_call.get_or_insert_with(|| {
+                    reason_text(&format!("system call `{name}` has no pure effect summary"))
+                });
             }
             NodeKind::MethodCall {
                 name,
@@ -397,7 +412,7 @@ impl<'a> Codegen<'a> {
                 // SV 9.4.2 admits nonvirtual class methods. The waiting
                 // process calls them; their property reads are resolved
                 // through the call's receiver (`with_dynamic_reads`).
-                needs_process(process, "class method calls run in the waiting process");
+                needs_process(effects, "class method calls run in the waiting process");
                 for (formal, is_out) in self.func_formals(*method) {
                     if is_out
                         || matches!(
@@ -419,8 +434,7 @@ impl<'a> Codegen<'a> {
                             scope_path,
                             visited_functions,
                             Some(*method),
-                            process,
-                            external,
+                            effects,
                         )?;
                     }
                 }
@@ -450,11 +464,11 @@ impl<'a> Codegen<'a> {
                 })?;
                 if !self.event_local_write_allowed(function, lhs) {
                     needs_process(
-                        process,
+                        effects,
                         "function body writes external or persistent storage",
                     );
                     if !self.event_owned_write(function, lhs) {
-                        external.get_or_insert_with(|| {
+                        effects.external.get_or_insert_with(|| {
                             format!("a helper in `{scope_path}` writes storage it does not own")
                         });
                     }
@@ -482,11 +496,11 @@ impl<'a> Codegen<'a> {
                 })?;
                 if !self.event_local_write_allowed(function, lhs) {
                     needs_process(
-                        process,
+                        effects,
                         "function body writes external or persistent storage",
                     );
                     if !self.event_owned_write(function, lhs) {
-                        external.get_or_insert_with(|| {
+                        effects.external.get_or_insert_with(|| {
                             format!("a helper in `{scope_path}` writes storage it does not own")
                         });
                     }
@@ -495,14 +509,7 @@ impl<'a> Codegen<'a> {
             _ => {}
         }
         for child in &self.node(node).children {
-            self.check_event_node(
-                *child,
-                scope_path,
-                visited_functions,
-                function,
-                process,
-                external,
-            )?;
+            self.check_event_node(*child, scope_path, visited_functions, function, effects)?;
         }
         Ok(())
     }
