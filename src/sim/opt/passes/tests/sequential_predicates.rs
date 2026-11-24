@@ -86,7 +86,7 @@ fn sequential_predicate_fold_can_drop_only_an_unreached_suffix() {
     }
     let mut expr = predicate(vec![call(), konst(0, 1)]);
     fold_expr(&mut expr);
-    ident_expr(&mut expr);
+    walk_expr_mut(&mut expr, &mut ident_expr);
     assert!(
         matches!(expr.kind, IrExprKind::Predicate { .. }),
         "a later zero must not discard a reached effectful clause"
@@ -96,7 +96,7 @@ fn sequential_predicate_fold_can_drop_only_an_unreached_suffix() {
 #[test]
 fn sequential_predicate_identity_never_turns_a_vector_clause_into_a_vector_result() {
     let mut expr = predicate(vec![IrExpr::new(IrExprKind::SigRead(0), 8, false, None)]);
-    ident_expr(&mut expr);
+    walk_expr_mut(&mut expr, &mut ident_expr);
     assert!(matches!(expr.kind, IrExprKind::Predicate { .. }));
     assert_eq!(expr.width, 1);
 }

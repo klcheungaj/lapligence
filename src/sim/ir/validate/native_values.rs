@@ -32,10 +32,10 @@ impl Validator<'_> {
     /// Types, storage names and type references of every native value.
     pub(super) fn validate_native_tables(&self) -> ValidationResult {
         for (index, ty) in self.model.native_types.iter().enumerate() {
-            validate_native_type(ty, &format!("native_types[{index}]"))?;
+            validate_native_type(ty, format_args!("native_types[{index}]"))?;
         }
         for (index, value) in self.model.native_values.iter().enumerate() {
-            let path = format!("native_values[{index}]");
+            let path = format_args!("native_values[{index}]");
             if value.ty >= self.model.native_types.len() {
                 return self.fail(path, "native value type is out of bounds");
             }
@@ -45,13 +45,13 @@ impl Validator<'_> {
             for (position, companion) in value.companions.iter().enumerate() {
                 let Some(container) = self.model.containers.get(*companion) else {
                     return self.fail(
-                        format!("{path}.companions[{position}]"),
+                        format_args!("{path}.companions[{position}]"),
                         "native companion container is out of bounds",
                     );
                 };
                 if container.activation != value.activation || container.class_field.is_some() {
                     return self.fail(
-                        format!("{path}.companions[{position}]"),
+                        format_args!("{path}.companions[{position}]"),
                         "native companion container must share its value's lifetime",
                     );
                 }
@@ -65,7 +65,7 @@ impl Validator<'_> {
                     .is_none_or(|formal| formal.native_value.is_none() || !formal.is_ref())
                 {
                     return self.fail(
-                        format!("funcs[{index}].bound_native_refs[{position}]"),
+                        format_args!("funcs[{index}].bound_native_refs[{position}]"),
                         "statically bound formal must be a native ref formal",
                     );
                 }
@@ -74,7 +74,7 @@ impl Validator<'_> {
                 let Some(value) = formal.native_value else {
                     continue;
                 };
-                let path = format!("funcs[{index}].formals[{formal_index}]");
+                let path = format_args!("funcs[{index}].formals[{formal_index}]");
                 if value >= self.model.native_values.len() {
                     return self.fail(path, "native formal storage is out of bounds");
                 }
@@ -105,7 +105,11 @@ impl Validator<'_> {
 
     /// A native value used here must be persistent, a formal of the function
     /// being validated or declared in an enclosing lexical scope.
-    pub(super) fn validate_native_value_use(&self, index: usize, path: &str) -> ValidationResult {
+    pub(super) fn validate_native_value_use(
+        &self,
+        index: usize,
+        path: IrPath<'_>,
+    ) -> ValidationResult {
         let Some(value) = self.model.native_values.get(index) else {
             return self.fail(path, "native value reference is out of bounds");
         };
@@ -148,7 +152,7 @@ impl Validator<'_> {
     pub(super) fn captured_native_values(
         &self,
         captures: &[IrCapture],
-        path: &str,
+        path: IrPath<'_>,
     ) -> Result<HashSet<usize>, IrValidationError> {
         let mut values = HashSet::new();
         for (position, capture) in captures.iter().enumerate() {
@@ -167,7 +171,7 @@ impl Validator<'_> {
             });
             let Some(value) = value else {
                 return Err(IrValidationError::new(
-                    format!("{path}.captures[{position}]"),
+                    format_args!("{path}.captures[{position}]"),
                     "a native capture must name a shared activation native value",
                 ));
             };
@@ -182,7 +186,7 @@ impl Validator<'_> {
         &self,
         captures: &[IrCapture],
         this: Option<Option<usize>>,
-        path: &str,
+        path: IrPath<'_>,
         body: impl FnOnce() -> ValidationResult,
     ) -> ValidationResult {
         let values = self.captured_native_values(captures, path)?;
@@ -199,14 +203,14 @@ impl Validator<'_> {
         ty: usize,
         leaves: &[IrNativeLeafValue],
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         let Some(root) = self.model.native_types.get(ty) else {
             return self.fail(path, "native leaf operand type is out of bounds");
         };
         let mut seen = HashSet::new();
         for (index, leaf) in leaves.iter().enumerate() {
-            let leaf_path = format!("{path}.leaves[{index}]");
+            let leaf_path = format_args!("{path}.leaves[{index}]");
             if !seen.insert(leaf.items.as_slice()) {
                 return self.fail(leaf_path, "native leaf is initialized twice");
             }
@@ -215,7 +219,7 @@ impl Validator<'_> {
                     Some(IrContainerElement::Packed { .. } | IrContainerElement::Real { .. }),
                     IrNativeLeafExpr::Packed(value) | IrNativeLeafExpr::Real(value),
                 ) => {
-                    self.validate_expr(value, formals, &leaf_path)?;
+                    self.validate_expr(value, formals, leaf_path)?;
                     true
                 }
                 (Some(IrContainerElement::String), IrNativeLeafExpr::String(value)) => {
@@ -244,7 +248,7 @@ impl Validator<'_> {
         value: usize,
         item_path: &[u32],
         ty: IrClassFieldType,
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         let Some(storage) = self.model.native_values.get(value) else {
             return self.fail(path, "native value item references missing storage");
@@ -270,7 +274,7 @@ impl Validator<'_> {
         receiver: &IrChandleExpr,
         item_path: &[u32],
         ty: IrClassFieldType,
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         let element = match receiver {
             IrChandleExpr::ContainerElement {
@@ -287,11 +291,11 @@ impl Validator<'_> {
                     key: key.as_deref().cloned(),
                 };
                 slot.element(storage, true, self.string_return.get(), &self.model)
-                    .map_err(|error| IrValidationError::new(path.to_owned(), error.to_string()))?
+                    .map_err(|error| IrValidationError::new(path, error.to_string()))?
             }
             IrChandleExpr::ItemElement { .. } => receiver
                 .located_value(&self.model)
-                .map_err(|error| IrValidationError::new(path.to_owned(), error.to_string()))?,
+                .map_err(|error| IrValidationError::new(path, error.to_string()))?,
             _ => return self.fail(path, "element item requires a container element locator"),
         };
         let selected = matches!(receiver, IrChandleExpr::ItemElement { .. });

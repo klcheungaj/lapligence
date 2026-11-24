@@ -447,7 +447,7 @@ impl Codegen<'_> {
                 return None;
             }
             let element = native_tagged_element(descriptor, layout).ok()?;
-            validate_native_type(&element, "native").ok()?;
+            validate_native_type(&element, format_args!("native")).ok()?;
             return Some(element);
         }
         // Records whose leaves are all integral are fixed values; beyond
@@ -468,7 +468,7 @@ impl Codegen<'_> {
             return None;
         }
         let element = lower_container_element(descriptor).ok()?;
-        validate_native_type(&element, "native").ok()?;
+        validate_native_type(&element, format_args!("native")).ok()?;
         Some(element)
     }
 

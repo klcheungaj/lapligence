@@ -7,7 +7,7 @@ impl Validator<'_> {
         &self,
         call: &IrCallExpr,
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         self.validate_call_target(call.f, &call.args, formals, path, false)?;
         let callee = &self.model.funcs[call.f];
@@ -36,21 +36,25 @@ impl Validator<'_> {
             } = arg
             {
                 if let Some(init) = init {
-                    self.validate_expr(init, formals, &format!("{path}.args[{idx}].init"))?;
+                    self.validate_expr(init, formals, format_args!("{path}.args[{idx}].init"))?;
                 }
-                self.validate_lhs(writeback, formals, &format!("{path}.args[{idx}].writeback"))?;
+                self.validate_lhs(
+                    writeback,
+                    formals,
+                    format_args!("{path}.args[{idx}].writeback"),
+                )?;
                 if let Some(storage_lhs) = storage_lhs {
                     self.validate_lhs(
                         storage_lhs,
                         formals,
-                        &format!("{path}.args[{idx}].storage_lhs"),
+                        format_args!("{path}.args[{idx}].storage_lhs"),
                     )?;
                 }
                 if let Some(storage_read) = storage_read {
                     self.validate_expr(
                         storage_read,
                         formals,
-                        &format!("{path}.args[{idx}].storage_read"),
+                        format_args!("{path}.args[{idx}].storage_read"),
                     )?;
                 }
                 for (selector_idx, (_, width, signed, two_state, init)) in
@@ -58,30 +62,30 @@ impl Validator<'_> {
                 {
                     if *width == 0 {
                         return self.fail(
-                            format!("{path}.args[{idx}].selector_inits[{selector_idx}]"),
+                            format_args!("{path}.args[{idx}].selector_inits[{selector_idx}]"),
                             "selector initializer must be packed",
                         );
                     }
                     self.validate_width(
                         *width,
-                        &format!("{path}.args[{idx}].selector_inits[{selector_idx}].width"),
+                        format_args!("{path}.args[{idx}].selector_inits[{selector_idx}].width"),
                     )?;
                     if *two_state && init.is_real() {
                         return self.fail(
-                            format!("{path}.args[{idx}].selector_inits[{selector_idx}]"),
+                            format_args!("{path}.args[{idx}].selector_inits[{selector_idx}]"),
                             "two-state selector initializer cannot be real",
                         );
                     }
                     if init.width != *width || init.signed != *signed {
                         return self.fail(
-                            format!("{path}.args[{idx}].selector_inits[{selector_idx}]"),
+                            format_args!("{path}.args[{idx}].selector_inits[{selector_idx}]"),
                             "selector initializer type disagrees with its capture",
                         );
                     }
                     self.validate_expr(
                         init,
                         formals,
-                        &format!("{path}.args[{idx}].selector_inits[{selector_idx}].init"),
+                        format_args!("{path}.args[{idx}].selector_inits[{selector_idx}].init"),
                     )?;
                 }
             }
@@ -94,7 +98,7 @@ impl Validator<'_> {
         function: usize,
         call: &crate::sim::ir::IrVirtualCall,
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         let interface = self
             .model
@@ -130,7 +134,7 @@ impl Validator<'_> {
         function: usize,
         args: &[IrCallArg],
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
         allow_object_return: bool,
     ) -> ValidationResult {
         let callee = self.model.funcs.get(function).ok_or_else(|| {
@@ -162,21 +166,21 @@ impl Validator<'_> {
                     .filter(|(_, formal)| !formal.is_address()),
             );
         for (idx, (arg, (formal_index, formal))) in args.iter().zip(parameter_order).enumerate() {
-            let arg_path = format!("{path}.args[{idx}]");
+            let arg_path = format_args!("{path}.args[{idx}]");
             // A formal the callee binds statically takes exactly the bound
             // marker, which no other formal accepts (SIM-008).
             if callee.bound_native_refs.contains(&formal_index)
                 != matches!(arg, IrCallArg::NativeRefBound)
             {
                 return self.fail(
-                    &arg_path,
+                    arg_path,
                     "statically bound native ref formal and operand must match",
                 );
             }
             if formal.fixed_array.is_some()
                 && !matches!(arg, IrCallArg::FixedArray(_) | IrCallArg::FixedValue(_))
             {
-                return self.fail(&arg_path, "descriptor formal requires descriptor operand");
+                return self.fail(arg_path, "descriptor formal requires descriptor operand");
             }
             if formal.native_value.is_some()
                 != (matches!(
@@ -191,7 +195,7 @@ impl Validator<'_> {
                         if reference.kind == crate::sim::ir::IrElementRefKind::Record
                 ))
             {
-                return self.fail(&arg_path, "native-value formal and operand must match");
+                return self.fail(arg_path, "native-value formal and operand must match");
             }
             if formal.container.is_some()
                 != matches!(
@@ -199,7 +203,7 @@ impl Validator<'_> {
                     IrCallArg::Container(_) | IrCallArg::ContainerValues { .. }
                 )
             {
-                return self.fail(&arg_path, "container formal and operand must match");
+                return self.fail(arg_path, "container formal and operand must match");
             }
             if formal.real_array.is_some()
                 != matches!(
@@ -209,11 +213,11 @@ impl Validator<'_> {
                         | IrCallArg::RealArrayCall { .. }
                 )
             {
-                return self.fail(&arg_path, "real-array formal and operand must match");
+                return self.fail(arg_path, "real-array formal and operand must match");
             }
             match arg {
                 IrCallArg::RealArray(array) => {
-                    self.validate_fixed_activation(*array, &arg_path)?;
+                    self.validate_fixed_activation(*array, arg_path)?;
                     let expected = formal
                         .real_array
                         .and_then(|array| self.model.arrays.get(array));
@@ -224,7 +228,7 @@ impl Validator<'_> {
                             && actual.shortreal == expected.shortreal
                             && actual.total == expected.total
                     }) {
-                        return self.fail(&arg_path, "real-array operand shape mismatch");
+                        return self.fail(arg_path, "real-array operand shape mismatch");
                     }
                 }
                 IrCallArg::RealArrayCall { array, call } => {
@@ -243,12 +247,12 @@ impl Validator<'_> {
                             |argument| matches!(argument, IrCallArg::RealArray(index) if index == array),
                         )
                     {
-                        return self.fail(&arg_path, "real-array call operand requires an owned result");
+                        return self.fail(arg_path, "real-array call operand requires an owned result");
                     }
                     self.fixed_activations
                         .borrow_mut()
                         .push(HashSet::from([*array]));
-                    let valid = self.validate_stmt(&IrStmt::Call(call.clone()), formals, &arg_path);
+                    let valid = self.validate_stmt(&IrStmt::Call(call.clone()), formals, arg_path);
                     self.fixed_activations.borrow_mut().pop();
                     valid?;
                 }
@@ -260,13 +264,13 @@ impl Validator<'_> {
                         || expected.is_none_or(|expected| expected.total != values.len() as u64)
                     {
                         return self.fail(
-                            &arg_path,
+                            arg_path,
                             "real-array values require an input formal of the same size",
                         );
                     }
                     for (index, value) in values.iter().enumerate() {
-                        let path = format!("{arg_path}.values[{index}]");
-                        self.validate_expr(value, formals, &path)?;
+                        let path = format_args!("{arg_path}.values[{index}]");
+                        self.validate_expr(value, formals, path)?;
                         if !value.is_real() {
                             return self.fail(path, "real-array element value must be real");
                         }
@@ -286,12 +290,12 @@ impl Validator<'_> {
                             .iter()
                             .any(|argument| matches!(argument, IrCallArg::NativeValue(index) if index == value))
                     {
-                        return self.fail(&arg_path, "native call operand requires an owned result");
+                        return self.fail(arg_path, "native call operand requires an owned result");
                     }
                     self.native_activations
                         .borrow_mut()
                         .push(HashSet::from([*value]));
-                    let valid = self.validate_stmt(&IrStmt::Call(call.clone()), formals, &arg_path);
+                    let valid = self.validate_stmt(&IrStmt::Call(call.clone()), formals, arg_path);
                     self.native_activations.borrow_mut().pop();
                     valid?;
                 }
@@ -304,8 +308,7 @@ impl Validator<'_> {
                         .native_value
                         .and_then(|value| self.model.native_values.get(value));
                     if formal.is_address() || expected.is_none_or(|expected| expected.ty != *ty) {
-                        return self
-                            .fail(&arg_path, "native leaf operand requires an input formal");
+                        return self.fail(arg_path, "native leaf operand requires an input formal");
                     }
                     if containers.len() != formal.native_companions.len()
                         || containers.iter().zip(&formal.native_companions).any(
@@ -316,9 +319,9 @@ impl Validator<'_> {
                             },
                         )
                     {
-                        return self.fail(&arg_path, "native leaf operand container mismatch");
+                        return self.fail(arg_path, "native leaf operand container mismatch");
                     }
-                    self.validate_native_leaf_values(*ty, leaves, formals, &arg_path)?;
+                    self.validate_native_leaf_values(*ty, leaves, formals, arg_path)?;
                 }
                 IrCallArg::ContainerValues { container, values } => {
                     let actual = self.model.container(*container);
@@ -326,7 +329,7 @@ impl Validator<'_> {
                         .container
                         .and_then(|container| self.model.container(container));
                     let Some((actual, expected)) = actual.zip(expected) else {
-                        return self.fail(&arg_path, "container argument type mismatch");
+                        return self.fail(arg_path, "container argument type mismatch");
                     };
                     if formal.is_address()
                         || !actual.activation
@@ -335,14 +338,18 @@ impl Validator<'_> {
                         || !(actual.element.is_packed() || actual.element.is_real())
                     {
                         return self.fail(
-                            &arg_path,
+                            arg_path,
                             "container values require a packed or real dynamic array or queue input",
                         );
                     }
                     for (index, value) in values.iter().enumerate() {
-                        self.validate_expr(value, formals, &format!("{arg_path}.values[{index}]"))?;
+                        self.validate_expr(
+                            value,
+                            formals,
+                            format_args!("{arg_path}.values[{index}]"),
+                        )?;
                         if value.is_real() != actual.element.is_real() {
-                            return self.fail(&arg_path, "container value kind mismatch");
+                            return self.fail(arg_path, "container value kind mismatch");
                         }
                     }
                 }
@@ -356,23 +363,23 @@ impl Validator<'_> {
                         || !matches!((actual, expected), (Some(actual), Some(expected))
                             if actual.same_storage_type(expected))
                     {
-                        return self.fail(&arg_path, "container argument type mismatch");
+                        return self.fail(arg_path, "container argument type mismatch");
                     }
                 }
                 IrCallArg::NativeRefBound => {
                     if !formal.is_ref() {
-                        return self.fail(&arg_path, "bound native operand requires a ref formal");
+                        return self.fail(arg_path, "bound native operand requires a ref formal");
                     }
                 }
                 IrCallArg::NativeValue(value) => {
-                    self.validate_native_value_use(*value, &arg_path)?;
+                    self.validate_native_value_use(*value, arg_path)?;
                     let expected = formal
                         .native_value
                         .and_then(|value| self.model.native_values.get(value));
                     if expected
                         .is_none_or(|expected| expected.ty != self.model.native_values[*value].ty)
                     {
-                        return self.fail(&arg_path, "native argument type mismatch");
+                        return self.fail(arg_path, "native argument type mismatch");
                     }
                     let actual = &self.model.native_values[*value].companions;
                     if actual.len() != formal.native_companions.len()
@@ -384,17 +391,17 @@ impl Validator<'_> {
                                     .same_storage_type(&self.model.containers[*expected])
                             })
                     {
-                        return self.fail(&arg_path, "native argument companion mismatch");
+                        return self.fail(arg_path, "native argument companion mismatch");
                     }
                 }
                 IrCallArg::FixedValue(value) => {
-                    let bits = self.validate_fixed_value(value, formals, &arg_path)?;
+                    let bits = self.validate_fixed_value(value, formals, arg_path)?;
                     let expected = formal
                         .fixed_array
                         .and_then(|array| self.model.arrays.get(array))
                         .ok_or_else(|| {
                             IrValidationError::new(
-                                &arg_path,
+                                arg_path,
                                 "fixed operand requires descriptor formal",
                             )
                         })?;
@@ -410,22 +417,22 @@ impl Validator<'_> {
                         || (formal.is_ref() && !matches!(value.as_ref(), IrFixedValue::Array(_)))
                     {
                         return self.fail(
-                            &arg_path,
+                            arg_path,
                             "fixed argument shape or reference identity mismatch",
                         );
                     }
                 }
                 IrCallArg::FixedArray(array) => {
-                    self.validate_fixed_activation(*array, &arg_path)?;
+                    self.validate_fixed_activation(*array, arg_path)?;
                     let actual = self.model.arrays.get(*array).ok_or_else(|| {
-                        IrValidationError::new(&arg_path, "invalid descriptor argument")
+                        IrValidationError::new(arg_path, "invalid descriptor argument")
                     })?;
                     let expected = formal
                         .fixed_array
                         .and_then(|array| self.model.arrays.get(array))
                         .ok_or_else(|| {
                             IrValidationError::new(
-                                &arg_path,
+                                arg_path,
                                 "descriptor argument requires descriptor formal",
                             )
                         })?;
@@ -438,7 +445,7 @@ impl Validator<'_> {
                             .map(|(l, r)| l.abs_diff(*r))
                             .ne(expected.dims.iter().map(|(l, r)| l.abs_diff(*r)))
                     {
-                        return self.fail(&arg_path, "descriptor argument shape mismatch");
+                        return self.fail(arg_path, "descriptor argument shape mismatch");
                     }
                 }
 
@@ -453,7 +460,7 @@ impl Validator<'_> {
                         return self
                             .fail(arg_path, "chandle formal requires a typed pointer value");
                     }
-                    self.validate_expr(expr, formals, &arg_path)?;
+                    self.validate_expr(expr, formals, arg_path)?;
                     if formal.real != expr.is_real()
                         || expr.width != formal.width
                         || expr.signed != formal.signed
@@ -635,9 +642,7 @@ impl Validator<'_> {
                     if formal.chandle && !formal.is_address() {
                         value
                             .validate(&self.model, formals, self.chandle_return.get())
-                            .map_err(|error| {
-                                IrValidationError::new(arg_path.clone(), error.to_string())
-                            })?;
+                            .map_err(|error| IrValidationError::new(arg_path, error.to_string()))?;
                     } else {
                         return self.fail(arg_path, "typed chandle value requires an input formal");
                     }
@@ -646,7 +651,7 @@ impl Validator<'_> {
                     if !formal.event || formal.is_address() {
                         return self.fail(arg_path, "event value requires an input event formal");
                     }
-                    self.validate_event_ref(event, formals, &arg_path)?;
+                    self.validate_event_ref(event, formals, arg_path)?;
                 }
                 IrCallArg::EventAddr(event) => {
                     if !formal.event || !formal.is_address() {
@@ -658,7 +663,7 @@ impl Validator<'_> {
                     if matches!(event, IrEventRef::Null | IrEventRef::Handle(_)) {
                         return self.fail(arg_path, "event address requires handle storage");
                     }
-                    self.validate_event_ref(event, formals, &arg_path)?;
+                    self.validate_event_ref(event, formals, arg_path)?;
                 }
                 IrCallArg::EventSlot(address) => {
                     if !formal.event || !formal.is_address() || address.is_empty() {
@@ -697,7 +702,7 @@ impl Validator<'_> {
                     }
                     if formal.real {
                         self.validate_real_ref_actual(
-                            lhs, read, *width, *const_ref, formal, formals, &arg_path,
+                            lhs, read, *width, *const_ref, formal, formals, arg_path,
                         )?;
                         continue;
                     }
@@ -722,13 +727,13 @@ impl Validator<'_> {
                     self.validate_ref_actual_lhs(
                         lhs,
                         formals,
-                        &format!("{arg_path}.lhs"),
+                        format_args!("{arg_path}.lhs"),
                         formal.const_ref,
                     )?;
-                    self.validate_expr(read, formals, &format!("{arg_path}.read"))?;
+                    self.validate_expr(read, formals, format_args!("{arg_path}.read"))?;
                     if read.width != *width || read.signed != *signed {
                         return self.fail(
-                            format!("{arg_path}.read"),
+                            format_args!("{arg_path}.read"),
                             "reference read type disagrees with its descriptor",
                         );
                     }
@@ -756,7 +761,7 @@ impl Validator<'_> {
                         || init.signed != formal.signed
                     {
                         return self.fail(
-                            format!("{arg_path}.init"),
+                            format_args!("{arg_path}.init"),
                             "output/inout temp initializer type disagrees with its formal",
                         );
                     }
@@ -805,7 +810,7 @@ impl Validator<'_> {
         const_ref: bool,
         formal: &IrFormal,
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         if width != 0 || !read.is_real() {
             return self.fail(path, "real reference operand must carry a real value");
@@ -838,7 +843,7 @@ impl Validator<'_> {
                 // A const real reference is not an assignment target, so it is
                 // checked here rather than through `validate_lhs`.
                 return match super::lvalues::real_ref_formal(formals, addr) {
-                    Some(_) => self.validate_expr(read, formals, &format!("{path}.read")),
+                    Some(_) => self.validate_expr(read, formals, format_args!("{path}.read")),
                     None => self.fail(path, "forwarded real reference names no real ref formal"),
                 };
             }
@@ -850,15 +855,15 @@ impl Validator<'_> {
                 "real reference operand requires real variable storage",
             );
         }
-        self.validate_lhs(lhs, formals, &format!("{path}.lhs"))?;
-        self.validate_expr(read, formals, &format!("{path}.read"))
+        self.validate_lhs(lhs, formals, format_args!("{path}.lhs"))?;
+        self.validate_expr(read, formals, format_args!("{path}.read"))
     }
 
     fn validate_ref_actual_lhs(
         &self,
         lhs: &IrLhs,
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
         allow_const: bool,
     ) -> ValidationResult {
         match lhs {
@@ -866,7 +871,7 @@ impl Validator<'_> {
                 self.validate_ref_actual_lhs(
                     target,
                     formals,
-                    &format!("{path}.target"),
+                    format_args!("{path}.target"),
                     allow_const,
                 )?;
                 if self.lhs_packed_width(target).is_none() {

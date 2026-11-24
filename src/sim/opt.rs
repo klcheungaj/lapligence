@@ -2,6 +2,8 @@
 
 mod passes;
 pub(in crate::sim) use passes::walk_expr_mut;
+#[cfg(test)]
+pub(in crate::sim) use passes::walk_model_exprs_mut;
 
 pub use passes::OptConfig;
 

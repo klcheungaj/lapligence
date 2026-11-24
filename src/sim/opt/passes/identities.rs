@@ -4,371 +4,16 @@ use super::*;
 
 // ── Pass: identities ──────────────────────────────────────────────────────────
 
+/// Apply the identity rules at `e`, whose operands the caller has rewritten: the
+/// expression walk visits them first. Each rule replaces `e` with one of its
+/// descendants or fixes the bounds of a select, so the rules run out.
 pub(super) fn ident_expr(e: &mut IrExpr) {
-    ident_children(e);
-    for _ in 0..8 {
-        if !try_identity(e) {
-            break;
-        }
-        ident_children(e);
-    }
+    while try_identity(e) {}
 }
 
-/// Apply identity rules to every descendant (children first).
-fn ident_children(e: &mut IrExpr) {
-    match &mut e.kind {
-        IrExprKind::FixedValueCompare { left, right, .. } => {
-            left.expressions_mut(&mut ident_expr);
-            right.expressions_mut(&mut ident_expr);
-        }
-        IrExprKind::FixedArrayReduce(reduction) => {
-            reduction.expressions_mut(&mut |child| ident_expr(child));
-        }
-        IrExprKind::Bin { a, b, .. } | IrExprKind::RealBin { a, b, .. } => {
-            ident_expr(a);
-            ident_expr(b);
-        }
-        IrExprKind::Un { a, .. }
-        | IrExprKind::RealUn { a, .. }
-        | IrExprKind::CastToPacked { a }
-        | IrExprKind::Resize { a }
-        | IrExprKind::Convert { a }
-        | IrExprKind::ToTwoState { a }
-        | IrExprKind::StreamToFixed { a, .. } => ident_expr(a),
-        IrExprKind::CastToReal { a, .. } => ident_expr(a),
-        IrExprKind::Mux { sel, a, b }
-        | IrExprKind::ArrayMux { sel, a, b, .. }
-        | IrExprKind::StructMux { sel, a, b, .. } => {
-            ident_expr(sel);
-            ident_expr(a);
-            ident_expr(b);
-        }
-        IrExprKind::UdpEval { inputs: parts, .. }
-        | IrExprKind::Predicate { clauses: parts }
-        | IrExprKind::Concat { parts }
-        | IrExprKind::Replicate { parts, .. } => {
-            for p in parts {
-                ident_expr(p);
-            }
-        }
-        IrExprKind::Pattern(pattern) => {
-            ident_expr(&mut pattern.value);
-            if let Some(constant) = &mut pattern.constant {
-                ident_expr(constant);
-            }
-            if let Some(binding) = &mut pattern.binding {
-                walk_lhs_mut(binding, &mut |child| ident_expr(child));
-            }
-            for check in &mut pattern.checks {
-                if let Some(constant) = &mut check.constant {
-                    ident_expr(constant);
-                }
-                if let Some(binding) = &mut check.binding {
-                    walk_lhs_mut(binding, &mut |child| ident_expr(child));
-                }
-            }
-            for binding in &mut pattern.native_bindings {
-                if let crate::sim::ir::IrNativeBinding::Value { lhs, .. } = binding {
-                    walk_lhs_mut(lhs, &mut |child| ident_expr(child));
-                }
-                binding.expressions_mut(&mut |child| ident_expr(child));
-            }
-        }
-        IrExprKind::Stream { value, .. } => ident_expr(value),
-        IrExprKind::Mutation(mutation) => {
-            walk_lhs_mut(&mut mutation.lhs, &mut |child| ident_expr(child));
-            ident_expr(&mut mutation.value);
-        }
-        IrExprKind::BitStreamCast { a, .. } => ident_expr(a),
-        IrExprKind::DynamicCast(cast) => {
-            walk_lhs_mut(&mut cast.lhs, &mut |child| ident_expr(child));
-            ident_expr(&mut cast.rhs);
-            if let Some(source) = &mut cast.class_source {
-                source.expressions_mut(&mut |child| ident_expr(child));
-            }
-            for value in &mut cast.valid_values {
-                ident_expr(value);
-            }
-        }
-        IrExprKind::Inside { value, items } => {
-            ident_expr(value);
-            for item in items {
-                match item {
-                    IrInsideItem::Value(item) => ident_expr(item),
-                    IrInsideItem::Range { low, high } => {
-                        ident_expr(low);
-                        ident_expr(high);
-                    }
-                    IrInsideItem::OpenRange { low, high } => {
-                        if let Some(low) = low {
-                            ident_expr(low);
-                        }
-                        if let Some(high) = high {
-                            ident_expr(high);
-                        }
-                    }
-                    IrInsideItem::Container { .. } => {}
-                    IrInsideItem::Cells(cells) => cells.expressions_mut(&mut ident_expr),
-                    IrInsideItem::FixedArray { value, .. } => ident_expr(value),
-                }
-            }
-        }
-        IrExprKind::BitSel { base, idx } => {
-            ident_expr(base);
-            ident_expr(idx);
-        }
-        IrExprKind::PartSel { base, .. } => ident_expr(base),
-        IrExprKind::IdxPartSel {
-            base,
-            base_idx,
-            width_expr,
-            ..
-        } => {
-            ident_expr(base);
-            ident_expr(base_idx);
-            ident_expr(width_expr);
-        }
-        IrExprKind::ArrayRead {
-            indices, elem_sel, ..
-        } => {
-            for i in indices {
-                ident_expr(i);
-            }
-            elem_sel.expressions_mut(&mut |idx| ident_expr(idx));
-        }
-        IrExprKind::EnumMethod(query) => {
-            query.expressions_mut(&mut |child| ident_expr(child));
-        }
-        IrExprKind::CallFn(call) => {
-            for arg in &mut call.args {
-                match arg {
-                    IrCallArg::FixedValue(value) => value.expressions_mut(&mut ident_expr),
-                    IrCallArg::Val(ex) => ident_expr(ex),
-                    IrCallArg::RealArrayValues(values)
-                    | IrCallArg::ContainerValues { values, .. } => {
-                        values.iter_mut().for_each(&mut ident_expr)
-                    }
-                    IrCallArg::StringVal(value) => {
-                        value.expressions_mut(&mut |child| ident_expr(child));
-                    }
-                    IrCallArg::NativeLeaves { leaves, .. } => {
-                        for leaf in leaves {
-                            leaf.expressions_mut(&mut |child| ident_expr(child));
-                        }
-                    }
-                    IrCallArg::NativeCall { .. } | IrCallArg::RealArrayCall { .. } => {
-                        arg.expressions_mut(&mut |child| ident_expr(child));
-                    }
-                    IrCallArg::OutTemp {
-                        init,
-                        writeback,
-                        storage_lhs,
-                        storage_read,
-                        selector_inits,
-                        ..
-                    } => {
-                        if let Some(init) = init {
-                            ident_expr(init);
-                        }
-                        ident_lhs(writeback);
-                        if let Some(storage_lhs) = storage_lhs {
-                            ident_lhs(storage_lhs);
-                        }
-                        if let Some(storage_read) = storage_read {
-                            ident_expr(storage_read);
-                        }
-                        for (_, _, _, _, init) in selector_inits {
-                            ident_expr(init);
-                        }
-                    }
-                    IrCallArg::OutAddr(_)
-                    | IrCallArg::StringOutAddr(_)
-                    | IrCallArg::StringRefAddr { .. }
-                    | IrCallArg::ChandleVal(_)
-                    | IrCallArg::FixedArray(_)
-                    | IrCallArg::RealArray(_)
-                    | IrCallArg::NativeValue(_)
-                    | IrCallArg::NativeRefBound
-                    | IrCallArg::Container(_)
-                    | IrCallArg::EventVal(_)
-                    | IrCallArg::EventSlot(_)
-                    | IrCallArg::EventAddr(_)
-                    | IrCallArg::ChandleAddr(_)
-                    | IrCallArg::ChandleRefAddr(_) => {}
-                    IrCallArg::RefAddr { read, lhs, .. } => {
-                        ident_expr(read);
-                        ident_lhs(lhs);
-                    }
-                    IrCallArg::ElementRef(reference) => reference.expressions_mut(&mut ident_expr),
-                    IrCallArg::StringOutTemp {
-                        init, storage_read, ..
-                    } => {
-                        if let Some(init) = init {
-                            init.expressions_mut(&mut |child| ident_expr(child));
-                        }
-                        if let Some(read) = storage_read {
-                            read.expressions_mut(&mut |child| ident_expr(child));
-                        }
-                    }
-                }
-            }
-        }
-        IrExprKind::SysFunc(sf) => match &mut **sf {
-            IrSysFunc::TestPlusArgs { pattern } => {
-                pattern.expressions_mut(&mut |expression| ident_expr(expression))
-            }
-            IrSysFunc::ValuePlusArgs { format, target } => {
-                format.expressions_mut(&mut |expression| ident_expr(expression));
-                match target {
-                    crate::sim::ir::IrPlusArgTarget::Packed { lhs, .. }
-                    | crate::sim::ir::IrPlusArgTarget::Real { lhs, .. } => ident_lhs(lhs),
-                    crate::sim::ir::IrPlusArgTarget::String { .. } => {}
-                    crate::sim::ir::IrPlusArgTarget::Element { read, .. } => ident_expr(read),
-                }
-            }
-            IrSysFunc::CoverageCounts {
-                query,
-                covered,
-                total,
-            } => {
-                if let Some(record) = query.chandle_mut() {
-                    record.expressions_mut(&mut |child| ident_expr(child));
-                }
-                for target in [covered, total] {
-                    match target {
-                        crate::sim::ir::IrPlusArgTarget::Packed { lhs, .. }
-                        | crate::sim::ir::IrPlusArgTarget::Real { lhs, .. } => ident_lhs(lhs),
-                        crate::sim::ir::IrPlusArgTarget::String { .. } => {}
-                        crate::sim::ir::IrPlusArgTarget::Element { read, .. } => ident_expr(read),
-                    }
-                }
-            }
-            IrSysFunc::System(Some(command)) => {
-                command.expressions_mut(&mut |child| ident_expr(child));
-            }
-            IrSysFunc::CoverageApi(call) => {
-                call.expressions_mut(&mut |child| ident_expr(child));
-            }
-            IrSysFunc::System(None) => {}
-            IrSysFunc::VpiCall { args, .. } => {
-                for arg in args {
-                    ident_expr(arg);
-                }
-            }
-            IrSysFunc::LegacyRandom { seed, args, .. } => {
-                if let Some(seed) = seed {
-                    ident_lhs(seed);
-                }
-                for arg in args {
-                    ident_expr(arg);
-                }
-            }
-            IrSysFunc::Urandom { seed } => {
-                if let Some(seed) = seed {
-                    ident_expr(seed);
-                }
-            }
-            IrSysFunc::UrandomRange { max, min } => {
-                ident_expr(max);
-                if let Some(min) = min {
-                    ident_expr(min);
-                }
-            }
-            IrSysFunc::Clog2(a)
-            | IrSysFunc::Bits(a)
-            | IrSysFunc::BitQuery { arg: a, .. }
-            | IrSysFunc::Rtoi(a)
-            | IrSysFunc::Itor(a)
-            | IrSysFunc::RealToBits(a)
-            | IrSysFunc::BitsToReal(a)
-            | IrSysFunc::ShortRealToBits(a)
-            | IrSysFunc::BitsToShortReal(a) => ident_expr(a),
-            IrSysFunc::RandJoinPick { lengths, ratio } => {
-                for length in lengths {
-                    ident_expr(length);
-                }
-                ident_expr(ratio);
-            }
-            IrSysFunc::Randcase { weights, .. } => {
-                for weight in weights {
-                    ident_expr(weight);
-                }
-            }
-            IrSysFunc::RandStep { stream, .. } => {
-                if let Some(stream) = stream {
-                    stream.expressions_mut(&mut |expression| ident_expr(expression));
-                }
-            }
-            IrSysFunc::RandCallReady { .. }
-            | IrSysFunc::RandValue { .. }
-            | IrSysFunc::RandCyclic { .. } => {}
-            IrSysFunc::RandInst { inst, index, .. } => {
-                if let Some(inst) = inst {
-                    ident_expr(inst);
-                }
-                if let Some(index) = index {
-                    ident_expr(index);
-                }
-            }
-            IrSysFunc::Math { args, .. } => {
-                for arg in args {
-                    ident_expr(arg);
-                }
-            }
-            IrSysFunc::QFull { q_id, status } => {
-                ident_expr(q_id);
-                ident_lhs(status);
-            }
-            IrSysFunc::Time { .. } | IrSysFunc::Realtime { .. } => {}
-            IrSysFunc::FileOpen { path, mode } => {
-                path.expressions_mut(&mut |expression| ident_expr(expression));
-                if let Some(mode) = mode {
-                    mode.expressions_mut(&mut |expression| ident_expr(expression));
-                }
-            }
-            IrSysFunc::FileTell(descriptor) | IrSysFunc::FileEof(descriptor) => {
-                ident_expr(descriptor)
-            }
-            IrSysFunc::FileSeek {
-                descriptor,
-                offset,
-                operation,
-            } => {
-                ident_expr(descriptor);
-                ident_expr(offset);
-                ident_expr(operation);
-            }
-            IrSysFunc::FileInput(input) => {
-                input.expressions_mut(&mut |expression| ident_expr(expression));
-            }
-            IrSysFunc::Sampled(call) => ident_expr(&mut call.argument),
-        },
-        _ => {}
-    }
-}
-
-fn ident_lhs(l: &mut IrLhs) {
-    match l {
-        IrLhs::Bit(_, idx, _) => ident_expr(idx),
-        IrLhs::IdxPart(_, base, width, _, _, _) => {
-            ident_expr(base);
-            ident_expr(width);
-        }
-        IrLhs::ArrayElem {
-            indices, elem_sel, ..
-        } => {
-            for i in indices {
-                ident_expr(i);
-            }
-            elem_sel.expressions_mut(&mut |idx| ident_expr(idx));
-        }
-        IrLhs::Stream { parts, .. } => {
-            for (part, _) in parts {
-                ident_lhs(part);
-            }
-        }
-        _ => {}
-    }
+/// Move an operand out of the expression it is about to replace.
+fn take(operand: &mut IrExpr) -> IrExpr {
+    std::mem::replace(operand, IrExpr::new(IrExprKind::Fill(0), 1, false, Some(0)))
 }
 
 fn is_zero_const(e: &IrExpr) -> bool {
@@ -399,10 +44,10 @@ fn try_identity(e: &mut IrExpr) -> bool {
             if let IrExprKind::Un {
                 op: IrUnOp::BitNeg,
                 a: inner,
-            } = &a.kind
+            } = &mut a.kind
             {
                 if as_packed_const(inner).is_some_and(|v| !v.is_unknown()) {
-                    let replacement = (**inner).clone();
+                    let replacement = take(inner);
                     *e = replacement;
                     return true;
                 }
@@ -412,13 +57,12 @@ fn try_identity(e: &mut IrExpr) -> bool {
         // shift by constant 0 → base (same shape guard as the other rules:
         // the replacement must keep the node's recorded width/signedness)
         IrExprKind::Bin {
-            op: op @ (IrBinOp::Shl | IrBinOp::Shr | IrBinOp::Ashl | IrBinOp::Ashr),
+            op: IrBinOp::Shl | IrBinOp::Shr | IrBinOp::Ashl | IrBinOp::Ashr,
             a,
             b,
         } => {
             if is_zero_const(b) && a.width == e.width && a.signed == e.signed {
-                let replacement = (**a).clone();
-                let _ = op;
+                let replacement = take(a);
                 *e = replacement;
                 return true;
             }
@@ -428,7 +72,7 @@ fn try_identity(e: &mut IrExpr) -> bool {
         // operand. Do not expose a signed child or resurrect a fill marker
         // (which can also live on the literal rather than its enclosing node).
         IrExprKind::Concat { parts } if parts.len() == 1 => {
-            let part = &parts[0];
+            let part = &mut parts[0];
             if part.width == e.width
                 && part.signed == e.signed
                 && e.fill.is_none()
@@ -436,7 +80,7 @@ fn try_identity(e: &mut IrExpr) -> bool {
                 && !matches!(&part.kind, IrExprKind::Fill(_))
                 && !matches!(&part.kind, IrExprKind::Const(value) if value.fill.is_some())
             {
-                let replacement = parts[0].clone();
+                let replacement = take(part);
                 *e = replacement;
                 return true;
             }
@@ -453,10 +97,10 @@ fn try_identity(e: &mut IrExpr) -> bool {
             let pick = as_packed_const(sel).and_then(|v| v.to_u64().map(|u| u != 0));
             match pick {
                 Some(choice) => {
-                    let chosen = if choice { &**a } else { &**b };
+                    let chosen = if choice { a } else { b };
                     if chosen.width == e.width && chosen.signed == e.signed && chosen.fill.is_none()
                     {
-                        let replacement = chosen.clone();
+                        let replacement = take(chosen);
                         *e = replacement;
                         true
                     } else {
@@ -495,7 +139,7 @@ fn try_identity(e: &mut IrExpr) -> bool {
                 .and_then(|low| low.checked_add(span).map(|left| (left, low)))
             {
                 Some((left, right)) => {
-                    let base = base.clone();
+                    let base = Box::new(take(base));
                     e.kind = IrExprKind::PartSel { base, left, right };
                     true
                 }
@@ -504,14 +148,14 @@ fn try_identity(e: &mut IrExpr) -> bool {
         }
         // Resize(a, w, s) where a already has (w, s) → a
         IrExprKind::Resize { a } if a.width == e.width && a.signed == e.signed => {
-            let replacement = (**a).clone();
+            let replacement = take(a);
             *e = replacement;
             true
         }
         // Convert(a, w, s) where a already has (w, s) → a (sv4_cast on an
         // identical shape is the identity)
         IrExprKind::Convert { a } if a.width == e.width && a.signed == e.signed => {
-            let replacement = (**a).clone();
+            let replacement = take(a);
             *e = replacement;
             true
         }

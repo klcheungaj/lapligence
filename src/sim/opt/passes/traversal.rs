@@ -4,7 +4,7 @@ use super::*;
 
 // ── Expression walking (every slot, recursively into statements) ─────────────
 
-pub(super) fn walk_lhs_mut(l: &mut IrLhs, f: &mut impl FnMut(&mut IrExpr)) {
+fn walk_lhs_mut(l: &mut IrLhs, f: &mut impl FnMut(&mut IrExpr)) {
     // `IrLhs::expressions_mut` is exhaustive over the lvalue forms, so a new
     // form fails to compile there until its selector slots are classified.
     l.expressions_mut(&mut |child| walk_expr_mut(child, f));
@@ -981,7 +981,7 @@ fn walk_pre_fn_mut(pre: &mut IrPreFn, f: &mut impl FnMut(&mut IrExpr)) {
     }
 }
 
-pub(super) fn walk_model_exprs_mut(model: &mut IrModel, f: &mut impl FnMut(&mut IrExpr)) {
+pub(in crate::sim) fn walk_model_exprs_mut(model: &mut IrModel, f: &mut impl FnMut(&mut IrExpr)) {
     for access in &mut model.native_accesses {
         access
             .receiver

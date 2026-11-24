@@ -39,6 +39,72 @@ impl<'a> Codegen<'a> {
         Ok(values.fold(first, |left, right| cmp_expr_ir(ir_operation, left, right)))
     }
 
+    /// A context-determined packed operator: its operands take the common type.
+    fn lower_context_binary(
+        &self,
+        scope_path: &str,
+        op: IrBinOp,
+        operands: &[NodeId],
+        a: IrExpr,
+        b: IrExpr,
+    ) -> Result<IrExpr, String> {
+        let (width, signed) = (a.width.max(b.width), a.signed && b.signed);
+        let context = "arithmetic/bitwise context";
+        let a = self.context_operand(scope_path, operands[0], a, width, signed, context)?;
+        let b = self.context_operand(scope_path, operands[1], b, width, signed, context)?;
+        Ok(common_bin_expr(op, a, b))
+    }
+
+    /// Propagate the common type of an operation into `value`, lowered from its
+    /// operand `node`. An operand that propagated this very type to its own
+    /// operands keeps it; otherwise a chain of operators would visit each
+    /// operand once per operator around it.
+    pub(super) fn context_operand(
+        &self,
+        scope_path: &str,
+        node: NodeId,
+        value: IrExpr,
+        width: u32,
+        signed: bool,
+        context: &str,
+    ) -> Result<IrExpr, String> {
+        let propagated = (value.width, value.signed) == (width, signed)
+            && match (self.kind(node), &value.kind) {
+                (
+                    NodeKind::Expr(ExprKind::Operation {
+                        op:
+                            Operation::Add
+                            | Operation::Subtract
+                            | Operation::Multiply
+                            | Operation::Divide
+                            | Operation::Modulo
+                            | Operation::BitwiseAnd
+                            | Operation::BitwiseOr
+                            | Operation::BitwiseXor
+                            | Operation::BitwiseXnor,
+                        assignment: false,
+                        ..
+                    }),
+                    IrExprKind::Bin { op, .. },
+                ) => is_context_binary(*op),
+                (
+                    NodeKind::Expr(
+                        ExprKind::Conditional { .. }
+                        | ExprKind::Operation {
+                            op: Operation::Conditional,
+                            ..
+                        },
+                    ),
+                    IrExprKind::Mux { .. },
+                ) => true,
+                _ => false,
+            };
+        if propagated {
+            return Ok(value);
+        }
+        checked_operand_with_context(value, width, signed, scope_path, context)
+    }
+
     pub(super) fn lower_operation(
         &mut self,
         scope_path: &str,
@@ -157,7 +223,7 @@ impl<'a> Codegen<'a> {
                 if a.is_real() || b.is_real() {
                     return Ok(real_bin_expr(IrRealBinOp::Add, a, b));
                 }
-                common_bin_expr_with_context(IrBinOp::Add, a, b, scope_path)
+                self.lower_context_binary(scope_path, IrBinOp::Add, operands, a, b)
             }
             Operation::Subtract => {
                 let a = op!(0);
@@ -165,7 +231,7 @@ impl<'a> Codegen<'a> {
                 if a.is_real() || b.is_real() {
                     return Ok(real_bin_expr(IrRealBinOp::Sub, a, b));
                 }
-                common_bin_expr_with_context(IrBinOp::Sub, a, b, scope_path)
+                self.lower_context_binary(scope_path, IrBinOp::Sub, operands, a, b)
             }
             Operation::Multiply => {
                 let a = op!(0);
@@ -173,7 +239,7 @@ impl<'a> Codegen<'a> {
                 if a.is_real() || b.is_real() {
                     return Ok(real_bin_expr(IrRealBinOp::Mul, a, b));
                 }
-                common_bin_expr_with_context(IrBinOp::Mul, a, b, scope_path)
+                self.lower_context_binary(scope_path, IrBinOp::Mul, operands, a, b)
             }
             Operation::Divide | Operation::Modulo | Operation::Power => {
                 let a = op!(0);
@@ -192,7 +258,7 @@ impl<'a> Codegen<'a> {
                     _ => IrBinOp::Pow,
                 };
                 if matches!(f, IrBinOp::Div | IrBinOp::Mod) {
-                    common_bin_expr_with_context(f, a, b, scope_path)
+                    self.lower_context_binary(scope_path, f, operands, a, b)
                 } else {
                     let (width, signed) = (a.width, a.signed);
                     Ok(IrExpr::new(
@@ -215,7 +281,7 @@ impl<'a> Codegen<'a> {
                         "bitwise operation on real value in `{scope_path}` is not supported"
                     ));
                 }
-                common_bin_expr_with_context(IrBinOp::BitAnd, a, b, scope_path)
+                self.lower_context_binary(scope_path, IrBinOp::BitAnd, operands, a, b)
             }
             Operation::BitwiseOr => {
                 let a = op!(0);
@@ -225,7 +291,7 @@ impl<'a> Codegen<'a> {
                         "bitwise operation on real value in `{scope_path}` is not supported"
                     ));
                 }
-                common_bin_expr_with_context(IrBinOp::BitOr, a, b, scope_path)
+                self.lower_context_binary(scope_path, IrBinOp::BitOr, operands, a, b)
             }
             Operation::BitwiseXor => {
                 let a = op!(0);
@@ -235,7 +301,7 @@ impl<'a> Codegen<'a> {
                         "bitwise operation on real value in `{scope_path}` is not supported"
                     ));
                 }
-                common_bin_expr_with_context(IrBinOp::BitXor, a, b, scope_path)
+                self.lower_context_binary(scope_path, IrBinOp::BitXor, operands, a, b)
             }
             Operation::BitwiseXnor => {
                 let a = op!(0);
@@ -245,7 +311,7 @@ impl<'a> Codegen<'a> {
                         "bitwise operation on real value in `{scope_path}` is not supported"
                     ));
                 }
-                common_bin_expr_with_context(IrBinOp::BitXNor, a, b, scope_path)
+                self.lower_context_binary(scope_path, IrBinOp::BitXNor, operands, a, b)
             }
             Operation::LogicalAnd => {
                 let a = op!(0);

@@ -47,7 +47,11 @@ impl Validator<'_> {
         .then_some(index)
     }
 
-    pub(super) fn validate_fixed_activation(&self, index: usize, path: &str) -> ValidationResult {
+    pub(super) fn validate_fixed_activation(
+        &self,
+        index: usize,
+        path: IrPath<'_>,
+    ) -> ValidationResult {
         if self
             .model
             .arrays
@@ -195,7 +199,7 @@ impl Validator<'_> {
         &self,
         event: &IrEventRef,
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         match event {
             IrEventRef::Null => Ok(()),
@@ -228,7 +232,11 @@ impl Validator<'_> {
                     }
                 }
                 for (index, expression) in indices.iter().enumerate() {
-                    self.validate_expr(expression, formals, &format!("{path}.indices[{index}]"))?;
+                    self.validate_expr(
+                        expression,
+                        formals,
+                        format_args!("{path}.indices[{index}]"),
+                    )?;
                 }
                 Ok(())
             }
@@ -241,11 +249,15 @@ impl Validator<'_> {
             IrEventRef::Handle(handle) => {
                 handle
                     .validate(&self.model, formals, self.chandle_return.get())
-                    .map_err(|error| IrValidationError::new(path.to_owned(), error.to_string()))?;
+                    .map_err(|error| IrValidationError::new(path, error.to_string()))?;
                 let mut indices = Vec::new();
                 handle.expressions(&mut |expression| indices.push(expression.clone()));
                 for (index, expression) in indices.iter().enumerate() {
-                    self.validate_expr(expression, formals, &format!("{path}.handle[{index}]"))?;
+                    self.validate_expr(
+                        expression,
+                        formals,
+                        format_args!("{path}.handle[{index}]"),
+                    )?;
                 }
                 Ok(())
             }
@@ -263,7 +275,7 @@ impl Validator<'_> {
         &self,
         text: &IrPlusArgText,
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         match text {
             IrPlusArgText::Literal(text) => {

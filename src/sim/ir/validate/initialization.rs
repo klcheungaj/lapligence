@@ -7,7 +7,7 @@ impl Validator<'_> {
         &self,
         pre_fns: &[IrPreFn],
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         let saved_return = self.chandle_return.replace(None);
         let saved_string_return = self.string_return.replace(None);
@@ -23,7 +23,7 @@ impl Validator<'_> {
                         self.validate_stmts(
                             body,
                             branch_formals,
-                            &format!("{path}.pre_fns[{idx}].body"),
+                            format_args!("{path}.pre_fns[{idx}].body"),
                         )
                     })?;
                 }
@@ -33,7 +33,7 @@ impl Validator<'_> {
                             capture.storage(),
                             capture.initial(),
                             formals,
-                            &format!("{path}.pre_fns[{idx}].captures[{capture_idx}].initial"),
+                            format_args!("{path}.pre_fns[{idx}].captures[{capture_idx}].initial"),
                         )?;
                     }
                     // Each `ref` formal's descriptor is captured once; a
@@ -74,7 +74,7 @@ impl Validator<'_> {
                             });
                         if (repeated && !(handle && paired)) || marker_expected {
                             return self.fail(
-                                format!("{path}.pre_fns[{idx}].captures[{capture_idx}]"),
+                                format_args!("{path}.pre_fns[{idx}].captures[{capture_idx}]"),
                                 "a `ref` formal is captured once, followed by its change marker for a handle or event formal",
                             );
                         }
@@ -88,12 +88,12 @@ impl Validator<'_> {
                     self.with_captured_native_values(
                         captures,
                         this,
-                        &format!("{path}.pre_fns[{idx}]"),
+                        format_args!("{path}.pre_fns[{idx}]"),
                         || {
                             self.validate_stmts(
                                 body,
                                 if ref_formals { formals } else { branch_formals },
-                                &format!("{path}.pre_fns[{idx}].body"),
+                                format_args!("{path}.pre_fns[{idx}].body"),
                             )
                         },
                     )?;
@@ -104,7 +104,7 @@ impl Validator<'_> {
                             self.validate_expr(
                                 arg,
                                 branch_formals,
-                                &format!("{path}.pre_fns[{idx}].args[{arg_idx}]"),
+                                format_args!("{path}.pre_fns[{idx}].args[{arg_idx}]"),
                             )
                         })
                     })?;
@@ -114,7 +114,7 @@ impl Validator<'_> {
                                 capture.storage(),
                                 capture.initial(),
                                 formals,
-                                &format!(
+                                format_args!(
                                     "{path}.pre_fns[{idx}].context.captures[{capture_idx}].initial"
                                 ),
                             )?;
@@ -134,7 +134,7 @@ impl Validator<'_> {
                             || !slots.insert(capture.storage().slot())
                         {
                             return self.fail(
-                                format!("{path}.pre_fns[{idx}].captures[{capture_idx}]"),
+                                format_args!("{path}.pre_fns[{idx}].captures[{capture_idx}]"),
                                 "event assignment captures must use unique slots in their frame",
                             );
                         }
@@ -142,23 +142,23 @@ impl Validator<'_> {
                             capture.storage(),
                             capture.initial(),
                             formals,
-                            &format!("{path}.pre_fns[{idx}].captures[{capture_idx}].initial"),
+                            format_args!("{path}.pre_fns[{idx}].captures[{capture_idx}].initial"),
                         )?;
                     }
                     self.with_captured_native_values(
                         captures,
                         this,
-                        &format!("{path}.pre_fns[{idx}]"),
+                        format_args!("{path}.pre_fns[{idx}]"),
                         || {
                             self.validate_lhs(
                                 lhs,
                                 branch_formals,
-                                &format!("{path}.pre_fns[{idx}].lhs"),
+                                format_args!("{path}.pre_fns[{idx}].lhs"),
                             )?;
                             self.validate_expr(
                                 rhs,
                                 branch_formals,
-                                &format!("{path}.pre_fns[{idx}].rhs"),
+                                format_args!("{path}.pre_fns[{idx}].rhs"),
                             )
                         },
                     )?;
@@ -175,7 +175,7 @@ impl Validator<'_> {
                             || !slots.insert(capture.storage().slot())
                         {
                             return self.fail(
-                                format!("{path}.pre_fns[{idx}].captures[{capture_idx}]"),
+                                format_args!("{path}.pre_fns[{idx}].captures[{capture_idx}]"),
                                 "deferred assertion captures must use unique slots in their frame",
                             );
                         }
@@ -183,18 +183,18 @@ impl Validator<'_> {
                             capture.storage(),
                             capture.initial(),
                             formals,
-                            &format!("{path}.pre_fns[{idx}].captures[{capture_idx}].initial"),
+                            format_args!("{path}.pre_fns[{idx}].captures[{capture_idx}].initial"),
                         )?;
                     }
                     self.with_captured_native_values(
                         captures,
                         this,
-                        &format!("{path}.pre_fns[{idx}]"),
+                        format_args!("{path}.pre_fns[{idx}]"),
                         || {
                             self.validate_stmts(
                                 body,
                                 branch_formals,
-                                &format!("{path}.pre_fns[{idx}].body"),
+                                format_args!("{path}.pre_fns[{idx}].body"),
                             )
                         },
                     )?;
@@ -212,13 +212,13 @@ impl Validator<'_> {
                         self.validate_stmts(
                             prelude,
                             branch_formals,
-                            &format!("{path}.pre_fns[{idx}].prelude"),
+                            format_args!("{path}.pre_fns[{idx}].prelude"),
                         )?;
                         for (arg_idx, arg) in args.iter().enumerate() {
                             arg.validate(
                                 &self.model,
                                 self.string_return.get(),
-                                &format!("{path}.pre_fns[{idx}].args[{arg_idx}]"),
+                                format_args!("{path}.pre_fns[{idx}].args[{arg_idx}]"),
                             )?;
                             let mut result = Ok(());
                             arg.expressions(&mut |expression| {
@@ -226,7 +226,7 @@ impl Validator<'_> {
                                     self.validate_expr(
                                         expression,
                                         branch_formals,
-                                        &format!("{path}.pre_fns[{idx}].args[{arg_idx}]"),
+                                        format_args!("{path}.pre_fns[{idx}].args[{arg_idx}]"),
                                     )
                                 });
                             });
@@ -238,7 +238,7 @@ impl Validator<'_> {
                 IrPreFn::RealEval { value, context, .. } => {
                     if !value.is_real() {
                         return self.fail(
-                            format!("{path}.pre_fns[{idx}].value"),
+                            format_args!("{path}.pre_fns[{idx}].value"),
                             "real event evaluator requires a real expression",
                         );
                     }
@@ -246,7 +246,7 @@ impl Validator<'_> {
                         self.validate_expr(
                             value,
                             branch_formals,
-                            &format!("{path}.pre_fns[{idx}].value"),
+                            format_args!("{path}.pre_fns[{idx}].value"),
                         )
                     })?;
                     if let Some(context) = context {
@@ -255,7 +255,7 @@ impl Validator<'_> {
                                 capture.storage(),
                                 capture.initial(),
                                 formals,
-                                &format!(
+                                format_args!(
                                     "{path}.pre_fns[{idx}].context.captures[{capture_idx}].initial"
                                 ),
                             )?;
@@ -265,7 +265,7 @@ impl Validator<'_> {
                 IrPreFn::ForceEval { value, real, .. } => {
                     if *real != value.is_real() {
                         return self.fail(
-                            format!("{path}.pre_fns[{idx}].value"),
+                            format_args!("{path}.pre_fns[{idx}].value"),
                             "force evaluator real flag disagrees with its value",
                         );
                     }
@@ -273,7 +273,7 @@ impl Validator<'_> {
                         self.validate_expr(
                             value,
                             branch_formals,
-                            &format!("{path}.pre_fns[{idx}].value"),
+                            format_args!("{path}.pre_fns[{idx}].value"),
                         )
                     })?;
                 }
@@ -284,7 +284,11 @@ impl Validator<'_> {
         Ok(())
     }
 
-    pub(super) fn validate_init_step(&self, step: &IrInitStep, path: &str) -> ValidationResult {
+    pub(super) fn validate_init_step(
+        &self,
+        step: &IrInitStep,
+        path: IrPath<'_>,
+    ) -> ValidationResult {
         match step {
             IrInitStep::FillArrayX(array)
             | IrInitStep::FillArrayZ(array)
@@ -330,7 +334,7 @@ impl Validator<'_> {
             }
             IrInitStep::Initialize(initialization) => match &initialization.target {
                 IrInitTarget::Fixed(lhs) => {
-                    self.validate_lhs(lhs, &[], &format!("{path}.target"))?;
+                    self.validate_lhs(lhs, &[], format_args!("{path}.target"))?;
                     if self.has_transient_target(lhs) {
                         return self.fail(
                             path,
@@ -363,7 +367,7 @@ impl Validator<'_> {
                 }
             },
             IrInitStep::Execute { body, .. } => {
-                self.validate_stmts(std::slice::from_ref(body), &[], &format!("{path}.body"))?;
+                self.validate_stmts(std::slice::from_ref(body), &[], format_args!("{path}.body"))?;
             }
             IrInitStep::WriteNet { group, slot, .. } => {
                 let net = self.model.net_groups.get(*group).ok_or_else(|| {
@@ -465,12 +469,12 @@ impl Validator<'_> {
                         }
                     }
                 }
-                self.validate_expr(&initialization.value, &[], &format!("{path}.value"))
+                self.validate_expr(&initialization.value, &[], format_args!("{path}.value"))
             }
         }
     }
 
-    pub(super) fn validate_spawns(&self, spawns: &[String], path: &str) -> ValidationResult {
+    pub(super) fn validate_spawns(&self, spawns: &[String], path: IrPath<'_>) -> ValidationResult {
         let processes: HashSet<&str> = self
             .model
             .processes
@@ -481,12 +485,15 @@ impl Validator<'_> {
         for (idx, spawn) in spawns.iter().enumerate() {
             if !processes.contains(spawn.as_str()) {
                 return self.fail(
-                    format!("{path}[{idx}]"),
+                    format_args!("{path}[{idx}]"),
                     format!("process `{spawn}` does not exist"),
                 );
             }
             if !seen.insert(spawn.as_str()) {
-                return self.fail(format!("{path}[{idx}]"), "duplicate process registration");
+                return self.fail(
+                    format_args!("{path}[{idx}]"),
+                    "duplicate process registration",
+                );
             }
         }
         Ok(())
@@ -494,7 +501,7 @@ impl Validator<'_> {
 
     pub(super) fn fail<T>(
         &self,
-        path: impl Into<String>,
+        path: impl fmt::Display,
         detail: impl Into<String>,
     ) -> Result<T, IrValidationError> {
         Err(IrValidationError::new(path, detail))

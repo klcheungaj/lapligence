@@ -2394,6 +2394,8 @@ struct Codegen<'a> {
     /// The iterator variables of every `foreach`, built on first use: local
     /// collection asks for each node of every subroutine body.
     foreach_iterators: std::cell::OnceCell<HashSet<NodeId>>,
+    /// The nearest scope of each node ([`Self::lexical_scopes`]).
+    lexical_scopes: std::cell::OnceCell<Vec<Option<NodeId>>>,
     /// Assertion action helpers are registered by the runtime and must not
     /// also be spawned as ordinary design processes at time zero.
     assertion_action_procs: HashSet<String>,
@@ -2840,6 +2842,7 @@ impl<'a> Codegen<'a> {
             wave_block_records: Vec::new(),
             wave_unnamed_blocks: std::cell::OnceCell::new(),
             foreach_iterators: std::cell::OnceCell::new(),
+            lexical_scopes: std::cell::OnceCell::new(),
             assertion_action_procs: HashSet::new(),
             checker_free: Vec::new(),
             free_set_plans: Vec::new(),
@@ -4082,6 +4085,33 @@ pub(super) fn lower_compound_expr_ir(
     Ok(result)
 }
 
+/// The nearest ancestor of each node that `accepts`, indexed by node. One table
+/// instead of a walk over the parent links per query, which takes as many steps
+/// as the node is deep.
+fn nearest_ancestors(db: &Db, accepts: impl Fn(NodeId) -> bool) -> Vec<Option<NodeId>> {
+    let mut nearest = vec![None; db.node_count()];
+    let mut known = vec![false; nearest.len()];
+    let mut path = Vec::new();
+    for node in db.node_ids() {
+        let mut current = node;
+        let ancestor = loop {
+            if known[current.index()] {
+                break nearest[current.index()];
+            }
+            path.push(current);
+            match db.node(current).parent {
+                Some(parent) if !accepts(parent) => current = parent,
+                ancestor => break ancestor,
+            }
+        };
+        for node in path.drain(..) {
+            nearest[node.index()] = ancestor;
+            known[node.index()] = true;
+        }
+    }
+    nearest
+}
+
 fn is_context_binary(op: IrBinOp) -> bool {
     matches!(
         op,
@@ -4261,37 +4291,6 @@ fn common_bin_expr(op: IrBinOp, a: IrExpr, b: IrExpr) -> IrExpr {
         s,
         None,
     )
-}
-
-fn common_bin_expr_with_context(
-    op: IrBinOp,
-    a: IrExpr,
-    b: IrExpr,
-    scope_path: &str,
-) -> Result<IrExpr, String> {
-    let (width, signed) = (a.width.max(b.width), a.signed && b.signed);
-    Ok(IrExpr::new(
-        IrExprKind::Bin {
-            op,
-            a: Box::new(checked_operand_with_context(
-                a,
-                width,
-                signed,
-                scope_path,
-                "arithmetic/bitwise context",
-            )?),
-            b: Box::new(checked_operand_with_context(
-                b,
-                width,
-                signed,
-                scope_path,
-                "arithmetic/bitwise context",
-            )?),
-        },
-        width,
-        signed,
-        None,
-    ))
 }
 
 /// A comparison/equality node after applying the common packed operand type.
@@ -4562,6 +4561,9 @@ fn ir_arg_resize(e: IrExpr, width: u32, signed: bool) -> IrExpr {
 
 #[cfg(test)]
 mod ir_mutation_tests;
+
+#[cfg(test)]
+mod operand_context_tests;
 
 #[cfg(test)]
 mod operation_arity_tests {

@@ -624,6 +624,11 @@ impl IrExpr {
         if let Some(f) = a.fill {
             return IrExpr::new(IrExprKind::Fill(f), width, signed, Some(f));
         }
+        // Each operator of a chain propagates its type to the operands below
+        // it, so a leaf would collect one resize per enclosing operator.
+        if matches!(a.kind, IrExprKind::Resize { .. }) && (a.width, a.signed) == (width, signed) {
+            return a;
+        }
         IrExpr::new(IrExprKind::Resize { a: Box::new(a) }, width, signed, None)
     }
 

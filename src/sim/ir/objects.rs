@@ -1,6 +1,6 @@
 //! Non-integral storage and expressions, kept distinct from packed vectors.
 
-use super::{IrCallArg, IrEnumMember, IrEventRef, IrExpr};
+use super::{IrCallArg, IrEnumMember, IrEventRef, IrExpr, IrPath};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Non-integral scalar storage categories, independent of the packed backend.
@@ -309,7 +309,7 @@ impl IrDisplayArg {
         &self,
         model: &super::CheckedModel<'_>,
         string_return: Option<bool>,
-        path: &str,
+        path: IrPath<'_>,
     ) -> Result<(), super::IrValidationError> {
         match self {
             Self::Packed(value) => {
@@ -786,7 +786,7 @@ impl IrStringExpr {
             }
             format.validate(model, string_return)?;
             for arg in args {
-                arg.validate(model, string_return, "string format argument")?;
+                arg.validate(model, string_return, format_args!("string format argument"))?;
             }
             return Ok(());
         }
@@ -1035,7 +1035,7 @@ impl IrStringExpr {
                     "object random state requires object stream storage",
                 ))
             }
-            Self::Pattern(pattern) => pattern.validate(model, "string.pattern"),
+            Self::Pattern(pattern) => pattern.validate(model, format_args!("string.pattern")),
             Self::CoverageText(query) => match query.as_ref() {
                 super::IrCoverageTextQuery::Type { coverage_type, .. }
                     if *coverage_type >= model.coverage_types.len() =>

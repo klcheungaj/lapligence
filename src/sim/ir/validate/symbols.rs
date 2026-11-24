@@ -18,7 +18,7 @@ impl Validator<'_> {
                 return Ok(());
             }
             self.fail(
-                format!("{table}[{index}].c_name"),
+                format_args!("{table}[{index}].c_name"),
                 format!("{kind} name `{name}` is not unique"),
             )
         };

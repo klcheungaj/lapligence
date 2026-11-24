@@ -8,7 +8,7 @@ impl Validator<'_> {
         storage: StorageRef,
         initial: &IrExpr,
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         let event_initial = matches!(
             initial.kind(),
@@ -56,14 +56,14 @@ impl Validator<'_> {
         &self,
         stmts: &[IrStmt],
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         self.fixed_activations.borrow_mut().push(HashSet::new());
         self.native_activations.borrow_mut().push(HashSet::new());
         let result = stmts.iter().enumerate().try_for_each(|(idx, stmt)| {
-            let path = format!("{path}[{idx}]");
-            self.validate_stmt(stmt, formals, &path)?;
-            self.validate_container_scope(&path)
+            let path = format_args!("{path}[{idx}]");
+            self.validate_stmt(stmt, formals, path)?;
+            self.validate_container_scope(path)
         });
         self.native_activations.borrow_mut().pop();
         self.fixed_activations.borrow_mut().pop();
@@ -74,11 +74,11 @@ impl Validator<'_> {
         &self,
         specs: &[(IrWaitSrc, IrEdge)],
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         for (idx, (source, edge)) in specs.iter().enumerate() {
             if let IrWaitSrc::Event(event) | IrWaitSrc::FilteredEvent { event, .. } = source {
-                self.validate_event_ref(event, formals, &format!("{path}[{idx}].event"))?;
+                self.validate_event_ref(event, formals, format_args!("{path}[{idx}].event"))?;
             }
             let helpers: Vec<(&str, bool)> = match source {
                 IrWaitSrc::Evaluated {
@@ -98,7 +98,7 @@ impl Validator<'_> {
             };
             if matches!(source, IrWaitSrc::Real(_)) && *edge != IrEdge::Any {
                 return self.fail(
-                    format!("{path}[{idx}]"),
+                    format_args!("{path}[{idx}]"),
                     "real event sources only support any-change controls",
                 );
             }
@@ -131,7 +131,7 @@ impl Validator<'_> {
                     });
                 if !valid {
                     return self.fail(
-                        format!("{path}[{idx}]"),
+                        format_args!("{path}[{idx}]"),
                         "event evaluator helper has an invalid value type",
                     );
                 }
@@ -139,7 +139,7 @@ impl Validator<'_> {
             if let IrWaitSrc::Real(name) = source {
                 if !self.valid_dependency(&IrDependency::real(name)) {
                     return self.fail(
-                        format!("{path}[{idx}]"),
+                        format_args!("{path}[{idx}]"),
                         "real event source must name active real storage",
                     );
                 }
@@ -151,7 +151,7 @@ impl Validator<'_> {
                     if !self.valid_dependency(read) || matches!(read, IrDependency::NativeAccess(_))
                     {
                         return self.fail(
-                            format!("{path}[{idx}]"),
+                            format_args!("{path}[{idx}]"),
                             "event dependency must name active storage",
                         );
                     }

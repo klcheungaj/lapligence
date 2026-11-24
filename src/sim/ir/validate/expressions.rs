@@ -7,16 +7,16 @@ impl Validator<'_> {
         &self,
         expr: &IrExpr,
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         self.max_width
             .set(self.max_width.get().max(u128::from(expr.width)));
         if expr.fill.is_some_and(|fill| fill > 3) {
-            return self.fail(format!("{path}.fill"), "fill marker must be in 0..=3");
+            return self.fail(format_args!("{path}.fill"), "fill marker must be in 0..=3");
         }
         if expr.width == 0 && expr.fill.is_some() {
             return self.fail(
-                format!("{path}.fill"),
+                format_args!("{path}.fill"),
                 "real expression carries a packed fill marker",
             );
         }
@@ -219,14 +219,14 @@ impl Validator<'_> {
                         || member.value.signed != query.default.signed
                     {
                         return self.fail(
-                            format!("{path}.members[{index}]"),
+                            format_args!("{path}.members[{index}]"),
                             "enum member value type disagrees with enum type",
                         );
                     }
                 }
             }
             IrExprKind::Const(value) => {
-                self.validate_const(value, &format!("{path}.const"))?;
+                self.validate_const(value, format_args!("{path}.const"))?;
                 if value.width != expr.width
                     || value.signed != expr.signed
                     || value.fill != expr.fill
@@ -362,7 +362,7 @@ impl Validator<'_> {
                     self.validate_expr(
                         capture.initial(),
                         formals,
-                        &format!("{path}.capture[{index}]"),
+                        format_args!("{path}.capture[{index}]"),
                     )?;
                 }
             }
@@ -441,10 +441,13 @@ impl Validator<'_> {
                 }
             }
             IrExprKind::Mutation(mutation) => {
-                self.validate_lhs(&mutation.lhs, formals, &format!("{path}.lhs"))?;
-                self.validate_expr(&mutation.value, formals, &format!("{path}.value"))?;
+                self.validate_lhs(&mutation.lhs, formals, format_args!("{path}.lhs"))?;
+                self.validate_expr(&mutation.value, formals, format_args!("{path}.value"))?;
                 if mutation.current_width != 0 {
-                    self.validate_width(mutation.current_width, &format!("{path}.current_width"))?;
+                    self.validate_width(
+                        mutation.current_width,
+                        format_args!("{path}.current_width"),
+                    )?;
                 }
             }
             IrExprKind::DynamicCast(cast) => {
@@ -481,42 +484,42 @@ impl Validator<'_> {
                     source.validate(&self.model, formals, self.chandle_return.get())?;
                     return Ok(());
                 }
-                self.validate_lhs(&cast.lhs, formals, &format!("{path}.lhs"))?;
+                self.validate_lhs(&cast.lhs, formals, format_args!("{path}.lhs"))?;
                 let lhs_width = self.lhs_packed_width(&cast.lhs);
                 if cast.target_width == 0 {
                     if lhs_width.is_some() {
                         return self.fail(path, "$cast real target metadata disagrees with LHS");
                     }
                 } else {
-                    self.validate_width(cast.target_width, &format!("{path}.target_width"))?;
+                    self.validate_width(cast.target_width, format_args!("{path}.target_width"))?;
                     if lhs_width != Some(cast.target_width) {
                         return self.fail(path, "$cast target width disagrees with LHS");
                     }
                 }
-                self.validate_expr(&cast.rhs, formals, &format!("{path}.rhs"))?;
+                self.validate_expr(&cast.rhs, formals, format_args!("{path}.rhs"))?;
                 for (idx, value) in cast.valid_values.iter().enumerate() {
                     if cast.target_width == 0
                         || value.width != cast.target_width
                         || value.signed != cast.target_signed
                     {
                         return self.fail(
-                            format!("{path}.valid_values[{idx}]"),
+                            format_args!("{path}.valid_values[{idx}]"),
                             "$cast enum member shape disagrees with target",
                         );
                     }
-                    self.validate_expr(value, formals, &format!("{path}.valid_values[{idx}]"))?;
+                    self.validate_expr(value, formals, format_args!("{path}.valid_values[{idx}]"))?;
                 }
             }
             IrExprKind::Sequence(sequence) => {
                 for (index, statement) in sequence.statements.iter().enumerate() {
-                    let statement_path = format!("{path}.statements[{index}]");
+                    let statement_path = format_args!("{path}.statements[{index}]");
                     if !sequence_statement(statement) {
                         return self.fail(
                             statement_path,
                             "expression statement sequences admit only declarations, blocking copies and calls",
                         );
                     }
-                    self.validate_stmt(statement, formals, &statement_path)?;
+                    self.validate_stmt(statement, formals, statement_path)?;
                 }
                 let value = &sequence.value;
                 if value.width != expr.width || value.signed != expr.signed {
@@ -525,39 +528,39 @@ impl Validator<'_> {
                         "statement sequence result shape disagrees with its value",
                     );
                 }
-                self.validate_expr(value, formals, &format!("{path}.value"))?;
+                self.validate_expr(value, formals, format_args!("{path}.value"))?;
             }
             IrExprKind::TaggedSelect {
                 base,
                 steps,
                 location: _,
             } => {
-                self.validate_expr(base, formals, &format!("{path}.base"))?;
+                self.validate_expr(base, formals, format_args!("{path}.base"))?;
                 if base.is_real() || steps.is_empty() {
                     return self.fail(path, "tagged member selection requires a packed receiver");
                 }
                 let mut parent_width = base.width;
                 for (index, step) in steps.iter().enumerate() {
-                    let step_path = format!("{path}.steps[{index}]");
+                    let step_path = format_args!("{path}.steps[{index}]");
                     self.validate_expr(
                         &step.selection.base,
                         formals,
-                        &format!("{step_path}.base"),
+                        format_args!("{step_path}.base"),
                     )?;
-                    self.validate_width(step.selection.width, &format!("{step_path}.width"))?;
+                    self.validate_width(step.selection.width, format_args!("{step_path}.width"))?;
                     if step.selection.base.is_real() || step.selection.width > parent_width {
-                        return self.fail(&step_path, "invalid packed tagged-member projection");
+                        return self.fail(step_path, "invalid packed tagged-member projection");
                     }
                     if let Some(guard) = &step.guard {
                         if guard.tag_width == 0 || guard.tag_width > parent_width {
                             return self
-                                .fail(&step_path, "tagged-union guard width exceeds its receiver");
+                                .fail(step_path, "tagged-union guard width exceeds its receiver");
                         }
                         if guard.member_name.is_empty()
                             || (guard.tag_width < 32
                                 && guard.member_index >= (1u32 << guard.tag_width))
                         {
-                            return self.fail(&step_path, "invalid tagged-union guard metadata");
+                            return self.fail(step_path, "invalid tagged-union guard metadata");
                         }
                     }
                     parent_width = step.selection.width;
@@ -577,15 +580,15 @@ impl Validator<'_> {
                         "fixed bit-stream cast requires equal nonzero source and target widths",
                     );
                 }
-                self.validate_width(*source_width, &format!("{path}.source_width"))?;
-                self.validate_expr(a, formals, &format!("{path}.a"))?;
+                self.validate_width(*source_width, format_args!("{path}.source_width"))?;
+                self.validate_expr(a, formals, format_args!("{path}.a"))?;
                 if a.width != *source_width || a.is_real() {
                     return self.fail(path, "bit-stream source width disagrees with metadata");
                 }
             }
             IrExprKind::Bin { a, b, .. } | IrExprKind::RealBin { a, b, .. } => {
-                self.validate_expr(a, formals, &format!("{path}.a"))?;
-                self.validate_expr(b, formals, &format!("{path}.b"))?;
+                self.validate_expr(a, formals, format_args!("{path}.a"))?;
+                self.validate_expr(b, formals, format_args!("{path}.b"))?;
             }
             IrExprKind::Un { a, .. }
             | IrExprKind::RealUn { a, .. }
@@ -594,14 +597,14 @@ impl Validator<'_> {
             | IrExprKind::Resize { a }
             | IrExprKind::Convert { a }
             | IrExprKind::ToTwoState { a } => {
-                self.validate_expr(a, formals, &format!("{path}.a"))?;
+                self.validate_expr(a, formals, format_args!("{path}.a"))?;
             }
             IrExprKind::StreamToFixed { a, .. } => {
                 if expr.width == 0 || a.is_real() || expr.fill.is_some() {
                     return self.fail(path, "fixed stream target requires a packed nonzero width");
                 }
-                self.validate_width(expr.width, &format!("{path}.width"))?;
-                self.validate_expr(a, formals, &format!("{path}.a"))?;
+                self.validate_width(expr.width, format_args!("{path}.width"))?;
+                self.validate_expr(a, formals, format_args!("{path}.a"))?;
             }
             IrExprKind::UdpEval { table, inputs } => {
                 self.validate_udp_eval(expr, *table, inputs, formals, path)?;
@@ -615,7 +618,7 @@ impl Validator<'_> {
                     );
                 }
                 for (index, clause) in clauses.iter().enumerate() {
-                    self.validate_expr(clause, formals, &format!("{path}.clauses[{index}]"))?;
+                    self.validate_expr(clause, formals, format_args!("{path}.clauses[{index}]"))?;
                 }
             }
             IrExprKind::Pattern(pattern) => {
@@ -628,7 +631,7 @@ impl Validator<'_> {
                 if pattern.value.is_real() {
                     return self.fail(path, "conditional pattern value must be packed");
                 }
-                self.validate_expr(&pattern.value, formals, &format!("{path}.value"))?;
+                self.validate_expr(&pattern.value, formals, format_args!("{path}.value"))?;
                 if !pattern.checks.is_empty()
                     && (pattern.constant.is_some() || pattern.binding.is_some())
                 {
@@ -647,10 +650,10 @@ impl Validator<'_> {
                             "conditional pattern constant shape disagrees with its value",
                         );
                     }
-                    self.validate_expr(constant, formals, &format!("{path}.constant"))?;
+                    self.validate_expr(constant, formals, format_args!("{path}.constant"))?;
                 }
                 if let Some(binding) = &pattern.binding {
-                    self.validate_lhs(binding, formals, &format!("{path}.binding"))?;
+                    self.validate_lhs(binding, formals, format_args!("{path}.binding"))?;
                     if self.lhs_packed_width(binding) != Some(pattern.value.width) {
                         return self.fail(
                             path,
@@ -659,7 +662,7 @@ impl Validator<'_> {
                     }
                 }
                 for (index, binding) in pattern.native_bindings.iter().enumerate() {
-                    let binding_path = format!("{path}.native_bindings[{index}]");
+                    let binding_path = format_args!("{path}.native_bindings[{index}]");
                     match binding {
                         crate::sim::ir::IrNativeBinding::String { local, value } => {
                             if local.is_empty() {
@@ -676,17 +679,21 @@ impl Validator<'_> {
                             value.validate(&self.model, formals, self.chandle_return.get())?;
                         }
                         crate::sim::ir::IrNativeBinding::Value { lhs, value } => {
-                            self.validate_lhs(lhs, formals, &format!("{binding_path}.lhs"))?;
-                            self.validate_expr(value, formals, &format!("{binding_path}.value"))?;
+                            self.validate_lhs(lhs, formals, format_args!("{binding_path}.lhs"))?;
+                            self.validate_expr(
+                                value,
+                                formals,
+                                format_args!("{binding_path}.value"),
+                            )?;
                         }
                     }
                 }
                 for (index, check) in pattern.checks.iter().enumerate() {
-                    let check_path = format!("{path}.checks[{index}]");
-                    self.validate_width(check.width, &format!("{check_path}.width"))?;
+                    let check_path = format_args!("{path}.checks[{index}]");
+                    self.validate_width(check.width, format_args!("{check_path}.width"))?;
                     let Some(end) = check.offset.checked_add(check.width) else {
                         return self.fail(
-                            format!("{check_path}.offset"),
+                            format_args!("{check_path}.offset"),
                             "conditional pattern member range overflows",
                         );
                     };
@@ -698,7 +705,7 @@ impl Validator<'_> {
                     }
                     if check.constant.is_some() == check.binding.is_some() {
                         return self.fail(
-                            format!("{path}.checks[{index}]"),
+                            format_args!("{path}.checks[{index}]"),
                             "conditional pattern member must have exactly one match action",
                         );
                     }
@@ -708,25 +715,25 @@ impl Validator<'_> {
                             || constant.signed != check.signed
                         {
                             return self.fail(
-                                format!("{path}.checks[{index}].constant"),
+                                format_args!("{path}.checks[{index}].constant"),
                                 "conditional pattern member constant shape disagrees with its field",
                             );
                         }
                         self.validate_expr(
                             constant,
                             formals,
-                            &format!("{path}.checks[{index}].constant"),
+                            format_args!("{path}.checks[{index}].constant"),
                         )?;
                     }
                     if let Some(binding) = &check.binding {
                         self.validate_lhs(
                             binding,
                             formals,
-                            &format!("{path}.checks[{index}].binding"),
+                            format_args!("{path}.checks[{index}].binding"),
                         )?;
                         if self.lhs_packed_width(binding) != Some(check.width) {
                             return self.fail(
-                                format!("{path}.checks[{index}].binding"),
+                                format_args!("{path}.checks[{index}].binding"),
                                 "conditional pattern member binding width disagrees with its field",
                             );
                         }
@@ -734,9 +741,9 @@ impl Validator<'_> {
                 }
             }
             IrExprKind::Mux { sel, a, b } => {
-                self.validate_expr(sel, formals, &format!("{path}.sel"))?;
-                self.validate_expr(a, formals, &format!("{path}.a"))?;
-                self.validate_expr(b, formals, &format!("{path}.b"))?;
+                self.validate_expr(sel, formals, format_args!("{path}.sel"))?;
+                self.validate_expr(a, formals, format_args!("{path}.a"))?;
+                self.validate_expr(b, formals, format_args!("{path}.b"))?;
             }
             IrExprKind::ArrayMux {
                 sel,
@@ -744,10 +751,10 @@ impl Validator<'_> {
                 b,
                 element_default,
             } => {
-                self.validate_expr(sel, formals, &format!("{path}.sel"))?;
-                self.validate_expr(a, formals, &format!("{path}.a"))?;
-                self.validate_expr(b, formals, &format!("{path}.b"))?;
-                self.validate_const(element_default, &format!("{path}.element_default"))?;
+                self.validate_expr(sel, formals, format_args!("{path}.sel"))?;
+                self.validate_expr(a, formals, format_args!("{path}.a"))?;
+                self.validate_expr(b, formals, format_args!("{path}.b"))?;
+                self.validate_const(element_default, format_args!("{path}.element_default"))?;
                 if expr.width == 0
                     || expr.signed
                     || expr.fill.is_some()
@@ -769,15 +776,15 @@ impl Validator<'_> {
                     || !expr.width.is_multiple_of(element_default.width)
                 {
                     return self.fail(
-                        format!("{path}.element_default"),
+                        format_args!("{path}.element_default"),
                         "array conditional default must be a concrete packed element whose width divides the payload",
                     );
                 }
             }
             IrExprKind::StructMux { sel, a, b, leaves } => {
-                self.validate_expr(sel, formals, &format!("{path}.sel"))?;
-                self.validate_expr(a, formals, &format!("{path}.a"))?;
-                self.validate_expr(b, formals, &format!("{path}.b"))?;
+                self.validate_expr(sel, formals, format_args!("{path}.sel"))?;
+                self.validate_expr(a, formals, format_args!("{path}.a"))?;
+                self.validate_expr(b, formals, format_args!("{path}.b"))?;
                 if expr.width == 0
                     || expr.signed
                     || expr.fill.is_some()
@@ -793,7 +800,7 @@ impl Validator<'_> {
                         "record conditional requires equal unsigned payload widths",
                     );
                 }
-                self.validate_leaf_merge(leaves, expr.width, &format!("{path}.leaves"))?;
+                self.validate_leaf_merge(leaves, expr.width, format_args!("{path}.leaves"))?;
             }
             IrExprKind::Concat { parts } | IrExprKind::Replicate { parts, .. } => {
                 if parts.is_empty() {
@@ -820,14 +827,14 @@ impl Validator<'_> {
                     }
                 }
                 for (idx, part) in parts.iter().enumerate() {
-                    self.validate_expr(part, formals, &format!("{path}.parts[{idx}]"))?;
+                    self.validate_expr(part, formals, format_args!("{path}.parts[{idx}]"))?;
                 }
             }
             IrExprKind::Stream { value, slice, .. } => {
                 if *slice == 0 {
                     return self.fail(path, "streaming slice size must be positive");
                 }
-                self.validate_expr(value, formals, &format!("{path}.value"))?;
+                self.validate_expr(value, formals, format_args!("{path}.value"))?;
                 if value.is_real() || expr.width != value.width || expr.signed {
                     return self.fail(
                         path,
@@ -855,7 +862,7 @@ impl Validator<'_> {
                 let mut result = Ok(());
                 let mut visit = |child: &IrExpr| {
                     result = result.clone().and_then(|_| {
-                        self.validate_expr(child, formals, &format!("{path}.selector"))
+                        self.validate_expr(child, formals, format_args!("{path}.selector"))
                     });
                 };
                 match selector.as_ref() {
@@ -895,13 +902,13 @@ impl Validator<'_> {
                         "fixed stream source must produce an unsigned packed value",
                     );
                 }
-                self.validate_expr(image, formals, &format!("{path}.image"))?;
-                self.validate_expr(fallback, formals, &format!("{path}.fallback"))?;
+                self.validate_expr(image, formals, format_args!("{path}.image"))?;
+                self.validate_expr(fallback, formals, format_args!("{path}.fallback"))?;
                 validate_stream_selector(selector)?;
                 let mut result = Ok(());
                 let mut visit = |child: &IrExpr| {
                     result = result.clone().and_then(|_| {
-                        self.validate_expr(child, formals, &format!("{path}.selector"))
+                        self.validate_expr(child, formals, format_args!("{path}.selector"))
                     });
                 };
                 match selector.as_ref() {
@@ -924,24 +931,28 @@ impl Validator<'_> {
                 if expr.width != 1 || expr.signed {
                     return self.fail(path, "inside expression requires a 1-bit unsigned result");
                 }
-                self.validate_expr(value, formals, &format!("{path}.value"))?;
+                self.validate_expr(value, formals, format_args!("{path}.value"))?;
                 for (idx, item) in items.iter().enumerate() {
                     match item {
                         IrInsideItem::Value(item) => {
-                            self.validate_expr(item, formals, &format!("{path}.items[{idx}]"))?;
+                            self.validate_expr(item, formals, format_args!("{path}.items[{idx}]"))?;
                         }
                         IrInsideItem::Range { low, high } => {
-                            self.validate_expr(low, formals, &format!("{path}.items[{idx}].low"))?;
+                            self.validate_expr(
+                                low,
+                                formals,
+                                format_args!("{path}.items[{idx}].low"),
+                            )?;
                             self.validate_expr(
                                 high,
                                 formals,
-                                &format!("{path}.items[{idx}].high"),
+                                format_args!("{path}.items[{idx}].high"),
                             )?;
                         }
                         IrInsideItem::OpenRange { low, high } => {
                             if low.is_none() && high.is_none() {
                                 return self.fail(
-                                    format!("{path}.items[{idx}]"),
+                                    format_args!("{path}.items[{idx}]"),
                                     "inside open range requires an endpoint",
                                 );
                             }
@@ -949,27 +960,27 @@ impl Validator<'_> {
                                 self.validate_expr(
                                     low,
                                     formals,
-                                    &format!("{path}.items[{idx}].low"),
+                                    format_args!("{path}.items[{idx}].low"),
                                 )?;
                             }
                             if let Some(high) = high {
                                 self.validate_expr(
                                     high,
                                     formals,
-                                    &format!("{path}.items[{idx}].high"),
+                                    format_args!("{path}.items[{idx}].high"),
                                 )?;
                             }
                         }
                         IrInsideItem::Container { container } => {
                             let Some(container_model) = self.model.container(*container) else {
                                 return self.fail(
-                                    format!("{path}.items[{idx}]"),
+                                    format_args!("{path}.items[{idx}]"),
                                     "inside container index is out of bounds",
                                 );
                             };
                             if !container_model.element.is_packed() {
                                 return self.fail(
-                                    format!("{path}.items[{idx}]"),
+                                    format_args!("{path}.items[{idx}]"),
                                     "inside container element must be packed",
                                 );
                             }
@@ -978,7 +989,7 @@ impl Validator<'_> {
                             self.validate_fixed_array_cells(
                                 cells,
                                 formals,
-                                &format!("{path}.items[{idx}]"),
+                                format_args!("{path}.items[{idx}]"),
                                 true,
                             )?;
                         }
@@ -986,11 +997,11 @@ impl Validator<'_> {
                             self.validate_expr(
                                 value,
                                 formals,
-                                &format!("{path}.items[{idx}].value"),
+                                format_args!("{path}.items[{idx}].value"),
                             )?;
                             if value.width == 0 || elements.is_empty() {
                                 return self.fail(
-                                    format!("{path}.items[{idx}]"),
+                                    format_args!("{path}.items[{idx}]"),
                                     "inside fixed-array item requires packed scalar elements",
                                 );
                             }
@@ -1006,7 +1017,7 @@ impl Validator<'_> {
                                     || projection_width != Some(i64::from(element.width))
                                 {
                                     return self.fail(
-                                        format!("{path}.items[{idx}].elements[{element_idx}]"),
+                                        format_args!("{path}.items[{idx}].elements[{element_idx}]"),
                                         "inside fixed-array projection is outside its payload",
                                     );
                                 }
@@ -1016,11 +1027,11 @@ impl Validator<'_> {
                 }
             }
             IrExprKind::BitSel { base, idx } => {
-                self.validate_expr(base, formals, &format!("{path}.base"))?;
-                self.validate_expr(idx, formals, &format!("{path}.idx"))?;
+                self.validate_expr(base, formals, format_args!("{path}.base"))?;
+                self.validate_expr(idx, formals, format_args!("{path}.idx"))?;
             }
             IrExprKind::PartSel { base, left, right } => {
-                self.validate_expr(base, formals, &format!("{path}.base"))?;
+                self.validate_expr(base, formals, format_args!("{path}.base"))?;
                 self.validate_select_width(*left, *right, path)?;
             }
             IrExprKind::IdxPartSel {
@@ -1029,9 +1040,9 @@ impl Validator<'_> {
                 width_expr,
                 ..
             } => {
-                self.validate_expr(base, formals, &format!("{path}.base"))?;
-                self.validate_expr(base_idx, formals, &format!("{path}.base_idx"))?;
-                self.validate_expr(width_expr, formals, &format!("{path}.width_expr"))?;
+                self.validate_expr(base, formals, format_args!("{path}.base"))?;
+                self.validate_expr(base_idx, formals, format_args!("{path}.base_idx"))?;
+                self.validate_expr(width_expr, formals, format_args!("{path}.width_expr"))?;
             }
             IrExprKind::ArrayRead {
                 arr,
@@ -1053,9 +1064,9 @@ impl Validator<'_> {
                     );
                 }
                 for (idx, index) in indices.iter().enumerate() {
-                    self.validate_expr(index, formals, &format!("{path}.indices[{idx}]"))?;
+                    self.validate_expr(index, formals, format_args!("{path}.indices[{idx}]"))?;
                 }
-                self.validate_elem_sel(elem_sel, formals, &format!("{path}.elem_sel"))?;
+                self.validate_elem_sel(elem_sel, formals, format_args!("{path}.elem_sel"))?;
                 if let IrElemSel::PackedChain(steps) = elem_sel {
                     if array.real
                         || expr.signed
@@ -1080,13 +1091,13 @@ impl Validator<'_> {
             }
             IrExprKind::SysFunc(sys) => match &**sys {
                 IrSysFunc::TestPlusArgs { pattern } => {
-                    self.validate_plusarg_text(pattern, formals, &format!("{path}.pattern"))?;
+                    self.validate_plusarg_text(pattern, formals, format_args!("{path}.pattern"))?;
                     if (expr.width, expr.signed) != (32, true) {
                         return self.fail(path, "invalid $test$plusargs expression");
                     }
                 }
                 IrSysFunc::ValuePlusArgs { format, target } => {
-                    self.validate_plusarg_text(format, formals, &format!("{path}.format"))?;
+                    self.validate_plusarg_text(format, formals, format_args!("{path}.format"))?;
                     if (expr.width, expr.signed) != (32, true) {
                         return self.fail(path, "invalid $value$plusargs expression");
                     }
@@ -1097,23 +1108,23 @@ impl Validator<'_> {
                             signed,
                             two_state,
                         } => {
-                            self.validate_lhs(lhs, formals, &format!("{path}.target"))?;
+                            self.validate_lhs(lhs, formals, format_args!("{path}.target"))?;
                             if *width == 0
                                 || self.lhs_packed_width(lhs) != Some(*width)
                                 || lhs_signed(&self.model, lhs) != Some(*signed)
                                 || lhs_two_state(&self.model, lhs) != Some(*two_state)
                             {
                                 return self.fail(
-                                    format!("{path}.target"),
+                                    format_args!("{path}.target"),
                                     "plusarg packed target type disagrees with its lvalue",
                                 );
                             }
                         }
                         IrPlusArgTarget::Real { lhs, .. } => {
-                            self.validate_lhs(lhs, formals, &format!("{path}.target"))?;
+                            self.validate_lhs(lhs, formals, format_args!("{path}.target"))?;
                             if !lhs_is_real(&self.model, lhs) {
                                 return self.fail(
-                                    format!("{path}.target"),
+                                    format_args!("{path}.target"),
                                     "plusarg real target is not real storage",
                                 );
                             }
@@ -1121,7 +1132,7 @@ impl Validator<'_> {
                         IrPlusArgTarget::String { address } => {
                             if address.is_empty() {
                                 return self.fail(
-                                    format!("{path}.target"),
+                                    format_args!("{path}.target"),
                                     "plusarg string target address must not be empty",
                                 );
                             }
@@ -1148,7 +1159,7 @@ impl Validator<'_> {
                                     }],
                                 },
                                 formals,
-                                &format!("{path}.target"),
+                                format_args!("{path}.target"),
                             )?;
                         }
                     }
@@ -1190,18 +1201,18 @@ impl Validator<'_> {
                         } = target
                         else {
                             return self.fail(
-                                format!("{path}.{name}"),
+                                format_args!("{path}.{name}"),
                                 "coverage bin count target must be packed storage",
                             );
                         };
-                        self.validate_lhs(lhs, formals, &format!("{path}.{name}"))?;
+                        self.validate_lhs(lhs, formals, format_args!("{path}.{name}"))?;
                         if (*width, *signed) != (32, true)
                             || self.lhs_packed_width(lhs) != Some(*width)
                             || lhs_signed(&self.model, lhs) != Some(*signed)
                             || lhs_two_state(&self.model, lhs) != Some(*two_state)
                         {
                             return self.fail(
-                                format!("{path}.{name}"),
+                                format_args!("{path}.{name}"),
                                 "coverage bin count target must be an int lvalue",
                             );
                         }
@@ -1234,7 +1245,7 @@ impl Validator<'_> {
                         }
                     }
                     for (index, arg) in call.args.iter().enumerate() {
-                        self.validate_expr(arg, formals, &format!("{path}.args[{index}]"))?;
+                        self.validate_expr(arg, formals, format_args!("{path}.args[{index}]"))?;
                         if arg.is_real() {
                             return self.fail(path, "coverage access arguments must be integral");
                         }
@@ -1290,13 +1301,13 @@ impl Validator<'_> {
                         );
                     }
                     if expr.width != 0 {
-                        self.validate_width(expr.width, &format!("{path}.width"))?;
+                        self.validate_width(expr.width, format_args!("{path}.width"))?;
                     }
                     if args.len() > LLG_MAX_VPI_ARGS {
                         return self.fail(path, "VPI system-function exceeds the argument limit");
                     }
                     for (index, arg) in args.iter().enumerate() {
-                        self.validate_expr(arg, formals, &format!("{path}.args[{index}]"))?;
+                        self.validate_expr(arg, formals, format_args!("{path}.args[{index}]"))?;
                     }
                 }
                 IrSysFunc::LegacyRandom { kind, seed, args } => {
@@ -1309,17 +1320,17 @@ impl Validator<'_> {
                     match (kind, seed) {
                         (IrRandomFunc::Random, None) => {}
                         (_, Some(seed)) => {
-                            self.validate_lhs(seed, formals, &format!("{path}.seed"))?;
+                            self.validate_lhs(seed, formals, format_args!("{path}.seed"))?;
                             if self.lhs_packed_width(seed).is_none() {
                                 return self.fail(
-                                    format!("{path}.seed"),
+                                    format_args!("{path}.seed"),
                                     "legacy random seed must be packed storage",
                                 );
                             }
                         }
                         (_, None) => {
                             return self.fail(
-                                format!("{path}.seed"),
+                                format_args!("{path}.seed"),
                                 "distribution function requires a seed",
                             )
                         }
@@ -1327,16 +1338,16 @@ impl Validator<'_> {
                     for (index, arg) in args.iter().enumerate() {
                         if arg.is_real() {
                             return self.fail(
-                                format!("{path}.args[{index}]"),
+                                format_args!("{path}.args[{index}]"),
                                 "legacy random parameters must be packed",
                             );
                         }
-                        self.validate_expr(arg, formals, &format!("{path}.args[{index}]"))?;
+                        self.validate_expr(arg, formals, format_args!("{path}.args[{index}]"))?;
                     }
                 }
                 IrSysFunc::Urandom { seed } => {
                     if let Some(seed) = seed {
-                        self.validate_expr(seed, formals, &format!("{path}.seed"))?;
+                        self.validate_expr(seed, formals, format_args!("{path}.seed"))?;
                         if seed.is_real() || (seed.width, seed.signed) != (32, false) {
                             return self
                                 .fail(path, "$urandom seed must be a 32-bit unsigned value");
@@ -1347,7 +1358,7 @@ impl Validator<'_> {
                     }
                 }
                 IrSysFunc::UrandomRange { max, min } => {
-                    self.validate_expr(max, formals, &format!("{path}.max"))?;
+                    self.validate_expr(max, formals, format_args!("{path}.max"))?;
                     if (max.width, max.signed) != (32, false) {
                         return self.fail(
                             path,
@@ -1355,7 +1366,7 @@ impl Validator<'_> {
                         );
                     }
                     if let Some(min) = min {
-                        self.validate_expr(min, formals, &format!("{path}.min"))?;
+                        self.validate_expr(min, formals, format_args!("{path}.min"))?;
                         if (min.width, min.signed) != (32, false) {
                             return self.fail(
                                 path,
@@ -1372,14 +1383,14 @@ impl Validator<'_> {
                         return self.fail(path, "rand join requires at least two sequences");
                     }
                     for (index, length) in lengths.iter().enumerate() {
-                        let length_path = format!("{path}.lengths[{index}]");
-                        self.validate_expr(length, formals, &length_path)?;
+                        let length_path = format_args!("{path}.lengths[{index}]");
+                        self.validate_expr(length, formals, length_path)?;
                         if length.is_real() || length.width == 0 || length.signed {
                             return self
                                 .fail(length_path, "rand join lengths must be unsigned packed");
                         }
                     }
-                    self.validate_expr(ratio, formals, &format!("{path}.ratio"))?;
+                    self.validate_expr(ratio, formals, format_args!("{path}.ratio"))?;
                     if !ratio.is_real() || (expr.width, expr.signed) != (32, true) {
                         return self.fail(
                             path,
@@ -1395,8 +1406,8 @@ impl Validator<'_> {
                     }
                     let mut widest = 0u32;
                     for (index, weight) in weights.iter().enumerate() {
-                        let weight_path = format!("{path}.weights[{index}]");
-                        self.validate_expr(weight, formals, &weight_path)?;
+                        let weight_path = format_args!("{path}.weights[{index}]");
+                        self.validate_expr(weight, formals, weight_path)?;
                         if weight.is_real() || weight.width == 0 {
                             return self.fail(weight_path, "randcase weights must be packed");
                         }
@@ -1428,8 +1439,11 @@ impl Validator<'_> {
                         let mut result = Ok(());
                         stream.expressions(&mut |child| {
                             if result.is_ok() {
-                                result =
-                                    self.validate_expr(child, formals, &format!("{path}.stream"));
+                                result = self.validate_expr(
+                                    child,
+                                    formals,
+                                    format_args!("{path}.stream"),
+                                );
                             }
                         });
                         result?;
@@ -1535,7 +1549,7 @@ impl Validator<'_> {
                         return self.fail(path, "invalid randomize instance query");
                     }
                     for operand in inst.iter().chain(index.iter()) {
-                        self.validate_expr(operand, formals, &format!("{path}.instance"))?;
+                        self.validate_expr(operand, formals, format_args!("{path}.instance"))?;
                         if operand.is_real() {
                             return self.fail(path, "randomize instance operands must be packed");
                         }
@@ -1549,7 +1563,7 @@ impl Validator<'_> {
                         );
                     }
                     for (index, arg) in args.iter().enumerate() {
-                        self.validate_expr(arg, formals, &format!("{path}.args[{index}]"))?;
+                        self.validate_expr(arg, formals, format_args!("{path}.args[{index}]"))?;
                     }
                 }
                 IrSysFunc::Realtime {
@@ -1564,25 +1578,25 @@ impl Validator<'_> {
                     }
                 }
                 IrSysFunc::Rtoi(arg) => {
-                    self.validate_expr(arg, formals, &format!("{path}.arg"))?;
+                    self.validate_expr(arg, formals, format_args!("{path}.arg"))?;
                     if expr.width != 32 || !expr.signed {
                         return self.fail(path, "$rtoi requires a signed int result");
                     }
                 }
                 IrSysFunc::Itor(arg) => {
-                    self.validate_expr(arg, formals, &format!("{path}.arg"))?;
+                    self.validate_expr(arg, formals, format_args!("{path}.arg"))?;
                     if arg.is_real() || !expr.is_real() {
                         return self.fail(path, "$itor requires a packed argument and real result");
                     }
                 }
                 IrSysFunc::RealToBits(arg) => {
-                    self.validate_expr(arg, formals, &format!("{path}.arg"))?;
+                    self.validate_expr(arg, formals, format_args!("{path}.arg"))?;
                     if expr.width != 64 || expr.signed {
                         return self.fail(path, "$realtobits requires a 64-bit unsigned result");
                     }
                 }
                 IrSysFunc::BitsToReal(arg) => {
-                    self.validate_expr(arg, formals, &format!("{path}.arg"))?;
+                    self.validate_expr(arg, formals, format_args!("{path}.arg"))?;
                     if arg.is_real() || arg.width != 64 || !expr.is_real() {
                         return self.fail(
                             path,
@@ -1591,14 +1605,14 @@ impl Validator<'_> {
                     }
                 }
                 IrSysFunc::ShortRealToBits(arg) => {
-                    self.validate_expr(arg, formals, &format!("{path}.arg"))?;
+                    self.validate_expr(arg, formals, format_args!("{path}.arg"))?;
                     if expr.width != 32 || expr.signed {
                         return self
                             .fail(path, "$shortrealtobits requires a 32-bit unsigned result");
                     }
                 }
                 IrSysFunc::BitsToShortReal(arg) => {
-                    self.validate_expr(arg, formals, &format!("{path}.arg"))?;
+                    self.validate_expr(arg, formals, format_args!("{path}.arg"))?;
                     if arg.is_real() || arg.width != 32 || !expr.is_real() {
                         return self.fail(
                             path,
@@ -1607,7 +1621,7 @@ impl Validator<'_> {
                     }
                 }
                 IrSysFunc::BitQuery { kind, arg } => {
-                    self.validate_expr(arg, formals, &format!("{path}.arg"))?;
+                    self.validate_expr(arg, formals, format_args!("{path}.arg"))?;
                     if arg.is_real() || (expr.width, expr.signed) != kind.result_type() {
                         return self.fail(
                             path,
@@ -1616,7 +1630,7 @@ impl Validator<'_> {
                     }
                 }
                 IrSysFunc::Sampled(call) => {
-                    self.validate_expr(&call.argument, formals, &format!("{path}.argument"))?;
+                    self.validate_expr(&call.argument, formals, format_args!("{path}.argument"))?;
                     // Only `$sampled` reads a real directly; history domains keep
                     // a real argument as its exact 64-bit IEEE image.
                     if call.argument.is_real() && call.kind != IrSampledFunc::Sampled {
@@ -1723,7 +1737,7 @@ impl Validator<'_> {
                     }
                 }
                 IrSysFunc::Clog2(arg) | IrSysFunc::Bits(arg) => {
-                    self.validate_expr(arg, formals, &format!("{path}.arg"))?;
+                    self.validate_expr(arg, formals, format_args!("{path}.arg"))?;
                 }
                 IrSysFunc::Time {
                     precision_fs,
@@ -1738,12 +1752,16 @@ impl Validator<'_> {
                     }
                 }
                 IrSysFunc::QFull { q_id, status } => {
-                    self.validate_expr(q_id, formals, &format!("{path}.q_id"))?;
+                    self.validate_expr(q_id, formals, format_args!("{path}.q_id"))?;
                     if q_id.is_real() || expr.width != 32 || !expr.signed {
                         return self
                             .fail(path, "$q_full requires a packed q_id and signed int result");
                     }
-                    self.validate_stochastic_output(status, formals, &format!("{path}.status"))?;
+                    self.validate_stochastic_output(
+                        status,
+                        formals,
+                        format_args!("{path}.status"),
+                    )?;
                 }
                 IrSysFunc::FileOpen {
                     path: file_path,
@@ -1758,7 +1776,7 @@ impl Validator<'_> {
                     }
                 }
                 IrSysFunc::FileTell(descriptor) => {
-                    self.validate_expr(descriptor, formals, &format!("{path}.descriptor"))?;
+                    self.validate_expr(descriptor, formals, format_args!("{path}.descriptor"))?;
                     if descriptor.is_real() || expr.width != 64 || !expr.signed {
                         return self.fail(path, "$ftell requires a signed 64-bit result");
                     }
@@ -1773,7 +1791,7 @@ impl Validator<'_> {
                         ("offset", offset),
                         ("operation", operation),
                     ] {
-                        self.validate_expr(value, formals, &format!("{path}.{name}"))?;
+                        self.validate_expr(value, formals, format_args!("{path}.{name}"))?;
                         if value.is_real() {
                             return self.fail(path, "$fseek requires packed arguments");
                         }
@@ -1783,7 +1801,7 @@ impl Validator<'_> {
                     }
                 }
                 IrSysFunc::FileEof(descriptor) => {
-                    self.validate_expr(descriptor, formals, &format!("{path}.descriptor"))?;
+                    self.validate_expr(descriptor, formals, format_args!("{path}.descriptor"))?;
                     if descriptor.is_real() || expr.width != 32 || !expr.signed {
                         return self.fail(path, "$feof requires a signed 32-bit result");
                     }

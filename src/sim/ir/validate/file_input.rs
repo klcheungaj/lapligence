@@ -7,19 +7,19 @@ impl Validator<'_> {
         &self,
         input: &IrFileInput,
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         let validate_descriptor = |value: &IrExpr, name: &str| {
-            self.validate_expr(value, formals, &format!("{path}.{name}"))?;
+            self.validate_expr(value, formals, format_args!("{path}.{name}"))?;
             if value.is_real() {
                 return self.fail(
-                    format!("{path}.{name}"),
+                    format_args!("{path}.{name}"),
                     "file descriptor must be a packed expression",
                 );
             }
             Ok(())
         };
-        let validate_target = |target: &IrFileInputTarget, target_path: &str| {
+        let validate_target = |target: &IrFileInputTarget, target_path: IrPath<'_>| {
             match target {
                 IrFileInputTarget::Packed {
                     lhs,
@@ -88,7 +88,7 @@ impl Validator<'_> {
             }
             Ok(())
         };
-        let validate_read_target = |target: &IrFileReadTarget, target_path: &str| {
+        let validate_read_target = |target: &IrFileReadTarget, target_path: IrPath<'_>| {
             match target {
                 IrFileReadTarget::Packed {
                     lhs,
@@ -161,7 +161,7 @@ impl Validator<'_> {
             IrFileInput::Gets { descriptor, target }
             | IrFileInput::Error { descriptor, target } => {
                 validate_descriptor(descriptor, "descriptor")?;
-                validate_target(target, &format!("{path}.target"))?;
+                validate_target(target, format_args!("{path}.target"))?;
                 if matches!(target, IrFileInputTarget::Real { .. }) {
                     return self.fail(path, "file text destination cannot be real storage");
                 }
@@ -173,9 +173,9 @@ impl Validator<'_> {
                 ..
             } => {
                 validate_descriptor(descriptor, "descriptor")?;
-                self.validate_plusarg_text(format, formals, &format!("{path}.format"))?;
+                self.validate_plusarg_text(format, formals, format_args!("{path}.format"))?;
                 for (index, target) in targets.iter().enumerate() {
-                    validate_target(target, &format!("{path}.targets[{index}]"))?;
+                    validate_target(target, format_args!("{path}.targets[{index}]"))?;
                 }
             }
             IrFileInput::ScanString {
@@ -184,10 +184,10 @@ impl Validator<'_> {
                 targets,
                 ..
             } => {
-                self.validate_plusarg_text(source, formals, &format!("{path}.source"))?;
-                self.validate_plusarg_text(format, formals, &format!("{path}.format"))?;
+                self.validate_plusarg_text(source, formals, format_args!("{path}.source"))?;
+                self.validate_plusarg_text(format, formals, format_args!("{path}.format"))?;
                 for (index, target) in targets.iter().enumerate() {
-                    validate_target(target, &format!("{path}.targets[{index}]"))?;
+                    validate_target(target, format_args!("{path}.targets[{index}]"))?;
                 }
             }
             IrFileInput::Read {
@@ -197,13 +197,13 @@ impl Validator<'_> {
                 count,
             } => {
                 validate_descriptor(descriptor, "descriptor")?;
-                validate_read_target(target, &format!("{path}.target"))?;
+                validate_read_target(target, format_args!("{path}.target"))?;
                 for (name, value) in [("start", start), ("count", count)] {
                     if let Some(value) = value {
-                        self.validate_expr(value, formals, &format!("{path}.{name}"))?;
+                        self.validate_expr(value, formals, format_args!("{path}.{name}"))?;
                         if value.is_real() {
                             return self.fail(
-                                format!("{path}.{name}"),
+                                format_args!("{path}.{name}"),
                                 "file read bounds must be packed expressions",
                             );
                         }

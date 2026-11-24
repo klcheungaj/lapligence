@@ -8,7 +8,7 @@ impl Validator<'_> {
         value: &IrConst,
         width: u32,
         signed: bool,
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         if width == 0 || value.width != width || value.signed != signed || value.real.is_some() {
             return self.fail(path, "fixed storage default has the wrong type");
@@ -20,14 +20,14 @@ impl Validator<'_> {
         )
     }
 
-    pub(super) fn validate_type(&self, ty: &IrType, path: &str) -> ValidationResult {
+    pub(super) fn validate_type(&self, ty: &IrType, path: IrPath<'_>) -> ValidationResult {
         if let IrType::Packed { width, .. } = ty {
             self.validate_width(*width, path)?;
         }
         Ok(())
     }
 
-    pub(super) fn validate_width(&self, width: u32, path: &str) -> ValidationResult {
+    pub(super) fn validate_width(&self, width: u32, path: IrPath<'_>) -> ValidationResult {
         if width == 0 {
             return self.fail(path, "packed width must be nonzero");
         }
@@ -36,7 +36,7 @@ impl Validator<'_> {
         Ok(())
     }
 
-    pub(super) fn validate_const(&self, value: &IrConst, path: &str) -> ValidationResult {
+    pub(super) fn validate_const(&self, value: &IrConst, path: IrPath<'_>) -> ValidationResult {
         if value.real.is_some() {
             if value.width != 0 {
                 return self.fail(path, "real constant has a non-zero packed width");
@@ -46,15 +46,15 @@ impl Validator<'_> {
             }
             return Ok(());
         }
-        self.validate_width(value.width, &format!("{path}.width"))?;
+        self.validate_width(value.width, format_args!("{path}.width"))?;
         if value.fill.is_some_and(|fill| fill > 3) {
-            return self.fail(format!("{path}.fill"), "fill marker must be in 0..=3");
+            return self.fail(format_args!("{path}.fill"), "fill marker must be in 0..=3");
         }
         let limbs = value.width.div_ceil(64) as usize;
         for (name, values) in [("bits", &value.bits), ("x", &value.x), ("z", &value.z)] {
             if values.len() > limbs {
                 return self.fail(
-                    format!("{path}.{name}"),
+                    format_args!("{path}.{name}"),
                     format!("{} limbs exceed the {limbs}-limb width", values.len()),
                 );
             }
@@ -63,7 +63,7 @@ impl Validator<'_> {
             let x = value.x.get(idx).copied().unwrap_or(0);
             let z = value.z.get(idx).copied().unwrap_or(0);
             if x & z != 0 {
-                return self.fail(format!("{path}.x"), "X and Z masks overlap");
+                return self.fail(format_args!("{path}.x"), "X and Z masks overlap");
             }
         }
         let tail = value.width % 64;
@@ -72,7 +72,7 @@ impl Validator<'_> {
             for (name, values) in [("bits", &value.bits), ("x", &value.x), ("z", &value.z)] {
                 if values.get(limbs - 1).copied().unwrap_or(0) & outside != 0 {
                     return self.fail(
-                        format!("{path}.{name}"),
+                        format_args!("{path}.{name}"),
                         "high limb contains bits outside the declared width",
                     );
                 }
@@ -88,18 +88,18 @@ impl Validator<'_> {
         &self,
         leaves: &IrLeafMerge,
         payload: u32,
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         let (default, starts) = (&leaves.default, &leaves.starts);
-        self.validate_const(default, &format!("{path}.default"))?;
-        self.validate_const(starts, &format!("{path}.starts"))?;
+        self.validate_const(default, format_args!("{path}.default"))?;
+        self.validate_const(starts, format_args!("{path}.starts"))?;
         if default.real.is_some()
             || default.fill.is_some()
             || default.width == 0
             || !payload.is_multiple_of(default.width)
         {
             return self.fail(
-                format!("{path}.default"),
+                format_args!("{path}.default"),
                 "leaf merge default must be a concrete packed period whose width divides the payload",
             );
         }
@@ -110,7 +110,7 @@ impl Validator<'_> {
             || starts.bits.first().is_none_or(|limb| limb & 1 == 0)
         {
             return self.fail(
-                format!("{path}.starts"),
+                format_args!("{path}.starts"),
                 "leaf merge starts must be a known mask of the period width with bit 0 set",
             );
         }

@@ -394,7 +394,7 @@ impl IrVpiDynamic {
 
     pub(in crate::sim) fn validate(&self, model: &IrModel) -> Result<(), IrValidationError> {
         for (index, shape) in self.shapes.iter().enumerate() {
-            let path = format!("vpi_dynamic.shapes[{index}]");
+            let path = format_args!("vpi_dynamic.shapes[{index}]");
             let valid = match shape {
                 IrVpiShape::Container { element, .. } => *element < index,
                 IrVpiShape::FixedArray {
@@ -419,7 +419,7 @@ impl IrVpiDynamic {
                 _ => true,
             };
             if !valid {
-                return Err(IrValidationError::new(&path, "invalid VPI dynamic shape"));
+                return Err(IrValidationError::new(path, "invalid VPI dynamic shape"));
             }
         }
         if !self.classes.is_empty() && self.classes.len() != model.classes.len() {
@@ -429,7 +429,7 @@ impl IrVpiDynamic {
             ));
         }
         for (index, class) in self.classes.iter().enumerate() {
-            let path = format!("vpi_dynamic.classes[{index}]");
+            let path = format_args!("vpi_dynamic.classes[{index}]");
             let layout = &model.classes[index];
             if class.fields.len() != layout.fields.len()
                 || class.base.is_some_and(|base| base >= self.classes.len())
@@ -474,7 +474,7 @@ impl IrVpiDynamic {
                         })
                 })
             {
-                return Err(IrValidationError::new(&path, "invalid VPI class layout"));
+                return Err(IrValidationError::new(path, "invalid VPI class layout"));
             }
         }
         Ok(())

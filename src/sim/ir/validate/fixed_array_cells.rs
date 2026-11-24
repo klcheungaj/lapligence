@@ -7,12 +7,12 @@ impl Validator<'_> {
         &self,
         cells: &IrFixedArrayCells,
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
         allow_real: bool,
     ) -> Result<FixedArrayCellShape, IrValidationError> {
         self.validate_fixed_activation(cells.array, path)?;
         let array = self.model.arrays.get(cells.array).ok_or_else(|| {
-            IrValidationError::new(format!("{path}.array"), "array index is out of bounds")
+            IrValidationError::new(format_args!("{path}.array"), "array index is out of bounds")
         })?;
         if (array.real && !allow_real) || cells.prefix.len() >= array.dims.len() {
             return Err(IrValidationError::new(
@@ -21,8 +21,8 @@ impl Validator<'_> {
             ));
         }
         for (index, selector) in cells.prefix.iter().enumerate() {
-            let selector_path = format!("{path}.prefix[{index}]");
-            self.validate_expr(selector, formals, &selector_path)?;
+            let selector_path = format_args!("{path}.prefix[{index}]");
+            self.validate_expr(selector, formals, selector_path)?;
             if selector.is_real() {
                 return self.fail(selector_path, "fixed-array selector must be integral");
             }
@@ -36,7 +36,7 @@ impl Validator<'_> {
         &self,
         order: &IrFixedArrayOrder,
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         let shape = self.validate_fixed_array_cells(&order.cells, formals, path, false)?;
         let array = &self.model.arrays[order.cells.array];
@@ -54,8 +54,8 @@ impl Validator<'_> {
             .checked_mul(u64::from(array.elem_width))
             .and_then(|width| u32::try_from(width).ok())
             .ok_or_else(|| IrValidationError::new(path, "fixed-array sort item is too wide"))?;
-        self.validate_width(item_width, &format!("{path}.item_width"))?;
-        self.validate_width(32, &format!("{path}.index_width"))?;
+        self.validate_width(item_width, format_args!("{path}.item_width"))?;
+        self.validate_width(32, format_args!("{path}.index_width"))?;
         if order.item_name.is_empty()
             || order.index_name.is_empty()
             || order.item_name == order.index_name
@@ -73,7 +73,7 @@ impl Validator<'_> {
             (order.item_name.clone(), item_width, order.item_signed),
             (order.index_name.clone(), 32, true),
         ]);
-        let result = self.validate_expr(key, formals, &format!("{path}.key"));
+        let result = self.validate_expr(key, formals, format_args!("{path}.key"));
         self.reduction_bindings.borrow_mut().truncate(saved_depth);
         result?;
         if key.is_real() || key.fill.is_some() {

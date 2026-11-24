@@ -3,6 +3,7 @@ use super::*;
 mod array_conditionals;
 mod conditional_policy;
 mod fixed_array_reductions;
+mod identity_walk;
 mod sequential_predicates;
 mod singleton_concat;
 mod storage_references;

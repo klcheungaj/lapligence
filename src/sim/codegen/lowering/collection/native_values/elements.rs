@@ -274,7 +274,7 @@ impl Codegen<'_> {
         let descriptor = self
             .container_element_descriptor(container, depth)
             .ok_or_else(|| format!("container `{name}` element has no type descriptor"))?;
-        validate_native_type(&element, "container element").map_err(|error| {
+        validate_native_type(&element, format_args!("container element")).map_err(|error| {
             format!(
                 "record elements of container `{}` are not supported: {error}",
                 descriptor.name

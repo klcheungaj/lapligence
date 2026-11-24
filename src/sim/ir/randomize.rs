@@ -7,7 +7,7 @@
 //! run it and read its solution. The problem itself is pure data that the
 //! emitter turns into the `llg_cr_problem_t` tables of `llg_constraint.h`.
 
-use super::{IrChandleExpr, IrExpr, IrValidationError};
+use super::{IrChandleExpr, IrExpr, IrPath, IrValidationError};
 
 /// Solver node operation codes; values match `llg_constraint.h`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -379,8 +379,8 @@ impl IrRandProblem {
 
     /// Check the invariants the C solver also enforces, so a malformed
     /// problem fails at model construction rather than at run time.
-    pub(in crate::sim) fn validate(&self, path: &str) -> Result<(), IrValidationError> {
-        let fail = |message: String| Err(IrValidationError::new(path.to_owned(), message));
+    pub(in crate::sim) fn validate(&self, path: IrPath<'_>) -> Result<(), IrValidationError> {
+        let fail = |message: String| Err(IrValidationError::new(path, message));
         let count = self.nodes.len() as u32;
         for (index, node) in self.nodes.iter().enumerate() {
             let index = index as u32;
@@ -1053,36 +1053,36 @@ mod tests {
 
     #[test]
     fn template_problems_validate_their_units_and_operands() {
-        assert!(template_problem().validate("p").is_ok());
+        assert!(template_problem().validate(format_args!("p")).is_ok());
 
         // Template operations need units.
         let mut flat = template_problem();
         flat.units.clear();
-        assert!(flat.validate("p").is_err());
+        assert!(flat.validate(format_args!("p")).is_err());
 
         // An element node typed differently from its array.
         let mut mistyped = template_problem();
         mistyped.nodes[2].width = 4;
-        assert!(mistyped.validate("p").is_err());
+        assert!(mistyped.validate(format_args!("p")).is_err());
 
         // A reference must be a `Ref` node (or none).
         let mut bad_ref = template_problem();
         bad_ref.nodes[2].c = 1;
-        assert!(bad_ref.validate("p").is_err());
+        assert!(bad_ref.validate(format_args!("p")).is_err());
 
         // Units cover the blocks exactly, in order.
         let mut gap = template_problem();
         gap.units[1].block_first = 2;
-        assert!(gap.validate("p").is_err());
+        assert!(gap.validate(format_args!("p")).is_err());
 
         // A unit names only existing arrays.
         let mut missing = template_problem();
         missing.units[1].arrays.push(3);
-        assert!(missing.validate("p").is_err());
+        assert!(missing.validate(format_args!("p")).is_err());
 
         // An expanded element table never appears in a lowered problem.
         let mut expanded = template_problem();
         expanded.nodes[2].op = IrRandOp::Elem;
-        assert!(expanded.validate("p").is_err());
+        assert!(expanded.validate(format_args!("p")).is_err());
     }
 }

@@ -228,7 +228,7 @@ impl IrPattern {
     pub(in crate::sim) fn validate(
         &self,
         model: &CheckedModel<'_>,
-        path: &str,
+        path: IrPath<'_>,
     ) -> Result<(), IrValidationError> {
         let Some(ty) = model.pattern_types.get(self.ty) else {
             return Err(IrValidationError::new(
@@ -306,7 +306,7 @@ pub(in crate::sim) fn validate_pattern_tables(model: &IrModel) -> Result<(), IrV
             // points to an earlier entry and the tables cannot be cyclic.
             if child >= index {
                 return Err(IrValidationError::new(
-                    format!("pattern_types[{index}]"),
+                    format_args!("pattern_types[{index}]"),
                     "pattern type refers to itself or a later type",
                 ));
             }
@@ -321,7 +321,7 @@ pub(in crate::sim) fn validate_pattern_tables(model: &IrModel) -> Result<(), IrV
     for (index, class) in model.pattern_classes.iter().enumerate() {
         if class.fields.len() != model.classes[index].fields.len() {
             return Err(IrValidationError::new(
-                format!("pattern_classes[{index}]"),
+                format_args!("pattern_classes[{index}]"),
                 "class display layout differs from the object layout",
             ));
         }
@@ -331,7 +331,7 @@ pub(in crate::sim) fn validate_pattern_tables(model: &IrModel) -> Result<(), IrV
             .any(|field| field.ty >= model.pattern_types.len())
         {
             return Err(IrValidationError::new(
-                format!("pattern_classes[{index}]"),
+                format_args!("pattern_classes[{index}]"),
                 "class display field type out of range",
             ));
         }
