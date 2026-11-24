@@ -1739,7 +1739,7 @@ struct Capture {
         continue;
       auto& node = output.semantic_nodes[static_cast<size_t>(it->second)];
       if (node.kind == LLG_SLANG_SEMANTIC_PARAMETER)
-        node.auxiliary = 1;
+        node.auxiliary |= LLG_SLANG_PARAMETER_OVERRIDDEN;
     }
   }
 
@@ -1980,6 +1980,24 @@ bool isPulseLimitSpecparam(const SpecparamSymbol& symbol) {
   const Scope* parent = symbol.getParentScope();
   return (symbol.isPathPulse || symbol.name.starts_with("PATHPULSE$")) &&
          parent != nullptr && parent->asSymbol().kind == SymbolKind::SpecifyBlock;
+}
+
+// Whether the source reads the declaration of a parameter or specparam.
+template<typename T>
+bool isParameterRead(const T& parameter) {
+  // An overridden type parameter has no syntax of its own; its alias has.
+  const syntax::SyntaxNode* declaration = nullptr;
+  if constexpr (std::same_as<T, TypeParameterSymbol>)
+    declaration = parameter.getTypeAlias().getSyntax();
+  else
+    declaration = parameter.getSyntax();
+  const Scope* scope = parameter.getParentScope();
+  if (declaration == nullptr || scope == nullptr)
+    return false;
+  // A read in the target of an assignment (`c #(P)::v = 1`) inherits its
+  // lvalue context.
+  const auto [read, written] = scope->getCompilation().isReferenced(*declaration);
+  return read || written;
 }
 
 // The input (`source`) or output terminal named by a pulse-limit specparam
@@ -3249,7 +3267,7 @@ public:
     if constexpr (std::same_as<T, ParameterSymbol>) {
       result.constant_id = capture.constant(symbol.getValue());
       if (symbol.isOverridden())
-        result.auxiliary = 1;
+        result.auxiliary |= LLG_SLANG_PARAMETER_OVERRIDDEN;
       if (symbol.isFromGenvar()) {
         result.flags |= LLG_SLANG_SEMANTIC_IMPLICIT;
         const Scope* blockScope = symbol.getParentScope();
@@ -3297,6 +3315,8 @@ public:
                   std::same_as<T, TypeParameterSymbol>) {
       if (symbol.isLocalParam())
         result.flags |= LLG_SLANG_SEMANTIC_LOCAL;
+      if (isParameterRead(symbol))
+        result.auxiliary |= LLG_SLANG_PARAMETER_REFERENCED;
     }
     if constexpr (std::same_as<T, InstanceSymbol>) {
       result.subkind = LLG_SLANG_INSTANCE_SINGLE;
@@ -3580,6 +3600,8 @@ public:
       else {
         result.subkind = LLG_SLANG_PARAMETER_SPECPARAM;
         result.constant_id = capture.constant(symbol.getValue());
+        if (isParameterRead(symbol))
+          result.auxiliary |= LLG_SLANG_PARAMETER_REFERENCED;
       }
     }
     if constexpr (std::same_as<T, RandSeqProductionSymbol>) {

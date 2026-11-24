@@ -2124,6 +2124,7 @@ mod tests {
                         },
                         value: None,
                         local: false,
+                        referenced: true,
                     },
                     Some(NodeId(0)),
                     vec![],

@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 79u
+#define LLG_SLANG_ABI_VERSION 81u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -422,6 +422,16 @@ enum {
 enum {
   LLG_SLANG_PARAMETER_LOCAL = 1u << 0,
   LLG_SLANG_PARAMETER_PORT = 1u << 1
+};
+
+/* Auxiliary bits of a PARAMETER node that is no pulse-limit specparam. */
+enum {
+  /* An elaboration override replaced the declared value. */
+  LLG_SLANG_PARAMETER_OVERRIDDEN = 1u << 0,
+  /* An expression, range, type or name in the source reads the parameter's
+   * declaration, in any instance and also where elaboration folds the read
+   * away. An override of the parameter is no read. */
+  LLG_SLANG_PARAMETER_REFERENCED = 1u << 1
 };
 
 typedef struct {

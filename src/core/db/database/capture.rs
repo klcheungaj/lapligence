@@ -135,7 +135,9 @@ impl Db {
             .iter()
             .enumerate()
             .filter(|(_, semantic)| {
-                semantic.kind == SemanticKind::Parameter && semantic.auxiliary == 1
+                semantic.kind == SemanticKind::Parameter
+                    && semantic.subkind == 0
+                    && semantic.auxiliary & SEMANTIC_PARAMETER_OVERRIDDEN != 0
             })
             .map(|(index, _)| NodeId::from_index(index))
             .collect();
