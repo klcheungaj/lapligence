@@ -103,6 +103,8 @@ pub(super) fn node_kind_from_slang(
                 .and_then(|id| snapshot.constants.get(id as usize))
                 .and_then(|constant| val_from_slang(&constant.value)),
             local: node.is_local(),
+            referenced: node.subkind != SEMANTIC_PARAMETER_PATHPULSE
+                && node.auxiliary & SEMANTIC_PARAMETER_REFERENCED != 0,
         },
         SemanticKind::Process => NodeKind::Process {
             kind: match node.subkind {
@@ -157,10 +159,12 @@ pub(super) fn node_kind_from_slang(
                 })
                 .collect::<Result<Vec<_>, DbError>>()?;
             let prim_type = primitive_type_from_subkind(node.subkind);
+            // A primitive the frontend rejected for its port list has no table.
             let udp = if matches!(
                 prim_type,
                 PrimitiveType::Combinational | PrimitiveType::Sequential
-            ) {
+            ) && !node.is_bad()
+            {
                 let primitive_id = node.target_id().ok_or_else(|| {
                     DbError::InvalidSnapshot(format!(
                         "UDP instance `{}` has no declaration identity",

@@ -78,6 +78,34 @@ pub fn discover_sources(config: &LlgConfig) -> io::Result<Vec<PathBuf>> {
     Ok(units.into_keys().collect())
 }
 
+/// Why the discovery of `config` found no source file. Names the directories
+/// and patterns, and what the patterns are relative to: a pattern that repeats
+/// its directory's name (`src` with `src/**/*.sv`) matches nothing.
+pub fn no_sources_message(config: &LlgConfig) -> String {
+    let list = |items: Vec<String>| {
+        items
+            .iter()
+            .map(|item| format!("`{item}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let sources = &config.sources;
+    format!(
+        "`[sources]` selects no files: no `.v` or `.sv` file below {} matches the include \
+         patterns {} and none of the exclude patterns {}; patterns are relative to each of these \
+         directories, not to the directory of the config file",
+        list(
+            sources
+                .directories
+                .iter()
+                .map(|directory| directory.display().to_string())
+                .collect()
+        ),
+        list(sources.include.clone()),
+        list(sources.exclude.clone()),
+    )
+}
+
 fn resolve_sources(base_dir: &Path, raw: &RawSources) -> Result<SourcesConfig, ConfigError> {
     // A present `[sources]` table WITHOUT `include` would otherwise yield an
     // empty glob list and silently discover nothing; fall back to the same

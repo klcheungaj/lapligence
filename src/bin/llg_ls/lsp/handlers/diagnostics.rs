@@ -323,6 +323,19 @@ pub(super) async fn send_in_ticket_order<F, Fut>(
     }
 }
 
+/// Why the config of `root` selects no source file, when its directories
+/// exist (a missing one has its own warning) and discovery found nothing.
+fn no_sources_warning(root: &state::RootState) -> Option<String> {
+    let config = root.descriptor.config.as_deref()?;
+    (root.discovered.is_empty()
+        && config
+            .sources
+            .directories
+            .iter()
+            .all(|directory| directory.is_dir()))
+    .then(|| llg::config::no_sources_message(config))
+}
+
 impl Backend {
     /// Publish each root's config errors and warnings against its TOML URI.
     pub(super) async fn publish_config_diagnostics(&self) {
@@ -370,7 +383,9 @@ impl Backend {
                     } else {
                         root.config_warnings
                             .iter()
-                            .map(|warning| Diagnostic {
+                            .cloned()
+                            .chain(no_sources_warning(root))
+                            .map(|message| Diagnostic {
                                 range: Range {
                                     start: Position::new(0, 0),
                                     end: Position::new(0, 1),
@@ -379,7 +394,7 @@ impl Backend {
                                 code: Some(NumberOrString::String("llg-config".to_owned())),
                                 code_description: None,
                                 source: Some("llg".to_owned()),
-                                message: warning.clone(),
+                                message,
                                 related_information: None,
                                 tags: None,
                                 data: None,

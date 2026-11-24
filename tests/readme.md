@@ -1221,7 +1221,7 @@ support; the corresponding execution tests must also pass.
   `default-filter` in `.config/nextest.toml`): the `llg_ls` unit tests, library
   `core`/`config`/`ffi`/`memory_limit` tests and the `general` suites that need
   no simulator, C compiler or `llg` driver (`lsp_stdio`, `shadowing`,
-  `dump_tokens`, `config_effect`, `compilation_units`, `include_dir_search`,
+  `dump_tokens`, `config_effect`, `broken_sources`, `compilation_units`, `include_dir_search`,
   `parse_only`, `probe_bindings`, `slang_frontend`, `slang_static_function_return`,
   `elab_resolve`). Reproduce it on any host with
   `scripts/run-tests.sh --cargo-profile quick --profile ci-lsp --all-features --lib --bin llg_ls --test general`

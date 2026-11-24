@@ -13,6 +13,13 @@ pub(super) fn statement_from_slang(
     let required = |role, name| {
         first(role)?.ok_or_else(|| DbError::InvalidSnapshot(format!("{name} is missing")))
     };
+    // A statement the frontend rejected has none of the operands its kind
+    // promises; its children stay in the tree.
+    if node.is_bad() {
+        return Ok(NodeKind::Stmt(StmtKind::Unsupported {
+            object_type: ObjectType::UnsupportedStatement,
+        }));
+    }
     Ok(NodeKind::Stmt(match node.subkind {
         32 | 60 => StmtKind::Begin,
         SEMANTIC_STMT_IMMEDIATE_ASSERT
@@ -624,6 +631,11 @@ fn timing_statement(
             .ok_or_else(|| DbError::InvalidSnapshot("cycle-delay control has no count".into()))?;
         return Ok(StmtKind::CycleDelayControl { count });
     }
+    if timing.subkind == SEMANTIC_TIMING_ONE_STEP_DELAY {
+        return Ok(StmtKind::Unsupported {
+            object_type: ObjectType::UnsupportedStatement,
+        });
+    }
     let (specs, implicit) = event_specs(snapshot, timing, ids)?;
     Ok(StmtKind::EventControl {
         specs,
@@ -688,6 +700,9 @@ fn event_trigger_timing(
     }
 }
 
+/// The events `timing` waits for and whether it is `@*`. A control the
+/// frontend rejected waits for no event that could be named: it has no specs
+/// and is not implicit, which no legal control is.
 pub(super) fn event_specs(
     snapshot: &SlangSnapshot,
     timing: &SemanticNode,
@@ -695,6 +710,8 @@ pub(super) fn event_specs(
 ) -> Result<(Vec<EventSpec>, bool), DbError> {
     let edges = semantic_edges(snapshot, timing)?;
     match timing.subkind {
+        // `@(ghost)`, or a whole list one of whose events failed to bind.
+        _ if timing.is_bad() => Ok((Vec::new(), false)),
         113 => {
             let sig = edge_target(ids, edges, SemanticEdgeRole::Event)?
                 .ok_or_else(|| DbError::InvalidSnapshot("signal event has no expression".into()))?;

@@ -138,11 +138,16 @@ fn start(args: Vec<String>) -> Result<DriverOptions, i32> {
     let options = settings::resolve(cli, &settings::Env::from_process(), config.as_ref())
         .map_err(config_failure)?;
     if options.files.is_empty() {
-        say(Message::new(
-            &catalog::CLI_NO_SOURCES,
-            "no source files given (name them on the command line or in a --config file's \
-             `sources.files`/`sources.directories`)",
-        ));
+        let mut text = "no source files given (name them on the command line or in a --config \
+                        file's `sources.files`/`sources.directories`)"
+            .to_owned();
+        if let Some(config) = config
+            .as_ref()
+            .filter(|config| config.sources.directories_configured)
+        {
+            text = format!("{text}; {}", llg::config::no_sources_message(config));
+        }
+        say(Message::new(&catalog::CLI_NO_SOURCES, text));
         return Err(2);
     }
     Ok(options)

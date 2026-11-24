@@ -130,6 +130,12 @@ pub enum NodeKind {
         ty: TypeInfo,
         value: Option<Val>,
         local: bool,
+        /// Whether the source reads the declaration
+        /// ([`crate::ffi::slang::SEMANTIC_PARAMETER_REFERENCED`]): every
+        /// instance shares it, and reads that elaboration folds into a
+        /// constant, a type or a generate decision count. Always `false` for
+        /// a pulse-limit specparam.
+        referenced: bool,
     },
     /// A parameter override; a `defparam` (IEEE 1800-2009 23.10.1) names
     /// the parameter it overrides and has its value expression as its only

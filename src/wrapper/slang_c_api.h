@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 80u
+#define LLG_SLANG_ABI_VERSION 82u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -117,7 +117,7 @@ enum {
    * attribute instances, the IMPORTED edges of import declarations, the
    * FORWARD_DECLARATION edges of classes, and the transparent members through
    * which a derived class shows inherited members. LIBRARY_UNITS captures
-   * omit all but the last as well. (ABI v80) Also record what only tokens
+   * omit all but the last as well. (ABI v82) Also record what only tokens
    * and navigation need, which no other capture spends time on: macros and
    * includes, lexical targets, macro uses, attribute names, end labels, and
    * the names of class headers, definitions outside their class, parameter
@@ -432,6 +432,16 @@ enum {
   LLG_SLANG_PARAMETER_PORT = 1u << 1
 };
 
+/* Auxiliary bits of a PARAMETER node that is no pulse-limit specparam. */
+enum {
+  /* An elaboration override replaced the declared value. */
+  LLG_SLANG_PARAMETER_OVERRIDDEN = 1u << 0,
+  /* An expression, range, type or name in the source reads the parameter's
+   * declaration, in any instance and also where elaboration folds the read
+   * away. An override of the parameter is no read. */
+  LLG_SLANG_PARAMETER_REFERENCED = 1u << 1
+};
+
 typedef struct {
   uint64_t owner_instance_id;
   uint32_t kind;
@@ -587,6 +597,8 @@ enum {
 };
 
 enum {
+  /* The frontend rejected the construct: its subkind may be NONE and operands
+   * its kind promises may be missing. */
   LLG_SLANG_SEMANTIC_BAD = 1u << 0,
   LLG_SLANG_SEMANTIC_UNINSTANTIATED = 1u << 1,
   LLG_SLANG_SEMANTIC_AUTOMATIC = 1u << 2,
@@ -1528,7 +1540,7 @@ enum {
    * identifiers when the expansions disagree or there is none. The net type
    * of `default_nettype, `none` included, is LLG_SLANG_LEXICAL_KEYWORD. */
   LLG_SLANG_LEXICAL_MACRO_FORMAL = 29,
-  /* The name of an attribute instance (IEEE 1800-2009 5.12, ABI v80), which
+  /* The name of an attribute instance (IEEE 1800-2009 5.12, ABI v82), which
    * no declaration introduces: role NONE, no semantic target. An identifier
    * without LLG_SLANG_COMPILE_EDITOR. */
   LLG_SLANG_LEXICAL_ATTRIBUTE = 30
@@ -1743,7 +1755,7 @@ typedef struct {
 } LlgSlangAttribute;
 
 /* A target of the lexical token at index token_index of the lexical token
- * table (ABI v80, LLG_SLANG_COMPILE_EDITOR only); a token with records names
+ * table (ABI v82, LLG_SLANG_COMPILE_EDITOR only); a token with records names
  * these instead of its semantic_id. Exactly one of semantic_id (a semantic node) and target_token
  * (the index of a token of role DECLARATION) is valid. A name that refers to a
  * written declaration without a semantic node (an end label, a formal
@@ -1761,7 +1773,7 @@ typedef struct {
   uint64_t target_token;
 } LlgSlangLexicalTarget;
 
-/* A `define directive that took effect (IEEE 1800-2009 22.5.1, ABI v80), one
+/* A `define directive that took effect (IEEE 1800-2009 22.5.1, ABI v82), one
  * record per directive however many syntax trees include its file; this table
  * and the two that follow are empty without LLG_SLANG_COMPILE_EDITOR. A
  * directive in inactive conditional text, with an invalid name, or for a
@@ -1780,7 +1792,7 @@ typedef struct {
   uint32_t reserved;
 } LlgSlangMacroDefinition;
 
-/* One resolution of a written macro name (ABI v80), in the state of the
+/* One resolution of a written macro name (ABI v82), in the state of the
  * preprocessor at that name; the walk meets the active directives and uses of
  * a tree, headers included in place, in the order the preprocessor did.
  * definition_id indexes the macro definition table, or is
@@ -1806,7 +1818,7 @@ typedef struct {
   uint32_t flags;
 } LlgSlangMacroReference;
 
-/* An `include directive (IEEE 1800-2009 22.4, ABI v80) that the preprocessor
+/* An `include directive (IEEE 1800-2009 22.4, ABI v82) that the preprocessor
  * resolved to an admitted file: `operand` is the written path with its
  * delimiters. A macro operand, whose path is not written there, and an
  * unresolved one have no record. Records are sorted by operand and distinct. */

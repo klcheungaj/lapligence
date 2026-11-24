@@ -39,7 +39,6 @@ impl LintRule for IncompleteSensitivityListRule {
     fn check(&self, ctx: &LintCtx<'_>) -> Vec<LintDiag> {
         let db = ctx.db;
         let mut out = Vec::new();
-        let mut diagnostics_seen = HashSet::new();
 
         for process in all_nodes(db) {
             let NodeKind::Process {
@@ -81,14 +80,6 @@ impl LintRule for IncompleteSensitivityListRule {
                 "incomplete sensitivity list: missing signals: {}",
                 missing.into_iter().collect::<Vec<_>>().join(", ")
             );
-            if !diagnostics_seen.insert((
-                event_node.file().map(str::to_owned),
-                line,
-                col,
-                message.clone(),
-            )) {
-                continue;
-            }
             out.push(LintDiag {
                 rule: "incomplete-sensitivity-list".to_string(),
                 logical: None,
@@ -717,10 +708,13 @@ mod tests {
 
     fn check(sv: &str) -> Vec<LintDiag> {
         let (db, model) = build_design(sv, "t");
-        IncompleteSensitivityListRule.check(&LintCtx {
-            db: &db,
-            model: &model,
-        })
+        crate::core::lint::distinct_findings(
+            &IncompleteSensitivityListRule,
+            &LintCtx {
+                db: &db,
+                model: &model,
+            },
+        )
     }
 
     #[test]

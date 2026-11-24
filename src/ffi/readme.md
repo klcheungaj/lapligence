@@ -80,10 +80,10 @@ invocation locations in configuration diagnostics.
   byte budget. The text must span exactly the comment range minus its
   delimiters; instance records must name distinct instance nodes of a
   reported scope. Parsing and binding happen in the owned DB.
-- `lexical_targets` (ABI 80) name the targets of a token whose `semantic_id`
+- `lexical_targets` (ABI 82) name the targets of a token whose `semantic_id`
   cannot: another token that declares the name, or each of several. They are
   sorted by token, and one that names a token names a declaration.
-  `macro_definitions`, `macro_references` and `includes` (ABI 80) are the
+  `macro_definitions`, `macro_references` and `includes` (ABI 82) are the
   preprocessor's resolutions (all four tables are empty but in editor captures), sorted by range; a macro reference without a
   definition is predefined. Their counts are bounded by the lexical token limit
   (`LLG_SLANG_MAX_LEXICAL_TARGETS` per body name) and the record byte budget.

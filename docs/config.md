@@ -240,11 +240,15 @@ Required integer; must be `1`.
 - `files` (array of strings, `llg` only) — explicit source files, the
   equivalent of the command-line `<file.sv>...`. Ignored by `llg_ls`, which
   discovers sources from `directories`.
-- `include` (array of globs) — root-relative include globs evaluated against
-  each source directory. Only `.v`/`.sv` files become compilation units
+- `include` (array of globs) — include globs relative to each source directory,
+  not to the config file: with `directories = ["src"]`, every file below `src`
+  is `**/*.sv`, and `src/**/*.sv` would need a `src/src`. `llg_ls` warns on the
+  config file, and `llg` reports, when the directories and patterns select no
+  file. Only `.v`/`.sv` files become compilation units
   (`.vh`/`.svh` and other extensions enter analysis only through include
   resolution). Default `["**/*.v", "**/*.sv"]`.
-- `exclude` (array of globs) — excludes win over includes. Built-in defaults:
+- `exclude` (array of globs) — relative to each source directory too; excludes
+  win over includes. Built-in defaults:
   `slpp_all/**`, `.git/**`, `target/**`.
 
 ## `[compile]` — compilation inputs

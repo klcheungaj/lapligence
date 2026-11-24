@@ -261,6 +261,10 @@ fn clocking_delay_expression(
         .semantic_nodes
         .get(delay.index())
         .ok_or_else(|| DbError::InvalidSnapshot("clocking skew timing is missing".into()))?;
+    // A skew that failed to bind (`input #ghost a;`) has no expression.
+    if timing.is_bad() {
+        return Ok(None);
+    }
     if timing.subkind == 112 {
         return edge_target_at(
             ids,

@@ -21,8 +21,8 @@ One module per rule; the rule's behavior is in its module docs and
 - When two rules could report one location, document the split in both modules
   (`case_default.rs` vs `latch.rs`; `mixed_assign.rs` vs `blocking_in_ff.rs` and
   `nba_in_comb.rs`).
-- Identical findings from cloned instances are source-deduplicated where the
-  rule says so; keep that when refactoring.
+- A rule reports every instance's finding; `LintRegistry::lint` keeps equal ones
+  once. Name the instance or value in the message only when copies may differ.
 
 ## Pitfalls
 

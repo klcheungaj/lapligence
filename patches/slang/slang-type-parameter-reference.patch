@@ -1,0 +1,26 @@
+diff --git a/source/ast/Lookup.cpp b/source/ast/Lookup.cpp
+index 5b04c9406..279708a7f 100644
+--- a/source/ast/Lookup.cpp
++++ b/source/ast/Lookup.cpp
+@@ -157,7 +157,8 @@ struct NamePlusLoc {
+ 
+ const Symbol* unwrapTypeParam(const Scope& scope, const Symbol* symbol) {
+     if (symbol->kind == SymbolKind::TypeParameter) {
+-        scope.getCompilation().noteReference(*symbol);
++        // An overridden type parameter has no syntax of its own; its alias has.
++        scope.getCompilation().noteReference(symbol->as<TypeParameterSymbol>().getTypeAlias());
+ 
+         auto result = &symbol->as<TypeParameterSymbol>().targetType.getType();
+         if (result->isError())
+@@ -928,9 +929,10 @@ void unwrapResult(const Scope& scope, LookupResult& result, bool unwrapGenericCl
+ 
+     // Unwrap type parameters into their target type alias.
+     if (result.found->kind == SymbolKind::TypeParameter) {
++        // An overridden type parameter has no syntax of its own; its alias has.
++        result.found = &result.found->as<TypeParameterSymbol>().getTypeAlias();
+         scope.getCompilation().noteReference(*result.found);
+ 
+-        result.found = &result.found->as<TypeParameterSymbol>().getTypeAlias();
+         result.flags |= LookupResultFlags::FromTypeParam;
+     }
+     else if (result.found->kind == SymbolKind::TypeAlias) {

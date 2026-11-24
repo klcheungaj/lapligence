@@ -27,7 +27,6 @@ impl LintRule for XzLogicalEqualityRule {
     fn check(&self, ctx: &LintCtx<'_>) -> Vec<LintDiag> {
         let db = ctx.db;
         let mut out = Vec::new();
-        let mut diagnostics_seen = std::collections::HashSet::new();
         for id in all_nodes(db) {
             let NodeKind::Expr(ExprKind::Operation { op, operands, .. }) = db.node_kind(id) else {
                 continue;
@@ -48,14 +47,6 @@ impl LintRule for XzLogicalEqualityRule {
             let message =
                 "logical equality compares a literal containing X/Z/?; use === or !== instead"
                     .to_string();
-            if !diagnostics_seen.insert((
-                node.file().map(str::to_owned),
-                line,
-                col,
-                message.clone(),
-            )) {
-                continue;
-            }
             out.push(LintDiag {
                 rule: "xz-logical-equality".to_string(),
                 logical: None,
@@ -108,10 +99,13 @@ mod tests {
 
     fn rule_diags(sv: &str, top: &str) -> Vec<LintDiag> {
         let (db, model) = build_design(sv, top);
-        XzLogicalEqualityRule.check(&LintCtx {
-            db: &db,
-            model: &model,
-        })
+        crate::core::lint::distinct_findings(
+            &XzLogicalEqualityRule,
+            &LintCtx {
+                db: &db,
+                model: &model,
+            },
+        )
     }
 
     #[test]

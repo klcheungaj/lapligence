@@ -18,6 +18,7 @@ mod sim_cli;
 mod sim_harness;
 mod support;
 
+mod broken_sources;
 mod compilation_units;
 mod compile_errors;
 mod compiler_cache;
