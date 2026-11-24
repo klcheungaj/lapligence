@@ -591,6 +591,18 @@ impl Codegen<'_> {
         }
     }
 
+    /// Whether `node` is a string literal with a `\0` in it.
+    fn literal_has_zero_byte(&self, node: NodeId) -> Result<bool, String> {
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Constant {
+                const_type: ConstantType::String,
+                value,
+                ..
+            }) => Ok(decoded_string_bytes(value)?.contains(&0)),
+            _ => Ok(false),
+        }
+    }
+
     /// Lower one argument retained by the shared typed formatter.  Native
     /// strings remain owned string expressions and reals never pass through a
     /// packed conversion.
@@ -599,6 +611,11 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<IrDisplayArg, String> {
+        if self.literal_has_zero_byte(node)? {
+            // A string value would lose the zero bytes of the packed literal
+            // (SV 5.9, 6.16), which `%s` and `%h` print.
+            return Ok(IrDisplayArg::Packed(self.lower_expr(path, node)?));
+        }
         if self.is_string_expr(path, node)
             || matches!(
                 self.kind(node),

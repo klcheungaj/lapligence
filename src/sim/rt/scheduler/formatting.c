@@ -460,6 +460,32 @@ static size_t llg_format_char(sv4_t value, char* raw, size_t cap) {
     return 1;
 }
 
+// `%s` of a packed vector: its bytes from the most significant one, x and z
+// bits read as 0. A zero byte prints as a space wherever it stands, so the
+// text fills the width of the vector as a value of any other format does
+// (SV 21.2.1.3: "string values are expanded with leading spaces"), unless
+// `drop_zero_bytes` removes it, as `%0s` and a left-justified field do
+// (decision S24-D4). A vector of one byte has no such width.
+static size_t llg_format_vector_string(sv4_t value, int32_t drop_zero_bytes,
+                                       char* raw, size_t cap) {
+    size_t bytes = ((size_t)llg_sv4_width(value) + 7u) / 8u;
+    if (bytes <= 1u) drop_zero_bytes = 1;
+    size_t len = 0;
+    for (size_t i = bytes; i > 0 && len < cap; --i) {
+        size_t bit = (i - 1u) * 8u;
+        size_t word = bit / 64u;
+        uint64_t known = llg_sv4_word(value, word, LLG_SV4_BITS) &
+                         ~(llg_sv4_word(value, word, LLG_SV4_X) |
+                           llg_sv4_word(value, word, LLG_SV4_Z));
+        uint8_t byte = (uint8_t)(known >> (bit % 64u));
+        if (byte)
+            raw[len++] = (char)byte;
+        else if (!drop_zero_bytes)
+            raw[len++] = ' ';
+    }
+    return len;
+}
+
 static sv4_t llg_string_to_display_packed(const llg_string_t* value) {
     size_t max_bytes = (size_t)(LLG_SUPPORTED_WIDTH_LIMIT - 1u) / 8u;
     if (value->len > max_bytes) {
@@ -852,11 +878,9 @@ static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
                                            ? (size_t)written
                                            : raw_cap - 1;
         } else if (conversion == 's' && arg->kind == LLG_FMT_PACKED) {
-            llg_string_t value = llg_string_from_packed(arg->value.packed);
-            raw_len = value.len;
-            if (raw_len > raw_cap) raw_len = raw_cap;
-            if (raw_len) memcpy(raw, value.data, raw_len);
-            llg_string_destroy(&value);
+            raw_len = llg_format_vector_string(
+                arg->value.packed, spec.left || (spec.zero && !spec.has_width),
+                raw, raw_cap);
         } else if (conversion == 's' && arg->kind == LLG_FMT_STRING) {
             raw_len = arg->value.string.len;
             if (raw_len > raw_cap) raw_len = raw_cap;

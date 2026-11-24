@@ -970,6 +970,14 @@ fn s24_d3_unformatted_real() {
 }
 
 #[test]
+fn s24_d4_vector_string_padding() {
+    run_decision(
+        "S24-D4_vector_string_padding",
+        include_str!("fixtures/sim/lrm_decisions/S24-D4_vector_string_padding.out"),
+    );
+}
+
+#[test]
 fn s26_d1_scan_selector_snapshot() {
     run_decision(
         "S26-D1_scan_selector_snapshot",
