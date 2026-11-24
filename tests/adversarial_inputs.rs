@@ -8,7 +8,11 @@
 //! input must end in a defined result: a value or an error from a library
 //! entry, an exit status of 0, 1 or 2 from a tool; never a panic, a signal
 //! or a hang. These are component tests: no model is built or run here
-//! (the run-time readers are in `sim_feature_completion::fin_002b`).
+//! (the run-time readers are in `sim_feature_completion::fin_002b`). The
+//! source corpus continues where `broken_sources` ends: that suite proves
+//! token by token that a broken design still imports and lints; this one
+//! damages bytes of larger designs and follows the survivors through
+//! lowering, both optimizer modes and C generation.
 use crate::fuzz::{self, Fuzz};
 use crate::sim_harness;
 use llg::core::compile::{self, CompileOpts, OwnedSource};
@@ -340,11 +344,17 @@ fn component_mutated_sources_end_in_diagnostics_or_generated_models() {
             continue;
         };
         let failed = compiled.snapshot.has_errors();
-        let Ok(database) = defined(&label, &bytes, || {
+        // A construct the frontend rejected is a neutral node of the owned
+        // database (`broken_sources`), so the import itself never fails.
+        let database = defined(&label, &bytes, || {
             llg::core::db::Db::from_slang(&compiled.snapshot)
-        }) else {
-            continue;
-        };
+        })
+        .unwrap_or_else(|error| {
+            panic!(
+                "{label}: database import failed: {error}\n{}",
+                String::from_utf8_lossy(&bytes)
+            )
+        });
         drop(compiled);
         defined(&label, &bytes, || {
             let model = llg::core::model::DesignModel::from_db(&database);
@@ -367,6 +377,31 @@ fn component_mutated_sources_end_in_diagnostics_or_generated_models() {
     assert!(
         generated > 0 || cases.end - cases.start < 160,
         "no mutated source reached C generation"
+    );
+}
+
+/// Minimized from `inputs/sources` case 428: a character the frontend
+/// rejects beside a name gave a rejected construct whose range ended inside
+/// that character, and the import of the whole design failed with "semantic
+/// range is not on a source character boundary".
+#[test]
+fn component_a_rejected_character_keeps_the_design_analysable() {
+    let source =
+        "module tb;\n  logic ck;\n  initial begin\n    #1 ck\u{fffd}= 1'b0;\n  end\nendmodule\n";
+    let compiled = compile::compile_sources(
+        &[OwnedSource::compilation_unit("tb.sv", source)],
+        &CompileOpts {
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        },
+    )
+    .expect("the frontend reports the character and returns a snapshot");
+    assert!(compiled.snapshot.has_errors());
+    let database = llg::core::db::Db::from_slang(&compiled.snapshot)
+        .expect("the rejected construct is a neutral node");
+    assert!(
+        database.nodes().iter().any(|node| node.line == 2),
+        "the declaration before the error keeps its node"
     );
 }
 
