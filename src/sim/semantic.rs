@@ -1271,6 +1271,11 @@ fn is_declaration_only_unknown(detail: Option<&str>) -> bool {
                 // `modport m(clocking cb)` only exports the interface's block.
                 | "ModportClocking"
                 | "Constraint"
+                // $info and $warning calls outside procedures (SV 20.10): the
+                // frontend printed the message; $error and $fatal stop there.
+                | "ElabSystemTask"
+                // A lone `;` (A.1.4).
+                | "EmptyMember"
                 | "ExplicitImport"
                 | "Export"
                 // `typedef class c;` only names a type declared later.

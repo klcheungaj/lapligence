@@ -642,13 +642,15 @@ impl CompileOut {
     }
 }
 
-/// Frontend errors that llg reports as warnings by decision, which `-Werror`
-/// reports as errors again: an override that changes a virtual method's
-/// visibility (S08-D1) and an unpacked array of derived-class handles
-/// assigned to one of base-class handles (UVB-D1).
+/// Frontend warnings that `-Werror` reports as errors: two frontend errors
+/// that llg reports as warnings by decision, an override that changes a
+/// virtual method's visibility (S08-D1) and an unpacked array of
+/// derived-class handles assigned to one of base-class handles (UVB-D1), and
+/// the design's own `$warning` elaboration tasks (IEEE 1800-2009 20.10).
 pub const WERROR_FRONTEND_WARNINGS: &[&str] = &[
     "SLANG-VirtualVisibilityMismatch",
     "SLANG-DerivedClassArrayAssignment",
+    "SLANG-WarningTask",
 ];
 
 /// [`CompileOut::retain_frontend_diagnostics`] over a compile projection,

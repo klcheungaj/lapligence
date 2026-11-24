@@ -1,8 +1,5 @@
-// $typename of a type parameter inside a class specialization: a known
-// difference (docs/known_issues.md, UVM example differences). llg prints the
-// spelling where the frontend first met the type; 20.6.1 asks for the
-// resolved type. The expected output pins llg's current text so that a fix
-// updates it.
+// $typename of a type parameter inside a class specialization returns the
+// resolved type (20.6.1, decision TN-D2).
 package lib;
   class registry #(type T = int);
     static function string name();

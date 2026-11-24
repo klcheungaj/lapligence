@@ -74,6 +74,19 @@ fn run_time_formats_report_missing_arguments_once() {
 }
 
 #[test]
+fn run_time_formats_append_extra_arguments_and_report_once() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_024/dynamic_extra.out");
+    sim_cli::run_case(
+        SUITE,
+        "dynamic_extra",
+        expected,
+        "INFO: dynamic_extra.sv:29:5: [SIM-001] (tb @ 0 ps) $finish called\nINFO: [SIM-000] 0 error(s), 1 warning(s), 1 info(s)\n",
+        &["format `x=%0d` has fewer specifications than arguments; the rest are printed in their default formats"],
+    );
+    sim_cli::run_case_backend_parity(SUITE, "dynamic_extra", expected, &[], &[]);
+}
+
+#[test]
 fn neg_argument_count_type_and_specifier_errors() {
     sim_cli::reject_case(
         SUITE,

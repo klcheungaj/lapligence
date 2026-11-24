@@ -45,6 +45,7 @@
 #include "slang/ast/symbols/VariableSymbols.h"
 #include "slang/ast/types/AllTypes.h"
 #include "slang/ast/types/Type.h"
+#include "slang/ast/types/TypePrinter.h"
 #include "slang/diagnostics/AnalysisDiags.h"
 #include "slang/diagnostics/LexerDiags.h"
 #include "slang/diagnostics/CompilationDiags.h"
@@ -4304,6 +4305,12 @@ public:
         // without guessing from source names or child ordering.
         if (iteratorVariable)
           result.target_id = capture.ensureSemantic(iteratorVariable);
+        // The type table keeps the spelling of a type's first reference, so a
+        // `$typename` call carries its own text.
+        if (info.subroutine->knownNameId == parsing::KnownSystemName::Typename &&
+            !expression.arguments().empty())
+          result.constant_id = capture.constant(ConstantValue(
+              TypePrinter::typenameText(*expression.arguments()[0]->type)));
       }
       if (isSystemMethodCall(expression))
         result.kind = LLG_SLANG_SEMANTIC_METHOD_CALL;

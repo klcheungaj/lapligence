@@ -1,0 +1,5 @@
+event$[0:2]|event$[0:1][0:2]|event$[$]|event$[]|event$[string]
+event|event$[0:1]|int$[0:2]|int$[$]
+int$[$]|int$[$:5]|int$[]|int$[string]|int$[][$]
+int$[$][0:2]|string$[$]|string$[0:2]|string$[string]|real$[$]
+er 1

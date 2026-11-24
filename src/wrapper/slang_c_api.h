@@ -1416,6 +1416,8 @@ typedef struct {
   LlgSlangString definition_name;
   LlgSlangSourceRange range;
   uint64_t type_id;
+  /* The constant value of an expression or declaration, where the frontend
+   * has one; the text of a `$typename` system call (IEEE 1800-2009 20.6.1). */
   uint64_t constant_id;
   uint64_t target_id;
   uint64_t edge_start;

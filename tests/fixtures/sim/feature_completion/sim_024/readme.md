@@ -156,6 +156,11 @@ A specification in a run-time format without an argument is printed as
 written; the first such case of a run is reported once as
 `llg: warning: format specification `%0d` has no argument; printed as written`.
 
+Arguments such a format leaves over print in their default formats
+(`dynamic_extra`, decision S24-D5; SV 21.3.3 L36754-36757 asks for a warning
+and continued execution); the first such case of a run warns once. A literal
+format gives the same text, with a compile-time warning.
+
 ## Rejections (`neg_*`)
 
 | Fixture | Diagnostic | Rule |

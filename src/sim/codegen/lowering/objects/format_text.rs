@@ -7,7 +7,7 @@
 //! interprets validated text. Dynamic `$sformat`/`$sformatf` formats keep the
 //! same runtime formatter but are interpreted only at run time.
 use super::*;
-use crate::sim::ir::IrDisplayRadix;
+use crate::sim::ir::{IrDisplayRadix, IrRunTimeFormat};
 
 impl Codegen<'_> {
     /// Lower a display-family argument list into normalized format text and
@@ -88,25 +88,55 @@ impl Codegen<'_> {
                 format: Box::new(IrStringExpr::Literal(format)),
                 args: values,
                 scope,
-                binding: None,
+                run_time: None,
                 time_unit_fs,
             });
         }
-        let format = self.lower_string(path, format_node)?;
+        let format = self.lower_format_value(path, &scope, format_node)?;
         let values = args
             .iter()
             .map(|value| self.lower_dynamic_format_arg(path, *value))
             .collect::<Result<Vec<_>, _>>()?;
+        let mut defaults = Vec::new();
+        for value in &values {
+            push_default_conversion(&mut defaults, value, IrDisplayRadix::Decimal);
+        }
         Ok(IrStringExpr::Format {
             format: Box::new(format),
             args: values,
             scope,
-            binding: Some(
-                library
+            run_time: Some(Box::new(IrRunTimeFormat {
+                binding: library
                     .map(str::to_owned)
                     .unwrap_or_else(|| self.library_binding(self.inst)),
-            ),
+                defaults: String::from_utf8_lossy(&defaults).into_owned(),
+            })),
             time_unit_fs: self.timescale_of_node(format_node).unit_fs,
+        })
+    }
+
+    /// A format that is no literal: a string value, or the text of an
+    /// integral one (SV 21.3.3), which reads as `%s` prints it.
+    fn lower_format_value(
+        &mut self,
+        path: &str,
+        scope: &str,
+        node: NodeId,
+    ) -> Result<IrStringExpr, String> {
+        let integral = !self.is_string_expr(path, node)
+            && self
+                .query_descriptor(node)
+                .is_some_and(|descriptor| matches!(descriptor.shape, TypeShape::PackedAtom { .. }));
+        if !integral {
+            return self.lower_string(path, node);
+        }
+        let value = IrDisplayArg::Packed(self.lower_expr(path, node)?);
+        Ok(IrStringExpr::Format {
+            format: Box::new(IrStringExpr::Literal(b"%s".to_vec())),
+            args: vec![value],
+            scope: scope.to_owned(),
+            run_time: None,
+            time_unit_fs: 0,
         })
     }
 

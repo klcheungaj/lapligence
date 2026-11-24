@@ -1,0 +1,58 @@
+logic signed[4095:0]
+byte
+byte$[0:3]
+byte$[$]
+struct{byte a;int b;}tb.us_t
+struct{struct{byte a;int b;}tb.us_t u;logic[3:0]$[0:1] n;}tb.nest_t
+struct packed{logic[3:0] a;logic b;}pk::ps_t
+enum{X0=32'sd0,X1=32'sd1,X9=32'sd9}pk::en_t
+union packed{logic[3:0] a;logic[3:0] b;}tb.up_t
+real
+string
+logic[1:0][3:0]
+pk::C
+ifc#(W=5)
+chandle
+logic[3:0]$[byte]
+logic[3:0]$[$][0:2]
+struct packed{logic[3:0] a;logic b;}pk::ps_t$[0:1]
+enum{X0=32'sd0,X1=32'sd1,X9=32'sd9}pk::en_t$[$]
+pk::C$[$]
+pk::P#(logic[3:0])
+pk::P#(pk::C)
+pk::P#(logic signed[4095:0])
+pk::P#(pk::P#(pk::C))
+enum{A0=32'sd0,A1=32'sd1}tb.e$2
+struct{int x;}tb.s$4
+struct packed{logic z;}tb.s$5
+enum{Z0=2'd0}tb.zen_t
+mailbox#(logic[3:0])
+semaphore
+process
+event
+logic[3:0]
+logic[2:0]
+byte|byte$[0:3]|struct{byte a;int b;}tb.us_t|enum{X0=32'sd0,X1=32'sd1,X9=32'sd9}pk::en_t|struct packed{logic[3:0] a;logic b;}pk::ps_t
+logic[3:0]|pk::C|logic signed[4095:0]|int
+byte
+struct{byte a;int b;}tb.us_t
+pk::C
+pk::P#(pk::C)
+logic[3:0]
+enum{X0=32'sd0,X1=32'sd1,X9=32'sd9}pk::en_t
+int
+bit[23:0]
+real
+byte
+logic[3:0]
+bit[15:0]
+byte
+struct{byte a;int b;}tb.us_t
+time
+bit
+logic[3:0]|pk::C
+sub logic[3:0]|logic[3:0]|logic[3:0]
+sub pk::C|pk::C|pk::C
+sub struct{byte a;int b;}tb.us_t|struct{byte a;int b;}tb.us_t|struct{byte a;int b;}tb.us_t
+sub int|int|int
+sub logic[3:0]|logic[3:0]|logic[3:0]

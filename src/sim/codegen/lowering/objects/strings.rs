@@ -496,15 +496,11 @@ impl Codegen<'_> {
                 self.lower_explicit_format(path, library.as_deref(), "$sformatf", format, &values)
             }
             NodeKind::SysCall { name } if name == "$typename" => {
-                let [argument] = self.node(node).children.as_slice() else {
-                    return Err(format!("$typename requires exactly one argument in `{path}`"));
-                };
-                let descriptor = self.query_descriptor(*argument).ok_or_else(|| {
-                    format!(
-                        "$typename argument has no owned type metadata in `{path}`"
-                    )
-                })?;
-                Ok(IrStringExpr::Literal(descriptor.name.as_bytes().to_vec()))
+                let text = self
+                    .db
+                    .type_name_text(node)
+                    .ok_or_else(|| format!("$typename has no captured text in `{path}`"))?;
+                Ok(IrStringExpr::Literal(text.to_vec()))
             }
             NodeKind::Expr(ExprKind::Constant { const_type: ConstantType::String, value, .. }) => Ok(string_literal(decoded_string_bytes(value)?)),
             NodeKind::Expr(ExprKind::Ref {target:Some(target)}) if matches!(self.kind(*target),NodeKind::Param {ty,..} if ty.kind=="string") => self.lower_string(path,*target),
@@ -591,6 +587,18 @@ impl Codegen<'_> {
         }
     }
 
+    /// Whether `node` is a string literal with a `\0` in it.
+    fn literal_has_zero_byte(&self, node: NodeId) -> Result<bool, String> {
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Constant {
+                const_type: ConstantType::String,
+                value,
+                ..
+            }) => Ok(decoded_string_bytes(value)?.contains(&0)),
+            _ => Ok(false),
+        }
+    }
+
     /// Lower one argument retained by the shared typed formatter.  Native
     /// strings remain owned string expressions and reals never pass through a
     /// packed conversion.
@@ -599,6 +607,11 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<IrDisplayArg, String> {
+        if self.literal_has_zero_byte(node)? {
+            // A string value would lose the zero bytes of the packed literal
+            // (SV 5.9, 6.16), which `%s` and `%h` print.
+            return Ok(IrDisplayArg::Packed(self.lower_expr(path, node)?));
+        }
         if self.is_string_expr(path, node)
             || matches!(
                 self.kind(node),

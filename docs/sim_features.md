@@ -378,8 +378,7 @@ Macros, includes and their edition-specific behavior are counted in §11.
   NBAs to automatic reals are illegal. V §3.9 **[1995]**.
 - 🟦 **Typedefs and enums** — Simple/packed aliases resolve through the frontend;
   a forward `typedef class` in a module or package only names a later class.
-  `$typename` of a type parameter spells the parameter where the frontend
-  first met the type, not the resolved type (known issue). Enums retain nominal identity, base width and sparse signed declaration-order
+  Enums retain nominal identity, base width and sparse signed declaration-order
   values. `first/last/next/prev/num/name` support wrapping counts, owned names and
   two-/four-state invalid-value defaults. SV §§6.18–6.19 **[SV-2005]**.
 - 🟨 **Structures and untagged unions** — Packed members preserve state/sign and
@@ -2122,7 +2121,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   conversions round to 64-bit integers and integral `%e/%f/%g` arguments
   convert to real. String literals in argument lists start format segments;
   empty arguments print a space. A real without a format specification prints
-  in C's shortest `%g` form (`1.5`, `2`, [S24-D3](lrm_decisions.md#display-formatting-sim-024)). `%m` names the enclosing named block,
+  in C's shortest `%g` form (`1.5`, `2`, [S24-D3](lrm_decisions.md#display-formatting-sim-024)).
+  `%s` prints a zero byte of a packed vector as a space and `%0s` drops it
+  (S24-D4); arguments a run-time format leaves over print in their default
+  formats (S24-D5). `%m` names the enclosing named block,
   subroutine or generate block; in a class method it names the method below its
   class and the scope that declares the class (`C.f`, `p.D.g`, `tb.L.k`,
   S99-D10), followed by its named blocks (`C.f.fb`); a named `fork`-`join`
@@ -2339,6 +2341,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   which a `$fatal` executed exits with status 1, as does one ended by a run-time
   error; `$error`, `$warning`, failing assertions and `$finish` leave the
   status 0 ([exit statuses](../readme.md#using-llg), decision ES-D1).
+  Outside procedures the tasks run at elaboration, once per call left after
+  generate expansion, and name the scope of the call; `$error` and `$fatal`
+  stop before generation (exit 1), `$warning` (an error under `-Werror`) and
+  `$info` do not
+  ([fixtures](../tests/fixtures/sim/feature_completion/ki_elab_tasks/readme.md)).
   V §17.4.1; SV §§20.2, 20.9–20.10 **[1995/SV-2005]**.
 - 🟨 **Stop/resume** — `$stop` preserves pending work, activations, output and
   time. `--stop-policy resume` is the noninteractive default; `exit` returns
@@ -2355,8 +2362,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟨 **Data/array queries** — `$typename/$isunbounded/$bits`,
   `$left/$right/$low/$high/$increment/$size/$dimensions/$unpacked_dimensions`
   use represented packed, fixed-array, dynamic/queue, associative-integral and
-  string metadata. `$typename` spacing is
-  [TN-D1](lrm_decisions.md#type-names-small-decisions). Fixed queries cover selected rows, declared formal bounds and
+  string metadata. `$typename` resolves typedefs and type
+  parameters at every level and names a structure, union or enumeration by its
+  innermost typedef and a class by its scope
+  ([TN-D1, TN-D2](lrm_decisions.md#type-names-small-decisions)). Fixed queries cover selected rows, declared formal bounds and
   descriptor-backed arrays; an out-of-range or unknown dimension yields X.
   `$size/$left/$right/$low/$high/$increment` of a nested dynamic or queue
   element (`qq[i]`) read its runtime size
