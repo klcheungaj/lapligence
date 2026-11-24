@@ -724,6 +724,24 @@ endmodule
         assert_eq!(found, ["1", "2"]);
     }
 
+    /// What the directive sees, or else what the rest of the unit defines.
+    #[test]
+    fn a_use_in_a_body_that_is_never_expanded_resolves_at_the_directive() {
+        let text = "\
+`define EARLY `INNER
+`define INNER 1
+`define UNUSED `INNER + 1
+`define INNER 2
+`define NEVER `ABSENT
+module m;
+endmodule
+";
+        let macros = table(&[], text);
+        assert_eq!(bodies(&macros, text, "`define UNUSED `|INNER"), ["1"]);
+        assert_eq!(bodies(&macros, text, "`define EARLY `|INNER"), ["2"]);
+        assert!(bodies(&macros, text, "`define NEVER `|ABSENT").is_empty());
+    }
+
     #[test]
     fn a_site_covers_the_grave_accent_and_the_name() {
         let text = "`define W 4\nmodule m;\n  int x = `W;\nendmodule\n";
@@ -739,12 +757,12 @@ endmodule
 
     #[test]
     fn config_defines_that_are_no_identifier_are_dropped() {
-        let defines = ["A", "B=1", "C=", "1BAD", "BAD-NAME=2", "", "=3"].map(str::to_owned);
+        let defines = ["A", "B=1", "C=", "_D=4", "1BAD", "BAD-NAME=2", "", "=3"].map(str::to_owned);
         let parsed: Vec<_> = parse_config_defines(&defines)
             .into_iter()
             .map(|definition| (definition.name, definition.body))
             .collect();
-        let expected = [("A", ""), ("B", "1"), ("C", "")]
+        let expected = [("A", ""), ("B", "1"), ("C", ""), ("_D", "4")]
             .map(|(name, body)| (name.to_owned(), body.to_owned()));
         assert_eq!(parsed, expected);
     }

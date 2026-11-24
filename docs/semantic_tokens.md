@@ -391,10 +391,12 @@ resolved by spelling.
   in an included header, after any `` `undef ``. This holds for a use
   `` `NAME ``, the name in `` `define NAME `` and the operand of
   `` `ifdef ``, `` `ifndef ``, `` `elsif `` and `` `undef ``. A use in a
-  macro body is resolved where the body is expanded, and a header that several
-  units include leads to every definition they use. A `[compile] defines` entry
-  takes precedence over a `` `define `` of the same name, which then defines
-  nothing. Macro hover describes the same definitions.
+  macro body is resolved where the body is expanded; in a body that nothing
+  expands it leads to the definition in effect at the directive, or else to the
+  one in effect at the end of the unit. A header that several units include
+  leads to every definition they use. A `[compile] defines` entry takes
+  precedence over a `` `define `` of the same name, which then defines nothing.
+  Macro hover describes the same definitions.
 - **ST-81** The path of a resolved `` `include `` (22.4) leads to the start of
   the included file, from every column of the operand with its quotes or angle
   brackets. The file is the one the preprocessor read.
