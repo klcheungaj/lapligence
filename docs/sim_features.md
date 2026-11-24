@@ -378,8 +378,7 @@ Macros, includes and their edition-specific behavior are counted in §11.
   NBAs to automatic reals are illegal. V §3.9 **[1995]**.
 - 🟦 **Typedefs and enums** — Simple/packed aliases resolve through the frontend;
   a forward `typedef class` in a module or package only names a later class.
-  `$typename` of a type parameter spells the parameter where the frontend
-  first met the type, not the resolved type (known issue). Enums retain nominal identity, base width and sparse signed declaration-order
+  Enums retain nominal identity, base width and sparse signed declaration-order
   values. `first/last/next/prev/num/name` support wrapping counts, owned names and
   two-/four-state invalid-value defaults. SV §§6.18–6.19 **[SV-2005]**.
 - 🟨 **Structures and untagged unions** — Packed members preserve state/sign and
@@ -2363,8 +2362,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟨 **Data/array queries** — `$typename/$isunbounded/$bits`,
   `$left/$right/$low/$high/$increment/$size/$dimensions/$unpacked_dimensions`
   use represented packed, fixed-array, dynamic/queue, associative-integral and
-  string metadata. `$typename` spacing is
-  [TN-D1](lrm_decisions.md#type-names-small-decisions). Fixed queries cover selected rows, declared formal bounds and
+  string metadata. `$typename` resolves typedefs and type
+  parameters at every level and names a structure, union or enumeration by its
+  innermost typedef and a class by its scope
+  ([TN-D1, TN-D2](lrm_decisions.md#type-names-small-decisions)). Fixed queries cover selected rows, declared formal bounds and
   descriptor-backed arrays; an out-of-range or unknown dimension yields X.
   `$size/$left/$right/$low/$high/$increment` of a nested dynamic or queue
   element (`qq[i]`) read its runtime size

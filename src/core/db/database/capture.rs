@@ -458,6 +458,7 @@ impl Db {
         let instance_array_ranges = instance_array_ranges(snapshot);
         let mut keyword_lines = statement_keyword_lines(snapshot, &mut source_positions)?;
         keyword_lines.extend(port_header_lines(snapshot, &mut source_positions)?);
+        let type_name_texts = type_name_texts(snapshot)?;
         let fork_blocks = snapshot
             .semantic_nodes
             .iter()
@@ -1701,6 +1702,7 @@ impl Db {
             primitive_array_positions,
             instance_array_ranges,
             keyword_lines,
+            type_name_texts,
             fork_blocks,
             source_libraries,
             declaration_time_scales,
@@ -2190,6 +2192,34 @@ fn instance_array_ranges(snapshot: &SlangSnapshot) -> HashMap<NodeId, (i32, i32)
             let left = (node.auxiliary & u64::from(u32::MAX)) as u32 as i32;
             let right = (node.auxiliary >> 32) as u32 as i32;
             (NodeId::from_index(index), (left, right))
+        })
+        .collect()
+}
+
+/// The texts of the `$typename` calls, which the capture carries as their
+/// constants.
+fn type_name_texts(snapshot: &SlangSnapshot) -> Result<HashMap<NodeId, Box<[u8]>>, DbError> {
+    snapshot
+        .semantic_nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| {
+            node.kind == SemanticKind::SystemCall && node.name.as_str() == "$typename"
+        })
+        .filter_map(|(index, node)| Some((index, node.constant_id()?)))
+        .map(|(index, constant)| {
+            let value = usize::try_from(constant)
+                .ok()
+                .and_then(|constant| snapshot.constants.get(constant))
+                .map(|constant| &constant.value);
+            match value {
+                Some(SlangConstantValue::String(text)) => {
+                    Ok((NodeId::from_index(index), text.as_slice().into()))
+                }
+                _ => Err(DbError::InvalidSnapshot(
+                    "the text of a $typename call is missing".into(),
+                )),
+            }
         })
         .collect()
 }

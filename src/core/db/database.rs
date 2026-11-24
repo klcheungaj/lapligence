@@ -339,6 +339,8 @@ pub struct Db {
     /// its range's start, and a task or function body list (no range) where
     /// it opens; and the module header line of a non-ANSI port.
     keyword_lines: HashMap<NodeId, u32>,
+    /// The text of each `$typename` call (IEEE 1800-2009 20.6.1).
+    type_name_texts: HashMap<NodeId, Box<[u8]>>,
     /// The block symbols of `fork` statements; other block symbols are `begin`.
     fork_blocks: HashSet<NodeId>,
     /// Source library of each elaborated instance (its selected definition's
@@ -566,6 +568,7 @@ impl Db {
             primitive_array_positions: HashMap::new(),
             instance_array_ranges: HashMap::new(),
             keyword_lines: HashMap::new(),
+            type_name_texts: HashMap::new(),
             fork_blocks: HashSet::new(),
             source_libraries: HashMap::new(),
             declaration_time_scales: HashMap::new(),
@@ -678,6 +681,7 @@ impl Db {
             primitive_array_positions: HashMap::new(),
             instance_array_ranges: HashMap::new(),
             keyword_lines: HashMap::new(),
+            type_name_texts: HashMap::new(),
             fork_blocks: HashSet::new(),
             source_libraries: HashMap::new(),
             declaration_time_scales: HashMap::new(),
@@ -953,6 +957,11 @@ impl Db {
                 Some(NodeKind::Stmt(StmtKind::Begin | StmtKind::Fork { .. }))
             )
         })
+    }
+
+    /// The text `$typename` call `id` returns.
+    pub fn type_name_text(&self, id: NodeId) -> Option<&[u8]> {
+        self.type_name_texts.get(&id).map(|text| &**text)
     }
 
     /// Whether block scope `id` is the block of a `fork` statement.

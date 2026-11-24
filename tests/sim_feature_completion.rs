@@ -319,6 +319,8 @@ mod sim_099;
 
 #[path = "sim_feature_completion/ki_elab_tasks.rs"]
 mod ki_elab_tasks;
+#[path = "sim_feature_completion/ki_typename_resolved.rs"]
+mod ki_typename_resolved;
 
 #[path = "sim_feature_completion/ki_audit.rs"]
 mod ki_audit;

@@ -6537,3 +6537,11 @@ fn tn_d1_typename_spacing() {
         include_str!("fixtures/sim/lrm_decisions/TN-D1_typename_spacing.out"),
     );
 }
+
+#[test]
+fn tn_d2_typename_resolved() {
+    run_decision(
+        "TN-D2_typename_resolved",
+        include_str!("fixtures/sim/lrm_decisions/TN-D2_typename_resolved.out"),
+    );
+}

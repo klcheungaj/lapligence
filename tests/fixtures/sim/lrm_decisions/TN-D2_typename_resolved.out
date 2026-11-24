@@ -1,0 +1,28 @@
+logic signed[4095:0]
+logic signed[4095:0]
+logic[3:0]
+byte
+byte
+byte$[0:3]
+byte$[$]
+logic[1:0][3:0]
+logic[1:0][3:0]$[0:1]
+real
+string
+chandle
+logic[3:0]$[byte]
+logic[3:0]$[$][0:2]
+logic[3:0]$[$][0:2]
+logic[3:0]
+mailbox#(logic[3:0])
+mailbox#(logic signed[4095:0])
+byte|logic signed[4095:0]
+logic[3:0]|logic signed[4095:0]|string|int
+logic[3:0]|logic signed[4095:0]
+byte|logic[1:0][3:0]|byte$[$]
+byte|logic[3:0]|logic[3:0]$[0:2]
+bit[15:0]|bit|byte$[1:2]
+sub logic[3:0]|logic[3:0]|logic[3:0]
+sub logic[3:0]|logic[3:0]|logic[3:0]
+sub byte$[0:3]|byte$[0:3]|byte$[0:3]
+sub int|int|int

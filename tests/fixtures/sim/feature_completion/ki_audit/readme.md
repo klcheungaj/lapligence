@@ -95,12 +95,9 @@ reads the `'{3, 4}` stored before the push: `3 4`. The two continuous
 assignments drive bits 0 and 1 of `arr[1].a` with 1 and 0, printed most
 significant first at 1 ns: `01`.
 
-`typename_type_parameter` pins a known difference rather than a served form:
-20.6.1 L34538 ("The $typename system function returns a string that
-represents the resolved type of its argument.") asks for the resolved type,
-which the industry-standard behaviour prints as `class tb.mine`; llg prints the
-spelling where the frontend first met the type, `lib::registry::T`. A fix of
-the known issue updates the expected output.
+`typename_type_parameter`: 20.6.1 L34538 ("The $typename system function
+returns a string that represents the resolved type of its argument.") names
+the class the type parameter stands for, with its scope (decision TN-D2).
 
 `vpi_static_initializer` (with `vpi_static_initializer.c`): 36.9.1 L56584
 ("The registration of system tasks shall occur prior to elaboration or the
