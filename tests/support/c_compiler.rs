@@ -124,9 +124,15 @@ pub(crate) const GCC11_MAYBE_UNINITIALIZED_FLAGS: &[&str] = &["-fno-thread-jumps
 /// True when `compiler` is GNU GCC rather than a Clang driver installed under
 /// the same name (macOS `gcc` is Apple Clang). GCC-only diagnostics such as
 /// `-Werror=jump-misses-init` must be requested only from real GCC: Clang
-/// reports them as unknown warning options. Probed once per name per process.
+/// reports them as unknown warning options.
 pub(crate) fn is_gnu_gcc(compiler: &str) -> bool {
-    static PROBED: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
+    gnu_gcc_major(compiler).is_some()
+}
+
+/// The major version of `compiler` when it is GNU GCC ([`is_gnu_gcc`]).
+/// Probed once per name per process.
+pub(crate) fn gnu_gcc_major(compiler: &str) -> Option<u32> {
+    static PROBED: OnceLock<Mutex<HashMap<String, Option<u32>>>> = OnceLock::new();
     let probed = PROBED.get_or_init(Default::default);
     if let Some(&known) = probed
         .lock()
@@ -135,33 +141,35 @@ pub(crate) fn is_gnu_gcc(compiler: &str) -> bool {
     {
         return known;
     }
-    let gnu = probe_gnu_gcc(compiler);
+    let major = probe_gnu_gcc_major(compiler);
     probed
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .insert(compiler.to_owned(), gnu);
-    gnu
+        .insert(compiler.to_owned(), major);
+    major
 }
 
-fn probe_gnu_gcc(compiler: &str) -> bool {
-    let Ok(output) = Command::new(compiler)
+fn probe_gnu_gcc_major(compiler: &str) -> Option<u32> {
+    let output = Command::new(compiler)
         .args(["-dM", "-E", "-x", "c", "-"])
         .stdin(Stdio::null())
         .stderr(Stdio::null())
         .output()
-    else {
-        return false;
-    };
+        .ok()?;
     if !output.status.success() {
-        return false;
+        return None;
     }
     let macros = String::from_utf8_lossy(&output.stdout);
-    let defined = |name: &str| {
-        macros
-            .lines()
-            .any(|line| line.split_whitespace().nth(1) == Some(name))
+    let value = |name: &str| {
+        macros.lines().find_map(|line| {
+            let mut words = line.split_whitespace().skip(1);
+            (words.next() == Some(name)).then(|| words.next().unwrap_or_default())
+        })
     };
-    defined("__GNUC__") && !defined("__clang__")
+    if value("__clang__").is_some() {
+        return None;
+    }
+    value("__GNUC__")?.parse().ok()
 }
 
 /// The compiler ID CMake reports for a GNU-like `compiler`
