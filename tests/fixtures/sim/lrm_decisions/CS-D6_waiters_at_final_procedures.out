@@ -1,0 +1,18 @@
+at the end: box=0 got=0
+event WAITING level WAITING time WAITING
+get WAITING put WAITING keys WAITING
+join WAITING done FINISHED killed KILLED await WAITING
+ready WAITING finish RUNNING self RUNNING
+put 1
+get: box=0 got=5 WAITING
+put: took 1 full=1 WAITING
+put: took 2 full=0
+keys: one key 0 WAITING
+string: text left=0
+object: 9 left=0
+event: triggered=1 WAITING conditions=0
+forced: 3
+released: 8
+kill: KILLED KILLED
+second: WAITING WAITING got=5
+second: box=1

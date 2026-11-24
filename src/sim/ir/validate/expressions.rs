@@ -22,12 +22,12 @@ impl Validator<'_> {
         }
         match &expr.kind {
             IrExprKind::Container(operation) => {
-                operation.validate(self.model, self.string_return.get())?;
+                operation.validate(&self.model, self.string_return.get())?;
                 let real_pop = matches!(
                     operation.as_ref(),
                     IrContainerExpr::QueuePopFront(container)
                         | IrContainerExpr::QueuePopBack(container)
-                        if self.model.containers.get(*container).is_some_and(|container| container.element.is_real())
+                        if self.model.container(*container).is_some_and(|container| container.element.is_real())
                 );
                 if (expr.width == 0
                     && !real_pop
@@ -89,7 +89,7 @@ impl Validator<'_> {
                     self.validate_event_ref(event, formals, path)?;
                 }
                 query.validate(
-                    self.model,
+                    &self.model,
                     formals,
                     self.chandle_return.get(),
                     self.string_return.get(),
@@ -114,7 +114,7 @@ impl Validator<'_> {
                     | IrObjectQuery::MailboxTryPut { .. }
                     | IrObjectQuery::MailboxTryGet { .. } => Some((32, true)),
                     IrObjectQuery::MailboxEq(..) => Some((1, false)),
-                    IrObjectQuery::ArrayQuery(query) => Some(query.result_type(self.model)),
+                    IrObjectQuery::ArrayQuery(query) => Some(query.result_type(&self.model)),
                     _ => Some((32, true)),
                 };
                 if expected.is_some_and(|ty| ty != (expr.width, expr.signed)) {
@@ -478,7 +478,7 @@ impl Validator<'_> {
                     let Some(source) = cast.class_source.as_ref() else {
                         return self.fail(path, "class $cast source is missing");
                     };
-                    source.validate(self.model, formals, self.chandle_return.get())?;
+                    source.validate(&self.model, formals, self.chandle_return.get())?;
                     return Ok(());
                 }
                 self.validate_lhs(&cast.lhs, formals, &format!("{path}.lhs"))?;
@@ -666,14 +666,14 @@ impl Validator<'_> {
                                 return self
                                     .fail(binding_path, "string pattern binding has no local");
                             }
-                            value.validate(self.model, self.string_return.get())?;
+                            value.validate(&self.model, self.string_return.get())?;
                         }
                         crate::sim::ir::IrNativeBinding::Chandle { local, value } => {
                             if local.is_empty() {
                                 return self
                                     .fail(binding_path, "handle pattern binding has no local");
                             }
-                            value.validate(self.model, formals, self.chandle_return.get())?;
+                            value.validate(&self.model, formals, self.chandle_return.get())?;
                         }
                         crate::sim::ir::IrNativeBinding::Value { lhs, value } => {
                             self.validate_lhs(lhs, formals, &format!("{binding_path}.lhs"))?;
@@ -961,8 +961,7 @@ impl Validator<'_> {
                             }
                         }
                         IrInsideItem::Container { container } => {
-                            let Some(container_model) = self.model.containers.get(*container)
-                            else {
+                            let Some(container_model) = self.model.container(*container) else {
                                 return self.fail(
                                     format!("{path}.items[{idx}]"),
                                     "inside container index is out of bounds",
@@ -1101,8 +1100,8 @@ impl Validator<'_> {
                             self.validate_lhs(lhs, formals, &format!("{path}.target"))?;
                             if *width == 0
                                 || self.lhs_packed_width(lhs) != Some(*width)
-                                || lhs_signed(self.model, lhs) != Some(*signed)
-                                || lhs_two_state(self.model, lhs) != Some(*two_state)
+                                || lhs_signed(&self.model, lhs) != Some(*signed)
+                                || lhs_two_state(&self.model, lhs) != Some(*two_state)
                             {
                                 return self.fail(
                                     format!("{path}.target"),
@@ -1112,7 +1111,7 @@ impl Validator<'_> {
                         }
                         IrPlusArgTarget::Real { lhs, .. } => {
                             self.validate_lhs(lhs, formals, &format!("{path}.target"))?;
-                            if !lhs_is_real(self.model, lhs) {
+                            if !lhs_is_real(&self.model, lhs) {
                                 return self.fail(
                                     format!("{path}.target"),
                                     "plusarg real target is not real storage",
@@ -1198,8 +1197,8 @@ impl Validator<'_> {
                         self.validate_lhs(lhs, formals, &format!("{path}.{name}"))?;
                         if (*width, *signed) != (32, true)
                             || self.lhs_packed_width(lhs) != Some(*width)
-                            || lhs_signed(self.model, lhs) != Some(*signed)
-                            || lhs_two_state(self.model, lhs) != Some(*two_state)
+                            || lhs_signed(&self.model, lhs) != Some(*signed)
+                            || lhs_two_state(&self.model, lhs) != Some(*two_state)
                         {
                             return self.fail(
                                 format!("{path}.{name}"),
@@ -1241,7 +1240,7 @@ impl Validator<'_> {
                         }
                     }
                     for text in call.strings() {
-                        text.validate(self.model, self.string_return.get())?;
+                        text.validate(&self.model, self.string_return.get())?;
                         let mut result = Ok(());
                         text.expressions(&mut |child| {
                             result = result
@@ -1253,7 +1252,7 @@ impl Validator<'_> {
                 }
                 IrSysFunc::System(command) => {
                     if let Some(command) = command {
-                        command.validate(self.model, self.string_return.get())?;
+                        command.validate(&self.model, self.string_return.get())?;
                         let mut result = Ok(());
                         command.expressions(&mut |child| {
                             result = result
@@ -1750,9 +1749,9 @@ impl Validator<'_> {
                     path: file_path,
                     mode,
                 } => {
-                    file_path.validate(self.model, self.string_return.get())?;
+                    file_path.validate(&self.model, self.string_return.get())?;
                     if let Some(mode) = mode {
-                        mode.validate(self.model, self.string_return.get())?;
+                        mode.validate(&self.model, self.string_return.get())?;
                     }
                     if expr.width != 32 || !expr.signed {
                         return self.fail(path, "$fopen requires a signed 32-bit result");

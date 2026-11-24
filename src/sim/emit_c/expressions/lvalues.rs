@@ -157,7 +157,7 @@ fn retag_lhs_value(value: RenderedExpr, width: u32, signed: bool) -> RenderedExp
     }
 }
 
-fn lhs_two_state(ctx: &RCtx<'_>, lhs: &IrLhs) -> bool {
+pub(in crate::sim::emit_c) fn lhs_two_state(ctx: &RCtx<'_>, lhs: &IrLhs) -> bool {
     match lhs {
         IrLhs::Whole(index) => ctx.model.signal(*index).ty.two_state(),
         IrLhs::PackedSelect { two_state, .. }

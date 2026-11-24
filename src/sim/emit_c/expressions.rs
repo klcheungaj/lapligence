@@ -18,11 +18,11 @@ mod input;
 use input::{render_file_input, render_test_plusargs, render_value_plusargs};
 mod lvalues;
 pub(crate) use lvalues::array_guard;
-pub(super) use lvalues::render_lhs_address;
 use lvalues::{
     capture_lhs_indices, capture_lhs_indices_with_prefix, guarded_array_read,
     guarded_real_array_read, lhs_shape, render_lhs_value, render_mutation_expr,
 };
+pub(super) use lvalues::{lhs_two_state, render_lhs_address};
 mod casts;
 use casts::render_dynamic_cast;
 mod assignments;

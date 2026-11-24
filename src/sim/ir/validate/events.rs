@@ -61,7 +61,9 @@ impl Validator<'_> {
         self.fixed_activations.borrow_mut().push(HashSet::new());
         self.native_activations.borrow_mut().push(HashSet::new());
         let result = stmts.iter().enumerate().try_for_each(|(idx, stmt)| {
-            self.validate_stmt(stmt, formals, &format!("{path}[{idx}]"))
+            let path = format!("{path}[{idx}]");
+            self.validate_stmt(stmt, formals, &path)?;
+            self.validate_container_scope(&path)
         });
         self.native_activations.borrow_mut().pop();
         self.fixed_activations.borrow_mut().pop();

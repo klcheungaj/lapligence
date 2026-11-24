@@ -669,7 +669,27 @@ impl<'a, 'm> Frame<'a, 'm> {
         }
     }
 
+    /// Read a target. A selection of a two-state target reads 0 at the
+    /// positions it does not have (S07-D7).
     pub(super) fn read_target(&mut self, target: &Target) -> Value {
+        let value = self.read_target_bits(target);
+        let may_miss = match &target.selection {
+            None => false,
+            Some(Selection::Part(left, right)) => {
+                left.min(right) < &0 || left.max(right) >= &i64::from(target.binding.width)
+            }
+            Some(Selection::Bit(_) | Selection::Indexed(..) | Selection::PackedChain(..)) => true,
+        };
+        if may_miss && target.binding.two_state {
+            self.convert(value, target.width, target.signed, true, false)
+        } else {
+            value
+        }
+    }
+
+    /// [`Self::read_target`] before a two-state selection gets its state
+    /// domain: an X bit stands for each position the target does not have.
+    fn read_target_bits(&mut self, target: &Target) -> Value {
         if let Some(reference) = &target.reference {
             let whole = self.value(
                 format!("llg_rt_ref_read({reference})"),
@@ -679,26 +699,12 @@ impl<'a, 'm> Frame<'a, 'm> {
             if target.selection.is_none() {
                 return whole;
             }
-            // A bit reference records the selected width, while the descriptor
-            // still reads the whole caller value. Preserve that storage width
-            // and convert two-state views before a selection can supply X for
-            // out-of-range positions.
-            let whole = if target.binding.two_state {
-                let code = format!("sv4_to_two_state({})", whole.code);
-                let width = whole.width;
-                let signed = whole.signed;
-                self.replace(whole, code, width, signed)
-            } else {
-                whole
-            };
             let code = self.select_code(target, &whole.code);
             let value = self.replace(whole, code, target.width, false);
             return self.convert(value, target.width, target.signed, false, false);
         }
         if matches!(target.selection, Some(Selection::PackedChain(..))) {
-            // An invalid unpacked index supplies a default WHOLE element.
-            // Inner out-of-range positions still produce X, even when that
-            // element's two-state default is zero.
+            // An invalid unpacked index supplies a default whole element.
             let whole = self.value(
                 format!(
                     "({}) ? sv4_clone({}) : {}",
@@ -712,16 +718,6 @@ impl<'a, 'm> Frame<'a, 'm> {
                 ),
                 target.binding.width,
                 target.binding.signed,
-            );
-            // Convert a two-state member view before selecting. Converting
-            // the root copy is equivalent for every valid member bit; the
-            // selection plan subsequently supplies X for invalid positions.
-            let whole = self.convert(
-                whole,
-                target.binding.width,
-                target.binding.signed,
-                target.binding.two_state,
-                false,
             );
             let code = self.select_code(target, &whole.code);
             let value = self.replace(whole, code, target.width, false);
@@ -1094,7 +1090,7 @@ impl<'a, 'm> Frame<'a, 'm> {
                     signed,
                 )
             }
-            None => self.read_target(&target),
+            None => self.read_target_bits(&target),
         };
         self.release_target(target);
         Ok(value)

@@ -366,34 +366,43 @@ void llg_spawn_final(void (*fn)(void), const char* name) {
     llg_n_finals++;
 }
 
-void llg_rt_run_finals(void) {
-    if (llg_n_finals == 0) {
-        llg_clear_final_timeformat();
-        return;
+// Whether final procedures follow the run that is ending.
+static int32_t finals_follow_run(void) {
+    return llg_n_finals != 0 && !llg_last_config_error && !llg_skip_final_procedures;
+}
+
+// The processes of an ended run never run again: nothing a final procedure
+// writes or triggers is compared with, or evaluated for, their conditions.
+// Only a mailbox or semaphore waiter stays queued, since the message or the
+// keys it takes are gone from the object whether or not it resumes (CS-D6).
+static void end_process_waits(void) {
+    for (int32_t i = 0; i < g.n_procs; i++) {
+        llg_wait_t* wait = g.all_procs[i] ? &g.all_procs[i]->wait : NULL;
+        if (!wait || wait->kind == W_SEMAPHORE || wait->kind == W_MAILBOX_GET ||
+            wait->kind == W_MAILBOX_PUT)
+            continue;
+        remove_waiters_entry(wait);
+        event_unlink(wait);
+        event_triggered_unlink(wait);
     }
+}
+
+void llg_rt_run_finals(void) {
     // `$stop` is a resumable scheduler suspension, not a simulation exit.
     // Do not run final procedures while an embedding has intentionally
     // returned control to its caller under the EXIT policy.
-    if (g.suspended) return;
-    if (llg_last_config_error || llg_skip_final_procedures) {
-        llg_clear_final_timeformat();
+    if (llg_n_finals == 0 || g.suspended) return;
+    if (!finals_follow_run()) {
         finals_release();
         llg_n_finals = 0;
         return;
     }
-    // Explicit reset, decoupled from the cleanup-memset invariant: a stale
-    // $finish flag left by the scheduler exit must never read as
-    // "$finish inside a final" after the first final completes.
+    // The $finish that ended the run must not read as a $finish inside a
+    // final procedure.
     g.finish = 0;
-    g.running = 0;
     g.current_region = LLG_REGION_POSTPONED;
-    llg_restore_final_timeformat();
-    g.now = llg_final_time;
-    g.zero_loop_limit = llg_configured_zero_loop_limit;
-    g.process_step_limit = llg_configured_process_step_limit;
-    g.stop_policy = llg_configured_stop_policy;
-    g.initialized = 1;
     llg_in_finals = 1;
+    end_process_waits();
     for (int32_t i = 0; i < llg_n_finals; i++) {
         llg_proc_t process;
         memset(&process, 0, sizeof(process));
@@ -572,8 +581,7 @@ void llg_rt_run(void) {
     // No pending update or deferred evaluator executes between $finish and
     // final procedures, regardless of whether its issuing process completed.
     g.running = 0;
-    llg_file_defer_cleanup = llg_n_finals != 0;
-    if (llg_n_finals > 0) llg_save_final_timeformat();
-    llg_rt_cleanup();
-    llg_file_defer_cleanup = 0;
+    // Final procedures run in the state the run ended in; the cleanup
+    // follows them (llg_rt_run_finals).
+    if (!finals_follow_run()) llg_rt_cleanup();
 }

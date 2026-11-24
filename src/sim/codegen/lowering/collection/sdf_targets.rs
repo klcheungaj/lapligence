@@ -8,9 +8,10 @@
 use super::*;
 use crate::core::db::{PathCondition, PathEdge, PrimitiveType, TimingCheckKind, TimingEvent};
 use crate::sim::sdf::{
-    parse_hdl_condition, CondExpr, SdfCheckEvent, SdfCheckRow, SdfNetLoad, SdfPathRow,
-    SdfPortDirection, SdfScope, SdfScopeKind, SdfTargetCheck, SdfTargetCondition, SdfTargetEdge,
-    SdfTargetNet, SdfTargetPath, SdfTargetPort, SdfTargets, SdfTerminal, SdfTimingCheckKind,
+    parse_hdl_condition, CondExpr, SdfCheckEvent, SdfCheckRow, SdfNetLoad, SdfPathInput,
+    SdfPathRow, SdfPortDirection, SdfScope, SdfScopeKind, SdfTargetCheck, SdfTargetCondition,
+    SdfTargetEdge, SdfTargetNet, SdfTargetPath, SdfTargetPort, SdfTargets, SdfTerminal,
+    SdfTimingCheckKind,
 };
 
 /// The primitive name a CELLTYPE uses for a gate instance.
@@ -531,19 +532,22 @@ impl Codegen<'_> {
                 inputs: path
                     .inputs
                     .iter()
-                    .map(|input| self.sdf_terminal(*input))
+                    .enumerate()
+                    .map(|(index, input)| SdfPathInput {
+                        terminal: self.sdf_terminal(*input),
+                        edge: match path.input_edge(index) {
+                            None => SdfTargetEdge::None,
+                            Some(PathEdge::Posedge) => SdfTargetEdge::Posedge,
+                            Some(PathEdge::Negedge) => SdfTargetEdge::Negedge,
+                            Some(PathEdge::Edge) => SdfTargetEdge::Any,
+                        },
+                    })
                     .collect(),
                 outputs: path
                     .outputs
                     .iter()
                     .map(|output| self.sdf_terminal(*output))
                     .collect(),
-                edge: match path.edge {
-                    None => SdfTargetEdge::None,
-                    Some(PathEdge::Posedge) => SdfTargetEdge::Posedge,
-                    Some(PathEdge::Negedge) => SdfTargetEdge::Negedge,
-                    Some(PathEdge::Edge) => SdfTargetEdge::Any,
-                },
                 condition: match path.condition {
                     PathCondition::None => SdfTargetCondition::None,
                     PathCondition::IfNone => SdfTargetCondition::IfNone,

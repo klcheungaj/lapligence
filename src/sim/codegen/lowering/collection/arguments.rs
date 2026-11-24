@@ -1196,7 +1196,7 @@ impl<'a> Codegen<'a> {
         };
         let read = if read_actual {
             Some(match read {
-                Some(read) => read,
+                Some(read) => self.settle_two_state_select(actual, read),
                 None => self.lower_expr(path, actual)?,
             })
         } else {

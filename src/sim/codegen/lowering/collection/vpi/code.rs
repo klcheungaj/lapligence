@@ -1084,6 +1084,9 @@ impl<'c, 'a> CodeTables<'c, 'a> {
         indices: &[NodeId],
     ) -> (IrVpiCode, Children<'a>) {
         let mut code = self.typed(type_code, id);
+        if self.shape(id).3 {
+            code.flags |= IrVpiCode::TWO_STATE;
+        }
         // 37.55 detail 5: a select's typespec is that of its value
         // (decision A19-D32).
         code.typespec = self.value_typespec(id);

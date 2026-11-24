@@ -149,7 +149,7 @@ typedef struct {
 #define LLG_VPI_CODE_CONSTANT 0x40u   /* vpiConstantSelect */
 #define LLG_VPI_CODE_USER 0x80u       /* vpiUserDefn of a system task or function call */
 #define LLG_VPI_CODE_LOCALS 0x100u    /* vpiLocalVarDecls of a for statement */
-#define LLG_VPI_CODE_TWO_STATE 0x200u /* a conversion to a two-state type */
+#define LLG_VPI_CODE_TWO_STATE 0x200u /* a conversion to, or select of, a two-state type */
 #define LLG_VPI_CODE_STRING 0x400u    /* a constant whose text is the string's characters */
 #define LLG_VPI_CODE_INFERRED 0x800u  /* an assertion whose clocking event is inferred */
 #define LLG_VPI_CODE_LINK 0x1000u     /* stands for root row `first` (no children) */

@@ -437,7 +437,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   An index is never truncated (S07-D7): a value beyond 32 bits, an unsigned
   value above 2**31-1 or an X/Z index into an array, queue, string, bit-select
   or indexed part-select is invalid, so a read returns the element default and
-  a write does nothing. The same holds for the index arguments of `insert`,
+  a write does nothing; a select of a two-state vector reads 0 for a position
+  it does not have. The same holds for the index arguments of `insert`,
   `delete`, `getc`, `putc` and `substr` (no `int` conversion), and queue slice
   bounds clip whatever their width. Index checks (S07-D15, on by default,
   `--no-index-checks` or `simulator.index_checks = false` to turn off) stop
@@ -1817,7 +1818,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   scheduled (least significant bit, x and z true; A8-D1, A8-D2), `ifnone`
   paths apply when no path with their terminals is active (A8-D3), and
   `posedge`/`negedge`/`edge` paths start at the last such edge of the input's
-  least significant bit (A8-D4; `edge` is SystemVerilog only). Each pair of
+  least significant bit (A8-D4; `edge` is SystemVerilog only) and of the first input of a list
+  (A8-D10). Each pair of
   consecutive scheduled destination transitions is a pulse (A8-D8): below the
   reject limit it vanishes, below the error limit it becomes x, otherwise it
   passes. A transition is timed from the value last scheduled and keeps that

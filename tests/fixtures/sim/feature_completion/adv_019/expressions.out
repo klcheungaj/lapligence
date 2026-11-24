@@ -125,6 +125,21 @@ assign e_clog line=41
     user_defn=0
     argument vpiIntVar name=i size=32 dec="i" value=00000000000000000000000000000010
   assign value=error
+assign e_two line=42
+  rhs vpiIndexedPartSelect name=two[i * 16 +: 4] size=4 constant_select=0 indexed=1 dec="two[i * 16 +: 4]" value=0001
+    parent vpiBitVar name=two size=33 dec="two" value=111111111111111111111111111111111
+    base vpiOperation op=25 size=32 dec="i * 16" value=00000000000000000000000000100000
+      operand vpiIntVar name=i size=32 dec="i" value=00000000000000000000000000000010
+      operand vpiConstant const=1 size=32 dec="16" value=00000000000000000000000000010000
+    width vpiConstant const=1 size=32 dec="4" value=00000000000000000000000000000100
+  assign value=0001
+assign e_cell line=43
+  rhs vpiVarSelect name=cells[i * 4] size=8 constant_select=0 dec="cells[i * 4]" value=00000000
+    parent vpiRegArray name=cells size=4 dec="cells" value=error
+    index vpiOperation op=25 size=32 dec="i * 4" value=00000000000000000000000000001000
+      operand vpiIntVar name=i size=32 dec="i" value=00000000000000000000000000000010
+      operand vpiConstant const=1 size=32 dec="4" value=00000000000000000000000000000100
+  assign value=00000000
 high vpiOperation op=30 size=8 dec="a ^ b" value=01010101
   operand vpiReg name=a size=8 dec="a" value=01011010
   operand vpiReg name=b size=8 dec="b" value=00001111
@@ -146,3 +161,5 @@ again r * 2.0 value=3
 again int'(r) + 8'shf0 value=11111111111111111111111111110010
 again twice(3) value=error
 again $clog2(i) value=error
+again two[i * 16 +: 4] value=1111
+again cells[i * 4] value=00000000

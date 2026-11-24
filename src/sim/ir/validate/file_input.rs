@@ -30,8 +30,8 @@ impl Validator<'_> {
                     self.validate_lhs(lhs, formals, target_path)?;
                     if *width == 0
                         || self.lhs_packed_width(lhs) != Some(*width)
-                        || lhs_signed(self.model, lhs) != Some(*signed)
-                        || lhs_two_state(self.model, lhs) != Some(*two_state)
+                        || lhs_signed(&self.model, lhs) != Some(*signed)
+                        || lhs_two_state(&self.model, lhs) != Some(*two_state)
                     {
                         return self.fail(
                             target_path,
@@ -41,7 +41,7 @@ impl Validator<'_> {
                 }
                 IrFileInputTarget::Real { lhs, .. } => {
                     self.validate_lhs(lhs, formals, target_path)?;
-                    if !lhs_is_real(self.model, lhs) {
+                    if !lhs_is_real(&self.model, lhs) {
                         return self.fail(target_path, "file scan real target is not real storage");
                     }
                 }
@@ -64,7 +64,7 @@ impl Validator<'_> {
                         IrExprKind::Container(operation) => match operation.as_ref() {
                             IrContainerExpr::Get { container, .. }
                             | IrContainerExpr::GetString { container, .. } => {
-                                self.model.containers.get(*container)
+                                self.model.container(*container)
                             }
                             _ => None,
                         },
@@ -99,8 +99,8 @@ impl Validator<'_> {
                     self.validate_lhs(lhs, formals, target_path)?;
                     if *width == 0
                         || self.lhs_packed_width(lhs) != Some(*width)
-                        || lhs_signed(self.model, lhs) != Some(*signed)
-                        || lhs_two_state(self.model, lhs) != Some(*two_state)
+                        || lhs_signed(&self.model, lhs) != Some(*signed)
+                        || lhs_two_state(&self.model, lhs) != Some(*two_state)
                     {
                         return self.fail(
                             target_path,
@@ -132,17 +132,13 @@ impl Validator<'_> {
                     target_path,
                 )?,
                 IrFileReadTarget::Container { container } => {
-                    let packed = self
-                        .model
-                        .containers
-                        .get(*container)
-                        .is_some_and(|container| {
-                            matches!(container.element, IrContainerElement::Packed { .. })
-                                && matches!(
-                                    container.kind,
-                                    IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
-                                )
-                        });
+                    let packed = self.model.container(*container).is_some_and(|container| {
+                        matches!(container.element, IrContainerElement::Packed { .. })
+                            && matches!(
+                                container.kind,
+                                IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
+                            )
+                    });
                     if !packed {
                         return self.fail(
                             target_path,

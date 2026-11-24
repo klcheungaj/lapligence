@@ -184,7 +184,7 @@ impl SdfPlan {
             format!(
                 "{} path {path} ({} => {})",
                 targets.path_of(scope),
-                declaration.inputs[input as usize],
+                declaration.inputs[input as usize].terminal,
                 declaration.outputs[output as usize]
             )
         };

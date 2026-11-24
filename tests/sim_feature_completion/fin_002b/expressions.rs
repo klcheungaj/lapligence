@@ -369,17 +369,18 @@ impl Oracle<'_> {
     }
 
     /// Bits `start..start + width` of a variable; a bit outside the variable
-    /// or selected by an unknown index reads x (11.5.1), also from a
-    /// two-state vector.
+    /// or selected by an unknown index reads x (11.5.1), and 0 from a
+    /// two-state vector (S07-D7).
     fn select(&self, variable: usize, start: Option<Option<i128>>, width: u32) -> Bits {
         let value = &self.values[variable];
+        let missing = if VARS[variable].four_state { X } else { 0 };
         (0..i128::from(width))
             .map(|offset| match start {
                 Some(Some(start)) => usize::try_from(start + offset)
                     .ok()
                     .and_then(|position| value.get(position).copied())
-                    .unwrap_or(X),
-                _ => X,
+                    .unwrap_or(missing),
+                _ => missing,
             })
             .collect()
     }
@@ -899,13 +900,9 @@ impl Generator {
         self.fuzz.index(VARS.len())
     }
 
-    /// An index operand: any variable, or a valid literal position. A
-    /// two-state vector is only read at valid positions: 11.5.1 gives x
-    /// for a position outside the vector, which the simulator follows,
-    /// while the conversions of a two-state operand turn that x into 0
-    /// depending on the context type (docs/known_issues.md).
-    fn position(&mut self, limit: u32, valid: bool) -> Expr {
-        if self.constant || valid || self.fuzz.chance(1, 4) {
+    /// An index operand: any variable, or a valid literal position.
+    fn position(&mut self, limit: u32) -> Expr {
+        if self.constant || self.fuzz.chance(1, 4) {
             let bits = number(u128::from(self.fuzz.below(u64::from(limit))), 9);
             return Expr::Literal {
                 text: spelled_literal(&bits, false),
@@ -930,18 +927,17 @@ impl Generator {
                     if width == 1 {
                         return Expr::Var(variable);
                     }
-                    let valid = !VARS[variable].four_state;
                     match self.fuzz.below(3) {
                         0 => {
                             let low = self.fuzz.below(u64::from(width)) as u32;
                             let high = self.fuzz.range(u64::from(low), u64::from(width - 1)) as u32;
                             Expr::Part(variable, high, low)
                         }
-                        1 => Expr::Bit(variable, Box::new(self.position(width, valid))),
+                        1 => Expr::Bit(variable, Box::new(self.position(width))),
                         _ => {
                             let part = self.fuzz.range(1, u64::from(width.min(40))) as u32;
                             let limit = width - part + 1;
-                            Expr::Indexed(variable, Box::new(self.position(limit, valid)), part)
+                            Expr::Indexed(variable, Box::new(self.position(limit)), part)
                         }
                     }
                 }

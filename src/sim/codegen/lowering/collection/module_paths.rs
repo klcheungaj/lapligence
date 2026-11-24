@@ -201,14 +201,6 @@ impl Codegen<'_> {
                 PathPolarity::Positive => IrPathPolarity::Positive,
                 PathPolarity::Negative => IrPathPolarity::Negative,
             };
-            // The data source expression and the polarity describe the data
-            // flow for timing analysis only (30.4.3, 30.4.7).
-            let edge = match path.edge {
-                None => IrPathEdge::None,
-                Some(PathEdge::Posedge) => IrPathEdge::Posedge,
-                Some(PathEdge::Negedge) => IrPathEdge::Negedge,
-                Some(PathEdge::Edge) => IrPathEdge::Any,
-            };
             let condition = match path.condition {
                 PathCondition::None => IrPathCondition::None,
                 PathCondition::IfNone => IrPathCondition::IfNone,
@@ -245,6 +237,14 @@ impl Codegen<'_> {
                 outputs.push((output_index as u32, terminal, group));
             }
             for (input_index, input) in inputs.iter().enumerate() {
+                // The data source expression and the polarity describe the
+                // data flow for timing analysis only (30.4.3, 30.4.7).
+                let edge = match path.input_edge(input_index) {
+                    None => IrPathEdge::None,
+                    Some(PathEdge::Posedge) => IrPathEdge::Posedge,
+                    Some(PathEdge::Negedge) => IrPathEdge::Negedge,
+                    Some(PathEdge::Edge) => IrPathEdge::Any,
+                };
                 let signal = input.info.ir;
                 let index = match source_index.get(&signal) {
                     Some(index) => *index,

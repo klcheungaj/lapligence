@@ -257,7 +257,7 @@ impl Validator<'_> {
                 }
             }
             crate::sim::ir::IrMemoryStorage::Container(index) => {
-                let Some(container) = self.model.containers.get(*index) else {
+                let Some(container) = self.model.container(*index) else {
                     return self.fail(path, "memory container index is out of bounds");
                 };
                 if let IrContainerElement::FixedArray {
@@ -437,7 +437,7 @@ impl Validator<'_> {
                     self.validate_native_value_use(*value, path)?;
                 }
                 let info = &self.model.arrays[*array];
-                root.fixed_item(self.model, items, info.total, self.string_return.get())?;
+                root.fixed_item(&self.model, items, info.total, self.string_return.get())?;
                 u64::from(info.elem_width)
                     .checked_mul(info.total)
                     .ok_or_else(|| IrValidationError::new(path, "fixed operand width overflow"))
@@ -476,7 +476,7 @@ impl Validator<'_> {
                 cell_width,
                 consume,
             } => {
-                stream.validate(self.model, self.string_return.get())?;
+                stream.validate(&self.model, self.string_return.get())?;
                 let mut result = Ok(());
                 stream.expressions(&mut |value| {
                     if result.is_ok() {

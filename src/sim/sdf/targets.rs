@@ -106,14 +106,32 @@ pub struct SdfPathRow {
     pub path: u32,
 }
 
+/// An input terminal of a declared path and the edge its paths wait for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SdfPathInput {
+    pub terminal: SdfTerminal,
+    pub edge: SdfTargetEdge,
+}
+
+impl fmt::Display for SdfPathInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let edge = match self.edge {
+            SdfTargetEdge::None => "",
+            SdfTargetEdge::Posedge => "posedge ",
+            SdfTargetEdge::Negedge => "negedge ",
+            SdfTargetEdge::Any => "edge ",
+        };
+        write!(f, "{edge}{}", self.terminal)
+    }
+}
+
 /// A declared specify path (`(a, b *> y) = ...;` is one declaration).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SdfTargetPath {
     /// `file:line:col` of the declaration.
     pub origin: String,
-    pub inputs: Vec<SdfTerminal>,
+    pub inputs: Vec<SdfPathInput>,
     pub outputs: Vec<SdfTerminal>,
-    pub edge: SdfTargetEdge,
     pub condition: SdfTargetCondition,
     pub rows: Vec<SdfPathRow>,
 }
@@ -353,13 +371,13 @@ impl SdfTargets {
             SdfTargetCondition::If(None) => " if <not an SDF condition>".to_owned(),
             SdfTargetCondition::IfNone => " ifnone".to_owned(),
         };
-        let terminals = |terminals: &[SdfTerminal]| {
+        fn terminals(terminals: &[impl ToString]) -> String {
             terminals
                 .iter()
                 .map(ToString::to_string)
                 .collect::<Vec<_>>()
                 .join(", ")
-        };
+        }
         let event = |event: &SdfCheckEvent| {
             format!(
                 "{}{}{}",
@@ -429,12 +447,6 @@ impl SdfTargets {
                 ));
             }
             for (number, path) in scope.paths.iter().enumerate() {
-                let edge = match path.edge {
-                    SdfTargetEdge::None => "",
-                    SdfTargetEdge::Posedge => "posedge ",
-                    SdfTargetEdge::Negedge => "negedge ",
-                    SdfTargetEdge::Any => "edge ",
-                };
                 let rows = path
                     .rows
                     .iter()
@@ -447,7 +459,7 @@ impl SdfTargets {
                     .collect::<Vec<_>>()
                     .join(" ");
                 out.push_str(&format!(
-                    "  path {number}: ({edge}{} => {}){} rows [{rows}]\n",
+                    "  path {number}: ({} => {}){} rows [{rows}]\n",
                     terminals(&path.inputs),
                     terminals(&path.outputs),
                     condition(&path.condition)

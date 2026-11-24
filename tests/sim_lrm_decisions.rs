@@ -5623,6 +5623,14 @@ fn a8_d8_pulse_trains() {
 }
 
 #[test]
+fn a8_d10_edge_of_first_input() {
+    run_decision(
+        "A8-D10_edge_of_first_input",
+        include_str!("fixtures/sim/lrm_decisions/A8-D10_edge_of_first_input.out"),
+    );
+}
+
+#[test]
 fn a8_d9_pulse_limits_keep_net_delay() {
     run_decision(
         "A8-D9_pulse_limits_keep_net_delay",
@@ -6308,6 +6316,22 @@ fn s07_d7_wide_index_invalid() {
 }
 
 #[test]
+fn s07_d7_two_state_selects() {
+    run_decision(
+        "S07-D7_two_state_selects",
+        include_str!("fixtures/sim/lrm_decisions/S07-D7_two_state_selects.out"),
+    );
+}
+
+#[test]
+fn s07_d7_two_state_unknown_index() {
+    run_decision(
+        "S07-D7_two_state_unknown_index",
+        include_str!("fixtures/sim/lrm_decisions/S07-D7_two_state_unknown_index.out"),
+    );
+}
+
+#[test]
 fn s07_d5_whole_container_nba() {
     run_decision(
         "S07-D5_whole_container_nba",
@@ -6566,10 +6590,10 @@ fn cs_d3_release_takes_driven_value() {
 }
 
 #[test]
-fn cs_d6_no_waiters_at_final_procedures() {
+fn cs_d6_waiters_at_final_procedures() {
     run_decision(
-        "CS-D6_no_waiters_at_final_procedures",
-        include_str!("fixtures/sim/lrm_decisions/CS-D6_no_waiters_at_final_procedures.out"),
+        "CS-D6_waiters_at_final_procedures",
+        include_str!("fixtures/sim/lrm_decisions/CS-D6_waiters_at_final_procedures.out"),
     );
 }
 

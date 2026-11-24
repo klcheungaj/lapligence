@@ -186,6 +186,49 @@ fn delays_of_one_path_pair_change_alone() {
     );
 }
 
+/// The edge of a declaration with several inputs is on the path of its first
+/// input: in the VPI terminals, for SDF annotation and in simulation.
+#[test]
+fn edge_of_a_path_declaration_is_on_its_first_input() {
+    let directory = sim_harness::TempDir::new("adv020-edges").expect("temporary directory");
+    let archive = super::sim_041::static_archive(SUITE, &directory, "path_edges", &[]);
+    sim_cli::run_case_backend_parity_with_files(
+        SUITE,
+        "path_edges",
+        include_str!("../fixtures/sim/feature_completion/adv_020/path_edges.out"),
+        &[
+            "--define-system-task",
+            "task $edges(input string name)",
+            "--dpi-lib",
+            archive.as_str(),
+        ],
+        &[],
+        &[(
+            "path_edges.sdf",
+            include_str!("../fixtures/sim/feature_completion/adv_020/path_edges.sdf"),
+        )],
+    );
+}
+
+/// A select terminal is its select object and a terminal of its net.
+#[test]
+fn path_terminals_are_their_select_objects() {
+    let directory = sim_harness::TempDir::new("adv020-selects").expect("temporary directory");
+    let archive = super::sim_041::static_archive(SUITE, &directory, "path_selects", &[]);
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "path_selects",
+        include_str!("../fixtures/sim/feature_completion/adv_020/path_selects.out"),
+        &[
+            "--define-system-task",
+            "task $selects()",
+            "--dpi-lib",
+            archive.as_str(),
+        ],
+        &[],
+    );
+}
+
 const ACTIONS: &[&str] = &[
     "--define-system-task",
     "task $act_register()",

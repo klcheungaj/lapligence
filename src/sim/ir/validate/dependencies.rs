@@ -5,7 +5,7 @@ use super::*;
 impl Validator<'_> {
     pub(super) fn new(model: &IrModel) -> Validator<'_> {
         Validator {
-            model,
+            model: CheckedModel::new(model),
             max_width: Cell::new(0),
             reduction_bindings: RefCell::new(Vec::new()),
             fixed_activations: RefCell::new(Vec::new()),
@@ -23,7 +23,7 @@ impl Validator<'_> {
     fn signals_named(&self, name: &str) -> &[usize] {
         let names = self.signal_names.get_or_init(|| {
             let mut names = std::collections::HashMap::<&str, Vec<usize>>::new();
-            for (index, signal) in self.model.signals.iter().enumerate() {
+            for (index, signal) in self.model.model.signals.iter().enumerate() {
                 names.entry(signal.c_name.as_str()).or_default().push(index);
             }
             names
@@ -131,7 +131,7 @@ impl Validator<'_> {
                 .is_some_and(|array| *index < array.total),
             IrDependency::ArrayContents(array) => *array < self.model.arrays.len(),
             IrDependency::ContainerContents(container)
-            | IrDependency::ContainerShape(container) => *container < self.model.containers.len(),
+            | IrDependency::ContainerShape(container) => self.model.container(*container).is_some(),
             IrDependency::SharedCell { local, .. } | IrDependency::SharedNative { local, .. } => {
                 !local.is_empty()
             }
@@ -186,7 +186,7 @@ impl Validator<'_> {
                 })
             }
             IrDependency::InterfaceInstance { .. } => {
-                crate::sim::execution::valid_interface_instance(self.model, dependency)
+                crate::sim::execution::valid_interface_instance(&self.model, dependency)
             }
         }
     }
@@ -240,7 +240,7 @@ impl Validator<'_> {
             }
             IrEventRef::Handle(handle) => {
                 handle
-                    .validate(self.model, formals, self.chandle_return.get())
+                    .validate(&self.model, formals, self.chandle_return.get())
                     .map_err(|error| IrValidationError::new(path.to_owned(), error.to_string()))?;
                 let mut indices = Vec::new();
                 handle.expressions(&mut |expression| indices.push(expression.clone()));
@@ -273,7 +273,7 @@ impl Validator<'_> {
             }
             IrPlusArgText::Dynamic(value) => {
                 value
-                    .validate(self.model, self.string_return.get())
+                    .validate(&self.model, self.string_return.get())
                     .map_err(|error| IrValidationError::new(path, error.to_string()))?;
                 let mut result = Ok(());
                 value.expressions(&mut |expression| {

@@ -526,7 +526,7 @@ in both editions, `edge_any.sv` in sv2009, both optimizer modes and every
 value backend, outputs hand-derived from V §§14.2.3-14.2.4, 14.6 and SV
 §§30.4.3-30.4.4, 30.7; `options.v` also runs with `--pulse-reject`,
 `--pulse-error`, `--pulse-style`, `--show-cancelled` and the `[simulator]`
-keys. Decisions A8-D1-D9 are in `sim_lrm_decisions` (`-E 'test(/a8_d/)'`).
+keys. Decisions A8-D1-D10 are in `sim_lrm_decisions` (`-E 'test(/a8_d/)'`).
 Unit tests: `path_pulses_keep_limits_and_resolved_terminals`, the IR
 validation and emitter tests above plus
 `module_path_triggers_limits_styles_and_options_are_emitted`, the settings and

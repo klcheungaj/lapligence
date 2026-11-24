@@ -321,10 +321,11 @@ impl<'a> Codegen<'a> {
             let alias_bindings = self.alias_lvalue_bindings(g, terms[*out_pos].expr)?;
             let mut alias_terminals = HashMap::new();
             if let Some(bindings) = &alias_bindings {
+                // In group order: each may add a driver slot to the model.
                 let groups = bindings
                     .iter()
                     .map(|(binding, _)| binding.group())
-                    .collect::<HashSet<_>>();
+                    .collect::<BTreeSet<_>>();
                 for group in groups {
                     // Number terminals within each resolved group. Alias
                     // concatenations can span several groups, so each group

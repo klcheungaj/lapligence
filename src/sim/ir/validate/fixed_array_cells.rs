@@ -28,7 +28,7 @@ impl Validator<'_> {
             }
         }
         cells
-            .shape(self.model)
+            .shape(&self.model)
             .ok_or_else(|| IrValidationError::new(path, "fixed-array cell view extent overflows"))
     }
 

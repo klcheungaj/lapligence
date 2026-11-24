@@ -13,7 +13,10 @@ use crate::sim_harness;
 /// reaches it first, keeping that spelling of its type parameter, so a type
 /// reached through two spellings (`specialization_spellings`) catches an
 /// order key that reads the spelling.
-const FIXTURES: [(&str, usize); 6] = [
+/// The VPI metadata numbers the types of every class member in one table, so
+/// the designs with several classes (the last three) catch a table filled in
+/// hash order.
+const FIXTURES: [(&str, usize); 9] = [
     (
         "data_types_next/static_function_executable_assignments.sv",
         3,
@@ -26,6 +29,20 @@ const FIXTURES: [(&str, usize); 6] = [
         "feature_completion/ki_uvm_run/specialization_spellings.sv",
         6,
     ),
+    ("classes/inheritance.sv", 4),
+    (
+        "feature_completion/ki_class_defects/named_block_disable.sv",
+        4,
+    ),
+    ("feature_completion/ki_uvm_cast/string_contexts.sv", 4),
+];
+
+/// The generation modes whose sources are compared: the optimized model, the
+/// unoptimized one, and the model with VPI metadata.
+const MODES: [(&str, &[&str]); 3] = [
+    ("default", &[]),
+    ("no-opt", &["--no-opt"]),
+    ("vpi", &["--vpi"]),
 ];
 
 fn snapshot_tree(root: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
@@ -93,8 +110,7 @@ fn assert_same_tree(
 fn generated_sources_are_repeatable_across_processes() {
     let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sim");
     for (fixture, runs) in FIXTURES {
-        for no_opt in [false, true] {
-            let mode = if no_opt { "no-opt" } else { "default" };
+        for (mode, options) in MODES {
             let directory = sim_harness::TempDir::new("generated-c-determinism")
                 .expect("create deterministic-emission directory");
             let source = fixture_root.join(fixture);
@@ -106,9 +122,7 @@ fn generated_sources_are_repeatable_across_processes() {
                 command
                     .args(["--top", "tb", "--gen-only", "--out-dir"])
                     .arg(&output_root);
-                if no_opt {
-                    command.arg("--no-opt");
-                }
+                command.args(options);
                 // A fixture that deliberately violates a lint rule runs with
                 // that rule disabled; `sim_cli` checks the default-lint errors.
                 if let Some(lint) = lint {

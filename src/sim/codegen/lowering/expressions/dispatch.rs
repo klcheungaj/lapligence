@@ -756,6 +756,7 @@ impl<'a> Codegen<'a> {
         h: NodeId,
     ) -> Result<IrExpr, String> {
         self.lower_expr_node(scope_path, h)
+            .map(|value| self.settle_two_state_select(h, value))
             .map_err(|error| self.locate_error(h, error))
     }
 

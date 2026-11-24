@@ -1,7 +1,6 @@
 
-// Registered final-block processes (see llg_rt.h).  Kept OUTSIDE the runtime
-// context: `llg_rt_cleanup` memsets the context, and registration happens
-// around the `llg_rt_run()` call in generated `main()`.
+// Registered final-block processes (see llg_rt.h), outside the runtime
+// context that `llg_rt_cleanup` resets.
 typedef struct {
     void (*fn)(void);
     const char* name;
@@ -10,7 +9,7 @@ static llg_final_registration_t* llg_finals;
 static int32_t llg_n_finals;
 static int32_t llg_finals_capacity;
 static int32_t llg_in_finals;
-// Scheduler time when `llg_rt_run` exited; `$time` inside finals reports it.
+// Scheduler time when `llg_rt_run` exited, after the context is reset.
 static uint64_t llg_final_time;
 
 #define LLG_REGISTRY_INITIAL 16
@@ -176,7 +175,8 @@ static void release_program_process(llg_proc_t* process) {
 }
 
 static void service_program_completions(void) {
-    if (!g.program_completion_pending || g.finish || g.config_error) return;
+    if (!g.program_completion_pending || g.finish || g.config_error || llg_in_finals)
+        return;
     g.program_completion_pending = 0;
     for (llg_program_t* program = g.programs; program; program = program->next) {
         if (!program->had_initial || program->live_initials || program->closed)

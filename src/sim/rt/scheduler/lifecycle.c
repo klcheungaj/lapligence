@@ -409,12 +409,8 @@ void llg_rt_cleanup(void) {
     changes_release();
     gc_release_registrations();
     llg_cr_session_release_all();
-    // Final procedures may still query or sample coverage: the end-of-run
-    // database (19.9) and the release follow them.
-    if (!llg_file_defer_cleanup) {
-        llg_cov_end_of_run();
-        llg_cov_release_all();
-    }
+    llg_cov_end_of_run();
+    llg_cov_release_all();
     llg_rt_report_summary();
     value_scopes_unwind(NULL);
     while (root_reference_top) llg_ref_scope_end(root_reference_top);
@@ -503,24 +499,12 @@ void llg_rt_cleanup(void) {
     free(g.force_table);
     g.force_table = NULL;
     g.force_capacity = 0;
-    // A final procedure may still use the mailboxes, semaphores and events
-    // the design created: their handles are model storage. With final
-    // procedures to run these objects only lose their waiters here (the
-    // processes are gone) and are released by the cleanup after them.
-    const int32_t finals_follow = llg_file_defer_cleanup;
-    if (finals_follow) {
-        for (llg_mailbox_t* mailbox = g.mailboxes; mailbox; mailbox = mailbox->next)
-            mailbox->get_head = mailbox->get_tail = mailbox->put_head = mailbox->put_tail = NULL;
-        for (llg_dynamic_event_t* event = g.dynamic_events; event; event = event->next)
-            llg_event_object_reset(&event->object);
-    } else {
-        free_mailboxes();
-        // Containers owned by the model may still name these objects; they
-        // only drop handles at model close and never dereference them. The
-        // handle hooks stay installed so that model teardown after this
-        // cleanup still releases counted handles held by containers.
-        free_dynamic_events();
-    }
+    free_mailboxes();
+    // Containers owned by the model may still name these objects; they
+    // only drop handles at model close and never dereference them. The
+    // handle hooks stay installed so that model teardown after this
+    // cleanup still releases counted handles held by containers.
+    free_dynamic_events();
     reap_retired_procs();
     rng_scopes_free();
     llg_container_set_rng_source(NULL);
@@ -530,18 +514,17 @@ void llg_rt_cleanup(void) {
         free(g.programs);
         g.programs = next;
     }
-    for (llg_semaphore_t* semaphore = g.semaphores; semaphore;) {
-        llg_semaphore_t* next_semaphore = semaphore->next_all;
+    while (g.semaphores) {
+        llg_semaphore_t* semaphore = g.semaphores;
+        g.semaphores = semaphore->next_all;
         while (semaphore->wait_head) {
             llg_semaphore_wait_t* next = semaphore->wait_head->next;
             free(semaphore->wait_head);
             semaphore->wait_head = next;
         }
         semaphore->wait_tail = NULL;
-        if (!finals_follow) free(semaphore);
-        semaphore = next_semaphore;
+        free(semaphore);
     }
-    if (!finals_follow) g.semaphores = NULL;
     // External HDL references may keep terminal process identities alive, but
     // no handle may retain a pointer into the context being reset below.
     // A pinned handle's permanent reference ends here; counted holders that
@@ -559,7 +542,7 @@ void llg_rt_cleanup(void) {
         handle = next;
     }
     g.process_handles = NULL;
-    if (!llg_file_defer_cleanup) llg_file_cleanup();
+    llg_file_cleanup();
     if (llg_event_generation == UINT64_MAX) {
         // A process cannot execute enough complete runtime lifetimes to wrap
         // this counter in practice. Keep the fallback deterministic if a
@@ -574,15 +557,7 @@ void llg_rt_cleanup(void) {
         free(g.wait_source_free);
         g.wait_source_free = next;
     }
-    // The objects kept for the final procedures stay registered, so that
-    // the cleanup after them finds and releases them.
-    llg_mailbox_t* const kept_mailboxes = finals_follow ? g.mailboxes : NULL;
-    llg_semaphore_t* const kept_semaphores = finals_follow ? g.semaphores : NULL;
-    llg_dynamic_event_t* const kept_events = finals_follow ? g.dynamic_events : NULL;
     memset(&g, 0, sizeof(g));
-    g.mailboxes = kept_mailboxes;
-    g.semaphores = kept_semaphores;
-    g.dynamic_events = kept_events;
     while (llg_dependency_bindings) {
         llg_dependency_binding_t* next = llg_dependency_bindings->next;
         free(llg_dependency_bindings);
@@ -597,7 +572,6 @@ void llg_rt_cleanup(void) {
 
 void llg_rt_init_with_args_and_precision(int32_t argc, char** argv,
                                          uint64_t precision_fs) {
-    llg_clear_final_timeformat();
     llg_rt_cleanup();
     llg_warn_host_stack_limit();
     llg_last_failure = 0;
@@ -627,8 +601,6 @@ void llg_rt_init_with_args_and_precision(int32_t argc, char** argv,
         g.config_error = 1;
         return;
     }
-    llg_configured_zero_loop_limit = g.zero_loop_limit;
-    llg_configured_process_step_limit = g.process_step_limit;
     llg_configured_stop_policy = g.stop_policy;
     g.initialized = 1;
     g.static_init_phase = 1;

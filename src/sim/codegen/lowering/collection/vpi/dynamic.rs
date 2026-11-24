@@ -816,7 +816,7 @@ impl Codegen<'_> {
             .map(|(node, index)| (*node, *index))
             .collect();
         nodes.sort_by_key(|(_, index)| *index);
-        for (class, class_index) in nodes {
+        for (class, class_index) in nodes.iter().copied() {
             let Some(layout) = model.classes.get(class_index) else {
                 continue;
             };
@@ -927,7 +927,8 @@ impl Codegen<'_> {
                 })
             })
             .collect();
-        for (class, class_index) in &self.class_nodes {
+        // In class order: the items intern their types in the shared table.
+        for (class, class_index) in &nodes {
             let Some(entry) = dynamic.classes.get_mut(*class_index) else {
                 continue;
             };

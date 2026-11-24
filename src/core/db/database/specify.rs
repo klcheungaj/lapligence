@@ -55,6 +55,8 @@ pub struct ModulePath {
     pub block: NodeId,
     pub connection: PathConnection,
     pub polarity: PathPolarity,
+    /// The declaration's edge identifier; [`Self::input_edge`] gives the edge
+    /// of one input.
     pub edge: Option<PathEdge>,
     /// Polarity of an edge-sensitive path's data source (`q +: d`).
     pub edge_polarity: PathPolarity,
@@ -68,6 +70,15 @@ pub struct ModulePath {
     /// Path delay value expressions in source order (one, two, three, six
     /// or twelve in a valid design).
     pub delays: Vec<NodeId>,
+}
+
+impl ModulePath {
+    /// The edge input terminal `input` waits for. The edge identifier of a
+    /// full connection with several inputs applies to the first one; the
+    /// paths from the others are active on any transition (decision A8-D10).
+    pub fn input_edge(&self, input: usize) -> Option<PathEdge> {
+        self.edge.filter(|_| input == 0)
+    }
 }
 
 /// A pulse-style or showcancelled declaration (V 14.6.4, SV 30.7.4).

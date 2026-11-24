@@ -314,7 +314,8 @@ static void check_mailbox_complete_exit(void) {
     llg_rt_run();
     CHECK(llg_rt_failed());
     CHECK(mismatch_continued == 0);
-    CHECK(llg_process_status(handle) == LLG_PROCESS_FINISHED);
+    // The process whose error ended the run did not terminate (CS-D6).
+    CHECK(llg_process_status(handle) == LLG_PROCESS_RUNNING);
     llg_process_release(handle);
     sv4_destroy(&mismatch_target);
     llg_rt_cleanup();
