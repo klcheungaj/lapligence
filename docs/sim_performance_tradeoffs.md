@@ -1276,7 +1276,7 @@ processes or clock edges, at the cost of a few bytes per object.
 
 | Option | Effect | Decision |
 | --- | --- | --- |
-| Split the model into parallel translation units | Loses inlining across units. Compile: `pca-4100` 22% slower, `many-registers-10k` 8% faster, `tasks` 0.4 s saved; the serial cost was one storage function, later fixed by table-driven storage | Rejected |
+| Split the model into parallel translation units | Loses inlining across units. Compile: `pca-4100` (the ladder before `sites-4100`) 22% slower, `many-registers-10k` 8% faster, `tasks` 0.4 s saved; the serial cost was one storage function, later fixed by table-driven storage | Rejected |
 | Shared prologue/epilogue helpers for all coroutines | Compile +25% on the capacity model, flat elsewhere; `tasks` simulation +3.6% (within spread) | Rejected |
 | Shared resume dispatch through continuation functions | An indirect transfer per resume; compile +4% | Rejected |
 | Non-inlined await-result helper | A call after every arm; compile change within noise | Rejected |
