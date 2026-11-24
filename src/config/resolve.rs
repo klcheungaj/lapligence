@@ -13,7 +13,7 @@ use super::{
     AnalysisConfig, BuildConfig, CompileConfig, ConfigError, LibrariesConfig, LintRunConfig,
     LlgConfig, OutputConfig, PulseStyle, SimulatorConfig, SourcesConfig, StopPolicy,
     WaveformConfig, DEFAULT_EXCLUDE_GLOBS, DEFAULT_INCLUDE_GLOBS, DEFAULT_MAX_FILE_BYTES,
-    DEFAULT_MAX_TOTAL_INPUT_BYTES, SCHEMA_VERSION,
+    DEFAULT_MAX_SEMANTIC_NODES, DEFAULT_MAX_TOTAL_INPUT_BYTES, MAX_SEMANTIC_NODES, SCHEMA_VERSION,
 };
 use crate::core::compile::{
     CompilationUnitMode, DelaySelection, LanguageEdition, SemanticTimeScale,
@@ -241,9 +241,16 @@ fn resolve_analysis(raw: &RawAnalysis) -> Result<AnalysisConfig, ConfigError> {
             "analysis.max_total_input_bytes must be positive",
         ));
     }
+    let max_semantic_nodes = raw.max_semantic_nodes.unwrap_or(DEFAULT_MAX_SEMANTIC_NODES);
+    if !(1..=MAX_SEMANTIC_NODES).contains(&max_semantic_nodes) {
+        return Err(ConfigError::new(format!(
+            "analysis.max_semantic_nodes must be between 1 and {MAX_SEMANTIC_NODES}"
+        )));
+    }
     Ok(AnalysisConfig {
         max_file_bytes,
         max_total_input_bytes,
+        max_semantic_nodes,
     })
 }
 

@@ -160,8 +160,22 @@ fn single_unit_native_limit_recovers_navigation() {
     assert!(analysis.has_feature_data(), "{:?}", analysis.diagnostics);
     assert!(analysis.diagnostics.iter().any(|diag| diag
         .message
-        .contains("serving bounded declaration-level navigation")));
+        .contains("serving bounded declaration-level navigation")
+        && diag
+            .message
+            .contains("semantic node limit exceeded (limit=128, needs about ")
+        && diag
+            .message
+            .contains(crate::config::FRONTEND_LIMIT_GUIDANCE)));
     assert!(!workspace_symbols(&analysis, "data").is_empty());
+}
+
+#[test]
+fn limit_guidance_names_the_configuration_key() {
+    assert!(crate::config::FRONTEND_LIMIT_GUIDANCE.contains("[analysis].max_semantic_nodes"));
+    assert!(!crate::config::FRONTEND_LIMIT_GUIDANCE.contains("not llg.toml settings"));
+    // The single-buffer token parse does not read that key.
+    assert!(!crate::config::TOKEN_PARSE_LIMIT_GUIDANCE.contains("max_semantic_nodes"));
 }
 
 #[test]

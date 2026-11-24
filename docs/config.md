@@ -168,6 +168,7 @@ server, accepted and ignored by `llg`.
 | `lint.json` | bool | llg | `--lint-json` (stdout); implies `only` |
 | `lint.json_file` | string | llg | `--lint-json <path>`; implies `json` |
 | `analysis.max_file_bytes`, `analysis.max_total_input_bytes` | integers | ls | input budgets |
+| `analysis.max_semantic_nodes` | integer | ls | size of a full analysis |
 | `simulator.stop_policy` | `"resume"` \| `"exit"` | llg | `--stop-policy` |
 | `simulator.optimize` | bool | llg | `--no-opt` is `optimize = false` |
 | `simulator.pulse_reject`, `simulator.pulse_error` | integers 0 to 100 | llg | `--pulse-reject`, `--pulse-error` |
@@ -401,6 +402,7 @@ W = 16
 [analysis]
 max_file_bytes = 1048576
 max_total_input_bytes = 8388608
+max_semantic_nodes = 1000000
 
 [lint]
 enabled = true
@@ -520,7 +522,7 @@ optional process-wide guard.
   (`--out-dir`, default `build`).
 - `runtime_cache` (string) — runtime archive cache (`--runtime-cache`).
 
-## `[analysis]` — input-size safeguards (`llg_ls` only)
+## `[analysis]` — size safeguards (`llg_ls` only)
 
 - `max_file_bytes` (positive integer) — maximum UTF-8 buffer or on-disk byte
   length of one unique compilation unit or resolved include, including a
@@ -531,6 +533,13 @@ optional process-wide guard.
   bounded macro-expanded filenames.
   Canonicalized paths are counted once, including include cycles. Default
   `8388608` (8 MiB).
+- `max_semantic_nodes` (integer, 1 to 4294967295) — maximum semantic nodes one
+  full analysis may hold: every elaborated declaration, statement and
+  expression, counted per module instance, generate block and class
+  specialization. A larger design gets the
+  [reduced analysis](#lsp-analysis-snapshots). Default `1000000`. Larger values
+  raise the frontend's other record limits in proportion; the limits of
+  exported bytes and diagnostics follow the value throughout.
 
 Open UTF-8 buffer text is measured in preference to disk metadata. Discovery
 is unchanged, so files over either limit remain watched; the root analysis is
@@ -547,10 +556,13 @@ used by a later compile.
 Source-size rejections and native frontend capture-limit failures emit `ERROR`
 logs, including when a compact navigation snapshot can be recovered. The log
 and diagnostic advise excluding generated or unnecessary paths with
-`[sources].exclude`. For source-size limits, you can instead raise the relevant
-`[analysis]` budget if memory permits. `LLG_MEMORY_LIMIT_MB` controls a separate
-process-memory ceiling: raising it alone does not raise source/export caps.
-Native frontend caps are currently server-side limits, not `llg.toml` settings.
+`[sources].exclude`. You can instead raise the relevant `[analysis]` budget if
+memory permits: `max_file_bytes` or `max_total_input_bytes` for source-size
+limits, `max_semantic_nodes` for frontend capture limits. The frontend log and
+diagnostic name the exhausted limit and, for a full analysis that runs out of
+semantic nodes, about how many the design needs. `LLG_MEMORY_LIMIT_MB` controls
+a separate process-memory ceiling: raising it alone raises none of these
+limits, and it still ends an analysis that a raised limit lets grow past it.
 
 Literal includes are resolved beside the including file first, then in the
 configured source directories followed by `compile.include_dirs`, in the same
@@ -579,7 +591,7 @@ and do not replace the last valid configuration.
 ## LSP analysis snapshots
 
 Large elaborated designs use a compact source-navigation snapshot when full
-capture exceeds 100,000 semantic nodes or another frontend limit. Tokens are
+capture exceeds `analysis.max_semantic_nodes` or another frontend limit. Tokens are
 stored per source file, module bodies and generate blocks are visited once,
 and references target source definitions. Hover, definition, references,
 symbols, semantic tokens, token dumps, and the module explorer remain
@@ -587,6 +599,20 @@ available. The server reports this reduced mode explicitly; custom lint and
 instance-specific parameter values, widths, and elaborated hierarchy are not
 available in that snapshot. A previous full snapshot remains preferred after
 a failing edit. Simulator compilation retains its independent capture limits.
+
+A full analysis peaks at about 0.6 KiB of server memory per semantic node, on
+top of the memory for the sources and their tokens. Measured on x86-64 Linux:
+
+| Design | Semantic nodes | Tokens | Peak RSS |
+| --- | --- | --- | --- |
+| UVM 1.2 package | 188,242 | 518,784 | 375 MiB |
+| UVM 1.2 with one example testbench | 224,000 | 331,194 | 351 MiB |
+| 17,800 generated register processes | 996,900 | 424 | 577 MiB |
+| 60,000 generated register processes | 3,360,100 | 424 | 1,777 MiB |
+
+The default budget therefore keeps that part of an analysis near 600 MiB. A
+design above the budget fails after one budget of nodes is captured, before the
+reduced analysis starts.
 
 ## LSP duplicate definitions
 

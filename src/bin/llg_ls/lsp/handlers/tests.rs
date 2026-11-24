@@ -38,6 +38,7 @@ fn config_with_budget(
     config.analysis = config::AnalysisConfig {
         max_file_bytes,
         max_total_input_bytes,
+        ..config.analysis
     };
     config
 }

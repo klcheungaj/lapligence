@@ -155,8 +155,10 @@ stage.
 The simulator's capture has no export byte budget: `Limits::simulator()`
 leaves export, source and value-bit bytes unlimited and record counts at their
 structural ceilings (32-bit record IDs), so only available process memory
-bounds a large design. Library and LSP callers keep their bounded
-`Limits::default()` budgets, where `export byte limit exceeded` can still occur.
+bounds a large design. Library callers keep their bounded `Limits::default()`
+budgets, where `export byte limit exceeded` can still occur; the language server
+scales its budgets with
+[`analysis.max_semantic_nodes`](config.md#lsp-analysis-snapshots).
 
 ### Intended direction
 
