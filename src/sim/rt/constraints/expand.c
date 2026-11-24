@@ -597,7 +597,7 @@ static uint32_t cr_inst_add(cr_tpl_t* t, void* handle, uint32_t unit, int32_t ra
     if (t->count == t->cap) {
         uint32_t cap = t->cap ? t->cap * 2u : 8u;
         cr_inst_t* grown = (cr_inst_t*)realloc(t->inst, (size_t)cap * sizeof(cr_inst_t));
-        if (!grown) cr_fatal("out of memory");
+        if (!grown) llg_msg_abort_allocation("constraint solver", cap, sizeof(cr_inst_t));
         for (uint32_t i = t->cap; i < cap; ++i) {
             memset(&grown[i], 0, sizeof(cr_inst_t));
             grown[i].unit = LLG_CR_NONE;

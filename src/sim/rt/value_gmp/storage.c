@@ -1,8 +1,12 @@
 #if LLG_SV4_USE_GMP
 #include "../llg_value.h"
-void llg_value_require_abi(void) {}
 #endif
 #include "internal.h"
+#if LLG_SV4_USE_GMP
+/* The link guard of the value ABI is also the one call every model makes into
+ * this backend before it computes anything. */
+void llg_value_require_abi(void) { llg_gmp_sv4_kernel_start(); }
+#endif
 #include <stdio.h>
 
 void llg_gmp_sv4_fail(const char* message) {
@@ -14,7 +18,7 @@ uint64_t* llg_gmp_sv4_alloc(size_t words) {
         llg_gmp_sv4_fail("allocation size overflow");
     uint64_t* p = (uint64_t*)calloc(words, sizeof(uint64_t));
     if (!p)
-        llg_gmp_sv4_fail("allocation failed");
+        llg_msg_abort_allocation("packed value", words, sizeof(uint64_t));
     return p;
 }
 g4_t llg_gmp_sv4_new(uint32_t width, int8_t sign, int32_t with_b) {
@@ -35,7 +39,7 @@ g4_t llg_gmp_sv4_clone_wide(const g4_t* v) {
     size_t bytes = llg_gmp_sv4_bytes(v);
     uint64_t* p = (uint64_t*)malloc(bytes);
     if (!p)
-        llg_gmp_sv4_fail("allocation failed");
+        llg_msg_abort_allocation("packed value", 1, bytes);
     g4_t out = LLG_GMP_SV4_EMPTY;
     out.width = v->width;
     out.is_signed = v->is_signed;
@@ -60,7 +64,7 @@ void llg_gmp_sv4_promote(g4_t* v) {
     size_t n = llg_gmp_sv4_words(*v);
     uint64_t* p = (uint64_t*)realloc(v->data.wide.a, n * 16u);
     if (!p)
-        llg_gmp_sv4_fail("allocation failed");
+        llg_msg_abort_allocation("packed value", n, 16u);
     memset(p + n, 0, n * 8u);
     v->data.wide.a = p;
     v->data.wide.b = p + n;
@@ -82,7 +86,7 @@ void llg_gmp_sv4_finish(g4_t* v) {
             return;
     uint64_t* p = (uint64_t*)realloc(a, n * 8u);
     if (!p)
-        llg_gmp_sv4_fail("allocation failed");
+        llg_msg_abort_allocation("packed value", n, 8u);
     v->data.wide.a = p;
     v->data.wide.b = NULL;
 }
@@ -93,7 +97,7 @@ g4_t llg_gmp_sv4_fill_wide(uint8_t state, uint32_t width, int8_t sign) {
     size_t n = ((size_t)width + 63u) / 64u;
     uint64_t* p = (uint64_t*)malloc(n * (state >= 2 ? 2u : 1u) * sizeof(uint64_t));
     if (!p)
-        llg_gmp_sv4_fail("allocation failed");
+        llg_msg_abort_allocation("packed value", n * (state >= 2 ? 2u : 1u), sizeof(uint64_t));
     g4_t v = LLG_GMP_SV4_EMPTY;
     v.width = width;
     v.is_signed = sign != 0;

@@ -2172,16 +2172,10 @@ static void path_queue_push(llg_inertial_t* driver, uint64_t time,
     if (queue->count == queue->capacity) {
         uint32_t capacity = queue->capacity ? queue->capacity * 2u : 4u;
         uint64_t* times = realloc(queue->times, capacity * sizeof(*times));
-        if (!times) {
-            llg_msg(LLG_MSG_INTERNAL, NULL, "out of memory for a module path queue");
-            abort();
-        }
+        if (!times) llg_fatal_allocation("module path queue", capacity, sizeof(*times));
         queue->times = times;
         uint8_t* states = realloc(queue->states, capacity * sizeof(*states));
-        if (!states) {
-            llg_msg(LLG_MSG_INTERNAL, NULL, "out of memory for a module path queue");
-            abort();
-        }
+        if (!states) llg_fatal_allocation("module path queue", capacity, sizeof(*states));
         queue->states = states;
         queue->capacity = capacity;
     }

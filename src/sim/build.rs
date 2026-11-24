@@ -960,7 +960,7 @@ fn directory_is_empty(directory: &Path) -> bool {
 
 /// File names [`super::write_sim_sources`] always writes (must mirror its
 /// fixed list there) plus this module's own `CMakeLists.txt`.
-const FIXED_SOURCE_NAMES: [&str; 31] = [
+const FIXED_SOURCE_NAMES: [&str; 32] = [
     "llg_rt.h",
     "llg_rt.c",
     "llg_value.h",
@@ -987,6 +987,7 @@ const FIXED_SOURCE_NAMES: [&str; 31] = [
     "llg_platform.h",
     "llg_platform_native.h",
     "llg_msg.h",
+    "llg_alloc_fault.h",
     "llg_msg_layout.def",
     "llg_msg_ids.def",
     "CMakeLists.txt",

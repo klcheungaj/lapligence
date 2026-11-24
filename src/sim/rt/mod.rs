@@ -299,9 +299,12 @@ pub fn platform_headers() -> &'static [(&'static str, &'static str)] {
 /// The runtime message reporter (`llg_msg.h`) and the two tables it reads:
 /// the layout shared with the host renderer (`core::report`) and the runtime
 /// message ids. Written beside every model and every standalone runtime unit.
+/// `llg_alloc_fault.h` is the allocation fault injection that `llg_msg.h`
+/// includes in a test build with `LLG_ALLOC_FAULT` and in no other.
 pub fn message_headers() -> &'static [(&'static str, &'static str)] {
     &[
         ("llg_msg.h", include_str!("llg_msg.h")),
+        ("llg_alloc_fault.h", include_str!("llg_alloc_fault.h")),
         ("llg_msg_layout.def", include_str!("llg_msg_layout.def")),
         ("llg_msg_ids.def", include_str!("llg_msg_ids.def")),
     ]

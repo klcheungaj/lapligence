@@ -127,7 +127,7 @@ static void svc_error_recorded(void) {
         }
         size_t grown = g_svc.capacity ? g_svc.capacity * 2u : 4u;
         if (grown > LLG_VPI_MAX_PLI_ERRORS) grown = LLG_VPI_MAX_PLI_ERRORS;
-        svc_error_t* queue = (svc_error_t*)realloc(g_svc.queue, grown * sizeof(*queue));
+        svc_error_t* queue = (svc_error_t*)vpi_realloc(g_svc.queue, grown * sizeof(*queue));
         if (!queue) {
             ++g_svc.dropped;
             return;
@@ -370,9 +370,9 @@ static int32_t svc_strength_bind(llg_vpi_cb_t* cb) {
     if (!net->strength) {
         if (g_svc.view_count == g_svc.view_capacity) {
             size_t grown = g_svc.view_capacity ? g_svc.view_capacity * 2u : 4u;
-            llg_net_t** nets = (llg_net_t**)realloc(g_svc.view_nets, grown * sizeof(*nets));
+            llg_net_t** nets = (llg_net_t**)vpi_realloc(g_svc.view_nets, grown * sizeof(*nets));
             if (nets) g_svc.view_nets = nets;
-            sv4_t** views = nets ? (sv4_t**)realloc(g_svc.views, grown * sizeof(*views)) : NULL;
+            sv4_t** views = nets ? (sv4_t**)vpi_realloc(g_svc.views, grown * sizeof(*views)) : NULL;
             if (views) g_svc.views = views;
             if (!nets || !views) {
                 vpi_error("LLG_VPI_NOMEM", "VPI strength view allocation failed");
@@ -380,7 +380,7 @@ static int32_t svc_strength_bind(llg_vpi_cb_t* cb) {
             }
             g_svc.view_capacity = grown;
         }
-        sv4_t* view = (sv4_t*)malloc(sizeof(*view));
+        sv4_t* view = (sv4_t*)vpi_malloc(sizeof(*view));
         if (!view) {
             vpi_error("LLG_VPI_NOMEM", "VPI strength view allocation failed");
             return 0;
@@ -394,8 +394,8 @@ static int32_t svc_strength_bind(llg_vpi_cb_t* cb) {
         }
     }
     uint32_t width = svc_target_width(&cb->target);
-    uint8_t* last = (uint8_t*)calloc(width ? width : 1u, 1);
-    llg_vpi_watch_t* watches = last ? (llg_vpi_watch_t*)realloc(
+    uint8_t* last = (uint8_t*)vpi_calloc(width ? width : 1u, 1);
+    llg_vpi_watch_t* watches = last ? (llg_vpi_watch_t*)vpi_realloc(
                                           cb->watches, (size_t)(cb->watch_total + 1u) *
                                                            sizeof(*watches))
                                     : NULL;

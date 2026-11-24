@@ -60,7 +60,7 @@ void llg_gmp_sv4_to_dec_string_wide(g4_t value, char* buf, size_t cap) {
     size_t capacity = ((size_t)value.width * 30103u) / 100000u + 2u;
     uint8_t* digits = (uint8_t*)malloc(capacity);
     if (!digits)
-        llg_gmp_sv4_fail("value-format allocation failed");
+        llg_msg_abort_allocation("packed value", 1, capacity);
     size_t count = n ? llg_gmp_sv4_kernel_decimal(digits, magnitude, n) : 0;
     size_t len = 0, first = 0;
     if (negative && len + 1u < cap)

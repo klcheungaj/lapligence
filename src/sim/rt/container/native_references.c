@@ -215,7 +215,7 @@ static void llg_native_ref_outdate(llg_native_ref_t* ref, llg_value_t* element) 
     if (llg_native_ref_has_items(ref)) {
         llg_value_t fresh = {0};
         if (!llg_value_try_construct_copy(&fresh, ref->value.desc, &ref->value))
-            llg_container_fatal("container allocation failed");
+            llg_msg_abort_allocation("container", 0, 0);
         element->value.items = fresh.value.items;
     }
     llg_native_ref_disconnect(ref);

@@ -50,8 +50,7 @@ static void llg_warn_host_stack_limit(void) {
 
 static _Noreturn void llg_fatal_allocation(const char* what, size_t count,
                                            size_t size) {
-    llg_msg_abort(LLG_MSG_ALLOCATION, "cannot allocate %zu element(s) of %zu byte(s) for %s",
-                  count, size, what);
+    llg_msg_abort_allocation(what, count, size);
 }
 
 // Whole-message buffers (llg_report_t) and the reporter are in llg_msg.h.

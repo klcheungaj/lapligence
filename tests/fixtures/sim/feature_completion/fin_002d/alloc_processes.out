@@ -1,0 +1,5 @@
+depth 30 log 31 at 31
+workers 39 handles 8 at 105
+any 41 last 4
+kill 44 1 1 counter 33
+done

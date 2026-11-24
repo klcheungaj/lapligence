@@ -2,7 +2,7 @@
 
 llg_nested_assoc_t* llg_nested_assoc_new(const llg_value_desc_t* desc) {
     llg_nested_assoc_t* nested = llg_value_try_items(1, sizeof(*nested));
-    if (!nested) llg_container_fatal("container allocation failed");
+    if (!nested) llg_msg_abort_allocation("container", 0, 0);
     nested->pins = 1;
     nested->desc = desc;
     const llg_value_desc_t* element = desc->element;

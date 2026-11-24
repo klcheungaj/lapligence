@@ -35,7 +35,7 @@ static void* cr_alloc(size_t count, size_t size) {
     if (count == 0 || size == 0) return NULL;
     if (count > SIZE_MAX / size) cr_fatal("allocation size overflow");
     void* memory = calloc(count, size);
-    if (!memory) cr_fatal("out of memory");
+    if (!memory) llg_msg_abort_allocation("constraint solver", count, size);
     return memory;
 }
 
@@ -49,7 +49,7 @@ static void* cr_grow(void* memory, size_t* capacity, size_t needed,
     }
     if (next > SIZE_MAX / size) cr_fatal("allocation size overflow");
     void* grown = realloc(memory, next * size);
-    if (!grown) cr_fatal("out of memory");
+    if (!grown) llg_msg_abort_allocation("constraint solver", next, size);
     memset((char*)grown + *capacity * size, 0, (next - *capacity) * size);
     *capacity = next;
     return grown;

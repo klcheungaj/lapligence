@@ -86,7 +86,7 @@ static g4_t multiply(g4_t a, g4_t b) {
     if (product != n || mixed) {
         uint64_t* q = (uint64_t*)realloc(p, n * 8u);
         if (!q)
-            llg_gmp_sv4_fail("allocation failed");
+            llg_msg_abort_allocation("packed value", n, 8u);
         p = q;
     }
     g4_t out = LLG_GMP_SV4_EMPTY;
@@ -103,7 +103,7 @@ g4_t llg_gmp_sv4_binary_known_equal(const uint64_t* lhs, const uint64_t* rhs, ui
     size_t n = ((size_t)width + 63u) / 64u;
     uint64_t* result = (uint64_t*)malloc(n * sizeof(uint64_t));
     if (!result)
-        llg_gmp_sv4_fail("allocation failed");
+        llg_msg_abort_allocation("packed value", n, sizeof(uint64_t));
     if (op <= 1) {
         uint64_t carry = op == 1;
         for (size_t i = 0; i < n; ++i) {
@@ -324,7 +324,7 @@ g4_t llg_gmp_sv4_pow_wide(g4_t a, g4_t b) {
     /* Publish only the exact-width result, releasing the operation's scratch. */
     uint64_t* p = (uint64_t*)realloc(scratch, an * 8u);
     if (!p)
-        llg_gmp_sv4_fail("allocation failed");
+        llg_msg_abort_allocation("packed value", an, 8u);
     g4_t out = LLG_GMP_SV4_EMPTY;
     out.width = a.width;
     out.is_signed = a.is_signed;

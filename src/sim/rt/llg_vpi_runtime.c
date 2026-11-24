@@ -77,7 +77,7 @@ static void rts_push(rts_handles_t* list, vpiHandle handle) {
     if (list->failed || !handle) return;
     if (list->count == list->capacity) {
         uint32_t capacity = list->capacity ? list->capacity * 2u : 8u;
-        uintptr_t* grown = (uintptr_t*)realloc(list->items, capacity * sizeof(*grown));
+        uintptr_t* grown = (uintptr_t*)vpi_realloc(list->items, capacity * sizeof(*grown));
         if (!grown) {
             list->failed = 1;
             return;
@@ -160,7 +160,7 @@ static void rts_entry_value(const llg_vpi_slot_t* slot, p_vpi_value output) {
     size_t words = count ? (count - 1u) / 4u + 1u : 1u;
     if (words > g_vpi.value_vector_capacity) {
         s_vpi_vecval* grown =
-            (s_vpi_vecval*)realloc(g_vpi.value_vector, words * sizeof(*grown));
+            (s_vpi_vecval*)vpi_realloc(g_vpi.value_vector, words * sizeof(*grown));
         if (!grown) {
             vpi_error("LLG_VPI_NOMEM", "VPI vector allocation failed");
             return;
@@ -286,7 +286,7 @@ static int32_t rts_code_parents(void) {
     (void)code_nodes();
     if (!g_vpi.code || !g_vpi.code->node_count) return 0;
     uint32_t count = g_vpi.code->node_count;
-    uint32_t* parents = (uint32_t*)calloc(count, sizeof(*parents));
+    uint32_t* parents = (uint32_t*)vpi_calloc(count, sizeof(*parents));
     if (!parents) return 0;
     for (uint32_t row = 0; row < count; ++row) {
         const llg_vpi_code_t* node = &g_vpi.code->nodes[row];
@@ -471,7 +471,7 @@ static rts_stack_t* rts_stack(int32_t slot, uint64_t identity, int32_t create) {
         if (!create) return NULL;
         uint32_t count = rts.stack_count ? rts.stack_count : 16u;
         while (count <= index) count *= 2u;
-        rts_stack_t* grown = (rts_stack_t*)realloc(rts.stacks, count * sizeof(*grown));
+        rts_stack_t* grown = (rts_stack_t*)vpi_realloc(rts.stacks, count * sizeof(*grown));
         if (!grown) return NULL;
         memset(grown + rts.stack_count, 0, (count - rts.stack_count) * sizeof(*grown));
         rts.stacks = grown;
@@ -1831,7 +1831,7 @@ static vpiHandle rts_auto_by_scoped_name(const llg_vpi_slot_t* scope, const char
     const char* base = rts_get_str(vpiFullName, (llg_vpi_slot_t*)scope, &handled);
     if (!base) return NULL;
     size_t length = strlen(base) + 1u + strlen(name) + 1u;
-    char* full = (char*)malloc(length);
+    char* full = (char*)vpi_malloc(length);
     if (!full) {
         vpi_error("LLG_VPI_NOMEM", "VPI name allocation failed");
         return NULL;
@@ -2100,7 +2100,7 @@ static void rts_pop_frame(int32_t slot, uint64_t identity) {
 /* Grow a frame stack to `capacity` records, keeping RTS_FRAME_ALIGN. */
 static int32_t rts_grow(rts_stack_t* stack, uint32_t capacity) {
     if ((uint64_t)capacity * sizeof(rts_frame_t) > (uint64_t)(SIZE_MAX - RTS_FRAME_ALIGN)) return 0;
-    void* block = malloc((size_t)capacity * sizeof(rts_frame_t) + RTS_FRAME_ALIGN);
+    void* block = vpi_malloc((size_t)capacity * sizeof(rts_frame_t) + RTS_FRAME_ALIGN);
     if (!block) return 0;
     uintptr_t address = ((uintptr_t)block + RTS_FRAME_ALIGN - 1u) & ~(uintptr_t)(RTS_FRAME_ALIGN - 1u);
     rts_frame_t* frames = (rts_frame_t*)(void*)address;
@@ -2345,7 +2345,7 @@ static int32_t rts_atomic_statement(int32_t type) {
 static int32_t rts_process_owners(void) {
     if (rts_code_owners) return 1;
     if (!rts_code_parents()) return 0;
-    uint32_t* owners = (uint32_t*)calloc(g_vpi.code->node_count, sizeof(*owners));
+    uint32_t* owners = (uint32_t*)vpi_calloc(g_vpi.code->node_count, sizeof(*owners));
     if (!owners) return 0;
     for (size_t row = 0; row < g_vpi.object_count; ++row) {
         const llg_vpi_model_object_t* object = &g_vpi.objects[row];

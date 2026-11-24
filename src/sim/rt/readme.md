@@ -43,6 +43,7 @@ reclaimed objects print `(reclaimed)` and output stops at
 | Source pair / directory | Responsibility |
 | --- | --- |
 | `llg_msg.h`, `llg_msg_layout.def`, `llg_msg_ids.def` | Message reporter: renders the layout template shared with the host (`src/core/report.rs`) with a catalog id, counts messages and builds the `SIM-000` summary. A model compiles it once, in `llg_rt.c` (`LLG_MSG_IMPLEMENTATION`; the other units build with `LLG_MSG_SHARED`); a unit built alone keeps private `static inline` copies ([messages](../../../docs/messages.md), [I/O](io.md)). |
+| `llg_alloc_fault.h` | Allocation fault injection, read by `llg_msg.h` in a test build with `LLG_ALLOC_FAULT` only: it renames the allocation calls of every unit and of the model to a wrapper that fails a chosen request ([tests readme](../../../tests/readme.md#allocation-fault-injection)). A failed allocation is reported once for the whole runtime, by `llg_msg_abort_allocation` (`SIM-031`, then `abort()`); the waveform writer alone reports its own (`SIM-018`) and lets the run finish. |
 | `llg_value.h/.c`, `value/` | Four-state values, arithmetic, selection, resolution, formatting and numeric conversion; scheduler-independent. |
 | `llg_random.h/.c` | Verilog random/distribution functions and explicit seed updates. |
 | `llg_rng.h/.c` | Process/object random streams, independent of scheduling. |

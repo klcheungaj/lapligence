@@ -23,6 +23,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+// Test builds only: renames the allocation calls of every runtime unit and of
+// the generated model (all of them include this header) to a wrapper that can
+// fail a chosen request. Kept behind the system headers above.
+#ifdef LLG_ALLOC_FAULT
+#include "llg_alloc_fault.h"
+#endif
+
 enum {
     LLG_SEVERITY_INFO = 0,
     LLG_SEVERITY_WARNING = 1,
@@ -96,6 +103,10 @@ LLG_MSG_API void llg_msg_hint(llg_msg_id_t id, const char* location, const char*
 // Report a fatal internal message and abort.
 LLG_MSG_PRINTF(2, 3)
 LLG_MSG_API _Noreturn void llg_msg_abort(llg_msg_id_t id, const char* fmt, ...);
+// The one report of a failed allocation, for every runtime unit and the
+// generated model: fatal message SIM-031 naming what the memory was for (and
+// `count` elements of `size` bytes when `count` is not 0), then abort.
+LLG_MSG_API _Noreturn void llg_msg_abort_allocation(const char* what, size_t count, size_t size);
 // The end-of-run summary text for `counts` from the layout's SUMMARY template.
 LLG_MSG_API void llg_msg_summary_text(llg_report_t* out, const uint64_t counts[4]);
 
@@ -373,6 +384,12 @@ LLG_MSG_API _Noreturn void llg_msg_abort(llg_msg_id_t id, const char* fmt, ...) 
     llg_msg_vreport(id, NULL, NULL, fmt, args);
     va_end(args);
     abort();
+}
+
+LLG_MSG_API _Noreturn void llg_msg_abort_allocation(const char* what, size_t count, size_t size) {
+    if (count == 0) llg_msg_abort(LLG_MSG_ALLOCATION, "cannot allocate memory for %s", what);
+    llg_msg_abort(LLG_MSG_ALLOCATION, "cannot allocate %zu element(s) of %zu byte(s) for %s",
+                  count, size, what);
 }
 
 // The end-of-run summary text for `counts` from the layout's SUMMARY template.

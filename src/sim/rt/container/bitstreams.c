@@ -37,7 +37,7 @@ static void llg_bitstream_reserve(llg_bitstream_t* stream, uint64_t bits) {
     }
     size_t count = llg_checked_count(capacity, sizeof(llg_bitstream_word_t));
     llg_bitstream_word_t* grown = realloc(stream->words, count * sizeof(*grown));
-    if (!grown) llg_container_fatal("bit stream allocation failed");
+    if (!grown) llg_msg_abort_allocation("bit stream", count, sizeof(*grown));
     memset(grown + stream->capacity, 0,
            (count - (size_t)stream->capacity) * sizeof(*grown));
     stream->words = grown;

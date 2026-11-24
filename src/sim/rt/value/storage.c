@@ -24,10 +24,7 @@ sv4_t sv4_zero(uint32_t width, int8_t is_signed) {
 
     size_t bytes = limbs * 3u * sizeof(uint64_t);
     result.bits = (uint64_t*)malloc(bytes);
-    if (!result.bits) {
-        llg_msg(LLG_MSG_INTERNAL, NULL, "packed storage allocation failed");
-        abort();
-    }
+    if (!result.bits) llg_msg_abort_allocation("packed value", 1, bytes);
     result.x = result.bits + limbs;
     result.z = result.x + limbs;
     memset(result.bits, 0, bytes);

@@ -225,7 +225,7 @@ oracle plane words, per-bit states, owner independence by mutate-and-restore,
 and the selected backend's exact payload bytes and owner allocation counts.
 `allocation_failure_probe.c` injects an allocation failure into constructors,
 wide clones, X/Z results and a queue element capture; each mode must end with
-the backend's fatal `allocation failed` diagnostic.
+the fatal allocation report (`SIM-031`).
 
 ```sh
 cmake -S tests/runtime_value_storage -B /build/llg-storage-compact -DCMAKE_BUILD_TYPE=Debug \

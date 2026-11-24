@@ -89,7 +89,7 @@ static int32_t llg_assoc_value_create_entry(llg_assoc_value_t* array,
                                         size_t string_length) {
     llg_value_t initial = {0};
     if (!llg_value_try_default_mode(&initial, array->element, 1))
-        llg_container_fatal("container allocation failed");
+        llg_msg_abort_allocation("container", 0, 0);
     int32_t change = 0;
     int32_t result = llg_assoc_value_set_source(array, integral_key, string_key,
                                             string_length, &initial, &change);
@@ -162,7 +162,7 @@ llg_value_t* llg_nested_seq_write_at(llg_value_t* owner, sv4_t index,
         llg_value_t initial = {0};
         if (!llg_value_try_default_mode(&initial,
                                         seq->array.queue_values.element, 1))
-            llg_container_fatal("container allocation failed");
+            llg_msg_abort_allocation("container", 0, 0);
         /* The queue's own write appends; at its bound it warns instead. */
         int32_t appended = 0;
         int32_t written = llg_queue_value_set_source(&seq->array.queue_values,
@@ -229,7 +229,7 @@ int32_t llg_queue_value_extend_nested(llg_queue_value_array_t* queue,
     if (native == queue->size) {
         llg_value_t initial = {0};
         if (!llg_value_try_default_mode(&initial, queue->element, 1))
-            llg_container_fatal("container allocation failed");
+            llg_msg_abort_allocation("container", 0, 0);
         int32_t appended =
             llg_queue_value_set_source(queue, indices[0], &initial, &change);
         llg_value_drop(&initial);
@@ -294,7 +294,7 @@ void llg_value_element_read(llg_value_t* dst, const llg_value_t* element) {
     const llg_value_desc_t* desc = dst->desc;
     llg_value_drop(dst);
     if (!llg_value_try_default(dst, desc))
-        llg_container_fatal("container allocation failed");
+        llg_msg_abort_allocation("container", 0, 0);
 }
 
 /* Replace one existing element with a converted copy of `value`, notifying

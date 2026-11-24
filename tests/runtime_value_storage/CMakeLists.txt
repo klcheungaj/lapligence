@@ -133,7 +133,7 @@ if(NOT LLG_TEST_VALUE_COMPACT)
   add_test(NAME storage_lifecycle COMMAND sv4_storage_probe)
   foreach(mode IN ITEMS limit uint32-max oom oom-copy)
     if(mode MATCHES "oom")
-      set(expected "packed storage allocation failed")
+      set(expected "[SIM-031] cannot allocate")
     else()
       set(expected "packed storage width")
     endif()
@@ -240,7 +240,7 @@ foreach(mode IN ITEMS construct clone unknown queue record_queue)
   add_test(NAME value_allocation_failure_${mode}
     COMMAND "${CMAKE_COMMAND}"
       "-DPROBE=$<TARGET_FILE:allocation_failure_probe>" "-DMODE=${mode}"
-      "-DEXPECTED=allocation failed" -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_failure.cmake")
+      "-DEXPECTED=[SIM-031] cannot allocate" -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_failure.cmake")
   set_tests_properties(value_allocation_failure_${mode} PROPERTIES TIMEOUT 60)
 endforeach()
 

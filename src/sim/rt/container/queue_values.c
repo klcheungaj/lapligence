@@ -87,7 +87,7 @@ static llg_value_t* llg_queue_value_nested_target(
             native == queue->size) {
             llg_value_t initial = {0};
             if (!llg_value_try_default_mode(&initial, queue->element, 1))
-                llg_container_fatal("container allocation failed");
+                llg_msg_abort_allocation("container", 0, 0);
             int32_t appended =
                 llg_queue_value_set_source(queue, indices[0], &initial, change);
             llg_value_drop(&initial);

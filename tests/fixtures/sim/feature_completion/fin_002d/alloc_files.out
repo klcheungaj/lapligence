@@ -1,0 +1,12 @@
+to both 7
+words 1111 beef 7777
+lines 128 1
+scan 3 00000000 word 0 14
+read 52 1
+sscanf 3 42 answer 00000abc
+ratio 0.75
+name llg
+wide 0000000000123456789abcdef
+plus 1 0
+missing 0
+done
