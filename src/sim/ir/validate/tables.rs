@@ -988,6 +988,14 @@ impl Validator<'_> {
         }
 
         for (idx, array) in self.model.arrays.iter().enumerate() {
+            // A static array is a global of the model beside the containers
+            // and signals; a lexical one is declared in its activation.
+            if !array.activation && !storage_names.insert(array.c_name.as_str()) {
+                return self.fail(
+                    format!("arrays[{idx}].c_name"),
+                    format!("static array storage name `{}` is not unique", array.c_name),
+                );
+            }
             let mut elements = HashSet::new();
             for (element, signal) in &array.net_elements {
                 let signal = self.model.signals.get(*signal).ok_or_else(|| {
@@ -1264,11 +1272,19 @@ impl Validator<'_> {
             self.validate_stmts(&allocation.body, formals, &format!("{path}.body"))?;
         }
 
+        // Every function and process defines C symbols under its name.
+        let mut routine_names = HashSet::new();
         for (idx, func) in self.model.funcs.iter().enumerate() {
             self.function.set(Some(func));
             self.chandle_return.set(Some(func.ret_chandle));
             self.string_return.set(Some(func.ret_string));
             let path = format!("funcs[{idx}]");
+            if !routine_names.insert(func.c_name.as_str()) {
+                return self.fail(
+                    format!("{path}.c_name"),
+                    format!("function name `{}` is not unique", func.c_name),
+                );
+            }
             if (func.ret_chandle || func.ret_string) && func.ret.is_some()
                 || func.ret_chandle && func.ret_string
             {
@@ -1443,6 +1459,12 @@ impl Validator<'_> {
         self.function.set(None);
         for (idx, process) in self.model.processes.iter().enumerate() {
             let path = format!("processes[{idx}]");
+            if !routine_names.insert(process.c_name.as_str()) {
+                return self.fail(
+                    format!("{path}.c_name"),
+                    format!("process name `{}` is not unique", process.c_name),
+                );
+            }
             for (write_idx, write) in process.writes.iter().enumerate() {
                 if !self.valid_dependency(write) {
                     return self.fail(

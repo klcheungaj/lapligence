@@ -392,6 +392,40 @@ fn simulator_usage_errors_carry_a_catalog_id_without_location() {
     }
 }
 
+/// An argument that is not valid UTF-8 is a usage error wherever it stands
+/// (an option, a source path, a plusarg after `--`), never a panic of the
+/// argument iterator.
+#[test]
+fn simulator_non_utf8_argument_is_a_usage_error() {
+    use llg::core::report::{self, catalog, Severity};
+    #[cfg(unix)]
+    let raw = {
+        use std::os::unix::ffi::OsStringExt;
+        std::ffi::OsString::from_vec(b"+seed=\xff\xfe".to_vec())
+    };
+    #[cfg(windows)]
+    let raw = {
+        use std::os::windows::ffi::OsStringExt;
+        std::ffi::OsString::from_wide(&[0x2b, 0xd800])
+    };
+    for before in [&[][..], &["tb.sv", "--"][..]] {
+        let output = Command::new(env!("CARGO_BIN_EXE_llg"))
+            .args(before)
+            .arg(&raw)
+            .output()
+            .expect("start CLI");
+        assert_eq!(output.status.code(), Some(2), "{output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let first = stderr.lines().next().unwrap_or_default();
+        let message = report::parse(first).unwrap_or_else(|| panic!("unparsed: {stderr}"));
+        assert_eq!(message.severity, Severity::Error, "{stderr}");
+        assert_eq!(message.id, catalog::CLI_OPTION_VALUE.id(), "{stderr}");
+        let text = format!("argument {} is not valid UTF-8", before.len() + 1);
+        assert!(message.text.starts_with(&text), "{stderr}");
+        assert_eq!(stderr.lines().count(), 1, "{stderr}");
+    }
+}
+
 /// A frontend error is a located `SLANG-<name>` message with its option
 /// hint absent (errors have no -W option), followed by the SLANG phase
 /// summary as the last line.

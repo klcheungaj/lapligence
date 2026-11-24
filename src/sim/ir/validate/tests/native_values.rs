@@ -455,6 +455,7 @@ fn statically_bound_record_refs_take_the_bound_operand_only() {
     model.funcs.push(function(vec![], vec![formal.clone()]));
     let mut bound = function(vec![], vec![formal]);
     bound.bound_native_refs = vec![0];
+    bound.c_name = "f_bound".to_owned();
     model.funcs.push(bound);
     let call = |function, args| {
         IrStmt::Call(Box::new(IrCall::new(

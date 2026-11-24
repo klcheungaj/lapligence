@@ -2,6 +2,8 @@
 
 #[path = "support/c_compiler.rs"]
 mod c_compiler;
+#[path = "support/fuzz.rs"]
+mod fuzz;
 #[path = "support/sim_cli.rs"]
 mod sim_cli;
 #[path = "support/sim.rs"]
@@ -73,6 +75,9 @@ mod adv_032;
 
 #[path = "sim_feature_completion/fin_002.rs"]
 mod fin_002;
+
+#[path = "sim_feature_completion/fin_002b.rs"]
+mod fin_002b;
 
 #[path = "sim_feature_completion/fnd_003.rs"]
 mod fnd_003;

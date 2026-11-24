@@ -1,0 +1,16 @@
+constant ffffffff 7fffffff f8 ff
+not    ffffffff
+shr    7fffffff
+shr x  0xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+shl    f8
+cond   000000ff
+narrow 00007fff
+power  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+minus  00000001
+sum    00000000
+or     000000000000000000000000xxxxxxxx
+display 011111111111
+sized   001111000000 111100010000
+actual  xxxxxxxx
+assign 1f
+base   01
