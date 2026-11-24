@@ -357,20 +357,6 @@ fn check_units(
     findings.into_inner().expect("findings lock")
 }
 
-/// A GNU GCC driver: the host compiler when it is GCC, else `gcc` on PATH
-/// when that is GCC (macOS `gcc` is Apple Clang).
-fn gcc_driver() -> Option<String> {
-    if cfg!(windows) {
-        return None;
-    }
-    let host = c_compiler::host_c_compiler();
-    if c_compiler::is_gnu_gcc(&host) {
-        return Some(host);
-    }
-    (c_compiler::c_compiler_available("gcc") && c_compiler::is_gnu_gcc("gcc"))
-        .then(|| "gcc".to_owned())
-}
-
 /// The arguments that make GCC report uninitialized uses of one unit as
 /// errors under `flags`. Only the diagnostics count (these checks never run on
 /// Windows).
@@ -406,7 +392,7 @@ fn gcc11_arguments() -> Vec<&'static str> {
 /// no flow analysis. Skipped without GCC and on Windows.
 #[test]
 fn runtime_units_have_no_gcc11_maybe_uninitialized_use() {
-    let Some(gcc) = gcc_driver() else {
+    let Some(gcc) = c_compiler::gcc_driver() else {
         eprintln!("SKIP: no GNU GCC driver for the GCC 11 maybe-uninitialized check");
         return;
     };
@@ -423,18 +409,15 @@ fn runtime_units_have_no_gcc11_maybe_uninitialized_use() {
     );
 }
 
-/// The oldest GCC the heavier-inlining pass runs under: GCC 13 reports false
-/// positives for flags like these (`docs/cross_platform.md`, Compiler
-/// versions).
-const HEAVY_INLINING_MIN_GCC: u32 = 14;
-
 /// GCC options of the heavier-inlining pass. More inlining exposes a local
 /// filled through an out-parameter that only another compiler or target would
 /// inline (CI: GCC 13 on AArch64 rejected `coverage/database.c:999 'types'`),
 /// and without jump threading, dominator optimization and VRP the failure path
 /// on which it looks unset stays. `-O1` with the inliners finds as much as
 /// `-O3` (15 of the 15 sites of the sweep that added this, against 14) in less
-/// than half the time.
+/// than half the time. The last two flags undo hardening that a distribution's
+/// GCC may enable by default: together, `_FORTIFY_SOURCE` and zeroed automatic
+/// variables hid a site the pass otherwise reports (measured with GCC 14.2).
 const HEAVY_INLINING_FLAGS: &[&str] = &[
     "-O1",
     "-finline-functions",
@@ -447,22 +430,14 @@ const HEAVY_INLINING_FLAGS: &[&str] = &[
     "-fno-thread-jumps",
     "-fno-tree-dominator-opts",
     "-fno-tree-vrp",
+    "-U_FORTIFY_SOURCE",
+    "-ftrivial-auto-var-init=uninitialized",
 ];
 
-/// A GCC driver new enough for the heavier-inlining pass, or `None` after
-/// saying why there is none.
+/// [`c_compiler::heavy_inlining_gcc`], failing when the GCC that
+/// `$LLG_TEST_HEAVY_INLINING_GCC` names cannot run the pass.
 fn heavy_inlining_gcc() -> Option<String> {
-    let gcc = gcc_driver();
-    let found = gcc.as_deref().and_then(c_compiler::gnu_gcc_major);
-    if found.is_some_and(|major| major >= HEAVY_INLINING_MIN_GCC) {
-        return gcc;
-    }
-    eprintln!(
-        "SKIP: the heavier-inlining maybe-uninitialized pass needs GCC \
-         {HEAVY_INLINING_MIN_GCC} or newer (found {})",
-        found.map_or_else(|| "none".to_owned(), |major| format!("GCC {major}"))
-    );
-    None
+    c_compiler::heavy_inlining_gcc().unwrap_or_else(|reason| panic!("{reason}"))
 }
 
 /// A second maybe-uninitialized pass over the runtime units with the inlining
@@ -470,8 +445,9 @@ fn heavy_inlining_gcc() -> Option<String> {
 /// GCC 14 host finds sites that only their inlining shows. Only the shipped
 /// configuration (compact values) is compiled: it holds every site the other
 /// configurations show, and the pass is the costliest of this file (about
-/// 15 s; one `llg_rt.c` compile is most of it). Skipped without GCC 14, so no
-/// CI job runs it (`tests/ci.md`).
+/// 20 s; one `llg_rt.c` compile is most of it). Skipped without GCC 14, unless
+/// `$LLG_TEST_HEAVY_INLINING_GCC` asks for it, as one CI job does
+/// (`tests/ci.md`).
 #[test]
 fn runtime_units_have_no_maybe_uninitialized_use_under_heavy_inlining() {
     let Some(gcc) = heavy_inlining_gcc() else {
@@ -547,6 +523,69 @@ fn heavy_inlining_flags_report_a_local_a_large_helper_leaves_unset() {
         !rejected.status.success() && diagnostics.contains("maybe-uninitialized"),
         "{diagnostics}"
     );
+}
+
+/// A host without a new enough GCC skips the pass; an explicit request that
+/// cannot be met is an error, and never falls back to the host's GCC.
+#[test]
+fn heavy_inlining_gcc_selection_fails_only_an_explicit_request() {
+    let major = |compiler: &str| match compiler {
+        "gcc-15" => Some(15),
+        "gcc-14" => Some(14),
+        "gcc" | "gcc-13" => Some(13),
+        _ => None,
+    };
+    let select = |requested: Option<&str>, host: Option<&str>| {
+        c_compiler::select_heavy_inlining_gcc(
+            requested.map(str::to_owned),
+            || host.map(str::to_owned),
+            major,
+        )
+    };
+    assert_eq!(select(None, Some("gcc-14")).as_deref(), Ok("gcc-14"));
+    assert_eq!(select(None, Some("gcc-15")).as_deref(), Ok("gcc-15"));
+    assert_eq!(
+        select(Some("gcc-14"), Some("gcc")).as_deref(),
+        Ok("gcc-14"),
+        "the request replaces an older host GCC"
+    );
+    assert_eq!(select(Some("gcc-14"), None).as_deref(), Ok("gcc-14"));
+    for (host, found) in [(Some("gcc"), "GCC 13"), (None, "no GNU GCC")] {
+        let Err(c_compiler::Unusable::Host(reason)) = select(None, host) else {
+            panic!("host {host:?} must be a skip");
+        };
+        assert!(reason.contains(&format!("(found {found})")), "{reason}");
+    }
+    for (requested, found) in [("gcc-13", "GCC 13"), ("gcc-absent", "no GNU GCC")] {
+        let Err(c_compiler::Unusable::Requested(reason)) = select(Some(requested), Some("gcc-14"))
+        else {
+            panic!("request {requested} must be an error");
+        };
+        assert!(
+            reason.contains(&format!("names `{requested}` (found {found})")),
+            "{reason}"
+        );
+    }
+}
+
+/// CI runs the pass in one job (`tests/ci.md`): a variable name that differs
+/// between the workflow and [`c_compiler::HEAVY_INLINING_GCC_VARIABLE`] would
+/// turn it into a skip.
+#[test]
+fn one_ci_job_names_the_heavy_inlining_gcc() {
+    let workflows = Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows");
+    let mut passed = Vec::new();
+    for entry in std::fs::read_dir(&workflows).expect("read the workflow directory") {
+        let path = entry.expect("workflow entry").path();
+        let text = std::fs::read_to_string(&path).expect("read a workflow");
+        let option = format!("--env {}=", c_compiler::HEAVY_INLINING_GCC_VARIABLE);
+        passed.extend(
+            text.lines()
+                .filter(|line| line.contains(&option))
+                .map(|_| path.file_name().expect("file name").to_owned()),
+        );
+    }
+    assert_eq!(passed, ["linux-platform.yml"]);
 }
 
 /// Every C fixture (DPI-C and VPI companions) under Clang at the warning

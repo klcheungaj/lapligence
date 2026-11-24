@@ -1669,7 +1669,10 @@ checks without GCC.
   `core.autocrlf=true`.
 - `runtime_strict_sources::runtime_units_have_no_maybe_uninitialized_use_under_heavy_inlining`:
   GCC `-Wmaybe-uninitialized` with heavy inlining over the compact units (GCC 14
-  or newer; about 15 s).
+  or newer; about 20 s). `LLG_TEST_HEAVY_INLINING_GCC` names the GCC of this pass
+  alone (empty is unset; default: the host GCC) and turns its skip into a failure
+  when that compiler cannot run the pass; one CI job sets it
+  ([CI compilers](ci.md#triggers-and-pipelines)).
 
 ```sh
 scripts/run-tests.sh --test-work-dir /build -E 'test(/^runtime_strict_sources::/) | test(/vendor_patches::/)'

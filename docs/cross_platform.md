@@ -324,10 +324,12 @@ DPI-C and VPI DLLs:
   host does not reproduce CI; check runtime C that adds such locals with
   GCC 13 (`LLG_CC=gcc-13`) when available. GCC 13 on AArch64 (Ubuntu 24.04
   arm64) inlines differently and rejected `coverage/database.c:999 'types'`,
-  which x86_64 GCC 13 and 14 accept. On a GCC 14 host,
+  which x86_64 GCC 13 and 14 accept. Under GCC 14,
   `runtime_strict_sources::runtime_units_have_no_maybe_uninitialized_use_under_heavy_inlining`
   brings out such sites with more inlining and without dominator optimization
-  and VRP; older GCC skips it ([CI compilers](../tests/ci.md#triggers-and-pipelines)).
+  and VRP; a host whose GCC is older skips it unless
+  `LLG_TEST_HEAVY_INLINING_GCC` names one, as one CI job does
+  ([CI compilers](../tests/ci.md#triggers-and-pipelines)).
 
 ## arm64
 
