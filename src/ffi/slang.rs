@@ -576,7 +576,7 @@ pub enum DiagnosticSubsystem {
     Netlist,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SourceRange {
     pub file_id: u64,
     pub start: u64,

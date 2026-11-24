@@ -330,3 +330,48 @@ endmodule
     let references = references_at_with_options(&a, file, 2, 6, false);
     assert!(references.is_empty(), "{references:?}");
 }
+
+/// A name declared in the actual argument of a macro is declared where it is
+/// written.
+#[test]
+fn a_name_declared_in_a_macro_argument_is_declared_there() {
+    const TEXT: &str = concat!(
+        "`define DECL(name, width) logic [width-1:0] name;\n",
+        "`define TYPE(name) typedef logic [3:0] name;\n",
+        "module m;\n",
+        "  `DECL(x, 4)\n",
+        "  `TYPE(nibble)\n",
+        "  nibble y;\n",
+        "  assign x = y;\n",
+        "endmodule\n",
+    );
+    let _guards = analysis_guards();
+    let a = analyze_sources(&[("/x/m.sv", TEXT)]);
+    let at = |marked| {
+        let (line, col) = cursor(TEXT, marked);
+        Position::new(line, col)
+    };
+    for (marked, declaration, sites) in [
+        ("assign |x", "DECL(|x", ["DECL(|x", "assign |x"]),
+        (
+            "  |nibble y",
+            "TYPE(|nibble",
+            ["TYPE(|nibble", "  |nibble y"],
+        ),
+    ] {
+        assert_eq!(
+            definition_site(&a, hp("/x/m.sv"), TEXT, marked),
+            Some((hp("/x/m.sv").to_owned(), at(declaration))),
+            "{marked}"
+        );
+        let expected = sites.map(at);
+        for from in sites {
+            let Position { line, character } = at(from);
+            let found: Vec<Position> = references_at(&a, hp("/x/m.sv"), line, character)
+                .into_iter()
+                .map(|location| location.range.start)
+                .collect();
+            assert_eq!(found, expected, "{from}");
+        }
+    }
+}

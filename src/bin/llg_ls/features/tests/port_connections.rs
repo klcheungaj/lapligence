@@ -176,3 +176,94 @@ pub(super) fn pos_of(text: &str, needle: &str, occurrence: usize) -> (u32, u32) 
     let line_start = text[..start].rfind('\n').map_or(0, |i| i + 1);
     (line, (start - line_start) as u32)
 }
+
+/// A name in a connection is looked up where the instance is, not in another
+/// module of the file or in the instantiated one; an undeclared one has no
+/// definition, and its label keeps the port.
+#[test]
+fn actuals_name_the_object_of_their_own_module() {
+    let _guards = analysis_guards();
+    const TEXT: &str = concat!(
+        "`default_nettype none\n",
+        "module child(input wire clk);\n",
+        "endmodule\n",
+        "module other;\n",
+        "  logic wa;\n",
+        "endmodule\n",
+        "module parent;\n",
+        "  logic wa, wb;\n",
+        "  child u0(.clk(wa));\n",
+        "  child u1(.clk(wb));\n",
+        "  child u2(.clk(ghost));\n",
+        "endmodule\n",
+    );
+    let a = analyze_sources(&[("/x/c.sv", TEXT)]);
+    let site = |marked| definition_site(&a, hp("/x/c.sv"), TEXT, marked);
+    let at = |marked| {
+        let (line, col) = cursor(TEXT, marked);
+        Some((hp("/x/c.sv").to_owned(), Position::new(line, col)))
+    };
+    assert_eq!(site(".clk(|wa)"), at("logic |wa, wb"));
+    assert_eq!(site(".clk(|wb)"), at("wa, |wb;"));
+    assert_eq!(site(".clk(|ghost)"), None);
+    let (line, col) = cursor(TEXT, ".clk(|ghost)");
+    let ghost = a.tokens[0]
+        .nodes
+        .iter()
+        .find(|token| (token.line, token.col) == (line + 1, col + 1))
+        .expect("token of the undeclared name");
+    let rule = tokens::token_class(ghost.kind).rule();
+    assert_eq!(rule, tokens::TokenRule::Unresolved);
+    for label in [".|clk(wa)", ".|clk(wb)", ".|clk(ghost)"] {
+        assert_eq!(site(label), at("input wire |clk)"), "{label}");
+    }
+}
+
+/// Connection labels lead to the port or parameter in every form that declares
+/// one, also when the label is the first text of its line.
+#[test]
+fn labels_name_ports_and_parameters_however_they_are_declared() {
+    let _guards = analysis_guards();
+    const TEXT: &str = concat!(
+        "`define PORT(name) input logic name\n",
+        "module listed(a, y);\n",
+        "  parameter W = 8;\n",
+        "  parameter type T = logic;\n",
+        "  input [W-1:0] a;\n",
+        "  output T y;\n",
+        "endmodule\n",
+        "module built(`PORT(p), `PORT(q));\n",
+        "endmodule\n",
+        "interface bus;\n",
+        "endinterface\n",
+        "module with_bus(bus b);\n",
+        "endmodule\n",
+        "module top;\n",
+        "  logic [3:0] x;\n",
+        "  bit z;\n",
+        "  bus ifc();\n",
+        "  listed #(.W(4), .T(bit)) u0(.\n",
+        "a(x), .y(z));\n",
+        "  built u1(.p(z), .q(z));\n",
+        "  with_bus u2(.b(ifc));\n",
+        "endmodule\n",
+    );
+    let a = analyze_sources(&[("/x/c.sv", TEXT)]);
+    assert!(a.is_valid(), "{:?}", a.diagnostics);
+    for (label, declaration) in [
+        ("|a(x)", "[W-1:0] |a;"),
+        (".|y(z)", "T |y;"),
+        (".|W(4)", "parameter |W ="),
+        (".|T(bit)", "type |T ="),
+        (".|p(z)", "`PORT(|p)"),
+        (".|q(z)", "`PORT(|q)"),
+        (".|b(ifc)", "bus |b)"),
+    ] {
+        let (line, col) = cursor(TEXT, declaration);
+        assert_eq!(
+            definition_site(&a, hp("/x/c.sv"), TEXT, label),
+            Some((hp("/x/c.sv").to_owned(), Position::new(line, col))),
+            "{label}"
+        );
+    }
+}

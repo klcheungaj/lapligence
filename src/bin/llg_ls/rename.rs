@@ -311,22 +311,36 @@ mod tests {
     /// Two ports whose names share a prefix in `/x/ren.sv`, and an instance of
     /// their module in `/x/top.sv`.
     fn prefix_analysis() -> Analysis {
+        analysis_of(&[("/x/ren.sv", REN), ("/x/top.sv", TOP)])
+    }
+
+    fn analysis_of(sources: &[(&'static str, &str)]) -> Analysis {
         let _shadow = crate::features::TEST_PROCESS_SHADOW_LOCK
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         crate::features::analyze(&CompileOpts {
-            sources: vec![
-                OwnedSource::compilation_unit(hp("/x/ren.sv"), REN),
-                OwnedSource::compilation_unit(hp("/x/top.sv"), TOP),
-            ],
+            sources: sources
+                .iter()
+                .map(|(file, text)| OwnedSource::compilation_unit(hp(file), *text))
+                .collect(),
             editor: true,
             ..Default::default()
         })
     }
 
-    /// The edits of renaming the name at the position, as file, line, columns.
+    /// The edits of renaming the name at the position in [`prefix_analysis`].
     fn edits(file: &'static str, line: u32, col: u32) -> Vec<(String, u32, u32, u32)> {
-        let edit = rename(&prefix_analysis(), hp(file), line, col, "din")
+        edits_in(&prefix_analysis(), file, line, col)
+    }
+
+    /// The edits of renaming the name at the position, as file, line, columns.
+    fn edits_in(
+        analysis: &Analysis,
+        file: &'static str,
+        line: u32,
+        col: u32,
+    ) -> Vec<(String, u32, u32, u32)> {
+        let edit = rename(analysis, hp(file), line, col, "din")
             .expect("valid name")
             .expect("occurrences exist");
         let mut edits: Vec<_> = edit
@@ -452,6 +466,25 @@ mod tests {
             ("/x/top.sv", 3, 2),
         ] {
             assert_eq!(edits(file, line, col), expected, "{file}:{line}:{col}");
+        }
+    }
+
+    /// A name that a macro argument declares is renamed there and at its uses.
+    #[test]
+    fn rename_covers_a_name_declared_in_a_macro_argument() {
+        let text = concat!(
+            "`define PORT(name) input logic name\n",
+            "module m(`PORT(data));\n",
+            "  wire o = data;\n",
+            "endmodule\n",
+        );
+        let a = analysis_of(&[("/x/m.sv", text)]);
+        let expected = [
+            (hp("/x/m.sv").to_owned(), 1, 15, 19),
+            (hp("/x/m.sv").to_owned(), 2, 11, 15),
+        ];
+        for (line, col) in [(1, 15), (2, 12)] {
+            assert_eq!(edits_in(&a, "/x/m.sv", line, col), expected, "{line}:{col}");
         }
     }
 

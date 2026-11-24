@@ -321,10 +321,12 @@ pub fn from_slang_snapshot(snapshot: &Snapshot, file: Option<&str>) -> Vec<FileT
 pub fn project_slang(snapshot: &Snapshot, file: Option<&str>, defines: &[String]) -> Projection {
     let sources = SnapshotSources::new(snapshot);
     let macros = MacroTable::from_slang(snapshot, &sources, defines);
+    let written = WrittenNames::new(snapshot);
     let mut projector = Projector {
         snapshot,
         sources: &sources,
         macros: &macros,
+        written: &written,
         bindings: Bindings::default(),
         declarations: ParseDeclPositions::new(),
     };
@@ -372,7 +374,8 @@ pub fn project_slang(snapshot: &Snapshot, file: Option<&str>, defines: &[String]
 
     let mut details = DeclDetails::new();
     for node in &snapshot.semantic_nodes {
-        let Some((source, line, col)) = node.range.and_then(|range| sources.start(range)) else {
+        let Some((source, line, col)) = written.range(node).and_then(|range| sources.start(range))
+        else {
             continue;
         };
         if file.is_some_and(|file| file != source) {
@@ -403,10 +406,39 @@ struct Resolved {
     reference: bool,
 }
 
+/// Where the names that are declared in macro arguments are written. The range
+/// of their nodes is the macro use that the declaration is expanded from.
+struct WrittenNames<'a>(HashMap<(SourceRange, &'a str), SourceRange>);
+
+impl<'a> WrittenNames<'a> {
+    fn new(snapshot: &'a Snapshot) -> Self {
+        let names = snapshot
+            .lexical_tokens
+            .iter()
+            .filter(|token| token.is_macro_argument && token.role == LexicalRole::Declaration);
+        Self(
+            names
+                .filter_map(|token| {
+                    let node = semantic_node(snapshot, token.semantic_id?)?;
+                    Some(((node.range?, node.name.as_str()), token.range?))
+                })
+                .collect(),
+        )
+    }
+
+    /// The range of the name that declares `node`.
+    fn range(&self, node: &SemanticNode) -> Option<SourceRange> {
+        let range = node.range?;
+        let written = self.0.get(&(range, node.name.as_str())).copied();
+        Some(written.unwrap_or(range))
+    }
+}
+
 struct Projector<'a> {
     snapshot: &'a Snapshot,
     sources: &'a SnapshotSources<'a>,
     macros: &'a MacroTable,
+    written: &'a WrittenNames<'a>,
     bindings: Bindings,
     declarations: ParseDeclPositions,
 }
@@ -656,7 +688,7 @@ impl Projector<'_> {
     }
 
     fn decl_target(&self, node: &SemanticNode) -> Option<DeclTarget> {
-        let (file, line, col) = self.sources.start(node.range?)?;
+        let (file, line, col) = self.sources.start(self.written.range(node)?)?;
         // An instance that is not elaborated has the kind of its definition.
         let described = is_unelaborated_instance(node)
             .then(|| node.target_id())
