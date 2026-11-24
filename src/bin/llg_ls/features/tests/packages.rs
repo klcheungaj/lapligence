@@ -173,6 +173,78 @@ fn class_qualified_enum_members_resolve_to_the_member() {
     );
 }
 
+const PACKAGE_ITEMS: &str = concat!(
+    "package my_pkg;\n",
+    "  parameter int P = 3;\n",
+    "  typedef enum logic [1:0] {IDLE, RUN} state_t;\n",
+    "endpackage\n",
+    "package other_pkg;\n",
+    "  typedef enum {IDLE, STOP} other_t;\n",
+    "endpackage\n",
+    "module full;\n",
+    "  int a = my_pkg::P;\n",
+    "  my_pkg::state_t s = my_pkg::RUN;\n",
+    "endmodule\n",
+    "module bare;\n",
+    "  import my_pkg::*;\n",
+    "  int b = P;\n",
+    "  state_t t = RUN;\n",
+    "endmodule\n",
+    "module ambiguous;\n",
+    "  import my_pkg::*;\n",
+    "  import other_pkg::*;\n",
+    "  int c = IDLE;\n",
+    "  int d = STOP;\n",
+    "endmodule\n",
+);
+
+/// A package item is one declaration whether a name spells its package or
+/// imports it; a name that two imports offer is none of them.
+#[test]
+fn package_items_resolve_through_both_spellings() {
+    let _guards = analysis_guards();
+    let a = analyze_sources(&[("/x/p.sv", PACKAGE_ITEMS)]);
+    let at = |marked| {
+        let (line, col) = cursor(PACKAGE_ITEMS, marked);
+        Some((hp("/x/p.sv").to_owned(), Position::new(line, col)))
+    };
+    for (marked, declaration) in [
+        ("my_pkg::|P;", "int |P = 3"),
+        ("int b = |P;", "int |P = 3"),
+        ("= |my_pkg::P;", "package |my_pkg"),
+        ("my_pkg::|state_t s", "{IDLE, RUN} |state_t"),
+        ("  |state_t t", "{IDLE, RUN} |state_t"),
+        ("my_pkg::|RUN;", "{IDLE, |RUN}"),
+        ("t = |RUN;", "{IDLE, |RUN}"),
+        ("d = |STOP;", "{IDLE, |STOP}"),
+    ] {
+        assert_eq!(
+            definition_site(&a, hp("/x/p.sv"), PACKAGE_ITEMS, marked),
+            at(declaration),
+            "{marked}"
+        );
+    }
+    assert_eq!(
+        definition_site(&a, hp("/x/p.sv"), PACKAGE_ITEMS, "c = |IDLE;"),
+        None
+    );
+    let references = |marked| -> Vec<Position> {
+        let (line, col) = cursor(PACKAGE_ITEMS, marked);
+        references_at(&a, hp("/x/p.sv"), line, col)
+            .into_iter()
+            .map(|location| location.range.start)
+            .collect()
+    };
+    let expected: Vec<Position> = ["{IDLE, |RUN}", "my_pkg::|RUN;", "t = |RUN;"]
+        .map(|marked| at(marked).expect("site").1)
+        .to_vec();
+    for marked in ["{IDLE, |RUN}", "my_pkg::|RUN;", "t = |RUN;"] {
+        assert_eq!(references(marked), expected, "{marked}");
+    }
+    assert_eq!(references("{|IDLE, RUN}").len(), 1);
+    assert!(references("c = |IDLE;").is_empty());
+}
+
 #[test]
 fn package_item_hover_shows_enum_value() {
     let a = package_item_analysis();
