@@ -2,9 +2,8 @@
 // the mailboxes, semaphores and events the design created. They keep their
 // state after $finish (IEEE 1800-2009 9.2.3: a final procedure "executes
 // when simulation ends" and nothing ends an object while a handle names it,
-// 8.7), the processes that waited on them are gone, and a final procedure
-// may still use their functions (try_put, try_get, num, a semaphore put) and
-// trigger an event.
+// 8.7), and a final procedure may still use their functions (try_put, try_get,
+// num, a semaphore put) and trigger an event.
 `timescale 1ns/1ns
 module tb;
   class channel;
@@ -45,9 +44,8 @@ module tb;
     mailbox #(int) late;
     $display("final: inbox=%0d bounded=%0d plain=%0d items=%0d", inbox.num(), bounded.num(),
              plain.num(), ch.items.num());
-    // No process runs any more: a trigger wakes nobody. (What a process
-    // that still waited for a message or a key does to a put made here is
-    // decision CS-D6; nothing waits for one in this design.)
+    // No process runs any more: a trigger wakes nobody. (Nothing waits for a
+    // message or a key in this design; decision CS-D6.)
     void'(inbox.try_put(8));
     keys.put(4);
     -> ch.ready;

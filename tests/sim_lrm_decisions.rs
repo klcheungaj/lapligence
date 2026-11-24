@@ -6574,10 +6574,10 @@ fn cs_d3_release_takes_driven_value() {
 }
 
 #[test]
-fn cs_d6_no_waiters_at_final_procedures() {
+fn cs_d6_waiters_at_final_procedures() {
     run_decision(
-        "CS-D6_no_waiters_at_final_procedures",
-        include_str!("fixtures/sim/lrm_decisions/CS-D6_no_waiters_at_final_procedures.out"),
+        "CS-D6_waiters_at_final_procedures",
+        include_str!("fixtures/sim/lrm_decisions/CS-D6_waiters_at_final_procedures.out"),
     );
 }
 

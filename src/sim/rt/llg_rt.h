@@ -2865,13 +2865,16 @@ void llg_unique_priority_check(int32_t check, int32_t matched, int32_t has_defau
 // `final begin … end` processes (SV 1800-2005 §10.7) run ONCE at the end of
 // simulation — after `llg_rt_run` returns on $finish, deadlock, or running
 // out of future events.  Generated `main()` registers them via
-// `llg_spawn_final` (before or after `llg_rt_run`; registration is plain
-// bookkeeping) and calls `llg_rt_run_finals()` afterwards.
+// `llg_spawn_final` before `llg_rt_run` and calls `llg_rt_run_finals()`
+// afterwards.
+//
+// They run in the state the run ended in (CS-D6): `llg_rt_run` then leaves
+// the runtime as it is, processes included, and `llg_rt_run_finals` ends with
+// the one `llg_rt_cleanup`. No process of the run executes again.
 //
 // Finals run SEQUENTIALLY to completion in registration order.  Timing
 // controls inside a final are rejected by codegen (LRM §10.7) — fork/join
-// included, so a final never suspends and never leaves children behind; the
-// ready-queue drain in `llg_rt_run_finals` is dead-defensive only.
+// included, so a final never suspends and never leaves children behind.
 // `$finish` inside a final terminates that final immediately and skips all
 // remaining final procedures, as required by LRM §10.7.
 // `$time` inside finals reports the time of the last scheduler event.
@@ -2881,8 +2884,8 @@ void llg_unique_priority_check(int32_t check, int32_t matched, int32_t has_defau
 // Timing, fork and suspendable calls are forbidden in finals.
 void llg_spawn_final(void (*fn)(void), const char* name);
 // Run every registered final process sequentially and then release the
-// runtime (the finals phase owns teardown).  A no-op when nothing was
-// registered.  Repeated init/run cycles reset the registration list.
+// runtime.  A no-op when nothing was registered.  Repeated init/run cycles
+// reset the registration list.
 void llg_rt_run_finals(void);
 
 // ── fork/join ─────────────────────────────────────────────────────────────────

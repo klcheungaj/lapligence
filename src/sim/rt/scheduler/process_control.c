@@ -295,6 +295,12 @@ int32_t llg_process_status(const llg_process_handle_t* handle) {
         process_handle_null("status");
         return LLG_PROCESS_KILLED;
     }
+    // SV 9.7: RUNNING is "currently running (not in a blocking statement)". A
+    // process that was woken still waits in its statement until its turn.
+    if (handle->status == LLG_PROCESS_RUNNING) {
+        const llg_proc_t* proc = process_handle_live(handle);
+        if (proc && proc != g.current) return LLG_PROCESS_WAITING;
+    }
     return handle->status;
 }
 
@@ -394,6 +400,9 @@ void llg_process_kill(llg_proc_t* self, llg_process_handle_t* handle) {
         return;
     }
     if (init_process_control(handle, "kill")) return;
+    // A RUNNING process without a live record ended the run (proc_complete).
+    if (handle->status == LLG_PROCESS_RUNNING && !process_handle_live(handle))
+        handle->status = LLG_PROCESS_KILLED;
     if (!handle->proc || !region_can_mutate("process control")) return;
     llg_proc_t* target = handle->proc;
     if (target->completed) {

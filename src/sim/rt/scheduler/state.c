@@ -1056,48 +1056,7 @@ static llg_file_slot_t llg_file_slots[LLG_FILE_SLOTS];
 static int32_t llg_files_initialized;
 static int32_t llg_file_global_error;
 static char llg_file_global_message[160];
-// Keep ordinary streams alive between the scheduler and registered final
-// blocks; the final phase's cleanup closes them after its last output.
-static int32_t llg_file_defer_cleanup;
-
 static void llg_file_cleanup(void);
-
-// `llg_rt_run` tears down the scheduler before generated final blocks run,
-// but `$timeformat` is design-wide state that remains observable there. Keep
-// a cloned snapshot across that teardown and move it back for the finals.
-static llg_timeformat_state_t llg_final_time_format;
-static uint64_t llg_final_design_precision_fs;
-static int32_t llg_final_timeformat_valid;
-
-static void llg_clear_final_timeformat(void) {
-    if (!llg_final_timeformat_valid) return;
-    llg_string_destroy(&llg_final_time_format.suffix);
-    memset(&llg_final_time_format, 0, sizeof(llg_final_time_format));
-    llg_final_design_precision_fs = 0;
-    llg_final_timeformat_valid = 0;
-}
-
-static void llg_save_final_timeformat(void) {
-    llg_clear_final_timeformat();
-    llg_final_design_precision_fs = g.design_precision_fs;
-    llg_final_time_format.unit_fs = g.time_format.unit_fs;
-    llg_final_time_format.precision = g.time_format.precision;
-    llg_final_time_format.minimum_field_width = g.time_format.minimum_field_width;
-    llg_final_time_format.suffix = llg_string_clone(&g.time_format.suffix);
-    llg_final_timeformat_valid = 1;
-}
-
-static void llg_restore_final_timeformat(void) {
-    if (!llg_final_timeformat_valid) return;
-    g.design_precision_fs = llg_final_design_precision_fs;
-    g.time_format.unit_fs = llg_final_time_format.unit_fs;
-    g.time_format.precision = llg_final_time_format.precision;
-    g.time_format.minimum_field_width = llg_final_time_format.minimum_field_width;
-    g.time_format.suffix = llg_final_time_format.suffix;
-    llg_final_time_format.suffix = (llg_string_t){0};
-    llg_final_design_precision_fs = 0;
-    llg_final_timeformat_valid = 0;
-}
 
 // `$timeformat` units are decimal powers of seconds.  The runtime stores all
 // quantities as femtoseconds, so keep the finite standard range in one table
@@ -1176,8 +1135,6 @@ static uint64_t llg_assertion_event_order;
 // same-slot state cannot leak into a later runtime initialization without
 // dereferencing an object whose owner may be outside the scheduler.
 static uint64_t llg_event_generation;
-static uint64_t llg_configured_zero_loop_limit;
-static uint64_t llg_configured_process_step_limit;
 static int32_t llg_configured_stop_policy = LLG_STOP_POLICY_RESUME;
 static int32_t llg_stop_policy_override;
 

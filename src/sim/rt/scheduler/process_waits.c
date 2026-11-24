@@ -293,8 +293,12 @@ static void proc_complete(llg_proc_t* self) {
     self->completed = 1;
     // SV 9.7: "KILLED means the process was forcibly killed (via kill or
     // disable)"; a disabled whole-branch block leaves nothing to resume at.
-    int32_t terminal =
-        self->disabled_whole ? LLG_PROCESS_KILLED : LLG_PROCESS_FINISHED;
+    // The process that ended the run did not terminate: it stays RUNNING for
+    // the final procedures (CS-D6).
+    int32_t terminal = self->disabled_whole ? LLG_PROCESS_KILLED
+                       : g.finish && self->chain.exiting == LLG_EXIT_COMPLETE && !llg_in_finals
+                           ? LLG_PROCESS_RUNNING
+                           : LLG_PROCESS_FINISHED;
     process_status_set(self, terminal);
     // Live descendants keep this process reachable (see "Holding
     // descendants" in process_control.c).
