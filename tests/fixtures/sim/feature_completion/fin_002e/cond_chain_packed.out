@@ -1,0 +1,372 @@
+one n=4 pos=0 w=c3a40101 p=c3a40101 f=c3a40101
+x n=4 pos=0 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+z n=4 pos=0 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+x1 n=4 pos=0 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+xx n=4 pos=0 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+two n=4 pos=0 t=1
+one n=4 pos=1 w=c3a70202 p=c3a70202 f=c3a70202
+x n=4 pos=1 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+z n=4 pos=1 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+x1 n=4 pos=1 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+xx n=4 pos=1 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+two n=4 pos=1 t=4
+one n=4 pos=2 w=c3a60303 p=c3a60303 f=c3a60303
+x n=4 pos=2 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+z n=4 pos=2 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+x1 n=4 pos=2 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+xx n=4 pos=2 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+two n=4 pos=2 t=7
+one n=4 pos=3 w=c3a10404 p=c3a10404 f=c3a10404
+x n=4 pos=3 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+z n=4 pos=3 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+x1 n=4 pos=3 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+xx n=4 pos=3 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+two n=4 pos=3 t=10
+none n=4 pos=0 w=c3a00505 p=c3aX0X0X f=c3a00505
+allx n=4 pos=0 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+same n=4 pos=0 w=0f0f1234 p=0f0f1234 f=0f0f1234
+one n=8 pos=0 w=c3a40101 p=c3a40101 f=c3a40101
+x n=8 pos=0 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+z n=8 pos=0 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+x1 n=8 pos=0 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+xx n=8 pos=0 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+two n=8 pos=0 t=1
+one n=8 pos=1 w=c3a70202 p=c3a70202 f=c3a70202
+x n=8 pos=1 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+z n=8 pos=1 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+x1 n=8 pos=1 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+xx n=8 pos=1 w=c3ax0x0x p=c3ax0x0x f=c3ax0x0x
+two n=8 pos=1 t=4
+one n=8 pos=2 w=c3a60303 p=c3a60303 f=c3a60303
+x n=8 pos=2 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+z n=8 pos=2 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+x1 n=8 pos=2 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+xx n=8 pos=2 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+two n=8 pos=2 t=7
+one n=8 pos=3 w=c3a10404 p=c3a10404 f=c3a10404
+x n=8 pos=3 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+z n=8 pos=3 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+x1 n=8 pos=3 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+xx n=8 pos=3 w=c3ax0x0x p=c3ax0x0x f=c3ax0x0x
+two n=8 pos=3 t=10
+one n=8 pos=4 w=c3a00505 p=c3a00505 f=c3a00505
+x n=8 pos=4 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+z n=8 pos=4 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+x1 n=8 pos=4 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+xx n=8 pos=4 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+two n=8 pos=4 t=13
+one n=8 pos=5 w=c3a30606 p=c3a30606 f=c3a30606
+x n=8 pos=5 w=c3ax0x0x p=c3ax0x0x f=c3ax0x0x
+z n=8 pos=5 w=c3ax0x0x p=c3ax0x0x f=c3ax0x0x
+x1 n=8 pos=5 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+xx n=8 pos=5 w=c3ax0x0x p=c3ax0x0x f=c3ax0x0x
+two n=8 pos=5 t=16
+one n=8 pos=6 w=c3a20707 p=c3a20707 f=c3a20707
+x n=8 pos=6 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+z n=8 pos=6 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+x1 n=8 pos=6 w=c3ax0x0x p=c3ax0x0x f=c3ax0x0x
+xx n=8 pos=6 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+two n=8 pos=6 t=19
+one n=8 pos=7 w=c3ad0808 p=c3ad0808 f=c3ad0808
+x n=8 pos=7 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+z n=8 pos=7 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+x1 n=8 pos=7 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+xx n=8 pos=7 w=c3aX0X0X p=c3aX0X0X f=c3aX0X0X
+two n=8 pos=7 t=22
+none n=8 pos=0 w=c3ac0909 p=c3aX0X0X f=c3ac0909
+allx n=8 pos=0 w=c3ax0x0x p=c3ax0x0x f=c3ax0x0x
+same n=8 pos=0 w=0f0f1234 p=0f0f1234 f=0f0f1234
+one n=16 pos=0 w=c3a40101 p=c3a40101 f=c3a40101
+x n=16 pos=0 w=c3X4X1X1 p=c3X4X1X1 f=c3X4X1X1
+z n=16 pos=0 w=c3X4X1X1 p=c3X4X1X1 f=c3X4X1X1
+x1 n=16 pos=0 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=16 pos=0 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=16 pos=0 t=1
+one n=16 pos=1 w=c3a70202 p=c3a70202 f=c3a70202
+x n=16 pos=1 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=16 pos=1 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=16 pos=1 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=16 pos=1 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=16 pos=1 t=4
+one n=16 pos=2 w=c3a60303 p=c3a60303 f=c3a60303
+x n=16 pos=2 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=16 pos=2 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=16 pos=2 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=16 pos=2 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=16 pos=2 t=7
+one n=16 pos=3 w=c3a10404 p=c3a10404 f=c3a10404
+x n=16 pos=3 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=16 pos=3 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=16 pos=3 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=16 pos=3 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=16 pos=3 t=10
+one n=16 pos=4 w=c3a00505 p=c3a00505 f=c3a00505
+x n=16 pos=4 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=16 pos=4 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=16 pos=4 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=16 pos=4 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=16 pos=4 t=13
+one n=16 pos=5 w=c3a30606 p=c3a30606 f=c3a30606
+x n=16 pos=5 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=16 pos=5 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=16 pos=5 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=16 pos=5 w=c3XxXxXx p=c3XxXxXx f=c3XxXxXx
+two n=16 pos=5 t=16
+one n=16 pos=6 w=c3a20707 p=c3a20707 f=c3a20707
+x n=16 pos=6 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=16 pos=6 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=16 pos=6 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=16 pos=6 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=16 pos=6 t=19
+one n=16 pos=7 w=c3ad0808 p=c3ad0808 f=c3ad0808
+x n=16 pos=7 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=16 pos=7 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=16 pos=7 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=16 pos=7 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=16 pos=7 t=22
+one n=16 pos=8 w=c3ac0909 p=c3ac0909 f=c3ac0909
+x n=16 pos=8 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=16 pos=8 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=16 pos=8 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=16 pos=8 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=16 pos=8 t=25
+one n=16 pos=9 w=c3af0a0a p=c3af0a0a f=c3af0a0a
+x n=16 pos=9 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=16 pos=9 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=16 pos=9 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=16 pos=9 w=c3XxXxXx p=c3XxXxXx f=c3XxXxXx
+two n=16 pos=9 t=28
+one n=16 pos=10 w=c3ae0b0b p=c3ae0b0b f=c3ae0b0b
+x n=16 pos=10 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=16 pos=10 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=16 pos=10 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=16 pos=10 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=16 pos=10 t=31
+one n=16 pos=11 w=c3a90c0c p=c3a90c0c f=c3a90c0c
+x n=16 pos=11 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=16 pos=11 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=16 pos=11 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=16 pos=11 w=c3XxXxXx p=c3XxXxXx f=c3XxXxXx
+two n=16 pos=11 t=34
+one n=16 pos=12 w=c3a80d0d p=c3a80d0d f=c3a80d0d
+x n=16 pos=12 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=16 pos=12 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=16 pos=12 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=16 pos=12 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=16 pos=12 t=37
+one n=16 pos=13 w=c3ab0e0e p=c3ab0e0e f=c3ab0e0e
+x n=16 pos=13 w=c3XxXxXx p=c3XxXxXx f=c3XxXxXx
+z n=16 pos=13 w=c3XxXxXx p=c3XxXxXx f=c3XxXxXx
+x1 n=16 pos=13 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=16 pos=13 w=c3XxXxXx p=c3XxXxXx f=c3XxXxXx
+two n=16 pos=13 t=40
+one n=16 pos=14 w=c3aa0f0f p=c3aa0f0f f=c3aa0f0f
+x n=16 pos=14 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=16 pos=14 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=16 pos=14 w=c3XxXxXx p=c3XxXxXx f=c3XxXxXx
+xx n=16 pos=14 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=16 pos=14 t=43
+one n=16 pos=15 w=c3b51010 p=c3b51010 f=c3b51010
+x n=16 pos=15 w=c3bX1X1X p=c3bX1X1X f=c3bX1X1X
+z n=16 pos=15 w=c3bX1X1X p=c3bX1X1X f=c3bX1X1X
+x1 n=16 pos=15 w=c3bX1X1X p=c3bX1X1X f=c3bX1X1X
+xx n=16 pos=15 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=16 pos=15 t=46
+none n=16 pos=0 w=c3b41111 p=c3XXXXXX f=c3b41111
+allx n=16 pos=0 w=c3XxXxXx p=c3XxXxXx f=c3XxXxXx
+same n=16 pos=0 w=0f0f1234 p=0f0f1234 f=0f0f1234
+one n=32 pos=0 w=c3a40101 p=c3a40101 f=c3a40101
+x n=32 pos=0 w=c3X4X1X1 p=c3X4X1X1 f=c3X4X1X1
+z n=32 pos=0 w=c3X4X1X1 p=c3X4X1X1 f=c3X4X1X1
+x1 n=32 pos=0 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=32 pos=0 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=32 pos=0 t=1
+one n=32 pos=1 w=c3a70202 p=c3a70202 f=c3a70202
+x n=32 pos=1 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=32 pos=1 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=32 pos=1 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=32 pos=1 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=32 pos=1 t=4
+one n=32 pos=2 w=c3a60303 p=c3a60303 f=c3a60303
+x n=32 pos=2 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=32 pos=2 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=32 pos=2 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=32 pos=2 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=32 pos=2 t=7
+one n=32 pos=3 w=c3a10404 p=c3a10404 f=c3a10404
+x n=32 pos=3 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=32 pos=3 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=32 pos=3 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=32 pos=3 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=32 pos=3 t=10
+one n=32 pos=4 w=c3a00505 p=c3a00505 f=c3a00505
+x n=32 pos=4 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=32 pos=4 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=32 pos=4 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=32 pos=4 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=32 pos=4 t=13
+one n=32 pos=5 w=c3a30606 p=c3a30606 f=c3a30606
+x n=32 pos=5 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=32 pos=5 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=32 pos=5 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=32 pos=5 w=c3XxXxXx p=c3XxXxXx f=c3XxXxXx
+two n=32 pos=5 t=16
+one n=32 pos=6 w=c3a20707 p=c3a20707 f=c3a20707
+x n=32 pos=6 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=32 pos=6 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=32 pos=6 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=32 pos=6 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=32 pos=6 t=19
+one n=32 pos=7 w=c3ad0808 p=c3ad0808 f=c3ad0808
+x n=32 pos=7 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=32 pos=7 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=32 pos=7 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=32 pos=7 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=32 pos=7 t=22
+one n=32 pos=8 w=c3ac0909 p=c3ac0909 f=c3ac0909
+x n=32 pos=8 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=32 pos=8 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=32 pos=8 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=32 pos=8 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=32 pos=8 t=25
+one n=32 pos=9 w=c3af0a0a p=c3af0a0a f=c3af0a0a
+x n=32 pos=9 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=32 pos=9 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=32 pos=9 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=32 pos=9 w=c3XxXxXx p=c3XxXxXx f=c3XxXxXx
+two n=32 pos=9 t=28
+one n=32 pos=10 w=c3ae0b0b p=c3ae0b0b f=c3ae0b0b
+x n=32 pos=10 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=32 pos=10 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=32 pos=10 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=32 pos=10 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=32 pos=10 t=31
+one n=32 pos=11 w=c3a90c0c p=c3a90c0c f=c3a90c0c
+x n=32 pos=11 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=32 pos=11 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=32 pos=11 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=32 pos=11 w=c3XxXxXx p=c3XxXxXx f=c3XxXxXx
+two n=32 pos=11 t=34
+one n=32 pos=12 w=c3a80d0d p=c3a80d0d f=c3a80d0d
+x n=32 pos=12 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=32 pos=12 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=32 pos=12 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=32 pos=12 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=32 pos=12 t=37
+one n=32 pos=13 w=c3ab0e0e p=c3ab0e0e f=c3ab0e0e
+x n=32 pos=13 w=c3XxXxXx p=c3XxXxXx f=c3XxXxXx
+z n=32 pos=13 w=c3XxXxXx p=c3XxXxXx f=c3XxXxXx
+x1 n=32 pos=13 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=32 pos=13 w=c3XxXxXx p=c3XxXxXx f=c3XxXxXx
+two n=32 pos=13 t=40
+one n=32 pos=14 w=c3aa0f0f p=c3aa0f0f f=c3aa0f0f
+x n=32 pos=14 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=32 pos=14 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=32 pos=14 w=c3XxXxXx p=c3XxXxXx f=c3XxXxXx
+xx n=32 pos=14 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=32 pos=14 t=43
+one n=32 pos=15 w=c3b51010 p=c3b51010 f=c3b51010
+x n=32 pos=15 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=32 pos=15 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=32 pos=15 w=c3X5X0X0 p=c3X5X0X0 f=c3X5X0X0
+xx n=32 pos=15 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=32 pos=15 t=46
+one n=32 pos=16 w=c3b41111 p=c3b41111 f=c3b41111
+x n=32 pos=16 w=c3X4X1X1 p=c3X4X1X1 f=c3X4X1X1
+z n=32 pos=16 w=c3X4X1X1 p=c3X4X1X1 f=c3X4X1X1
+x1 n=32 pos=16 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=32 pos=16 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=32 pos=16 t=49
+one n=32 pos=17 w=c3b71212 p=c3b71212 f=c3b71212
+x n=32 pos=17 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=32 pos=17 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=32 pos=17 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=32 pos=17 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=32 pos=17 t=52
+one n=32 pos=18 w=c3b61313 p=c3b61313 f=c3b61313
+x n=32 pos=18 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=32 pos=18 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=32 pos=18 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=32 pos=18 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=32 pos=18 t=55
+one n=32 pos=19 w=c3b11414 p=c3b11414 f=c3b11414
+x n=32 pos=19 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=32 pos=19 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=32 pos=19 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=32 pos=19 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=32 pos=19 t=58
+one n=32 pos=20 w=c3b01515 p=c3b01515 f=c3b01515
+x n=32 pos=20 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=32 pos=20 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=32 pos=20 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=32 pos=20 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=32 pos=20 t=61
+one n=32 pos=21 w=c3b31616 p=c3b31616 f=c3b31616
+x n=32 pos=21 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=32 pos=21 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=32 pos=21 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=32 pos=21 w=c3XxXxXx p=c3XxXxXx f=c3XxXxXx
+two n=32 pos=21 t=64
+one n=32 pos=22 w=c3b21717 p=c3b21717 f=c3b21717
+x n=32 pos=22 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=32 pos=22 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=32 pos=22 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=32 pos=22 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=32 pos=22 t=67
+one n=32 pos=23 w=c3bd1818 p=c3bd1818 f=c3bd1818
+x n=32 pos=23 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=32 pos=23 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=32 pos=23 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=32 pos=23 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=32 pos=23 t=70
+one n=32 pos=24 w=c3bc1919 p=c3bc1919 f=c3bc1919
+x n=32 pos=24 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=32 pos=24 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=32 pos=24 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=32 pos=24 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=32 pos=24 t=73
+one n=32 pos=25 w=c3bf1a1a p=c3bf1a1a f=c3bf1a1a
+x n=32 pos=25 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=32 pos=25 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=32 pos=25 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=32 pos=25 w=c3XxXxXx p=c3XxXxXx f=c3XxXxXx
+two n=32 pos=25 t=76
+one n=32 pos=26 w=c3be1b1b p=c3be1b1b f=c3be1b1b
+x n=32 pos=26 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=32 pos=26 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=32 pos=26 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=32 pos=26 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=32 pos=26 t=79
+one n=32 pos=27 w=c3b91c1c p=c3b91c1c f=c3b91c1c
+x n=32 pos=27 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=32 pos=27 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=32 pos=27 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=32 pos=27 w=c3XxXxXx p=c3XxXxXx f=c3XxXxXx
+two n=32 pos=27 t=82
+one n=32 pos=28 w=c3b81d1d p=c3b81d1d f=c3b81d1d
+x n=32 pos=28 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=32 pos=28 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=32 pos=28 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=32 pos=28 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=32 pos=28 t=85
+one n=32 pos=29 w=c3bb1e1e p=c3bb1e1e f=c3bb1e1e
+x n=32 pos=29 w=c3XxXxXx p=c3XxXxXx f=c3XxXxXx
+z n=32 pos=29 w=c3XxXxXx p=c3XxXxXx f=c3XxXxXx
+x1 n=32 pos=29 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+xx n=32 pos=29 w=c3XxXxXx p=c3XxXxXx f=c3XxXxXx
+two n=32 pos=29 t=88
+one n=32 pos=30 w=c3ba1f1f p=c3ba1f1f f=c3ba1f1f
+x n=32 pos=30 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+z n=32 pos=30 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+x1 n=32 pos=30 w=c3XxXxXx p=c3XxXxXx f=c3XxXxXx
+xx n=32 pos=30 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=32 pos=30 t=91
+one n=32 pos=31 w=c3852020 p=c3852020 f=c3852020
+x n=32 pos=31 w=c38X2X2X p=c38X2X2X f=c38X2X2X
+z n=32 pos=31 w=c38X2X2X p=c38X2X2X f=c38X2X2X
+x1 n=32 pos=31 w=c38X2X2X p=c38X2X2X f=c38X2X2X
+xx n=32 pos=31 w=c3XXXXXX p=c3XXXXXX f=c3XXXXXX
+two n=32 pos=31 t=94
+none n=32 pos=0 w=c3842121 p=c3XXXXXX f=c3842121
+allx n=32 pos=0 w=c3XxXxXx p=c3XxXxXx f=c3XxXxXx
+same n=32 pos=0 w=0f0f1234 p=0f0f1234 f=0f0f1234

@@ -1641,6 +1641,17 @@ sanitizer or leak report is an uncatalogued line and fails the run that
 printed it. `allocation_fault_build_renames_every_runtime_allocation` lists
 the objects of such a build that still call the C library directly.
 
+### Generated code size of conditional chains
+
+A conditional operator renders code in proportion to its source. Two tests
+hold that: `-E 'test(conditional_chains::)'` (library) renders chains of 8,
+16 and 32 levels and requires each alternative once and at most twice the
+code for twice the levels, in a flat block; `-E 'binary(sim_feature_completion)
+& test(fin_002e::)'` runs the fixtures of
+`fixtures/sim/feature_completion/fin_002e/` (chains of 4 to 32 levels with 0,
+1, X and Z predicates at every position) and bounds each `model.c`. A new
+conditional form (a result type with its own merge) needs a row in both.
+
 ### One readable fixture
 
 ```sh

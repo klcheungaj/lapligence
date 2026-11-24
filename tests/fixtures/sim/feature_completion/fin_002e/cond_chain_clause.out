@@ -1,0 +1,45 @@
+one s=00000001 yar=00 01 02 03 yia=0 1 2 yrc=40 0 yit=500 yr=0.5
+x s=0000000x yar=xx xx xx xx yia=0 0 0 yrc=xx 0 yit=-1 yr=0
+zx s=0000000z yar=xx xx xx xx yia=0 0 0 yrc=xx 0 yit=-1 yr=0
+x1 s=1000000x yar=xx xx xx xx yia=0 0 0 yrc=xx 0 yit=-1 yr=0
+one s=00000010 yar=10 11 12 13 yia=100 101 102 yrc=41 11 yit=501 yr=1.75
+x s=000000x0 yar=xx xx xx xx yia=0 0 0 yrc=xx 0 yit=-1 yr=0
+zx s=000000zx yar=xx xx xx xx yia=0 0 0 yrc=xx 0 yit=-1 yr=0
+x1 s=100000x0 yar=xx xx xx xx yia=0 0 0 yrc=xx 0 yit=-1 yr=0
+one s=00000100 yar=20 21 22 23 yia=200 201 202 yrc=42 22 yit=502 yr=3
+x s=00000x00 yar=xx xx xx xx yia=0 0 0 yrc=xx 0 yit=-1 yr=0
+zx s=00000zx0 yar=xx xx xx xx yia=0 0 0 yrc=xx 0 yit=-1 yr=0
+x1 s=10000x00 yar=xx xx xx xx yia=0 0 0 yrc=xx 0 yit=-1 yr=0
+one s=00001000 yar=30 31 32 33 yia=300 301 302 yrc=43 33 yit=503 yr=4.25
+x s=0000x000 yar=xx xx xx xx yia=0 0 0 yrc=xx 0 yit=-1 yr=0
+zx s=0000zx00 yar=xx xx xx xx yia=0 0 0 yrc=xx 0 yit=-1 yr=0
+x1 s=1000x000 yar=xx xx xx xx yia=0 0 0 yrc=xx 0 yit=-1 yr=0
+one s=00010000 yar=40 41 42 43 yia=400 401 402 yrc=44 44 yit=504 yr=5.5
+x s=000x0000 yar=xx xx xx xx yia=0 0 0 yrc=xx 0 yit=-1 yr=0
+zx s=000zx000 yar=xx xx xx xx yia=0 0 0 yrc=xx 0 yit=-1 yr=0
+x1 s=100x0000 yar=xx xx xx xx yia=0 0 0 yrc=xx 0 yit=-1 yr=0
+one s=00100000 yar=50 51 52 53 yia=500 501 502 yrc=45 55 yit=505 yr=6.75
+x s=00x00000 yar=xx xx xx xx yia=0 0 0 yrc=xx 0 yit=-1 yr=0
+zx s=00zx0000 yar=xx xx xx xx yia=0 0 0 yrc=xx 0 yit=-1 yr=0
+x1 s=10x00000 yar=xx xx xx xx yia=0 0 0 yrc=xx 0 yit=-1 yr=0
+one s=01000000 yar=60 61 62 63 yia=600 601 602 yrc=46 66 yit=506 yr=8
+x s=0x000000 yar=xx xx xx xx yia=0 0 0 yrc=xx 0 yit=-1 yr=0
+zx s=0zx00000 yar=xx xx xx xx yia=0 0 0 yrc=xx 0 yit=-1 yr=0
+x1 s=1x000000 yar=xx xx xx xx yia=0 0 0 yrc=xx 0 yit=-1 yr=0
+one s=10000000 yar=70 71 72 73 yia=700 701 702 yrc=47 77 yit=507 yr=9.25
+x s=x0000000 yar=xx xx xx xx yia=0 0 0 yrc=xx 0 yit=-1 yr=0
+zx s=zx000000 yar=xx xx xx xx yia=0 0 0 yrc=xx 0 yit=-1 yr=0
+x1 s=10000000 yar=70 71 72 73 yia=700 701 702 yrc=47 77 yit=507 yr=9.25
+none s=00000000 yar=80 81 82 83 yia=800 801 802 yrc=48 88 yit=508 yr=10.5
+allx s=xxxxxxxx yar=xx xx xx xx yia=0 0 0 yrc=xx 0 yit=-1 yr=0
+same s=xxxxxxxx yar=01 02 03 04 yia=10 11 12 yrc=11 22 yit=-1 yr=0
+near s=0000x000 yar=01 02 xx 04 yia=10 0 12 yrc=11 0 yit=-1 yr=0
+xleaf s=0000x000 yar=xx 02 xx 04 yia=10 0 12 yrc=11 0 yit=-1 yr=0
+inc u=1 y=0000000000001010 i=11 j=20 k=30
+inc2 u=1 y=0000000000101010 i=12 j=20 k=29 l=40
+inc u=0 y=0000000000010100 i=10 j=21 k=30
+inc2 u=0 y=0000000000111100 i=10 j=20 k=30 l=41
+inc u=x y=00000000000xxxx0 i=11 j=21 k=31
+inc2 u=x y=xxxxxxxxxxxxxxxx i=12 j=20 k=30 l=41
+inc u=z y=00000000000xxxx0 i=11 j=21 k=31
+inc2 u=z y=xxxxxxxxxxxxxxxx i=12 j=20 k=30 l=41
