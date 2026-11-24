@@ -107,8 +107,8 @@ fn editor_capture_omits_only_simulation_facts() {
     Db::from_slang(&full).expect("full database");
     Db::from_slang(&editor).expect("editor database");
 
-    // Every token with a definition is the same, and the base class name of a
-    // class header gains one.
+    // Every token with a definition is the same. The base class name of a
+    // class header gains one, and attribute names are named as such.
     let full = tokens::project_slang(&full, None, &[]);
     let editor = tokens::project_slang(&editor, None, &[]);
     let (full_tokens, editor_tokens) = (defined_tokens(&full), defined_tokens(&editor));
@@ -120,7 +120,7 @@ fn editor_capture_omits_only_simulation_facts() {
             (token_fields(full.0), &full.1) != (token_fields(editor.0), &editor.1)
         })
         .collect();
-    let [(before, after)] = added.as_slice() else {
+    let [(before, after), keep, async_reg] = added.as_slice() else {
         panic!("{added:?}");
     };
     assert_eq!(before.0.kind, tokens::TOKEN_SLANG_IDENTIFIER);
@@ -128,6 +128,12 @@ fn editor_capture_omits_only_simulation_facts() {
     assert_eq!(after.0.name.as_deref(), Some("base"));
     assert_eq!((after.0.line, after.0.col), (8, 25));
     assert!(after.1.contains("line0: 3"), "{after:?}");
+    for ((before, after), name) in [(keep, "keep"), (async_reg, "async_reg")] {
+        assert_eq!(before.0.kind, tokens::TOKEN_SLANG_IDENTIFIER);
+        assert_eq!(after.0.kind, tokens::TOKEN_SLANG_ATTRIBUTE);
+        assert_eq!(after.0.name.as_deref(), Some(name));
+        assert_eq!(after.1, "None");
+    }
     assert!(!editor.bindings.references.is_empty());
     assert_eq!(
         editor.bindings.references.len(),

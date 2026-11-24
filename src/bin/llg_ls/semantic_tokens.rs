@@ -447,6 +447,7 @@ mod tests {
         for library_units in [false, true] {
             let compiled = compile::compile(&CompileOpts {
                 library_units,
+                editor: true,
                 sources: vec![OwnedSource::compilation_unit(hp("/virtual/top.sv"), source)],
                 ..Default::default()
             })

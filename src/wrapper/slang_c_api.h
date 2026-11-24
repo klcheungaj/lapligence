@@ -117,13 +117,15 @@ enum {
    * attribute instances, the IMPORTED edges of import declarations, the
    * FORWARD_DECLARATION edges of classes, and the transparent members through
    * which a derived class shows inherited members. LIBRARY_UNITS captures
-   * omit all but the last as well. (ABI v80) Also bind the names that only
-   * tokens and navigation need: class headers, definitions outside their
-   * class, parameter assignments in type names, generate conditions, generic
-   * classes that nothing specializes, and the connections of instances that
-   * are not elaborated. These are lexical data alone, except for the
-   * definitions that only a shadowed definition instantiates, which are
-   * captured as that one is. */
+   * omit all but the last as well. (ABI v80) Also record what only tokens
+   * and navigation need, which no other capture spends time on: macros and
+   * includes, lexical targets, macro uses, attribute names, end labels, and
+   * the names of class headers, definitions outside their class, parameter
+   * assignments in type names, generate conditions, generic classes that
+   * nothing specializes and the connections of instances that are not
+   * elaborated. This is lexical data alone, except for the definitions that
+   * only a shadowed definition instantiates, which are captured as that one
+   * is. */
   LLG_SLANG_COMPILE_EDITOR = 1u << 6
 };
 
@@ -1490,9 +1492,9 @@ enum {
   LLG_SLANG_LEXICAL_METHOD = 17,
   /* A text macro name: the name a `define declares (role DECLARATION), the
    * operand of a conditional directive or `undef and any other name in a
-   * directive (role NONE), and since v79 a use site `NAME, its grave accent
-   * included (role REFERENCE). The definitions a name resolves to are
-   * LlgSlangMacroReference records. */
+   * directive (role NONE), and in an editor capture a use site `NAME, its
+   * grave accent included (role REFERENCE; an operator elsewhere). The
+   * definitions a name resolves to are LlgSlangMacroReference records. */
   LLG_SLANG_LEXICAL_MACRO = 18,
   LLG_SLANG_LEXICAL_KEYWORD = 19,
   LLG_SLANG_LEXICAL_STRING = 20,
@@ -1527,7 +1529,8 @@ enum {
    * of `default_nettype, `none` included, is LLG_SLANG_LEXICAL_KEYWORD. */
   LLG_SLANG_LEXICAL_MACRO_FORMAL = 29,
   /* The name of an attribute instance (IEEE 1800-2009 5.12, ABI v80), which
-   * no declaration introduces: role NONE, no semantic target. */
+   * no declaration introduces: role NONE, no semantic target. An identifier
+   * without LLG_SLANG_COMPILE_EDITOR. */
   LLG_SLANG_LEXICAL_ATTRIBUTE = 30
 };
 
@@ -1740,8 +1743,8 @@ typedef struct {
 } LlgSlangAttribute;
 
 /* A target of the lexical token at index token_index of the lexical token
- * table (ABI v80); a token with records names these instead of its
- * semantic_id. Exactly one of semantic_id (a semantic node) and target_token
+ * table (ABI v80, LLG_SLANG_COMPILE_EDITOR only); a token with records names
+ * these instead of its semantic_id. Exactly one of semantic_id (a semantic node) and target_token
  * (the index of a token of role DECLARATION) is valid. A name that refers to a
  * written declaration without a semantic node (an end label, a formal
  * argument in a `define body, a name in a generic class that nothing
@@ -1759,7 +1762,8 @@ typedef struct {
 } LlgSlangLexicalTarget;
 
 /* A `define directive that took effect (IEEE 1800-2009 22.5.1, ABI v80), one
- * record per directive however many syntax trees include its file. A
+ * record per directive however many syntax trees include its file; this table
+ * and the two that follow are empty without LLG_SLANG_COMPILE_EDITOR. A
  * directive in inactive conditional text, with an invalid name, or for a
  * macro that the language or the request predefines has none. `name` is the
  * name in the directive, `range` runs from the directive's grave accent to

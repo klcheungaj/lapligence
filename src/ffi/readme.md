@@ -84,7 +84,7 @@ invocation locations in configuration diagnostics.
   cannot: another token that declares the name, or each of several. They are
   sorted by token, and one that names a token names a declaration.
   `macro_definitions`, `macro_references` and `includes` (ABI 80) are the
-  preprocessor's resolutions, sorted by range; a macro reference without a
+  preprocessor's resolutions (all four tables are empty but in editor captures), sorted by range; a macro reference without a
   definition is predefined. Their counts are bounded by the lexical token limit
   (`LLG_SLANG_MAX_LEXICAL_TARGETS` per body name) and the record byte budget.
 - `attributes` (ABI 69) are the attribute instances of simulation captures

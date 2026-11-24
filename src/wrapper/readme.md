@@ -88,11 +88,15 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   `LLG_SLANG_TYPEDEF_BUILTIN` auxiliary bit of a typedef renaming a built-in
   type.
 - Editor capture (`LLG_SLANG_COMPILE_EDITOR`, the language server's
-  captures) omits the facts only simulation reads and binds more names; the
-  flag's comment in `slang_c_api.h` lists both. Every other node and edge is
-  the same; definitions that only a shadowed definition instantiates are added.
+  captures) omits the facts only simulation reads and records what only tokens
+  and navigation need; the flag's comment in `slang_c_api.h` lists both. Every
+  other node and edge is the same; definitions that only a shadowed definition
+  instantiates are added. A simulator capture does nothing of the latter but
+  test the flag: what a function that every capture calls does for the editor
+  is behind the test, in a `LLG_NOINLINE` function so the code around it stays
+  the same.
   The transparent members it omits were a tenth of the nodes of a class library.
-- Those bindings are lexical data. A name that would need a semantic node of
+- The added names are lexical data. A name that would need a semantic node of
   its own (one in a generic class that nothing specializes, or written in a
   macro argument or class header) is bound to the text of its declaration
   instead (`bindByText`, `LlgSlangLexicalTarget::target_token`). A name that
@@ -171,7 +175,8 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
 - Named statement blocks, labeled statements (Slang makes each one a named
   block) and generate block names get `LLG_SLANG_LEXICAL_BLOCK` from the
   syntax, so declaration-only capture classifies them too: the opening name is
-  the declaration, a matching end label (`end : blk`, `join : f`) binds to it,
+  the declaration, a matching end label (`end : blk`, `join : f`) binds to it
+  (the end labels of other declarations bind in editor capture),
   and resolved references (`disable blk`, the `g` of `g[0].x`) take the kind
   from the bound generate or statement-block scope. Instance names keep their
   kind. A keyword carries `LLG_SLANG_LEXICAL_CONTROL_FLOW` only where its
@@ -202,7 +207,7 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   `` `define `` body text it was copied from (`Capture::macroBodySpan`), so
   its lexical bindings are keyed by the body range and bind the body token:
   every expansion binds it again, and the merge keeps a kind and role only
-  when all bindings agree. It has a target record
+  when all bindings agree. In editor capture it has a target record
   (`LlgSlangLexicalTarget`) for each declaration an expansion resolves it to.
   The expansion copy also keeps a binding at its use-site range; it gives
   the copy no kind or role, only the compilation-unit forward-reference
@@ -211,9 +216,10 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   are `LLG_SLANG_LEXICAL_MACRO_FORMAL`; other body names are identifiers
   until an expansion binds them. The net type of `` `default_nettype ``
   (`none` included) is a keyword.
-- Attribute names are `LLG_SLANG_LEXICAL_ATTRIBUTE` without a target, from the
-  syntax. Slang parses the variables of a clocking item as the same syntax.
-- The preprocessor's macro and include events (`MacroCapture`) give one
+- In editor capture, attribute names are `LLG_SLANG_LEXICAL_ATTRIBUTE` without a
+  target, from the syntax. Slang parses the variables of a clocking item as the same syntax.
+- In editor capture, the preprocessor's macro and include events
+  (`MacroCapture`) give one
   `LlgSlangMacroDefinition` per effective `` `define ``, one
   `LlgSlangMacroReference` per written name and resolution (with the uses in a
   body resolved where it is expanded), and one `LlgSlangInclude` per resolved
