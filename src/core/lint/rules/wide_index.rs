@@ -30,7 +30,7 @@
 use std::collections::HashSet;
 
 use crate::core::db::{ArrayKind, Db, ExprKind, NodeId, NodeKind, TypeShape};
-use crate::core::lint::rules::analysis::{all_nodes, expr_width};
+use crate::core::lint::rules::analysis::{all_nodes, expr_width, ElementWidths};
 use crate::core::lint::rules::select_range::eval_integer;
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
@@ -191,7 +191,7 @@ fn check_index(
         );
         return;
     }
-    let Some(width) = expr_width(db, index) else {
+    let Some(width) = expr_width(db, index, ElementWidths::Unknown) else {
         return;
     };
     if width <= INDEX_BITS {

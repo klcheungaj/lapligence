@@ -20,8 +20,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::core::db::Operation;
 use crate::core::db::{
-    AlwaysKind, Db, Direction, ExprKind, IntraControl, NodeId, NodeKind, ProductionKind, StmtKind,
-    TypeShape,
+    AggregateKind, AlwaysKind, Db, Direction, ExprKind, IntraControl, NodeId, NodeKind,
+    ProductionKind, StmtKind, TypeShape,
 };
 use crate::core::value::ValueData;
 
@@ -153,6 +153,17 @@ pub fn object_width(db: &Db, id: NodeId) -> Option<u32> {
     }
 }
 
+/// Whether [`expr_width`] measures an element select of an unpacked array, a
+/// queue or an associative array and a member access, whose width only the
+/// element's or member's own type records.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ElementWidths {
+    /// Their declared packed width, as `width-mismatch` compares them.
+    Declared,
+    /// No width: the operand is skipped.
+    Unknown,
+}
+
 /// Computed width of an expression, per LRM self-determined width rules.
 ///
 /// - `Constant` → captured width (unsized literals like `'1` report size -1 → None).
@@ -163,11 +174,13 @@ pub fn object_width(db: &Db, id: NodeId) -> Option<u32> {
 ///   dimension (a slice of an unpacked array) has no packed width: `None`.
 /// - `Cast` → the cast target type width.
 /// - `Operation` → per-op rule (see [`op_width`]).
-/// - Anything else (calls, hier paths, unknown) → `None`.
-pub fn expr_width(db: &Db, id: NodeId) -> Option<u32> {
+/// - Element selects of unpacked arrays and member accesses → as `elements`
+///   says.
+/// - Anything else (calls, unknown) → `None`.
+pub fn expr_width(db: &Db, id: NodeId, elements: ElementWidths) -> Option<u32> {
     if db.is_implicit_conversion(id) {
         if let NodeKind::Expr(ExprKind::Cast { operand, .. }) = db.node_kind(id) {
-            return expr_width(db, *operand);
+            return expr_width(db, *operand, elements);
         }
     }
     match db.node_kind(id) {
@@ -189,15 +202,40 @@ pub fn expr_width(db: &Db, id: NodeId) -> Option<u32> {
         ) if !selects_unpacked(db, id) => {
             select_type_width(db, id).or_else(|| select_count_width(db, id))
         }
+        NodeKind::Expr(ExprKind::ArraySelect { .. } | ExprKind::HierPath { .. }) => {
+            match elements {
+                ElementWidths::Declared => packed_type_width(db, id),
+                ElementWidths::Unknown => None,
+            }
+        }
         NodeKind::Expr(ExprKind::Cast { ty, .. }) => ty.width,
-        NodeKind::Expr(ExprKind::Operation { op, operands, .. }) => op_width(db, *op, operands),
+        NodeKind::Expr(ExprKind::Operation { op, operands, .. }) => {
+            op_width(db, *op, operands, elements)
+        }
         NodeKind::Expr(ExprKind::Conditional {
             if_true, if_false, ..
-        }) => expr_width(db, *if_true)
-            .zip(expr_width(db, *if_false))
+        }) => expr_width(db, *if_true, elements)
+            .zip(expr_width(db, *if_false, elements))
             .map(|(a, b)| a.max(b)),
         _ => None,
     }
+}
+
+/// The width of an element select or member access whose elaborated type is
+/// packed: an integral value (an enum included) or a packed structure or
+/// union. An unpacked row or record, a container, a real, a string or a handle
+/// is no packed value (SV 6.2, 7.4): `None`.
+fn packed_type_width(db: &Db, id: NodeId) -> Option<u32> {
+    let descriptor = db.type_descriptor(id)?;
+    let packed = match &descriptor.shape {
+        TypeShape::PackedAtom { .. } => true,
+        TypeShape::Aggregate(layout) => matches!(
+            layout.kind,
+            AggregateKind::PackedStruct | AggregateKind::PackedUnion
+        ),
+        _ => false,
+    };
+    packed.then(|| select_type_width(db, id)).flatten()
 }
 
 /// Whether select `id` selects elements of an unpacked dimension, judged by
@@ -253,7 +291,7 @@ fn select_count_width(db: &Db, id: NodeId) -> Option<u32> {
 }
 
 /// Width of an operation result from its operands.
-fn op_width(db: &Db, op: Operation, operands: &[NodeId]) -> Option<u32> {
+fn op_width(db: &Db, op: Operation, operands: &[NodeId], elements: ElementWidths) -> Option<u32> {
     // Self-determined arithmetic / bitwise ops: max operand width.
     if matches!(
         op,
@@ -271,7 +309,10 @@ fn op_width(db: &Db, op: Operation, operands: &[NodeId]) -> Option<u32> {
             | Operation::BitwiseXnor
             | Operation::Power
     ) {
-        return operands.iter().filter_map(|o| expr_width(db, *o)).max();
+        return operands
+            .iter()
+            .filter_map(|o| expr_width(db, *o, elements))
+            .max();
     }
     // Shifts: width of the left operand (the shift amount is self-determined).
     if matches!(
@@ -281,7 +322,7 @@ fn op_width(db: &Db, op: Operation, operands: &[NodeId]) -> Option<u32> {
             | Operation::ArithmeticShiftLeft
             | Operation::ArithmeticShiftRight
     ) {
-        return operands.first().and_then(|o| expr_width(db, *o));
+        return operands.first().and_then(|o| expr_width(db, *o, elements));
     }
     // Comparisons, logical and reduction ops produce exactly one bit.
     if matches!(
@@ -311,7 +352,7 @@ fn op_width(db: &Db, op: Operation, operands: &[NodeId]) -> Option<u32> {
     if op == Operation::Concat {
         // Sum of operand widths; unknown operand → unknown total.
         return operands.iter().try_fold(0_u32, |width, operand| {
-            width.checked_add(expr_width(db, *operand)?)
+            width.checked_add(expr_width(db, *operand, elements)?)
         });
     }
     if op == Operation::MultiConcat {
@@ -322,7 +363,7 @@ fn op_width(db: &Db, op: Operation, operands: &[NodeId]) -> Option<u32> {
                 .and_then(|o| const_i128(db, *o))
                 .and_then(|count| u32::try_from(count).ok()),
             operands.iter().skip(1).try_fold(0_u32, |width, operand| {
-                width.checked_add(expr_width(db, *operand)?)
+                width.checked_add(expr_width(db, *operand, elements)?)
             }),
         ) {
             (Some(count), Some(parts)) => count.checked_mul(parts),
@@ -334,7 +375,7 @@ fn op_width(db: &Db, op: Operation, operands: &[NodeId]) -> Option<u32> {
         return operands
             .iter()
             .skip(1)
-            .filter_map(|o| expr_width(db, *o))
+            .filter_map(|o| expr_width(db, *o, elements))
             .max();
     }
     None
@@ -1926,7 +1967,7 @@ mod tests {
         let ca = top_cont_assign(&db);
         let rhs = db.node(ca).children[1];
         assert_eq!(signal_of_ref(&db, rhs), Some(a));
-        assert_eq!(expr_width(&db, rhs), Some(1));
+        assert_eq!(expr_width(&db, rhs, ElementWidths::Unknown), Some(1));
     }
 
     #[test]
@@ -2039,12 +2080,12 @@ mod tests {
         let cas = top_cont_assigns(&db);
         let (ca1, ca2) = (cas[0], cas[1]);
         let rhs1 = db.node(ca1).children[1];
-        assert_eq!(expr_width(&db, rhs1), Some(16));
+        assert_eq!(expr_width(&db, rhs1, ElementWidths::Unknown), Some(16));
         // Second assign: part select [7:4] → 4 bits.
         let rhs2 = db.node(ca2).children[1];
-        assert_eq!(expr_width(&db, rhs2), Some(4));
+        assert_eq!(expr_width(&db, rhs2, ElementWidths::Unknown), Some(4));
         let lhs2 = db.node(ca2).children[0];
-        assert_eq!(expr_width(&db, lhs2), Some(4));
+        assert_eq!(expr_width(&db, lhs2, ElementWidths::Unknown), Some(4));
     }
 
     #[test]
@@ -2057,16 +2098,16 @@ mod tests {
         let cas = top_cont_assigns(&db);
         // a + c → max(4, 8) = 8
         let sum = db.node(cas[0]).children[1];
-        assert_eq!(expr_width(&db, sum), Some(8));
+        assert_eq!(expr_width(&db, sum, ElementWidths::Unknown), Some(8));
         // a << s → LHS width 4
         let shift = db.node(cas[1]).children[1];
-        assert_eq!(expr_width(&db, shift), Some(4));
+        assert_eq!(expr_width(&db, shift, ElementWidths::Unknown), Some(4));
         // a == c → 1
         let cmp = db.node(cas[2]).children[1];
-        assert_eq!(expr_width(&db, cmp), Some(1));
+        assert_eq!(expr_width(&db, cmp, ElementWidths::Unknown), Some(1));
         // (a & c) | d → max(max(4,8), 8) = 8
         let mix = db.node(cas[3]).children[1];
-        assert_eq!(expr_width(&db, mix), Some(8));
+        assert_eq!(expr_width(&db, mix, ElementWidths::Unknown), Some(8));
     }
 
     #[test]
@@ -2077,11 +2118,19 @@ mod tests {
         );
         let assignments = top_cont_assigns(&db);
         assert_eq!(
-            expr_width(&db, db.node(assignments[0]).children[1]),
+            expr_width(
+                &db,
+                db.node(assignments[0]).children[1],
+                ElementWidths::Unknown
+            ),
             Some(3)
         );
         assert_eq!(
-            expr_width(&db, db.node(assignments[1]).children[1]),
+            expr_width(
+                &db,
+                db.node(assignments[1]).children[1],
+                ElementWidths::Unknown
+            ),
             Some(24)
         );
     }
@@ -2100,7 +2149,7 @@ mod tests {
                 let rhs = db.node(*assignment).children[1];
                 // The rhs of `w = pk[...]` is converted to 16 bits; the
                 // select itself is the converted operand.
-                expr_width(&db, rhs)
+                expr_width(&db, rhs, ElementWidths::Unknown)
             })
             .collect();
         assert_eq!(widths, [Some(16), Some(16), Some(16), Some(4)]);

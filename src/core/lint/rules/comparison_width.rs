@@ -11,11 +11,12 @@
 //! message.
 //!
 //! Best-effort by design: when either width is unknown (unsized literals,
-//! function calls, hierarchical refs, …) the comparison is skipped.
+//! function calls, array elements, structure members, …) the comparison is
+//! skipped.
 
 use crate::core::db::Operation;
 use crate::core::db::{ExprKind, NodeKind};
-use crate::core::lint::rules::analysis::{all_nodes, expr_width};
+use crate::core::lint::rules::analysis::{all_nodes, expr_width, ElementWidths};
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
 /// Flags comparisons with differing operand widths.
@@ -43,7 +44,8 @@ impl LintRule for ComparisonWidthRule {
             let (Some(lhs), Some(rhs)) = (operands.first(), operands.get(1)) else {
                 continue;
             };
-            let (Some(lw), Some(rw)) = (expr_width(db, *lhs), expr_width(db, *rhs)) else {
+            let width = |operand| expr_width(db, operand, ElementWidths::Unknown);
+            let (Some(lw), Some(rw)) = (width(*lhs), width(*rhs)) else {
                 continue; // unknown width on either side: skip (best effort)
             };
             if lw == rw {
