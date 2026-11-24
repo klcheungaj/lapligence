@@ -17,3 +17,9 @@ pub mod memory_limit;
 #[doc(hidden)]
 pub mod profile;
 pub mod sim;
+
+/// Seeded input generation shared with the integration-test groups
+/// (`tests/support/fuzz.rs` is its one definition).
+#[cfg(test)]
+#[path = "../tests/support/fuzz.rs"]
+mod fuzz;

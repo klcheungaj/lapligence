@@ -4546,6 +4546,9 @@ fn ir_arg_resize(e: IrExpr, width: u32, signed: bool) -> IrExpr {
 }
 
 #[cfg(test)]
+mod ir_mutation_tests;
+
+#[cfg(test)]
 mod operation_arity_tests {
     use super::*;
 
