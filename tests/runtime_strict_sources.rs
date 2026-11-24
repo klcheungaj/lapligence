@@ -413,11 +413,15 @@ fn runtime_units_have_no_gcc11_maybe_uninitialized_use() {
 /// filled through an out-parameter that only another compiler or target would
 /// inline (CI: GCC 13 on AArch64 rejected `coverage/database.c:999 'types'`),
 /// and without jump threading, dominator optimization and VRP the failure path
-/// on which it looks unset stays. `-O1` with the inliners finds as much as
-/// `-O3` (15 of the 15 sites of the sweep that added this, against 14) in less
-/// than half the time. The last two flags undo hardening that a distribution's
-/// GCC may enable by default: together, `_FORTIFY_SOURCE` and zeroed automatic
-/// variables hid a site the pass otherwise reports (measured with GCC 14.2).
+/// on which it looks unset stays. `-O1` with the inliners takes a little over
+/// half the time of `-O3` and reported all 15 sites of the sweep that added
+/// this pass on the tree before that sweep, against 14; with those sites put
+/// back into the sources of November 2026 it reports 13 diagnostics against
+/// 14, each level one site the other misses and neither the `types` seed any
+/// more, so the counts belong to those trees and not to the flags. The last
+/// two flags undo hardening that a distribution's GCC may enable by default:
+/// together, `_FORTIFY_SOURCE` and zeroed automatic variables hid a site the
+/// pass otherwise reports (measured with GCC 14.2).
 const HEAVY_INLINING_FLAGS: &[&str] = &[
     "-O1",
     "-finline-functions",
