@@ -605,8 +605,8 @@ top of the memory for the sources and their tokens. Measured on x86-64 Linux:
 
 | Design | Semantic nodes | Tokens | Peak RSS |
 | --- | --- | --- | --- |
-| UVM 1.2 package | 188,242 | 518,784 | 375 MiB |
-| UVM 1.2 with one example testbench | 224,000 | 331,194 | 351 MiB |
+| UVM 1.2 package | 188,242 | 518,784 | 380 MiB |
+| UVM 1.2 with one example testbench | 223,666 | 331,194 | 351 MiB |
 | 17,800 generated register processes | 996,900 | 424 | 577 MiB |
 | 60,000 generated register processes | 3,360,100 | 424 | 1,777 MiB |
 
