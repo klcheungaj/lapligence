@@ -3671,11 +3671,8 @@ one):
   database (with `option.name`), shown in no report;
 - `option.cross_num_print_missing`: the missing cross products a report
   lists; the database keeps none;
-- `option.per_instance`: llg always keeps instance coverage, which Table
-  19-1 allows when the option is 0 ("implementations are not required to
-  save instance-specific information"), so `get_inst_coverage()` reports it
-  either way. Some simulators return 0 from `get_inst_coverage()` when the
-  option is 0; portable fixtures set it.
+- `option.per_instance`: llg keeps the coverage of every instance whatever
+  its value (S46-D18).
 
 ### Cause
 

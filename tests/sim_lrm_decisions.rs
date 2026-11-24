@@ -5517,14 +5517,6 @@ fn s26_d25_open_error_status() {
 }
 
 #[test]
-fn s26_d19_errors_end_the_load() {
-    run_decision(
-        "S26-D19_errors_end_the_load",
-        include_str!("fixtures/sim/lrm_decisions/S26-D19_errors_end_the_load.out"),
-    );
-}
-
-#[test]
 fn s24_d7_integral_time_suffix() {
     run_decision(
         "S24-D7_integral_time_suffix",
@@ -5537,6 +5529,14 @@ fn s26_d18_start_after_finish_descends() {
     run_decision(
         "S26-D18_start_after_finish_descends",
         include_str!("fixtures/sim/lrm_decisions/S26-D18_start_after_finish_descends.out"),
+    );
+}
+
+#[test]
+fn s26_d19_errors_end_the_load() {
+    run_decision(
+        "S26-D19_errors_end_the_load",
+        include_str!("fixtures/sim/lrm_decisions/S26-D19_errors_end_the_load.out"),
     );
 }
 
@@ -6679,5 +6679,15 @@ fn tn_d2_typename_resolved() {
     run_decision(
         "TN-D2_typename_resolved",
         include_str!("fixtures/sim/lrm_decisions/TN-D2_typename_resolved.out"),
+    );
+}
+
+#[test]
+fn s46_d18_instance_coverage_without_per_instance() {
+    run_decision(
+        "S46-D18_instance_coverage_without_per_instance",
+        include_str!(
+            "fixtures/sim/lrm_decisions/S46-D18_instance_coverage_without_per_instance.out"
+        ),
     );
 }

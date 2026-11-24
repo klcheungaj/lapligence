@@ -3370,7 +3370,7 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   S45-D18); `goal`, `comment`, `cross_num_print_missing` and
   `per_instance` are stored and readable but only shape a coverage report,
   which llg does not write ([known issues](known_issues.md#functional-coverage-limits-sim-044-sim-045)). `get_coverage()` (type, per elaborated declaration, S44-D1),
-  `get_inst_coverage()`, `start()`, `stop()`, `set_inst_name()` (no report)
+  `get_inst_coverage()` (whatever `per_instance` is, S46-D18), `start()`, `stop()`, `set_inst_name()` (no report)
   and `$get_coverage()` follow 19.11; the two-argument forms of 19.8 assign
   the covered and total bins (S46-D7). Options are read through an
   instance, coverpoint, cross or type name and written procedurally where
