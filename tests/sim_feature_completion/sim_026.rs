@@ -68,6 +68,41 @@ fn every_scan_conversion_and_source_kind() {
 }
 
 #[test]
+fn integral_string_arguments() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "integral_strings",
+        include_str!("../fixtures/sim/feature_completion/sim_026/integral_strings.out"),
+        &["--append-plusarg", "+ABC=1", "--append-plusarg", "+V=42"],
+        &[],
+    );
+}
+
+#[test]
+fn neg_string_argument_types() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_real_file_name",
+        "value of type 'real' cannot be assigned to type 'string'",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_unpacked_file_name",
+        "no implicit conversion from 'reg[7:0]$[2]' to 'string'",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_real_plusarg",
+        "value of type 'real' cannot be assigned to type 'string'",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_integral_coverage_name",
+        "no implicit conversion from 'reg[63:0]' to 'string'",
+    );
+}
+
+#[test]
 fn mixed_text_and_binary_input() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_026/binary_input.out");
     sim_cli::run_case_backend_parity_with_files(

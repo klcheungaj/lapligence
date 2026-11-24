@@ -86,6 +86,19 @@ impl Value {
         self.to_i128().and_then(|value| value.try_into().ok())
     }
 
+    /// The characters of the value, 8 bits each from the least significant
+    /// end, first character first; X and Z bits read as 0.
+    pub fn characters(&self) -> Vec<u8> {
+        self.bits
+            .rchunks(8)
+            .rev()
+            .map(|bits| {
+                bits.iter()
+                    .fold(0, |byte, bit| byte << 1 | u8::from(*bit == Bit::One))
+            })
+            .collect()
+    }
+
     /// Interpret the bits as an unsigned integer; `None` if any bit is X/Z or
     /// the clean value does not fit in `u128`.
     pub fn to_u128(&self) -> Option<u128> {

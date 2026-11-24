@@ -196,6 +196,20 @@ fn mtm_selection_scaling_and_log() {
     );
 }
 
+/// The file name is a concatenation of literals or a packed parameter, with
+/// or without padding (32.9).
+#[test]
+fn integral_constant_file_names() {
+    sim_cli::run_case_backend_parity_with_files(
+        SUITE,
+        "names.v",
+        fixture!("names.out"),
+        &[],
+        &[],
+        &[("cell.sdf", fixture!("cell.sdf"))],
+    );
+}
+
 /// DEVICE entries (Table 32-1): primitives driving the outputs of a cell
 /// without paths, a UDP, three-state gates with one, two and three delays
 /// and the TURNOFF_DELAY configuration, every path of a cell, the paths to

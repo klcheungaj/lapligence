@@ -21,13 +21,10 @@ use crate::sim::sdf::{
     SdfTargets, SdfTimebase, SdfTimingCheckKind, SdfWarning,
 };
 
-/// The text of a string argument: leading NUL characters are padding.
-fn sdf_text(bytes: Vec<u8>) -> Option<String> {
-    let start = bytes
-        .iter()
-        .position(|byte| *byte != 0)
-        .unwrap_or(bytes.len());
-    String::from_utf8(bytes[start..].to_vec()).ok()
+/// The text of a string argument: NUL characters are padding (6.16).
+fn sdf_text(mut bytes: Vec<u8>) -> Option<String> {
+    bytes.retain(|byte| *byte != 0);
+    String::from_utf8(bytes).ok()
 }
 
 /// Warnings a file reports on standard error before they are summarized;
@@ -327,7 +324,18 @@ impl Codegen<'_> {
                 }),
             }
         };
-        let Some(file) = text(0, "SDF file name")? else {
+        // The file name may also be "an integral data type containing a
+        // character string" (32.9): a packed constant is its characters.
+        let packed = args
+            .first()
+            .filter(|arg| !empty(arg))
+            .and_then(|arg| self.eval_bits(*arg).ok())
+            .and_then(|value| sdf_text(value.characters()));
+        let file = match packed {
+            None => text(0, "SDF file name")?,
+            packed => packed,
+        };
+        let Some(file) = file else {
             return Err(format!("$sdf_annotate at {origin} needs an SDF file name"));
         };
         let scope = match args.get(1) {

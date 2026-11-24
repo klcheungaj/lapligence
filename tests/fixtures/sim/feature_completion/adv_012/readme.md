@@ -33,6 +33,11 @@ with portable cases `A12-D*` in `tests/fixtures/sim/lrm_decisions/`.
   `average.cfg`, `last.cfg`, `interconnect.out`: PORT, INTERCONNECT,
   INTERCONNECT_MIPD policies and NETDELAY to ports and nets.
 - `startup.v`, `startup.sdf`, `cell.sdf`, `startup.out`: `--sdf`.
+- `names.v`, `cell.sdf`, `names.out`: the file name as an integral constant
+  (32.9 L53150-53151: "an expression that is a string literal, string data
+  type, or an integral data type containing a character string"; decision
+  S26-D23). The typical increment of `cell.sdf` makes the rise delay 1 + 4:
+  25 ns for `y0` to `y2` and 21 ns for `y3`, which no call names.
 - `diagnostics.v`, `malformed.sdf`, `unmatched.sdf`, `values.sdf`,
   `override.sdf`, `unknown.cfg`, `diagnostics.out`: diagnostics; the test
   requires the exact warnings.
