@@ -1401,6 +1401,12 @@ impl Db {
         self.parenthesized_assertions.contains(&id)
     }
 
+    /// Whether `id` declares a member of a structure or union type. Every
+    /// variable of the type shares the declaration, so it is no object.
+    pub fn is_record_member(&self, id: NodeId) -> bool {
+        self.semantic_detail(id) == Some("Field")
+    }
+
     /// Random qualifier of a class property (IEEE 1800-2009 18.4).
     pub fn rand_qualifier(&self, id: NodeId) -> RandQualifier {
         self.rand_qualifiers
