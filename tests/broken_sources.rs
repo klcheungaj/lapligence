@@ -96,6 +96,7 @@ const CORPUS: &[(&str, &str)] = &[
          assert property (@(posedge ghost) a);\n  assert property (p);\n\
          assert property (@(posedge clk or ghost) a);\n  cover sequence (@(ghost) s);\n\
          assert property (@(posedge clk) disable iff (ghost) a);\n\
+         assert property (@* a);\n  cover sequence (@(*) s ##1 @(posedge clk) a);\n\
          initial begin assert (ghost); expect (@(posedge ghost) a); end\nendmodule\n",
     ),
     (
