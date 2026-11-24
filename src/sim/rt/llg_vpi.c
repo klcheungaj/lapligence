@@ -6370,7 +6370,7 @@ static double datum_real(const llg_vpi_datum_t* datum) {
     return datum->is_real ? datum->real : sv4_to_real(datum->packed);
 }
 
-/* Bits [lsb, lsb + width) of `value`; bits outside it read as x (11.5.1). */
+/* Bits [lsb, lsb + width) of `value`, x for bits outside it (11.5.1). */
 static sv4_t select_bits(sv4_t value, int64_t lsb, uint32_t width) {
     uint32_t have = llg_sv4_width(value);
     if (lsb >= 0 && (uint64_t)lsb + width <= have)
@@ -6396,7 +6396,8 @@ static int32_t code_index(uint32_t index, int64_t* value, int32_t depth) {
     return known;
 }
 
-/* A bit, part or indexed part select of a packed value (11.5.1). */
+/* A bit, part or indexed part select of a packed value (11.5.1). A select of
+ * a two-state value reads 0 for the bits it does not have (S07-D7). */
 static int32_t eval_select(const llg_vpi_code_t* node, llg_vpi_datum_t* out, int32_t depth) {
     int64_t left, right;
     uint32_t parent = code_child(node, vpiParent);
@@ -6428,8 +6429,7 @@ static int32_t eval_select(const llg_vpi_code_t* node, llg_vpi_datum_t* out, int
         high = node->subtype == vpiNegIndexed ? start - count + 1 : start + count - 1;
     }
     /* Offsets count elements from the `right` end of the dimension, so
-     * ascending and descending ranges map alike; bits outside the value
-     * read as x. */
+     * ascending and descending ranges map alike. */
     int64_t from_low = left >= right ? low - right : right - low;
     int64_t from_high = left >= right ? high - right : right - high;
     int64_t from = from_low < from_high ? from_low : from_high;
@@ -6437,6 +6437,7 @@ static int32_t eval_select(const llg_vpi_code_t* node, llg_vpi_datum_t* out, int
     if (from <= -limit || from >= limit) known = 0;
     int64_t lsb = known ? from * (int64_t)stride : 0;
     sv4_t value = known ? select_bits(base.packed, lsb, width) : sv4_x(width, 0);
+    if (node->flags & LLG_VPI_CODE_TWO_STATE) sv4_replace(&value, sv4_to_two_state(value));
     datum_destroy(&base);
     datum_set_packed(out, value);
     return 1;
@@ -6472,7 +6473,9 @@ static int32_t eval_var_select(const llg_vpi_code_t* node, llg_vpi_datum_t* out,
             out->is_real = 1;
             out->real = 0.0;
         } else {
-            datum_set_packed(out, sv4_x(object->width ? object->width : 1u, 0));
+            uint32_t width = object->width ? object->width : 1u;
+            datum_set_packed(out, (node->flags & LLG_VPI_CODE_TWO_STATE) ? sv4_zero(width, 0)
+                                                                         : sv4_x(width, 0));
         }
         return 1;
     }

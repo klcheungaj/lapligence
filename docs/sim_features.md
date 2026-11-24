@@ -437,7 +437,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   An index is never truncated (S07-D7): a value beyond 32 bits, an unsigned
   value above 2**31-1 or an X/Z index into an array, queue, string, bit-select
   or indexed part-select is invalid, so a read returns the element default and
-  a write does nothing. The same holds for the index arguments of `insert`,
+  a write does nothing; a select of a two-state vector reads 0 for a position
+  it does not have. The same holds for the index arguments of `insert`,
   `delete`, `getc`, `putc` and `substr` (no `int` conversion), and queue slice
   bounds clip whatever their width. Index checks (S07-D15, on by default,
   `--no-index-checks` or `simulator.index_checks = false` to turn off) stop

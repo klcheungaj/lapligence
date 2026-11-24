@@ -389,7 +389,7 @@ The complete operator inventory is in 1800-2009 §11.4 (and 1364-2001 §§2.4,
 | Set membership | `inside` | Tests a value against expressions, ranges, and wildcard items; returns 1-bit result (§11.4.13) |
 | Streaming | `{<<{...}}`, `{>>{...}}`, with slice size | Packs/unpacks bit-streams, including arrays/structs where permitted (§11.4.14) |
 | Cast | `type'(expr)`, `signed'(expr)`, `unsigned'(expr)`, `$signed`, `$unsigned`, `$cast` | Explicit type/size/sign conversion (§6.24, §11.7) |
-| Select/index | `a[i]`, `a[msb:lsb]`, `a[base +: width]`, `a[base -: width]` | Bit/part/indexed-part select; out-of-range or X/Z index reads as X for packed values (§11.5) |
+| Select/index | `a[i]`, `a[msb:lsb]`, `a[base +: width]`, `a[base -: width]` | Bit/part/indexed-part select; out-of-range or X/Z index reads as X for packed values (§11.5), 0 for two-state ones (decision S07-D7) |
 | Member/hierarchy | `obj.member`, `scope::name`, `pkg::name`, hierarchical `top.u.signal` | Field/member and scoped-name lookup; `.` on a class/interface handle is a handle/member operation (§8.22, §23.7) |
 | Allocation | `new`, `new[size]` | Class construction or dynamic-array allocation; result is a handle/array, not an arithmetic value (§7.5, §8.4) |
 | Assignment pattern | `'{...}`, `'{default: expr}`, `'{type: expr}` | Initializes/assigns arrays and structures by position, member, type, or default (§10.9) |

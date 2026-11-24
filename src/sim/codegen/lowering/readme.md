@@ -60,7 +60,9 @@ storage, validation, dependency and owned-emission operations.
 
 Selected module references normalize to canonical storage plus ordered packed
 selection steps. Composing bit, part and indexed selections preserves each
-intermediate bound, including fixed-array element/member roots. Selections of a
+intermediate bound, including fixed-array element/member roots.
+`two_state_selects.rs` gives a select of a two-state value its state domain
+unless every position is known to lie inside the value (S07-D7). Selections of a
 whole multidimensional packed value, or of a packed array of records, address
 whole elements through `packed_geometry.rs`; an in-range constant chain lowers
 to one part-select of its root and one runtime step to an indexed part-select.

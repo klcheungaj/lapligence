@@ -640,6 +640,9 @@ impl IrExpr {
     }
 
     pub(in crate::sim) fn to_two_state(a: IrExpr) -> IrExpr {
+        if matches!(a.kind, IrExprKind::ToTwoState { .. }) {
+            return a;
+        }
         let (width, signed) = (a.width, a.signed);
         IrExpr::new(
             IrExprKind::ToTwoState { a: Box::new(a) },

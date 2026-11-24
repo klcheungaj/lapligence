@@ -431,6 +431,15 @@ impl Frame<'_, '_> {
                 self.file_control(*op, descriptor.as_deref())?
             }
             IrStmt::Assign { lhs, rhs, nba } => {
+                // Storing into a two-state target converts the value itself.
+                let rhs = match &rhs.kind {
+                    IrExprKind::ToTwoState { a }
+                        if super::super::expressions::lhs_two_state(self.ctx, lhs) =>
+                    {
+                        a
+                    }
+                    _ => rhs,
+                };
                 let value = if matches!(lhs, IrLhs::Whole(_) | IrLhs::WholeRef { .. }) {
                     self.operand(rhs)?
                 } else {

@@ -163,7 +163,7 @@ fn packed_ref_member_updates_via_the_original_reference_descriptor() {
 }
 
 #[test]
-fn two_state_member_conversion_precedes_read_modify_write_selection() {
+fn two_state_member_conversion_follows_read_modify_write_selection() {
     let model = IrModel::new("formal_union".to_owned(), 1).unwrap();
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
@@ -181,7 +181,7 @@ fn two_state_member_conversion_precedes_read_modify_write_selection() {
     frame.release_target(target);
     let body = frame.body();
     assert!(
-        body.find("sv4_to_two_state_to(").unwrap() < body.find("sv4_select_plan_read_to(").unwrap()
+        body.find("sv4_select_plan_read_to(").unwrap() < body.find("sv4_to_two_state_to(").unwrap()
     );
     assert!(frame.slots.iter().all(|used| !used));
 }

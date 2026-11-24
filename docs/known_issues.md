@@ -58,52 +58,6 @@ python3 -c "print('module tb; logic a; initial \$display(a' + ' + a' * 2000 + ')
 llg --top tb --gen-only chain.sv
 ```
 
-## Out-of-range select of a two-state vector reads x until it is converted
-
-**Status:** found by FIN-002 step 3 (expression corpus); a decision is
-needed, nothing was changed.
-
-### Symptom
-
-`bit [32:0] v; int i = 40;` then `v[i]`, `v[i +: 4]` or a select with an
-unknown index reads x, as 11.5.1 says for a vector ("If the bit-select is
-out of the address bounds or the bit-select is x or z, then the value
-returned by the reference shall be x"). The select has a two-state type, so
-the first implicit conversion to a two-state type turns the x into 0:
-`$display("%b", v[i])` prints `x`, `$display("%b", 4'b0001 + v[i])` prints
-`0001`, and `r = 4'b0001 + v[i]` with a four-state `r` gives `xxxx`. The
-industry-standard behaviour is 0 in every context, which is what 7.4.6
-gives for an array of two-state elements ("the default uninitialized value
-for the array element type") and what decision S07-D7 states for `bit`.
-
-### Cause
-
-The run-time select functions return x for every vector; the state domain
-of the source is applied only by the conversions the frontend inserts.
-
-### Intended direction
-
-Decide between the two clauses (the trusted simulator reads 0). For 0, the
-lowering marks a select of a two-state vector with a variable index as
-two-state, so no hot run-time function changes; decision S07-D7 and its
-portable case gain a two-state vector. The expression corpus
-(`fin_002b::expressions`) reads two-state vectors only at valid positions
-until then.
-
-### Reproduce
-
-```systemverilog
-module tb;
-  bit [32:0] v; int i; logic [3:0] r;
-  initial begin
-    v = '1; i = 40; #1;
-    $display("%b %b", v[i], 4'b0001 + v[i]);
-    r = 4'b0001 + v[i]; $display("%b", r);
-    $finish;
-  end
-endmodule
-```
-
 ## IR validation leaves one container invariant to the emitter
 
 **Status:** found by FIN-002 step 3 (mutated IR models); low severity, not

@@ -6300,6 +6300,22 @@ fn s07_d7_wide_index_invalid() {
 }
 
 #[test]
+fn s07_d7_two_state_selects() {
+    run_decision(
+        "S07-D7_two_state_selects",
+        include_str!("fixtures/sim/lrm_decisions/S07-D7_two_state_selects.out"),
+    );
+}
+
+#[test]
+fn s07_d7_two_state_unknown_index() {
+    run_decision(
+        "S07-D7_two_state_unknown_index",
+        include_str!("fixtures/sim/lrm_decisions/S07-D7_two_state_unknown_index.out"),
+    );
+}
+
+#[test]
 fn s07_d5_whole_container_nba() {
     run_decision(
         "S07-D5_whole_container_nba",
