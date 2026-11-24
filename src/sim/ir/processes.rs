@@ -101,6 +101,37 @@ pub enum IrPreFn {
     },
 }
 
+impl IrPreFn {
+    /// Whether the callback of a class method binds the method's `this`.
+    pub(super) fn binds_this(&self) -> bool {
+        let this = |name: &str| name == "_this";
+        // A captured handle keeps the name of the local it copies.
+        let copies_this = |initial: &IrExpr| match initial.kind() {
+            IrExprKind::LocalRead(name) => this(name),
+            IrExprKind::ObjectQuery(query) => matches!(
+                query.as_ref(),
+                IrObjectQuery::HandleCapture(IrChandleExpr::LocalRead(name)) if this(name)
+            ),
+            _ => false,
+        };
+        match self {
+            Self::CapturedBranch { captures, .. }
+            | Self::EventAssign { captures, .. }
+            | Self::DeferredAssertion { captures, .. } => captures
+                .iter()
+                .any(|capture| capture.alias().is_some_and(this) || copies_this(capture.initial())),
+            Self::MonEval { context, .. } | Self::RealEval { context, .. } => context
+                .iter()
+                .flat_map(IrEventContext::captures)
+                .any(|capture| this(capture.local()) || copies_this(capture.initial())),
+            Self::DisplayEval { receiver, .. } | Self::MonitorReads { receiver, .. } => {
+                receiver.as_deref().is_some_and(this)
+            }
+            Self::Branch { .. } | Self::ForceEval { .. } => false,
+        }
+    }
+}
+
 /// How a process function wraps its body.
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrShape {

@@ -4,6 +4,48 @@ use super::*;
 
 impl Validator<'_> {
     pub(super) fn validate(&self) -> ValidationResult {
+        // Only the code of a method has a `this`.
+        self.model.receiver.set(Some(None));
+        self.validate_tables()?;
+        self.validate_container_scope("model")
+    }
+
+    /// The `this` of a table entry used by the code of `function`. The users
+    /// of an entry without one are not known: a fork branch of a method uses
+    /// it with the `this` it captured.
+    fn set_table_receiver(&self, function: Option<&IrFunc>) {
+        self.model
+            .receiver
+            .set(function.map(|function| function.receiver_class));
+    }
+
+    /// Validate code whose `this` is `this` (see [`CheckedModel`]).
+    pub(super) fn with_receiver(
+        &self,
+        this: Option<Option<usize>>,
+        check: impl FnOnce() -> ValidationResult,
+    ) -> ValidationResult {
+        let saved = self.model.receiver.replace(this);
+        let result = check();
+        self.model.receiver.set(saved);
+        result
+    }
+
+    /// The checks so far named no class property container that their code
+    /// cannot reach.
+    pub(super) fn validate_container_scope(&self, path: &str) -> ValidationResult {
+        match self.model.unreachable_container.take() {
+            Some(container) => self.fail(
+                path,
+                format!(
+                    "class property container {container} is used outside the methods of its class"
+                ),
+            ),
+            None => Ok(()),
+        }
+    }
+
+    fn validate_tables(&self) -> ValidationResult {
         if self.model.precision_fs == 0 {
             return self.fail("precision_fs", "scheduler precision must be non-zero");
         }
@@ -256,7 +298,7 @@ impl Validator<'_> {
             }
         }
 
-        self.model.vpi_dynamic.validate(self.model)?;
+        self.model.vpi_dynamic.validate(&self.model)?;
 
         // Typespecs refer only to earlier entries, so the table has no cycle.
         for (idx, typespec) in self.model.vpi_typespecs.iter().enumerate() {
@@ -496,7 +538,7 @@ impl Validator<'_> {
                 if object.ty != IrObjectType::String {
                     return self.fail("objects", "non-string initializer");
                 }
-                initial.validate(self.model, None)?;
+                initial.validate(&self.model, None)?;
                 let mut result = Ok(());
                 initial.expressions(&mut |expr| {
                     result = result
@@ -1123,7 +1165,7 @@ impl Validator<'_> {
         }
 
         self.validate_native_tables()?;
-        super::patterns::validate_pattern_tables(self.model)?;
+        super::patterns::validate_pattern_tables(&self.model)?;
         for (index, access) in self.model.native_accesses.iter().enumerate() {
             let path = format!("native_accesses[{index}]");
             if access.name != format!("_llg_access_{index}") {
@@ -1150,6 +1192,15 @@ impl Validator<'_> {
                     "container element locators address element items only",
                 );
             }
+            let function = access
+                .function
+                .map(|index| {
+                    self.model.funcs.get(index).ok_or_else(|| {
+                        IrValidationError::new(&path, "function reference is out of bounds")
+                    })
+                })
+                .transpose()?;
+            self.set_table_receiver(function);
             match access.kind {
                 IrNativeAccessKind::ClassField { class, field } => {
                     if !self
@@ -1227,14 +1278,6 @@ impl Validator<'_> {
                     }
                 }
             }
-            let function = access
-                .function
-                .map(|index| {
-                    self.model.funcs.get(index).ok_or_else(|| {
-                        IrValidationError::new(&path, "function reference is out of bounds")
-                    })
-                })
-                .transpose()?;
             let formals = function.map_or(&[][..], |function| function.formals.as_slice());
             self.chandle_return
                 .set(function.map(|function| function.ret_chandle));
@@ -1242,7 +1285,7 @@ impl Validator<'_> {
                 .set(function.map(|function| function.ret_string));
             access
                 .receiver
-                .validate(self.model, formals, self.chandle_return.get())?;
+                .validate(&self.model, formals, self.chandle_return.get())?;
             let mut result = Ok(());
             access.receiver.expressions(&mut |expr| {
                 result = result
@@ -1250,6 +1293,7 @@ impl Validator<'_> {
                     .and_then(|_| self.validate_expr(expr, formals, &path));
             });
             result?;
+            self.validate_container_scope(&path)?;
         }
         for (index, allocation) in self.model.class_allocations.iter().enumerate() {
             let path = format!("class_allocations[{index}]");
@@ -1269,13 +1313,15 @@ impl Validator<'_> {
                 .set(function.map(|function| function.ret_chandle));
             self.string_return
                 .set(function.map(|function| function.ret_string));
+            self.set_table_receiver(function);
             self.validate_stmts(&allocation.body, formals, &format!("{path}.body"))?;
         }
 
         // Every function and process defines C symbols under its name.
         let mut routine_names = HashSet::new();
-        for (idx, func) in self.model.funcs.iter().enumerate() {
+        for (idx, func) in self.model.model.funcs.iter().enumerate() {
             self.function.set(Some(func));
+            self.model.receiver.set(Some(func.receiver_class));
             self.chandle_return.set(Some(func.ret_chandle));
             self.string_return.set(Some(func.ret_string));
             let path = format!("funcs[{idx}]");
@@ -1362,8 +1408,7 @@ impl Validator<'_> {
                     // is an activation binding (SIM-008).
                     if self
                         .model
-                        .containers
-                        .get(container)
+                        .container(container)
                         .is_none_or(|storage| formal.is_ref() && !storage.activation)
                         || formal.width != 0
                         || formal.real
@@ -1465,6 +1510,8 @@ impl Validator<'_> {
                     format!("process name `{}` is not unique", process.c_name),
                 );
             }
+            // The write set includes what the called methods write.
+            self.model.receiver.set(None);
             for (write_idx, write) in process.writes.iter().enumerate() {
                 if !self.valid_dependency(write) {
                     return self.fail(
@@ -1473,6 +1520,7 @@ impl Validator<'_> {
                     );
                 }
             }
+            self.model.receiver.set(Some(None));
             self.validate_pre_fns(&process.pre_fns, &[], &path)?;
             self.validate_stmts(&process.body, &[], &format!("{path}.body"))?;
         }

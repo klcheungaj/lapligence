@@ -307,7 +307,7 @@ pub enum IrDisplayArg {
 impl IrDisplayArg {
     pub(in crate::sim) fn validate(
         &self,
-        model: &super::IrModel,
+        model: &super::CheckedModel<'_>,
         string_return: Option<bool>,
         path: &str,
     ) -> Result<(), super::IrValidationError> {
@@ -765,7 +765,7 @@ pub enum IrObjectStmt {
 impl IrStringExpr {
     pub(in crate::sim) fn validate(
         &self,
-        model: &super::IrModel,
+        model: &super::CheckedModel<'_>,
         string_return: Option<bool>,
     ) -> Result<(), super::IrValidationError> {
         if let Self::Format {
@@ -900,7 +900,7 @@ impl IrStringExpr {
                 otherwise.validate(model, string_return)
             }
             Self::ContainerGet { container, index } => {
-                let Some(container) = model.containers.get(*container) else {
+                let Some(container) = model.container(*container) else {
                     return Err(super::IrValidationError::new(
                         "string",
                         "container index is out of bounds",
@@ -926,7 +926,7 @@ impl IrStringExpr {
                 Ok(())
             }
             Self::ContainerGetNested { container, indices } => {
-                let Some(container) = model.containers.get(*container) else {
+                let Some(container) = model.container(*container) else {
                     return Err(super::IrValidationError::new(
                         "string",
                         "container index is out of bounds",
@@ -954,7 +954,7 @@ impl IrStringExpr {
                 Ok(())
             }
             Self::QueuePop { container, .. } => {
-                if !model.containers.get(*container).is_some_and(|container| {
+                if !model.container(*container).is_some_and(|container| {
                     container.element.is_string()
                         && matches!(
                             container.kind,
@@ -969,7 +969,7 @@ impl IrStringExpr {
                 Ok(())
             }
             Self::AssociativeGet { container, key } => {
-                let Some(container) = model.containers.get(*container) else {
+                let Some(container) = model.container(*container) else {
                     return Err(super::IrValidationError::new(
                         "string",
                         "container index is out of bounds",
@@ -1291,7 +1291,7 @@ impl IrArrayQuery {
 
     pub(in crate::sim) fn validate(
         &self,
-        model: &super::IrModel,
+        model: &super::CheckedModel<'_>,
         string_return: Option<bool>,
     ) -> Result<(), super::IrValidationError> {
         if self.dimensions().is_empty() {
@@ -1313,7 +1313,7 @@ impl IrArrayQuery {
         match &self.target {
             IrArrayQueryTarget::Static { .. } => Ok(()),
             IrArrayQueryTarget::Container { container, .. } => {
-                if model.containers.get(*container).is_none() {
+                if model.container(*container).is_none() {
                     return Err(super::IrValidationError::new(
                         "array query",
                         "container index is out of bounds",
@@ -1347,7 +1347,7 @@ impl IrArrayQuery {
 impl IrProcessExpr {
     pub(in crate::sim) fn validate(
         &self,
-        model: &super::IrModel,
+        model: &super::CheckedModel<'_>,
         formals: &[super::IrFormal],
     ) -> Result<(), super::IrValidationError> {
         match self {
@@ -1371,7 +1371,7 @@ impl IrProcessExpr {
     /// carry the enclosing function's formals.
     pub(in crate::sim) fn validate_shape(
         &self,
-        model: &super::IrModel,
+        model: &super::CheckedModel<'_>,
     ) -> Result<(), super::IrValidationError> {
         match self {
             Self::FormalRead(_) => Ok(()),
@@ -1396,7 +1396,7 @@ impl IrProcessExpr {
 impl IrMailboxValue {
     pub(in crate::sim) fn validate(
         &self,
-        model: &super::IrModel,
+        model: &super::CheckedModel<'_>,
         formals: &[super::IrFormal],
         chandle_return: Option<bool>,
         string_return: Option<bool>,
@@ -1520,7 +1520,7 @@ impl IrMailboxTarget {
 impl IrMailboxExpr {
     pub(in crate::sim) fn validate(
         &self,
-        model: &super::IrModel,
+        model: &super::CheckedModel<'_>,
         formals: &[super::IrFormal],
         chandle_return: Option<bool>,
     ) -> Result<(), super::IrValidationError> {
@@ -1575,7 +1575,7 @@ impl IrObjectQuery {
 
     pub(in crate::sim) fn validate(
         &self,
-        model: &super::IrModel,
+        model: &super::CheckedModel<'_>,
         formals: &[super::IrFormal],
         chandle_return: Option<bool>,
         string_return: Option<bool>,
@@ -1832,7 +1832,7 @@ impl IrObjectStmt {
 
     pub(in crate::sim) fn validate(
         &self,
-        model: &super::IrModel,
+        model: &super::CheckedModel<'_>,
         formals: &[super::IrFormal],
         chandle_return: Option<bool>,
         string_return: Option<bool>,
@@ -2218,7 +2218,7 @@ impl IrChandleExpr {
     /// function's formals: a formal index cannot be checked there.
     pub(in crate::sim) fn validate_shape(
         &self,
-        model: &super::IrModel,
+        model: &super::CheckedModel<'_>,
         chandle_return: Option<bool>,
     ) -> Result<(), super::IrValidationError> {
         match self {
@@ -2346,7 +2346,7 @@ impl IrChandleExpr {
 
     pub(in crate::sim) fn validate(
         &self,
-        model: &super::IrModel,
+        model: &super::CheckedModel<'_>,
         formals: &[super::IrFormal],
         chandle_return: Option<bool>,
     ) -> Result<(), super::IrValidationError> {
@@ -2455,7 +2455,7 @@ impl IrChandleExpr {
                 key,
                 ..
             } => {
-                let Some(container) = model.containers.get(*container) else {
+                let Some(container) = model.container(*container) else {
                     return Err(super::IrValidationError::new(
                         "container element",
                         "container index is out of bounds",
@@ -2475,7 +2475,7 @@ impl IrChandleExpr {
             }
             Self::NbaHold => Ok(()),
             Self::QueuePop { container, .. } => {
-                if !model.containers.get(*container).is_some_and(|container| {
+                if !model.container(*container).is_some_and(|container| {
                     container.element.is_handle()
                         && matches!(
                             container.kind,
@@ -2526,7 +2526,7 @@ impl IrChandleExpr {
                 }
             }
             Self::ContainerGet { container, index } => {
-                let Some(container) = model.containers.get(*container) else {
+                let Some(container) = model.container(*container) else {
                     return Err(super::IrValidationError::new(
                         "chandle",
                         "container index is out of bounds",
@@ -2552,7 +2552,7 @@ impl IrChandleExpr {
                 Ok(())
             }
             Self::ContainerGetNested { container, indices } => {
-                let Some(container) = model.containers.get(*container) else {
+                let Some(container) = model.container(*container) else {
                     return Err(super::IrValidationError::new(
                         "chandle",
                         "container index is out of bounds",
@@ -2585,7 +2585,7 @@ impl IrChandleExpr {
                 index,
                 key,
             } => {
-                let valid = model.containers.get(*container).is_some_and(|container| {
+                let valid = model.container(*container).is_some_and(|container| {
                     container.element.is_event()
                         && match &container.kind {
                             super::containers::IrContainerKind::Associative {
@@ -2610,7 +2610,7 @@ impl IrChandleExpr {
                 Ok(())
             }
             Self::AssociativeGet { container, key } => {
-                let Some(container) = model.containers.get(*container) else {
+                let Some(container) = model.container(*container) else {
                     return Err(super::IrValidationError::new(
                         "chandle",
                         "container index is out of bounds",

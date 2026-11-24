@@ -179,7 +179,7 @@ impl Validator<'_> {
             }
             IrStmt::System(command) => {
                 if let Some(command) = command {
-                    command.validate(self.model, self.string_return.get())?;
+                    command.validate(&self.model, self.string_return.get())?;
                     let mut result = Ok(());
                     command.expressions(&mut |child| {
                         result = result
@@ -226,7 +226,7 @@ impl Validator<'_> {
                 }
             }
             IrStmt::RandomStateSet { state } => {
-                state.validate(self.model, self.string_return.get())?;
+                state.validate(&self.model, self.string_return.get())?;
                 let mut result = Ok(());
                 state.expressions(&mut |child| {
                     result = result
@@ -248,7 +248,7 @@ impl Validator<'_> {
                     return self.fail(path.to_owned(), "a memory dump has no source text");
                 }
                 for string in std::iter::once(file).chain(text.as_ref()) {
-                    string.validate(self.model, self.string_return.get())?;
+                    string.validate(&self.model, self.string_return.get())?;
                     let mut result = Ok(());
                     string.expressions(&mut |child| {
                         result = result
@@ -276,7 +276,7 @@ impl Validator<'_> {
                 }
                 self.validate_memory_image_root(task, formals, path)?;
                 for string in std::iter::once(&task.path).chain(task.text.as_ref()) {
-                    string.validate(self.model, self.string_return.get())?;
+                    string.validate(&self.model, self.string_return.get())?;
                     let mut result = Ok(());
                     string.expressions(&mut |child| {
                         result = result
@@ -471,7 +471,7 @@ impl Validator<'_> {
                 }
             }
             IrStmt::Container(operation) => {
-                operation.validate(self.model, self.string_return.get())?;
+                operation.validate(&self.model, self.string_return.get())?;
                 match operation.as_ref() {
                     IrContainerStmt::NbaLocate { .. } => self.located_nba.set(true),
                     IrContainerStmt::NbaLocateEnd => self.located_nba.set(false),
@@ -593,7 +593,7 @@ impl Validator<'_> {
                                     "nonblocking streaming assignment cannot resize a container",
                                 );
                             }
-                            let container = container_kind(self.model, *container, None)?;
+                            let container = container_kind(&self.model, *container, None)?;
                             if !matches!(
                                 container.kind,
                                 IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
@@ -669,7 +669,7 @@ impl Validator<'_> {
             }
             IrStmt::Object(operation) => {
                 operation.validate(
-                    self.model,
+                    &self.model,
                     formals,
                     self.chandle_return.get(),
                     self.string_return.get(),
@@ -815,20 +815,20 @@ impl Validator<'_> {
                     return self.fail(path, "string local name must not be empty");
                 }
                 if let Some(init) = init {
-                    init.validate(self.model, self.string_return.get())?;
+                    init.validate(&self.model, self.string_return.get())?;
                 }
             }
             IrStmt::DelayedStringAssign { target, rhs, .. } => {
                 if target.is_empty() {
                     return self.fail(path, "delayed string target must not be empty");
                 }
-                rhs.validate(self.model, self.string_return.get())?;
+                rhs.validate(&self.model, self.string_return.get())?;
             }
             IrStmt::DelayedChandleAssign { target, rhs, .. } => {
                 if target.is_empty() {
                     return self.fail(path, "delayed chandle target must not be empty");
                 }
-                rhs.validate(self.model, formals, self.chandle_return.get())?;
+                rhs.validate(&self.model, formals, self.chandle_return.get())?;
                 let mut result = Ok(());
                 rhs.expressions(&mut |child| {
                     result = result
@@ -1561,7 +1561,7 @@ impl Validator<'_> {
                 }
                 for (idx, arg) in args.iter().enumerate() {
                     arg.validate(
-                        self.model,
+                        &self.model,
                         self.string_return.get(),
                         &format!("{path}.args[{idx}]"),
                     )?;
@@ -1623,7 +1623,7 @@ impl Validator<'_> {
                 }
                 for (idx, arg) in args.iter().enumerate() {
                     arg.validate(
-                        self.model,
+                        &self.model,
                         self.string_return.get(),
                         &format!("{path}.args[{idx}]"),
                     )?;
@@ -1760,7 +1760,7 @@ impl Validator<'_> {
                 self.validate_expr(expr, formals, &format!("{path}.limit"))?;
             }
             IrStmt::WaveFileValue(file) => {
-                file.validate(self.model, self.string_return.get())?;
+                file.validate(&self.model, self.string_return.get())?;
             }
             IrStmt::PrintTimescale {
                 unit_fs,
@@ -1795,7 +1795,7 @@ impl Validator<'_> {
                         );
                     }
                 }
-                suffix.validate(self.model, self.string_return.get())?;
+                suffix.validate(&self.model, self.string_return.get())?;
             }
             IrStmt::Call(call) => {
                 self.validate_call_target(call.f, &call.args, formals, path, true)?;
@@ -1810,7 +1810,7 @@ impl Validator<'_> {
                     let receiver = call.receiver.as_ref().ok_or_else(|| {
                         IrValidationError::new(path, "class method call has no receiver")
                     })?;
-                    receiver.validate(self.model, formals, self.chandle_return.get())?;
+                    receiver.validate(&self.model, formals, self.chandle_return.get())?;
                 } else if call.receiver.is_some() {
                     return self.fail(path, "non-method call cannot carry a receiver");
                 }
@@ -2037,7 +2037,7 @@ impl Validator<'_> {
             self.validate_expr(expression, formals, &format!("{path}.values[{index}]"))?;
         }
         for (index, value) in operation.strings().into_iter().enumerate() {
-            value.validate(self.model, self.string_return.get())?;
+            value.validate(&self.model, self.string_return.get())?;
             let mut result = Ok(());
             value.expressions(&mut |child| {
                 if result.is_ok() {

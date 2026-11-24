@@ -178,8 +178,71 @@ fn validate_container_element(element: &IrContainerElement, path: &str) -> Valid
     }
 }
 
-struct Validator<'model> {
+/// The model under validation, and the class whose object (`this`) the code
+/// being checked runs on.
+pub(in crate::sim) struct CheckedModel<'model> {
     model: &'model IrModel,
+    /// `None` while detached code is checked, whose enclosing method is not
+    /// known; else the class of `this`, or `None` inside for code without one.
+    receiver: Cell<Option<Option<usize>>>,
+    /// A class property container that the checked code names although it has
+    /// no object to select it from.
+    unreachable_container: Cell<Option<usize>>,
+}
+
+impl std::ops::Deref for CheckedModel<'_> {
+    type Target = IrModel;
+
+    fn deref(&self) -> &IrModel {
+        self.model
+    }
+}
+
+impl<'model> CheckedModel<'model> {
+    fn new(model: &'model IrModel) -> Self {
+        Self {
+            model,
+            receiver: Cell::new(None),
+            unreachable_container: Cell::new(None),
+        }
+    }
+
+    /// The container a statement or expression names. Every check of a
+    /// container reference comes here: a property container without an
+    /// explicit receiver (`IrContainer::receiver`) is storage of `this`, so
+    /// only the code of its class can name it.
+    pub(in crate::sim) fn container(&self, index: usize) -> Option<&'model IrContainer> {
+        let container = self.model.containers.get(index)?;
+        if let Some((class, _)) = container.class_field {
+            if container.receiver.is_none() && !self.has_property_of(class) {
+                self.unreachable_container.set(Some(index));
+            }
+        }
+        Some(container)
+    }
+
+    /// Whether the checked code runs on an object with the properties of
+    /// `class`: `this` is of the class or of one derived from it.
+    pub(super) fn has_property_of(&self, class: usize) -> bool {
+        let Some(receiver) = self.receiver.get() else {
+            return true;
+        };
+        let mut current = receiver;
+        for _ in 0..=self.model.classes.len() {
+            match current {
+                Some(index) if index == class => return true,
+                Some(index) => {
+                    current = self.model.classes.get(index).and_then(|class| class.base);
+                }
+                None => return false,
+            }
+        }
+        false
+    }
+}
+
+struct Validator<'model> {
+    model: CheckedModel<'model>,
     max_width: Cell<u128>,
     /// Lexical bindings introduced by fixed-array method maps, innermost last.
     reduction_bindings: RefCell<Vec<(String, u32, bool)>>,

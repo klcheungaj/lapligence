@@ -21,7 +21,7 @@ impl Validator<'_> {
                 .receiver
                 .as_ref()
                 .ok_or_else(|| IrValidationError::new(path, "class method call has no receiver"))?;
-            receiver.validate(self.model, formals, self.chandle_return.get())?;
+            receiver.validate(&self.model, formals, self.chandle_return.get())?;
         } else if call.receiver.is_some() {
             return self.fail(path, "non-method call cannot carry a receiver");
         }
@@ -122,7 +122,7 @@ impl Validator<'_> {
             );
         }
         call.receiver
-            .validate(self.model, formals, self.chandle_return.get())
+            .validate(&self.model, formals, self.chandle_return.get())
     }
 
     pub(super) fn validate_call_target(
@@ -310,7 +310,7 @@ impl Validator<'_> {
                     if containers.len() != formal.native_companions.len()
                         || containers.iter().zip(&formal.native_companions).any(
                             |(actual, expected)| {
-                                self.model.containers.get(*actual).is_none_or(|actual| {
+                                self.model.container(*actual).is_none_or(|actual| {
                                     !actual.same_storage_type(&self.model.containers[*expected])
                                 })
                             },
@@ -321,10 +321,10 @@ impl Validator<'_> {
                     self.validate_native_leaf_values(*ty, leaves, formals, &arg_path)?;
                 }
                 IrCallArg::ContainerValues { container, values } => {
-                    let actual = self.model.containers.get(*container);
+                    let actual = self.model.container(*container);
                     let expected = formal
                         .container
-                        .and_then(|container| self.model.containers.get(container));
+                        .and_then(|container| self.model.container(container));
                     let Some((actual, expected)) = actual.zip(expected) else {
                         return self.fail(&arg_path, "container argument type mismatch");
                     };
@@ -347,10 +347,10 @@ impl Validator<'_> {
                     }
                 }
                 IrCallArg::Container(container) => {
-                    let actual = self.model.containers.get(*container);
+                    let actual = self.model.container(*container);
                     let expected = formal
                         .container
-                        .and_then(|container| self.model.containers.get(container));
+                        .and_then(|container| self.model.container(container));
                     // A `ref` container formal is an alias bound per call.
                     if formal.is_ref() && !expected.is_some_and(|expected| expected.activation)
                         || !matches!((actual, expected), (Some(actual), Some(expected))
@@ -464,7 +464,7 @@ impl Validator<'_> {
                 }
                 IrCallArg::StringVal(value) => {
                     if formal.string && !formal.is_address() {
-                        value.validate(self.model, self.string_return.get())?;
+                        value.validate(&self.model, self.string_return.get())?;
                     } else {
                         return self.fail(arg_path, "string value requires a string input formal");
                     }
@@ -504,7 +504,7 @@ impl Validator<'_> {
                                 && formal.native_companions.len() == reference.companions.len()
                                 && reference.companions.iter().all(|companion| {
                                     let created = |index: usize| {
-                                        self.model.containers.get(index).is_some_and(|container| {
+                                        self.model.container(index).is_some_and(|container| {
                                             container.activation
                                                 && !matches!(
                                                     container.kind,
@@ -534,7 +534,10 @@ impl Validator<'_> {
                                                 && unselected.is_none_or(created)
                                                 && choices.iter().all(|(positions, container)| {
                                                     positions.len() == runs
-                                                        && *container < self.model.containers.len()
+                                                        && self
+                                                            .model
+                                                            .container(*container)
+                                                            .is_some()
                                                 })
                                         }
                                     }
@@ -577,7 +580,7 @@ impl Validator<'_> {
                             index,
                             key,
                         } => {
-                            let Some(container) = self.model.containers.get(*container) else {
+                            let Some(container) = self.model.container(*container) else {
                                 return self.fail(
                                     arg_path,
                                     "element reference container is out of bounds",
@@ -631,7 +634,7 @@ impl Validator<'_> {
                 IrCallArg::ChandleVal(value) => {
                     if formal.chandle && !formal.is_address() {
                         value
-                            .validate(self.model, formals, self.chandle_return.get())
+                            .validate(&self.model, formals, self.chandle_return.get())
                             .map_err(|error| {
                                 IrValidationError::new(arg_path.clone(), error.to_string())
                             })?;
@@ -772,7 +775,7 @@ impl Validator<'_> {
                         return self.fail(arg_path, "string output temp has empty storage");
                     }
                     if let Some(init) = init {
-                        init.validate(self.model, self.string_return.get())?;
+                        init.validate(&self.model, self.string_return.get())?;
                     }
                     if let Some(addr) = storage_addr {
                         if addr.is_empty() {
@@ -781,7 +784,7 @@ impl Validator<'_> {
                         }
                     }
                     if let Some(read) = storage_read {
-                        read.validate(self.model, self.string_return.get())?;
+                        read.validate(&self.model, self.string_return.get())?;
                     }
                 }
                 IrCallArg::OutAddr(_) | IrCallArg::OutTemp { init: None, .. } => {}

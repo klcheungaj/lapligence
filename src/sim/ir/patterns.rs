@@ -227,7 +227,7 @@ pub struct IrPattern {
 impl IrPattern {
     pub(in crate::sim) fn validate(
         &self,
-        model: &IrModel,
+        model: &CheckedModel<'_>,
         path: &str,
     ) -> Result<(), IrValidationError> {
         let Some(ty) = model.pattern_types.get(self.ty) else {
@@ -249,7 +249,7 @@ impl IrPattern {
             // Handle reads are checked with their enclosing formals.
             IrPatternSource::Handle(_) => Ok(()),
             IrPatternSource::Container(index) => {
-                if *index >= model.containers.len() {
+                if model.container(*index).is_none() {
                     return Err(IrValidationError::new(
                         path,
                         "pattern container out of range",

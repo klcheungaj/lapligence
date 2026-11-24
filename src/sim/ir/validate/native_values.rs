@@ -110,6 +110,14 @@ impl Validator<'_> {
         let Some(value) = self.model.native_values.get(index) else {
             return self.fail(path, "native value reference is out of bounds");
         };
+        if let Some((class, _)) = value.class_field {
+            if value.receiver.is_none() && !self.model.has_property_of(class) {
+                return self.fail(
+                    path,
+                    "class record property is used outside the methods of its class",
+                );
+            }
+        }
         // A statically bound `ref` formal has no value at run time.
         if value.activation
             && !self.function.get().is_some_and(|function| {
@@ -169,16 +177,18 @@ impl Validator<'_> {
         Ok(values)
     }
 
-    /// Validate `body` with the native values `captures` bind in scope.
+    /// Validate `body` with the native values `captures` bind in scope and
+    /// `this` as in [`Self::with_receiver`].
     pub(super) fn with_captured_native_values(
         &self,
         captures: &[IrCapture],
+        this: Option<Option<usize>>,
         path: &str,
         body: impl FnOnce() -> ValidationResult,
     ) -> ValidationResult {
         let values = self.captured_native_values(captures, path)?;
         self.native_activations.borrow_mut().push(values);
-        let result = body();
+        let result = self.with_receiver(this, body);
         self.native_activations.borrow_mut().pop();
         result
     }
@@ -210,12 +220,12 @@ impl Validator<'_> {
                     true
                 }
                 (Some(IrContainerElement::String), IrNativeLeafExpr::String(value)) => {
-                    value.validate(self.model, self.string_return.get())?;
+                    value.validate(&self.model, self.string_return.get())?;
                     true
                 }
                 (Some(IrContainerElement::Chandle), IrNativeLeafExpr::Chandle(value))
                 | (Some(IrContainerElement::Opaque { .. }), IrNativeLeafExpr::Chandle(value)) => {
-                    value.validate(self.model, formals, self.chandle_return.get())?;
+                    value.validate(&self.model, formals, self.chandle_return.get())?;
                     true
                 }
                 _ => false,
@@ -270,18 +280,18 @@ impl Validator<'_> {
                 key,
                 ..
             } => {
-                let Some(storage) = self.model.containers.get(*container) else {
+                let Some(storage) = self.model.container(*container) else {
                     return self.fail(path, "element item references a missing container");
                 };
                 let slot = IrValueSlot::Element {
                     indices: indices.clone(),
                     key: key.as_deref().cloned(),
                 };
-                slot.element(storage, true, self.string_return.get(), self.model)
+                slot.element(storage, true, self.string_return.get(), &self.model)
                     .map_err(|error| IrValidationError::new(path.to_owned(), error.to_string()))?
             }
             IrChandleExpr::ItemElement { .. } => receiver
-                .located_value(self.model)
+                .located_value(&self.model)
                 .map_err(|error| IrValidationError::new(path.to_owned(), error.to_string()))?,
             _ => return self.fail(path, "element item requires a container element locator"),
         };

@@ -87,7 +87,10 @@ optional expressions) are boxed; `ir_records_stay_compact` bounds `IrExpr`,
 `ir.rs` owns `IrModel` and re-exports expression, lvalue, call, statement, event,
 assertion, process, function, initialization, storage, and VPI domains. Containers
 and objects remain separate. `validate.rs` supplies the shared context for
-`validate/` domain checks. See the [source map](../../../docs/source_layout.md).
+`validate/` domain checks. A check of a container reference looks the container
+up with `CheckedModel::container`, which knows the class of `this` and so
+refuses a property container without a receiver outside the methods of its
+class. See the [source map](../../../docs/source_layout.md).
 
 ## Storage, views, and delayed work
 

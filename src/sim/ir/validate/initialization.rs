@@ -12,14 +12,20 @@ impl Validator<'_> {
         let saved_return = self.chandle_return.replace(None);
         let saved_string_return = self.string_return.replace(None);
         let branch_formals = &[];
+        let receiver = self.model.receiver.get();
         for (idx, pre_fn) in pre_fns.iter().enumerate() {
+            // The captures are read by the declaring code, the body runs with
+            // the `this` the callback binds.
+            let this = receiver.map(|class| class.filter(|_| pre_fn.binds_this()));
             match pre_fn {
                 IrPreFn::Branch { body, .. } => {
-                    self.validate_stmts(
-                        body,
-                        branch_formals,
-                        &format!("{path}.pre_fns[{idx}].body"),
-                    )?;
+                    self.with_receiver(this, || {
+                        self.validate_stmts(
+                            body,
+                            branch_formals,
+                            &format!("{path}.pre_fns[{idx}].body"),
+                        )
+                    })?;
                 }
                 IrPreFn::CapturedBranch { captures, body, .. } => {
                     for (capture_idx, capture) in captures.iter().enumerate() {
@@ -81,6 +87,7 @@ impl Validator<'_> {
                     });
                     self.with_captured_native_values(
                         captures,
+                        this,
                         &format!("{path}.pre_fns[{idx}]"),
                         || {
                             self.validate_stmts(
@@ -92,13 +99,15 @@ impl Validator<'_> {
                     )?;
                 }
                 IrPreFn::MonEval { args, context, .. } => {
-                    for (arg_idx, arg) in args.iter().enumerate() {
-                        self.validate_expr(
-                            arg,
-                            branch_formals,
-                            &format!("{path}.pre_fns[{idx}].args[{arg_idx}]"),
-                        )?;
-                    }
+                    self.with_receiver(this, || {
+                        args.iter().enumerate().try_for_each(|(arg_idx, arg)| {
+                            self.validate_expr(
+                                arg,
+                                branch_formals,
+                                &format!("{path}.pre_fns[{idx}].args[{arg_idx}]"),
+                            )
+                        })
+                    })?;
                     if let Some(context) = context {
                         for (capture_idx, capture) in context.captures().iter().enumerate() {
                             self.validate_capture(
@@ -138,6 +147,7 @@ impl Validator<'_> {
                     }
                     self.with_captured_native_values(
                         captures,
+                        this,
                         &format!("{path}.pre_fns[{idx}]"),
                         || {
                             self.validate_lhs(
@@ -178,6 +188,7 @@ impl Validator<'_> {
                     }
                     self.with_captured_native_values(
                         captures,
+                        this,
                         &format!("{path}.pre_fns[{idx}]"),
                         || {
                             self.validate_stmts(
@@ -197,29 +208,32 @@ impl Validator<'_> {
                     }
                 }
                 IrPreFn::DisplayEval { args, prelude, .. } => {
-                    self.validate_stmts(
-                        prelude,
-                        branch_formals,
-                        &format!("{path}.pre_fns[{idx}].prelude"),
-                    )?;
-                    for (arg_idx, arg) in args.iter().enumerate() {
-                        arg.validate(
-                            self.model,
-                            self.string_return.get(),
-                            &format!("{path}.pre_fns[{idx}].args[{arg_idx}]"),
+                    self.with_receiver(this, || {
+                        self.validate_stmts(
+                            prelude,
+                            branch_formals,
+                            &format!("{path}.pre_fns[{idx}].prelude"),
                         )?;
-                        let mut result = Ok(());
-                        arg.expressions(&mut |expression| {
-                            result = result.clone().and_then(|_| {
-                                self.validate_expr(
-                                    expression,
-                                    branch_formals,
-                                    &format!("{path}.pre_fns[{idx}].args[{arg_idx}]"),
-                                )
+                        for (arg_idx, arg) in args.iter().enumerate() {
+                            arg.validate(
+                                &self.model,
+                                self.string_return.get(),
+                                &format!("{path}.pre_fns[{idx}].args[{arg_idx}]"),
+                            )?;
+                            let mut result = Ok(());
+                            arg.expressions(&mut |expression| {
+                                result = result.clone().and_then(|_| {
+                                    self.validate_expr(
+                                        expression,
+                                        branch_formals,
+                                        &format!("{path}.pre_fns[{idx}].args[{arg_idx}]"),
+                                    )
+                                });
                             });
-                        });
-                        result?;
-                    }
+                            result?;
+                        }
+                        Ok(())
+                    })?;
                 }
                 IrPreFn::RealEval { value, context, .. } => {
                     if !value.is_real() {
@@ -228,11 +242,13 @@ impl Validator<'_> {
                             "real event evaluator requires a real expression",
                         );
                     }
-                    self.validate_expr(
-                        value,
-                        branch_formals,
-                        &format!("{path}.pre_fns[{idx}].value"),
-                    )?;
+                    self.with_receiver(this, || {
+                        self.validate_expr(
+                            value,
+                            branch_formals,
+                            &format!("{path}.pre_fns[{idx}].value"),
+                        )
+                    })?;
                     if let Some(context) = context {
                         for (capture_idx, capture) in context.captures().iter().enumerate() {
                             self.validate_capture(
@@ -253,11 +269,13 @@ impl Validator<'_> {
                             "force evaluator real flag disagrees with its value",
                         );
                     }
-                    self.validate_expr(
-                        value,
-                        branch_formals,
-                        &format!("{path}.pre_fns[{idx}].value"),
-                    )?;
+                    self.with_receiver(this, || {
+                        self.validate_expr(
+                            value,
+                            branch_formals,
+                            &format!("{path}.pre_fns[{idx}].value"),
+                        )
+                    })?;
                 }
             }
         }

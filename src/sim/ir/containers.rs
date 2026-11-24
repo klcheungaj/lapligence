@@ -419,7 +419,7 @@ pub struct IrBitStream {
 impl IrBitStream {
     pub(in crate::sim) fn validate(
         &self,
-        model: &super::IrModel,
+        model: &super::CheckedModel<'_>,
         string_return: Option<bool>,
     ) -> Result<(), IrValidationError> {
         if self.slice == 0 || self.unpack.is_some_and(|(slice, _)| slice == 0) {
@@ -1112,7 +1112,7 @@ impl IrValueItemRoot {
     /// Check that `items` names a fixed array of `total` items.
     pub(in crate::sim) fn fixed_item(
         &self,
-        model: &super::IrModel,
+        model: &super::CheckedModel<'_>,
         items: &[u32],
         total: u64,
         string_return: Option<bool>,
@@ -1147,7 +1147,7 @@ impl IrValueItemRoot {
     /// The record type of the root value.
     fn element<'a>(
         &self,
-        model: &'a super::IrModel,
+        model: &'a super::CheckedModel<'_>,
         string_return: Option<bool>,
     ) -> Result<&'a IrContainerElement, IrValidationError> {
         match self {
@@ -1165,7 +1165,7 @@ impl IrValueItemRoot {
                 key,
                 ..
             }) => {
-                let storage = model.containers.get(*container).ok_or_else(|| {
+                let storage = model.container(*container).ok_or_else(|| {
                     IrValidationError::new("container element", "container index is out of bounds")
                 })?;
                 IrValueSlot::Element {
@@ -1261,7 +1261,7 @@ impl IrValueSlot {
         container: &'a IrContainer,
         write: bool,
         string_return: Option<bool>,
-        model: &super::IrModel,
+        model: &super::CheckedModel<'_>,
     ) -> Result<&'a IrContainerElement, IrValidationError> {
         let element = self.slot_element(container, write, string_return, model)?;
         if !matches!(
@@ -1283,7 +1283,7 @@ impl IrValueSlot {
         &self,
         container: &'a IrContainer,
         string_return: Option<bool>,
-        model: &super::IrModel,
+        model: &super::CheckedModel<'_>,
     ) -> Result<&'a IrContainerElement, IrValidationError> {
         let element = self.located_shape(container)?;
         self.validate_key(string_return, model)?;
@@ -1315,7 +1315,7 @@ impl IrValueSlot {
         container: &'a IrContainer,
         write: bool,
         string_return: Option<bool>,
-        model: &super::IrModel,
+        model: &super::CheckedModel<'_>,
     ) -> Result<&'a IrContainerElement, IrValidationError> {
         let element = self.slot_shape(container, write)?;
         self.validate_key(string_return, model)?;
@@ -1325,7 +1325,7 @@ impl IrValueSlot {
     fn validate_key(
         &self,
         string_return: Option<bool>,
-        model: &super::IrModel,
+        model: &super::CheckedModel<'_>,
     ) -> Result<(), IrValidationError> {
         match self {
             Self::Element { key: Some(key), .. } => key.validate(model, string_return),
@@ -1454,7 +1454,7 @@ fn stream_selector_expressions_mut(
 impl IrContainerExpr {
     pub(in crate::sim) fn validate(
         &self,
-        model: &super::IrModel,
+        model: &super::CheckedModel<'_>,
         string_return: Option<bool>,
     ) -> Result<(), IrValidationError> {
         let (index, expected) = match self {
@@ -1864,7 +1864,7 @@ impl IrContainerExpr {
 impl IrContainerStmt {
     pub(in crate::sim) fn validate(
         &self,
-        model: &super::IrModel,
+        model: &super::CheckedModel<'_>,
         string_return: Option<bool>,
     ) -> Result<(), IrValidationError> {
         match self {
@@ -3415,7 +3415,10 @@ impl IrContainerStmt {
 }
 
 /// The packed position queue of a generated array-method loop.
-fn method_positions(model: &super::IrModel, index: usize) -> Result<(), IrValidationError> {
+fn method_positions(
+    model: &super::CheckedModel<'_>,
+    index: usize,
+) -> Result<(), IrValidationError> {
     let positions = container_kind(model, index, Some("queue"))?;
     if !positions.element.is_packed() {
         return Err(IrValidationError::new(
@@ -3427,7 +3430,7 @@ fn method_positions(model: &super::IrModel, index: usize) -> Result<(), IrValida
 }
 
 /// The per-element key queue of a generated array-method loop.
-fn method_keys(model: &super::IrModel, index: usize) -> Result<(), IrValidationError> {
+fn method_keys(model: &super::CheckedModel<'_>, index: usize) -> Result<(), IrValidationError> {
     let keys = container_kind(model, index, Some("queue"))?;
     if !(keys.element.is_packed() || keys.element.is_real() || keys.element.is_string()) {
         return Err(IrValidationError::new(
@@ -3438,10 +3441,10 @@ fn method_keys(model: &super::IrModel, index: usize) -> Result<(), IrValidationE
     Ok(())
 }
 
-fn string_container(
-    model: &super::IrModel,
+fn string_container<'a>(
+    model: &'a super::CheckedModel<'_>,
     index: usize,
-) -> Result<&IrContainer, IrValidationError> {
+) -> Result<&'a IrContainer, IrValidationError> {
     let container = container_kind(model, index, Some("associative"))?;
     if !matches!(
         container.kind,
@@ -3461,7 +3464,7 @@ fn string_container(
 /// array of the nested type.
 fn nested_source(
     container: &IrContainer,
-    model: &super::IrModel,
+    model: &super::CheckedModel<'_>,
     source: usize,
 ) -> Result<(), IrValidationError> {
     let expected = match &container.element {
@@ -3518,11 +3521,11 @@ pub(super) fn nested_chandle_element(container: &IrContainer, depth: usize) -> b
 }
 
 pub(super) fn container_kind<'a>(
-    model: &'a super::IrModel,
+    model: &'a super::CheckedModel<'_>,
     index: usize,
     expected: Option<&str>,
 ) -> Result<&'a IrContainer, IrValidationError> {
-    let container = model.containers.get(index).ok_or_else(|| {
+    let container = model.container(index).ok_or_else(|| {
         IrValidationError::new("container", format!("index {index} is out of bounds"))
     })?;
     let actual = match container.kind {

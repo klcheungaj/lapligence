@@ -58,38 +58,6 @@ python3 -c "print('module tb; logic a; initial \$display(a' + ' + a' * 2000 + ')
 llg --top tb --gen-only chain.sv
 ```
 
-## IR validation leaves one container invariant to the emitter
-
-**Status:** found by FIN-002 step 3 (mutated IR models); low severity, not
-fixed. Lowering never produces such a model.
-
-### Symptom
-
-An `IrModel` whose container table is damaged so that a class property
-container (`class_field` without a receiver) is used by a process or a
-function that is not a method of that class passes `IrModel::validate`. The
-emitter then refuses it with `class container property used outside its
-class methods`: a clean error, no panic and no C text.
-
-### Cause
-
-Container references are checked at each statement and expression kind that
-holds one; none of those checks knows whether the enclosing function has an
-implicit receiver.
-
-### Intended direction
-
-One container-reference check in the validation context, which knows the
-enclosing function, used by every kind that names a container.
-`ir_mutation_tests` lists this refusal as the only known one; any other
-emitter refusal of a validated model fails it.
-
-### Reproduce
-
-```sh
-cargo nextest run --lib -E 'test(component_mutated_models)'   # cases 728, 1924, 2139, 2205 with LLG_FUZZ_CASES=0..3000
-```
-
 ## Declared net views retain per-bit lowering bindings
 
 **Status:** electrical groups, continuous writes and generated declared-view

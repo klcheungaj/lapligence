@@ -32,11 +32,6 @@ const DESIGNS: &[&str] = &[
 /// Prefix of an emitter error for a model the validator accepted.
 const REFUSED: &str = "emission of an accepted model";
 
-/// Invariants only the emitter checks (docs/known_issues.md, "IR
-/// validation leaves one container invariant to the emitter"): the emitter
-/// refuses such a model with an error. Any other refusal fails the test.
-const KNOWN_REFUSALS: &[&str] = &["class container property used outside its class methods"];
-
 /// Every n-th case compiles the C of its accepted model.
 const COMPILED_SAMPLE: u64 = 24;
 
@@ -231,11 +226,7 @@ fn component_mutated_models_are_rejected_or_emitted() {
         match outcome {
             Ok(Ok(())) => emitted += 1,
             Ok(Err(error)) => {
-                assert!(
-                    !error.starts_with(REFUSED)
-                        || KNOWN_REFUSALS.iter().any(|known| error.ends_with(known)),
-                    "{label}: {error}"
-                );
+                assert!(!error.starts_with(REFUSED), "{label}: {error}");
                 rejected += 1;
             }
             Err(_) => panic!("{label}: panic"),
@@ -249,4 +240,45 @@ fn component_mutated_models_are_rejected_or_emitted() {
             "{rejected} rejected, {emitted} emitted"
         );
     }
+}
+
+/// Each container of a class design exchanged with each other one: the body of
+/// a process or of another class's method that then names a property container
+/// is refused by validation, not by the emitter.
+#[test]
+fn class_property_containers_are_used_in_methods_of_their_class() {
+    let model = lowered(
+        "module tb;\n  class item;\n    int q [$];\n    function void push(int x);\n      \
+         q.push_back(x);\n    endfunction\n  endclass\n  class derived extends item;\n    \
+         function int first();\n      return q[0];\n    endfunction\n  endclass\n  \
+         class other;\n    int r [$];\n    function int size();\n      return r.size();\n    \
+         endfunction\n  endclass\n  item it;\n  derived d;\n  other o;\n  int list [$];\n  \
+         initial begin\n    it = new; d = new; o = new;\n    it.push(1);\n    list.push_back(2);\n    \
+         $display(\"%0d %0d %0d %0d\", list.size(), d.first(), o.size(), it.q.size());\n  end\n\
+         endmodule\n",
+    );
+    model.validate().expect("the lowered model is valid");
+    let mut refused = 0;
+    for left in 0..model.containers.len() {
+        for right in left + 1..model.containers.len() {
+            let mut model = model.clone();
+            model.containers.swap(left, right);
+            match model.validate() {
+                Err(error) => {
+                    refused += u32::from(
+                        error
+                            .detail()
+                            .contains("is used outside the methods of its class"),
+                    );
+                }
+                Ok(()) => {
+                    let execution = crate::sim::execution::ExecutionModel::lower(model)
+                        .expect("a valid model lowers");
+                    crate::sim::emit_c::render(&execution)
+                        .unwrap_or_else(|error| panic!("{left} and {right}: {error}"));
+                }
+            }
+        }
+    }
+    assert!(refused > 0, "no exchange was refused for its class");
 }
