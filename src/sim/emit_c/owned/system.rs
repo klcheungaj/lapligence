@@ -331,7 +331,6 @@ impl Frame<'_, '_> {
             IrSysFunc::FileOpen { .. }
             | IrSysFunc::FileTell(_)
             | IrSysFunc::FileSeek { .. }
-            | IrSysFunc::FileError { .. }
             | IrSysFunc::FileEof(_) => self.file_expression(function, expr)?,
         };
         Ok(result)

@@ -27,11 +27,10 @@ static void llg_plusarg_format_free(llg_plusarg_format_t* format) {
     memset(format, 0, sizeof(*format));
 }
 
-static int32_t llg_plusarg_format_parse(const char* text,
+static int32_t llg_plusarg_format_parse(const char* text, size_t length,
                                     llg_plusarg_format_t* format) {
     if (!text || !format) return 0;
     memset(format, 0, sizeof(*format));
-    size_t length = strlen(text);
     format->prefix = llg_checked_malloc(length + 1, 1, "plusarg format prefix");
     format->suffix = llg_checked_malloc(length + 1, 1, "plusarg format suffix");
     int32_t after_conversion = 0;
@@ -78,6 +77,8 @@ static int32_t llg_plusarg_format_parse(const char* text,
 static int32_t llg_plusarg_find(const llg_plusarg_format_t* format,
                             const char** value, size_t* value_len) {
     if (!format || !value || !value_len || !g.argv) return 0;
+    // An empty plusarg_string names no plusarg (decision S26-D24).
+    if (!format->prefix_len) return 0;
     for (int32_t i = 1; i < g.argc; ++i) {
         const char* argument = g.argv[i];
         if (!argument || argument[0] != '+') continue;
@@ -261,22 +262,23 @@ static void llg_plusarg_to_two_state(sv4_t* value) {
     llg_sv4_two_state_inplace(value);
 }
 
-int32_t llg_test_plusargs(const char* pattern) {
-    if (!pattern || !g.argv) return 0;
-    size_t length = strlen(pattern);
+int32_t llg_test_plusargs(const char* pattern, size_t length) {
+    // An empty string names no plusarg (decision S26-D24).
+    if (!pattern || !length || !g.argv) return 0;
     for (int32_t i = 1; i < g.argc; ++i) {
         const char* argument = g.argv[i];
         if (!argument || argument[0] != '+') continue;
-        if (strncmp(argument + 1, pattern, length) == 0) return 1;
+        if (strlen(argument + 1) >= length && memcmp(argument + 1, pattern, length) == 0)
+            return 1;
     }
     return 0;
 }
 
-int32_t llg_value_plusargs_packed(const char* format_text, sv4_t* out,
+int32_t llg_value_plusargs_packed(const char* format_text, size_t format_len, sv4_t* out,
                               uint32_t width, int32_t is_signed, int32_t two_state) {
     if (!out || width == 0 || width >= LLG_SUPPORTED_WIDTH_LIMIT) return 0;
     llg_plusarg_format_t format;
-    if (!llg_plusarg_format_parse(format_text, &format)) return 0;
+    if (!llg_plusarg_format_parse(format_text, format_len, &format)) return 0;
     const char* value = NULL;
     size_t value_len = 0;
     int32_t matched = llg_plusarg_find(&format, &value, &value_len);
@@ -364,10 +366,10 @@ static int32_t llg_plusarg_integral_real(const char* text, size_t length,
     return 1;
 }
 
-int32_t llg_value_plusargs_real(const char* format_text, double* out) {
+int32_t llg_value_plusargs_real(const char* format_text, size_t format_len, double* out) {
     if (!out) return 0;
     llg_plusarg_format_t format = {0};
-    if (!llg_plusarg_format_parse(format_text, &format) ||
+    if (!llg_plusarg_format_parse(format_text, format_len, &format) ||
         format.conversion == 's') {
         llg_plusarg_format_free(&format);
         return 0;
@@ -399,10 +401,10 @@ int32_t llg_value_plusargs_real(const char* format_text, double* out) {
     return converted;
 }
 
-int32_t llg_value_plusargs_string(const char* format_text, llg_string_t* out) {
+int32_t llg_value_plusargs_string(const char* format_text, size_t format_len, llg_string_t* out) {
     if (!out) return 0;
     llg_plusarg_format_t format = {0};
-    if (!llg_plusarg_format_parse(format_text, &format) ||
+    if (!llg_plusarg_format_parse(format_text, format_len, &format) ||
         format.conversion != 's') {
         llg_plusarg_format_free(&format);
         return 0;

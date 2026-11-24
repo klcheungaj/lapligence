@@ -160,10 +160,21 @@ fn neg_automatic_target() {
 }
 
 #[test]
-fn neg_force_printing_helper() {
+fn forces_of_functions_that_print() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "printing_helper",
+        include_str!("../fixtures/sim/feature_completion/sim_023/printing_helper.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn neg_force_finish_helper() {
     sim_cli::reject_case_with_id(
         SUITE,
-        "neg_force_printing_helper",
+        "neg_force_finish_helper",
         "CODEGEN-001",
         Some("11:5"),
         "side-effect-capable evaluator expressions",

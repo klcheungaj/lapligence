@@ -2049,6 +2049,42 @@ bool isPulseLimitSpecparam(const SpecparamSymbol& symbol) {
          parent != nullptr && parent->asSymbol().kind == SymbolKind::SpecifyBlock;
 }
 
+bool isStringLiteralParameter(const ParameterSymbol& parameter);
+
+// Whether an expression is a string literal, a parameter that takes its type
+// from one, or a concatenation of these (SV Table 6-9). Expression's own
+// isImplicitString() also accepts an expression with other operands.
+bool isStringLiteralExpression(const Expression& expression) {
+  switch (expression.kind) {
+    case ExpressionKind::StringLiteral:
+      return true;
+    case ExpressionKind::Concatenation:
+      return std::ranges::all_of(
+          expression.as<ConcatenationExpression>().operands(),
+          [](const Expression* operand) { return isStringLiteralExpression(*operand); });
+    case ExpressionKind::Replication:
+      return isStringLiteralExpression(expression.as<ReplicationExpression>().concat());
+    case ExpressionKind::Conversion: {
+      const auto& conversion = expression.as<ConversionExpression>();
+      return conversion.isImplicit() && isStringLiteralExpression(conversion.operand());
+    }
+    case ExpressionKind::NamedValue: {
+      const Symbol& symbol = expression.as<NamedValueExpression>().symbol;
+      return symbol.kind == SymbolKind::Parameter &&
+             isStringLiteralParameter(symbol.as<ParameterSymbol>());
+    }
+    default:
+      return false;
+  }
+}
+
+bool isStringLiteralParameter(const ParameterSymbol& parameter) {
+  if (parameter.getValue().bad() || !parameter.isImplicitString({}))
+    return false;
+  const Expression* value = parameter.getInitializer();
+  return value && isStringLiteralExpression(*value);
+}
+
 // Whether the source reads the declaration of a parameter or specparam.
 template<typename T>
 bool isParameterRead(const T& parameter) {
@@ -3392,6 +3428,8 @@ public:
       result.constant_id = capture.constant(symbol.getValue());
       if (symbol.isOverridden())
         result.auxiliary |= LLG_SLANG_PARAMETER_OVERRIDDEN;
+      if (isStringLiteralParameter(symbol))
+        result.auxiliary |= LLG_SLANG_PARAMETER_STRING_LITERAL;
       if (symbol.isFromGenvar()) {
         result.flags |= LLG_SLANG_SEMANTIC_IMPLICIT;
         const Scope* blockScope = symbol.getParentScope();

@@ -1,6 +1,5 @@
 //! Drivers.
 
-use super::super::collection::EventEvaluation;
 use super::*;
 use crate::sim::ir::{IrRedrive, IrRedriveAction, IrRedriveTarget, IrRuntimeQuery};
 use crate::sim::legacy_unsupported::LegacyFamily;
@@ -42,10 +41,7 @@ impl EmitCtx<'_, '_> {
         // changed its source, so it must be a read-only callback. A legal
         // helper with effects is instead evaluated by processes into a hidden
         // source that the callback merely reads (see `effectful_force`).
-        let effectful = matches!(
-            self.cg.classify_event_expression(rhs, &diagnostic_path),
-            Ok(EventEvaluation::Process(_))
-        );
+        let effectful = self.cg.force_source_needs_process(rhs, &diagnostic_path);
         self.check_force_target_type(lhs, "force", &diagnostic_path)?;
         let lh = self
             .cg
@@ -152,7 +148,8 @@ impl EmitCtx<'_, '_> {
     }
 
     /// Lower a force whose RHS calls a legal helper with effects (visible or
-    /// persistent writes, unproved static results or descriptor transport).
+    /// persistent writes, unproved static results, descriptor transport or
+    /// printing).
     ///
     /// SV 10.6 treats a force RHS like a continuous assignment that is
     /// re-evaluated whenever an operand changes while the force is in effect.

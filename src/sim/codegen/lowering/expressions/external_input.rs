@@ -72,17 +72,20 @@ impl<'a> Codegen<'a> {
             }
             _ => {
                 let expression = self.lower_expr(scope_path, node)?;
-                if let IrExprKind::Const(constant) = &expression.kind {
-                    return Ok(IrPlusArgText::Literal(Self::packed_plusarg_text(
-                        constant, context,
-                    )?));
-                }
                 if expression.is_real() {
                     return Err(format!("{context} requires a string or integral argument"));
                 }
-                Ok(IrPlusArgText::Dynamic(IrStringExpr::FromPacked(Box::new(
-                    expression,
-                ))))
+                if let IrExprKind::Const(constant) = &expression.kind {
+                    match Self::packed_plusarg_text(constant, context) {
+                        Ok(text) if !text.contains('\0') => {
+                            return Ok(IrPlusArgText::Literal(text));
+                        }
+                        _ => {}
+                    }
+                }
+                // Leading NUL characters of an integral value are not part of
+                // the string (SV 21.6); the others are.
+                Ok(IrPlusArgText::Packed(Box::new(expression)))
             }
         }
     }
@@ -389,6 +392,21 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// The operand of the conversion to `string` the frontend adds to an
+    /// integral argument of a system task or function. Unlike a written cast
+    /// it has the position of its operand.
+    pub(in super::super) fn integral_string_argument(&self, argument: NodeId) -> Option<NodeId> {
+        let position = |node: NodeId| (self.node(node).line, self.node(node).col);
+        match self.kind(argument) {
+            NodeKind::Expr(ExprKind::Cast { operand, ty, .. })
+                if ty.kind == "string" && position(*operand) == position(argument) =>
+            {
+                Some(*operand)
+            }
+            _ => None,
+        }
+    }
+
     pub(in super::super) fn lower_plusarg_expr(
         &mut self,
         scope_path: &str,
@@ -403,8 +421,9 @@ impl<'a> Codegen<'a> {
                         "$test$plusargs requires exactly one argument in `{scope_path}`"
                     ));
                 };
+                let pattern = self.integral_string_argument(*pattern).unwrap_or(*pattern);
                 let pattern =
-                    self.lower_plusarg_text(scope_path, *pattern, "$test$plusargs pattern")?;
+                    self.lower_plusarg_text(scope_path, pattern, "$test$plusargs pattern")?;
                 Ok(IrExpr::new(
                     IrExprKind::SysFunc(Box::new(IrSysFunc::TestPlusArgs { pattern })),
                     32,

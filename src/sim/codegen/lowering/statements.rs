@@ -72,6 +72,13 @@ pub(in crate::sim::codegen) fn immediate_display_task(name: &str) -> bool {
     )
 }
 
+/// Whether `name` is a task that prints while its statement runs and lets the
+/// run continue: an immediate display task, `$info`, `$warning` or `$error`.
+pub(in crate::sim::codegen) fn immediate_output_task(name: &str) -> bool {
+    immediate_display_task(name)
+        || severity_task_variant(name).is_some_and(|level| level != IrSeverityLevel::Fatal)
+}
+
 fn display_task_variant(name: &str) -> Option<(DisplayTaskKind, IrDisplayRadix)> {
     let variant = match name {
         "$display" => (

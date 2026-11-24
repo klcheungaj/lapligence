@@ -1842,8 +1842,9 @@ sensitivity includes unpacked-array, container or string storage, and event
 handles other than declared named events in such a list or as the target of
 such a `->>`. Stores a `$monitor`/`$strobe` helper makes to its own static
 storage publish no event, so a hierarchical wait on that storage does not
-wake. A `force` whose right-hand side calls a function that prints is an error
-(some simulators run it).
+wake. A `force` whose right-hand side calls a function that uses a system task
+other than an immediate display task, `$info`, `$warning` or `$error` (for
+example `$finish`) is an error.
 
 ### Cause
 
@@ -1862,7 +1863,7 @@ publish the private evaluation's static stores.
 (a named event beside a helper that reads array storage) and
 `tests/fixtures/sim/feature_completion/ki_audit/neg_helper_event_handle.sv`
 (an event handle other than a declared named event in a helper's list),
-[`neg_force_printing_helper.sv`](../tests/fixtures/sim/feature_completion/sim_023/neg_force_printing_helper.sv).
+[`neg_force_finish_helper.sv`](../tests/fixtures/sim/feature_completion/sim_023/neg_force_finish_helper.sv).
 
 ## Waited `ref` formals with unobservable actuals
 
@@ -3708,11 +3709,8 @@ one):
   database (with `option.name`), shown in no report;
 - `option.cross_num_print_missing`: the missing cross products a report
   lists; the database keeps none;
-- `option.per_instance`: llg always keeps instance coverage, which Table
-  19-1 allows when the option is 0 ("implementations are not required to
-  save instance-specific information"), so `get_inst_coverage()` reports it
-  either way. Some simulators return 0 from `get_inst_coverage()` when the
-  option is 0; portable fixtures set it.
+- `option.per_instance`: llg keeps the coverage of every instance whatever
+  its value (S46-D18).
 
 ### Cause
 

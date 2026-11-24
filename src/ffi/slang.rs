@@ -43,7 +43,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 82;
+const ABI_VERSION: u32 = 83;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -1114,6 +1114,8 @@ pub const SEMANTIC_PARAMETER_PATHPULSE: u32 = 237;
 pub const SEMANTIC_PARAMETER_OVERRIDDEN: u64 = 1 << 0;
 /// The source reads the parameter's declaration, in any instance.
 pub const SEMANTIC_PARAMETER_REFERENCED: u64 = 1 << 1;
+/// A parameter without a declared type takes its value from a string literal.
+pub const SEMANTIC_PARAMETER_STRING_LITERAL: u64 = 1 << 2;
 pub const CLOCKING_BLOCK_DEFAULT: u64 = 1 << 0;
 pub const CLOCKING_BLOCK_GLOBAL: u64 = 1 << 1;
 pub const CLOCKING_INPUT_EDGE_SHIFT: u32 = 2;

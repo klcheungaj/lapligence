@@ -1,0 +1,23 @@
+unnamed 5
+nested 100 11 10
+nested unnamed 7 10
+loop 0
+loop 3
+foreach 9
+foreach 10
+repeat 9
+if 11
+case 13
+fork a 20 21
+fork b 20 20
+fork none 30
+fork any 31
+w 12
+always 2
+fin 7 x 22
+gen 1 tb.gg[0].gb
+gen 3 tb.gg[1].gb
+hier 10 3
+hier2 100
+20
+final 77

@@ -176,21 +176,17 @@ impl<'a> Codegen<'a> {
             .children
             .iter()
             .filter_map(|child| {
-                let NodeKind::Param { value, .. } = self.kind(*child) else {
+                if !matches!(self.kind(*child), NodeKind::Param { .. }) {
                     return None;
+                }
+                let value = match self.parameter_value(*child)?.as_ref() {
+                    Val::Bits(bits) => bits
+                        .to_i128()
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| bits.format_verilog()),
+                    Val::Real(value) => value.to_string(),
+                    Val::Str(value) => format!("\"{value}\""),
                 };
-                let value =
-                    self.param_vals
-                        .get(child)
-                        .or(value.as_ref())
-                        .map(|value| match value {
-                            Val::Bits(bits) => bits
-                                .to_i128()
-                                .map(|value| value.to_string())
-                                .unwrap_or_else(|| value.format_verilog()),
-                            Val::Real(value) => value.to_string(),
-                            Val::Str(value) => format!("\"{value}\""),
-                        })?;
                 Some(format!("{}={value}", self.node(*child).name))
             })
             .collect::<Vec<_>>();

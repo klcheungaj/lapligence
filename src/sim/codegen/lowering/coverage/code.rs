@@ -103,7 +103,7 @@ impl Codegen<'_> {
             }
             NodeKind::Expr(ExprKind::Ref {
                 target: Some(target),
-            }) => self.param_vals.get(target)?.clone(),
+            }) => self.parameter_value(*target)?.into_owned(),
             _ => return None,
         };
         match value {

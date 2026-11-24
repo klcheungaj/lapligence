@@ -1800,18 +1800,6 @@ impl Validator<'_> {
                         return self.fail(path, "$fseek requires a signed 32-bit result");
                     }
                 }
-                IrSysFunc::FileError {
-                    descriptor,
-                    message,
-                } => {
-                    self.validate_expr(descriptor, formals, format_args!("{path}.descriptor"))?;
-                    if descriptor.is_real() || expr.width != 32 || !expr.signed {
-                        return self.fail(path, "$ferror requires a signed 32-bit result");
-                    }
-                    if message.as_deref().is_some_and(str::is_empty) {
-                        return self.fail(path, "$ferror message address must not be empty");
-                    }
-                }
                 IrSysFunc::FileEof(descriptor) => {
                     self.validate_expr(descriptor, formals, format_args!("{path}.descriptor"))?;
                     if descriptor.is_real() || expr.width != 32 || !expr.signed {

@@ -464,6 +464,11 @@ fn mailbox_value(ctx: &RCtx<'_>, value: &IrMailboxValue) -> Result<String, Strin
             i32::from(value.signed),
             i32::from(*two_state)
         ),
+        IrMailboxValue::StringLiteral(value) => format!(
+            "llg_mailbox_value_string_literal({}, {})",
+            render_expr_impl(ctx, value)?.code,
+            value.width
+        ),
         IrMailboxValue::Real { value, shortreal } => format!(
             "llg_mailbox_value_real({}, {})",
             render_expr_impl(ctx, value)?.code,

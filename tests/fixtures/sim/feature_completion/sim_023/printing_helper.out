@@ -1,0 +1,26 @@
+P show 2
+constant 2
+held 2
+released 3
+P show 5
+variable 5
+P show 6
+followed 6
+P written 6
+P filed 6
+P show 6
+replaced 19
+P written 7
+P filed 7
+P show 7
+followed 22
+kept 22
+P show 8
+net 8
+net released 2
+P show 8
+real 8.0
+P show 4
+real 4.0
+P counted
+counted 4 1

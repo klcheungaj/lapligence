@@ -182,7 +182,7 @@ impl<'a> Codegen<'a> {
         let (base_index, target) = refs.iter().enumerate().find_map(|(index, target)| {
             let target = (*target)?;
             (matches!(self.kind(target), NodeKind::Param { .. })
-                && self.param_vals.contains_key(&target)
+                && self.parameter_value(target).is_some()
                 && parts
                     .get(index)
                     .is_some_and(|part| part == &self.node(target).name))

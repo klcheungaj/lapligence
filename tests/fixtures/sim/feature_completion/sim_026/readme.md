@@ -197,3 +197,16 @@ of type string (decision S26-D23).
 
 Emitted models for the positive fixtures were also run with
 `-DLLG_CO_DEBUG -fsanitize=address,undefined` (see the SIM-026 report).
+
+## ferror_destinations (21.3.7, decision S26-D25)
+
+`$ferror` writes its message to strings and to integral variables, selections,
+container elements, class properties and formals; a write wakes waiters. A
+descriptor that is not open leaves the destination unchanged (S25-D7). A real or
+an unpacked destination is an error.
+
+- 21.3.7 L37202-37205: "A string description of the type of error encountered by
+  the most recent file I/O operation is written into the variable str, which
+  should be a packed array of at least 640 bits wide or a string type. ... If the
+  most recent operation did not result in an error, then the value returned shall
+  be zero, and the str variable shall be cleared."

@@ -1,0 +1,20 @@
+tb
+tb.MP type=41 size=32 local=0 00000003
+tb.b
+tb.b.K type=41 size=32 local=1 00000005
+tb.b.P type=41 size=8 local=1 08
+tb.b.R type=41 size=64 local=1 1.50
+tb.b.c
+tb.b.c.K type=41 size=32 local=1 0000001e
+tb.f
+tb.f.FK type=41 size=32 local=1 00000002
+tb.fk
+tb.fk.FF type=41 size=32 local=1 00000009
+in tb.b: tb.b.K type=41 size=32 local=1 00000005
+in tb.b.c: tb.b.c.K type=41 size=32 local=1 0000001e
+in tb.f: tb.f.FK type=41 size=32 local=1 00000002
+in tb.fk: tb.fk.FF type=41 size=32 local=1 00000009
+30 8 1.5
+tb.b.c.K type=41 size=32 local=1 0000001e
+6
+9

@@ -242,6 +242,35 @@ impl Codegen<'_> {
         self.mailbox_target_from_lhs(&lhs)
     }
 
+    /// Whether a message is a string literal: the literal, a parameter that
+    /// takes its type from one, or a concatenation of literals (SV Table 6-9).
+    fn is_string_literal_message(&self, node: NodeId) -> bool {
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Constant {
+                const_type: ConstantType::String,
+                ..
+            }) => true,
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(parameter),
+            }) => self.db.parameter_is_string_literal(*parameter),
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::Concat,
+                operands,
+                ..
+            }) => operands
+                .iter()
+                .all(|operand| self.is_string_literal_message(*operand)),
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::MultiConcat,
+                operands,
+                ..
+            }) => operands
+                .last()
+                .is_some_and(|operand| self.is_string_literal_message(*operand)),
+            _ => false,
+        }
+    }
+
     fn lower_mailbox_value_storage(
         &mut self,
         path: &str,
@@ -258,7 +287,9 @@ impl Codegen<'_> {
             return Ok(IrMailboxValue::Handle(self.lower_chandle(path, node)?));
         }
         let value = self.lower_expr(path, node)?;
-        Ok(if value.is_real() {
+        Ok(if self.is_string_literal_message(node) {
+            IrMailboxValue::StringLiteral(value)
+        } else if value.is_real() {
             let shortreal = self.query_descriptor(node).is_some_and(|descriptor| {
                 matches!(descriptor.shape, TypeShape::Real { shortreal: true })
             });

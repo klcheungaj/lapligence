@@ -523,7 +523,7 @@ impl<'a> Codegen<'a> {
             _ => return Ok(()),
         };
         if let Some(value) =
-            self.collected_parameter_value(scope, parameter, frontend_value.as_ref())?
+            self.collected_parameter_value(scope, parameter, frontend_value.as_ref())
         {
             self.param_vals.insert(parameter, value);
         }

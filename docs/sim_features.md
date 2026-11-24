@@ -680,6 +680,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   defaults, nominal enums, `type()`, constant queries and folded real/string
   values support finite extents and names. Fixed struct/union parameters are
   readable whole or by member; override expressions retain their parent scope.
+  Parameters declared in procedural blocks, subroutines and methods are read
+  like module parameters
+  ([ki_block_parameters](../tests/fixtures/sim/feature_completion/ki_block_parameters/readme.md)).
   [Elaboration regression sources](../tests/sim_syn016_elaboration.rs) exercise
   bounded function/type/namespace cases; source presence is not fresh acceptance.
   Constant functions reading `defparam`-affected parameters have
@@ -2215,7 +2218,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   V §17.2.4.4; SV §21.3.4.4 **[2001/SV-2005]**.
 - 🟦 **File position/status** — `$ftell/$fseek/$rewind/$fflush/$ferror/$feof`
   preserve EOF/error and invalid/closed-descriptor status; `$rewind` is also a
-  function and a successful reposition clears the error status. V §§17.2.5–17.2.7;
+  function and a successful reposition clears the error status. `$ferror` writes
+  its message to a string or an integral variable (S26-D25). V §§17.2.5–17.2.7;
   SV §§21.3.5–21.3.8 **[2001/SV-2005]**.
 - 🟦 **Memory images** — `$readmemh/$readmemb` accept owned string paths,
   whitespace/comments, binary/hex digits, X/Z and `@` addresses.
@@ -2444,7 +2448,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Leading-`+` prefix matching, first repeated match, literal `%%`,
   `%d/%h/%x/%o/%b/%f/%e/%g/%s`, wide four-state values and unchanged destinations
   on failure are represented, including packed container-element
-  destinations. V §17.10; SV §21.6 **[1995/SV-2005]**.
+  destinations. An empty string matches nothing (S26-D24). V §17.10; SV §21.6 **[1995/SV-2005]**.
 - 🟦 **Host commands** — `$system` evaluates one optional string once and
   requires generated-process `LLG_ALLOW_SYSTEM=1` (also `true/yes/on`). Denial
   diagnoses, returns signed 32-bit -1 and fails without shell execution.
@@ -2818,7 +2822,8 @@ These are bounded implementations, not full verification-infrastructure support.
   string, record (string/real/queue/class members, nested), queue, dynamic-array
   and pattern-built unpacked-array messages as deep copies, and class, event,
   process, virtual-interface and mailbox handles by identity; untyped mailboxes
-  match nominal and SV 6.22 equivalent types. Empty, full and mismatch differ;
+  match nominal and SV 6.22 equivalent types, and a string literal put into one
+  matches a string variable (AB-O4). Empty, full and mismatch differ;
   failed calls preserve message and destination, peek does not consume. Element,
   member and select destinations keep the selectors of the call. The put that
   wakes a blocked receiver completes its get: whole packed, real and string
@@ -3365,7 +3370,7 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   S45-D18); `goal`, `comment`, `cross_num_print_missing` and
   `per_instance` are stored and readable but only shape a coverage report,
   which llg does not write ([known issues](known_issues.md#functional-coverage-limits-sim-044-sim-045)). `get_coverage()` (type, per elaborated declaration, S44-D1),
-  `get_inst_coverage()`, `start()`, `stop()`, `set_inst_name()` (no report)
+  `get_inst_coverage()` (whatever `per_instance` is, S46-D18), `start()`, `stop()`, `set_inst_name()` (no report)
   and `$get_coverage()` follow 19.11; the two-argument forms of 19.8 assign
   the covered and total bins (S46-D7). Options are read through an
   instance, coverpoint, cross or type name and written procedurally where

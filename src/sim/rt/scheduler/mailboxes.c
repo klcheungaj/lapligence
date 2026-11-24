@@ -70,6 +70,12 @@ llg_mailbox_value_t llg_mailbox_value_packed(sv4_t value, uint32_t width,
     return result;
 }
 
+llg_mailbox_value_t llg_mailbox_value_string_literal(sv4_t value, uint32_t width) {
+    llg_mailbox_value_t result = llg_mailbox_value_packed(value, width, 0, 1);
+    result.string_literal = 1;
+    return result;
+}
+
 llg_mailbox_value_t llg_mailbox_value_real(double value, int32_t shortreal) {
     llg_mailbox_value_t result = {0};
     result.kind = LLG_MAILBOX_REAL;
@@ -190,9 +196,9 @@ static int32_t mailbox_target_matches(const llg_mailbox_value_t* value,
     }
 }
 
+// Deliver a message whose type the caller matched with `target`.
 static void mailbox_deliver(const llg_mailbox_value_t* value,
                             const llg_mailbox_target_t* target) {
-    if (!mailbox_target_matches(value, target)) return;
     if (target->kind == LLG_MAILBOX_VALUE) {
         llg_native_value_copy(target->target.native, &value->value.native);
         return;
@@ -233,22 +239,20 @@ static void mailbox_deliver(const llg_mailbox_value_t* value,
     }
 }
 
-// Deliver a message the caller owns: strings and same-descriptor values
+// Deliver a matched message the caller owns: strings and same-descriptor values
 // move into the destination; everything else converts as mailbox_deliver.
-static void mailbox_deliver_owned(llg_mailbox_value_t* value,
+LLG_NOINLINE static void mailbox_deliver_owned(llg_mailbox_value_t* value,
                                   const llg_mailbox_target_t* target) {
-    if (mailbox_target_matches(value, target)) {
-        if (target->kind == LLG_MAILBOX_STRING && target->target.string) {
-            llg_string_move(target->target.string, value->value.string);
-            memset(&value->value.string, 0, sizeof(value->value.string));
-        } else if (target->kind == LLG_MAILBOX_VALUE &&
-                   target->target.native->desc == value->value.native.desc) {
-            llg_native_value_destroy(target->target.native);
-            *target->target.native = value->value.native; // ownership transfer
-            memset(&value->value.native, 0, sizeof(value->value.native));
-        } else {
-            mailbox_deliver(value, target);
-        }
+    if (target->kind == LLG_MAILBOX_STRING && target->target.string) {
+        llg_string_move(target->target.string, value->value.string);
+        memset(&value->value.string, 0, sizeof(value->value.string));
+    } else if (target->kind == LLG_MAILBOX_VALUE &&
+               target->target.native->desc == value->value.native.desc) {
+        llg_native_value_destroy(target->target.native);
+        *target->target.native = value->value.native; // ownership transfer
+        memset(&value->value.native, 0, sizeof(value->value.native));
+    } else {
+        mailbox_deliver(value, target);
     }
     mailbox_value_destroy(value);
 }
@@ -377,6 +381,29 @@ static void mailbox_type_error(void) {
     if (current) current->chain.exiting = LLG_EXIT_COMPLETE;
 }
 
+// The head message of `mailbox` does not match `target`. A string literal has a
+// string target too (decision AB-O4): the head becomes its text, followed by a
+// copy of the literal for a peek, so that consuming the head completes the
+// retrieval. Only a mismatch reaches the literal test.
+static int32_t mailbox_head_text(llg_mailbox_t* mailbox, const llg_mailbox_target_t* target,
+                                 int32_t peek) {
+    llg_mailbox_message_t* head = mailbox->head;
+    if (!head->value.string_literal || target->kind != LLG_MAILBOX_STRING || target->type_id)
+        return 0;
+    if (peek) {
+        llg_mailbox_message_t* literal = mailbox_message_take(mailbox, 1);
+        literal->link.next = head->link.next;
+        head->link.next = literal;
+        if (mailbox->tail == head) mailbox->tail = literal;
+        mailbox->length++;
+    }
+    llg_mailbox_value_t text =
+        llg_mailbox_value_string(llg_string_from_packed(head->value.value.packed));
+    mailbox_value_destroy(&head->value);
+    head->value = text;
+    return 1;
+}
+
 static void mailbox_remove_and_wake(llg_wait_t* wait) {
     if (!wait) return;
     mailbox_unlink_wait(wait);
@@ -400,8 +427,20 @@ void llg_mailbox_delivery_take(llg_proc_t* self, llg_mailbox_target_t target) {
     llg_mailbox_message_t* message = self ? self->mailbox_delivery : NULL;
     if (!message) return;
     self->mailbox_delivery = NULL;
-    mailbox_deliver_owned(&message->value, &target);
+    // The put matched the destination of the call; this one is located again.
+    if (mailbox_target_matches(&message->value, &target))
+        mailbox_deliver_owned(&message->value, &target);
+    else
+        mailbox_value_destroy(&message->value);
     free(message);
+}
+
+// The head message does not match the first waiting get: convert it, or stop
+// the run.
+LLG_COLD LLG_NOINLINE static void mailbox_service_mismatch(llg_mailbox_t* mailbox) {
+    llg_wait_mailbox_get_payload_t* payload = &mailbox->get_head->payload.rare->mailbox_get;
+    if (mailbox_head_text(mailbox, &payload->target, payload->peek)) payload->peek = 0;
+    else mailbox_type_error();
 }
 
 // Service only FIFO heads. Unlinking/granting cannot execute a resumed
@@ -414,8 +453,8 @@ static void mailbox_service_waiters(llg_mailbox_t* mailbox) {
                 &get->payload.rare->mailbox_get;
             llg_mailbox_message_t* message = mailbox->head;
             if (!mailbox_target_matches(&message->value, &payload->target)) {
-                mailbox_type_error();
-                return;
+                mailbox_service_mismatch(mailbox);
+                continue;
             }
             // Consume (or copy) before the wake. Delivery-time storage is
             // written now; otherwise the waiter writes its destination when
@@ -611,14 +650,23 @@ int32_t llg_mailbox_try_put_value(llg_mailbox_t* mailbox,
     return 1;
 }
 
+// The head message does not match `target`.
+LLG_COLD LLG_NOINLINE static int32_t mailbox_take_mismatch(llg_mailbox_t* mailbox,
+                                                           const llg_mailbox_target_t* target,
+                                                           int32_t peek) {
+    if (!mailbox_head_text(mailbox, target, peek)) return -1;
+    return llg_mailbox_try_get_value(mailbox, *target, 0);
+}
+
 // 0 is empty, -1 is a type mismatch, and 1 is a successful transfer.
 // A failed conversion never changes either the message or the destination.
 static int32_t mailbox_take_value(llg_mailbox_t* mailbox,
-                              llg_mailbox_target_t target, int32_t peek) {
+                                  const llg_mailbox_target_t* target, int32_t peek) {
     if (!mailbox || !mailbox->head) return 0;
-    if (!mailbox_target_matches(&mailbox->head->value, &target)) return -1;
+    if (!mailbox_target_matches(&mailbox->head->value, target))
+        return mailbox_take_mismatch(mailbox, target, peek);
     llg_mailbox_message_t* message = mailbox_message_take(mailbox, peek);
-    mailbox_deliver_owned(&message->value, &target);
+    mailbox_deliver_owned(&message->value, target);
     free(message);
     mailbox_service_waiters(mailbox);
     return 1;
@@ -626,7 +674,7 @@ static int32_t mailbox_take_value(llg_mailbox_t* mailbox,
 
 static llg_co_arm_t llg_mailbox_wait_get(llg_proc_t* self,
                                          llg_mailbox_t* mailbox,
-                                         llg_mailbox_target_t target,
+                                         const llg_mailbox_target_t* target,
                                          int32_t peek) {
     if (!self || !region_can_mutate("mailbox get wait"))
         return LLG_CO_ARM_READY;
@@ -638,7 +686,7 @@ static llg_co_arm_t llg_mailbox_wait_get(llg_proc_t* self,
     llg_wait_mailbox_get_payload_t* payload =
         &wait_rare_allocate(wait, "mailbox get wait payload")->mailbox_get;
     payload->mailbox = mailbox;
-    payload->target = target;
+    payload->target = *target;
     payload->peek = peek;
     register_wait();
     mailbox_append_wait(mailbox, wait, 0);
@@ -655,7 +703,7 @@ llg_co_arm_t llg_arm_mailbox_get_value(llg_proc_t* self,
         if (self) self->chain.exiting = LLG_EXIT_COMPLETE;
         return LLG_CO_ARM_EXIT;
     }
-    int32_t result = mailbox_take_value(mailbox, target, peek);
+    int32_t result = mailbox_take_value(mailbox, &target, peek);
     if (result < 0) {
         mailbox_type_error();
         if (self) self->chain.exiting = LLG_EXIT_COMPLETE;
@@ -664,12 +712,12 @@ llg_co_arm_t llg_arm_mailbox_get_value(llg_proc_t* self,
     if (result > 0)
         return self && self->chain.exiting ? LLG_CO_ARM_EXIT
                                            : LLG_CO_ARM_READY;
-    return llg_mailbox_wait_get(self, mailbox, target, peek);
+    return llg_mailbox_wait_get(self, mailbox, &target, peek);
 }
 
 int32_t llg_mailbox_try_get_value(llg_mailbox_t* mailbox,
                               llg_mailbox_target_t target, int32_t peek) {
     mailbox = mailbox_require(mailbox, peek ? "try_peek" : "try_get");
     if (!mailbox) return 0;
-    return mailbox_take_value(mailbox, target, peek);
+    return mailbox_take_value(mailbox, &target, peek);
 }

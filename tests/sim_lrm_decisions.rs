@@ -478,6 +478,14 @@ fn ab_o3_kill_woken_receiver() {
 }
 
 #[test]
+fn ab_o4_mailbox_string_literal() {
+    run_decision(
+        "AB-O4_mailbox_string_literal",
+        include_str!("fixtures/sim/lrm_decisions/AB-O4_mailbox_string_literal.out"),
+    );
+}
+
+#[test]
 fn ab_n1_suspended_queue_waiter() {
     run_decision(
         "AB-N1_suspended_queue_waiter",
@@ -5490,6 +5498,33 @@ fn s26_d23_integral_file_names() {
 }
 
 #[test]
+fn s26_d24_empty_plusarg_strings() {
+    sim_cli::run_case_with_runtime_args(
+        SUITE,
+        "S26-D24_empty_plusarg_strings",
+        include_str!("fixtures/sim/lrm_decisions/S26-D24_empty_plusarg_strings.out"),
+        "INFO: S26-D24_empty_plusarg_strings.sv:40:5: [SIM-001] (tb @ 0 ps) $finish called\n",
+        &["+abc=5", "+77"],
+    );
+}
+
+#[test]
+fn s26_d25_open_error_status() {
+    run_decision(
+        "S26-D25_open_error_status",
+        include_str!("fixtures/sim/lrm_decisions/S26-D25_open_error_status.out"),
+    );
+}
+
+#[test]
+fn s24_d7_integral_time_suffix() {
+    run_decision(
+        "S24-D7_integral_time_suffix",
+        include_str!("fixtures/sim/lrm_decisions/S24-D7_integral_time_suffix.out"),
+    );
+}
+
+#[test]
 fn s26_d18_start_after_finish_descends() {
     run_decision(
         "S26-D18_start_after_finish_descends",
@@ -6644,5 +6679,15 @@ fn tn_d2_typename_resolved() {
     run_decision(
         "TN-D2_typename_resolved",
         include_str!("fixtures/sim/lrm_decisions/TN-D2_typename_resolved.out"),
+    );
+}
+
+#[test]
+fn s46_d18_instance_coverage_without_per_instance() {
+    run_decision(
+        "S46-D18_instance_coverage_without_per_instance",
+        include_str!(
+            "fixtures/sim/lrm_decisions/S46-D18_instance_coverage_without_per_instance.out"
+        ),
     );
 }

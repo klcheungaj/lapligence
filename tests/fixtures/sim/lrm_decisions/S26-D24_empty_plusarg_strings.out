@@ -1,0 +1,19 @@
+empty 0 0
+zero 0 0 0
+x 0
+z 0
+space 0
+prefix 1 1 1
+longer 0
+byte 1
+leading 1 1
+leading x 1
+trailing 0 0
+inner 0 0
+inner x 0
+value empty 0 9
+value empty 0 9
+value text 0 zz
+value 1 5
+value leading 1 5
+value inner 0 9

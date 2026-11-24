@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 82u
+#define LLG_SLANG_ABI_VERSION 83u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -439,7 +439,10 @@ enum {
   /* An expression, range, type or name in the source reads the parameter's
    * declaration, in any instance and also where elaboration folds the read
    * away. An override of the parameter is no read. */
-  LLG_SLANG_PARAMETER_REFERENCED = 1u << 1
+  LLG_SLANG_PARAMETER_REFERENCED = 1u << 1,
+  /* A parameter without a declared type whose final value, override included,
+   * is a string literal or a concatenation of string literals (ABI v83). */
+  LLG_SLANG_PARAMETER_STRING_LITERAL = 1u << 2
 };
 
 typedef struct {

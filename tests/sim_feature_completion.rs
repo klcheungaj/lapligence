@@ -359,6 +359,11 @@ mod ki_initializer_order;
 #[path = "sim_feature_completion/ki_untaken_generate.rs"]
 mod ki_untaken_generate;
 
+#[path = "sim_feature_completion/ki_bits_of_strings.rs"]
+mod ki_bits_of_strings;
+#[path = "sim_feature_completion/ki_block_parameters.rs"]
+mod ki_block_parameters;
+
 #[path = "sim_feature_completion/ki_timescale_option.rs"]
 mod ki_timescale_option;
 

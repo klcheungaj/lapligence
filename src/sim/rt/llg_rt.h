@@ -1494,6 +1494,8 @@ typedef struct {
     int8_t is_signed;
     int8_t two_state;
     int8_t shortreal;
+    // A packed message that is a string literal: a string target matches too.
+    int8_t string_literal;
     union {
         sv4_t packed;
         double real;
@@ -1539,6 +1541,9 @@ llg_mailbox_target_t llg_mailbox_published_target(llg_mailbox_target_t target,
 llg_mailbox_target_t llg_mailbox_target_ref(llg_ref_t* target);
 llg_mailbox_value_t llg_mailbox_value_packed(sv4_t value, uint32_t width,
                                               int32_t is_signed, int32_t two_state);
+// A string literal of `width` bits: a two-state unsigned packed message that
+// a string variable receives too (decision AB-O4).
+llg_mailbox_value_t llg_mailbox_value_string_literal(sv4_t value, uint32_t width);
 llg_mailbox_value_t llg_mailbox_value_real(double value, int32_t shortreal);
 llg_mailbox_value_t llg_mailbox_value_string(llg_string_t value);
 llg_mailbox_value_t llg_mailbox_value_handle(void* value);
@@ -2302,11 +2307,13 @@ int32_t llg_assertion_register_property(
 // prefix matching after the leading '+'. Value queries accept the standard
 // %d/%o/%h/%x/%b/%e/%f/%g/%s conversions (including uppercase and leading-0
 // forms); an unmatched query returns zero and leaves its destination unchanged.
-int32_t llg_test_plusargs(const char* pattern);
-int32_t llg_value_plusargs_packed(const char* format, sv4_t* out, uint32_t width,
-                              int32_t is_signed, int32_t two_state);
-int32_t llg_value_plusargs_real(const char* format, double* out);
-int32_t llg_value_plusargs_string(const char* format, llg_string_t* out);
+// A pattern or format is a byte count: an integral one can hold NUL characters,
+// which match nothing.
+int32_t llg_test_plusargs(const char* pattern, size_t length);
+int32_t llg_value_plusargs_packed(const char* format, size_t format_len, sv4_t* out,
+                              uint32_t width, int32_t is_signed, int32_t two_state);
+int32_t llg_value_plusargs_real(const char* format, size_t format_len, double* out);
+int32_t llg_value_plusargs_string(const char* format, size_t format_len, llg_string_t* out);
 // Execute one `$system` command in the generated simulator process. This
 // host boundary is disabled unless LLG_ALLOW_SYSTEM is set to 1, true, yes,
 // or on. When disabled, the runtime diagnoses the attempted command, marks
@@ -2393,6 +2400,7 @@ void llg_file_rewind(uint32_t descriptor);
 int64_t llg_file_tell(uint32_t descriptor);
 int32_t llg_file_seek(uint32_t descriptor, sv4_t offset, sv4_t operation);
 int32_t llg_file_error(uint32_t descriptor, llg_string_t* message);
+int32_t llg_file_error_packed(uint32_t descriptor, llg_ref_t* target);
 int32_t llg_file_eof(uint32_t descriptor);
 void llg_file_display_typed(uint32_t descriptor, const char* fmt,
                             llg_fmt_arg_t* args, int32_t n, const char* scope,

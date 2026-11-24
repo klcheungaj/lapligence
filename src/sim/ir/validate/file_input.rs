@@ -158,11 +158,12 @@ impl Validator<'_> {
                 validate_descriptor(character, "character")?;
                 validate_descriptor(descriptor, "descriptor")?;
             }
-            IrFileInput::Gets { descriptor, target } => {
+            IrFileInput::Gets { descriptor, target }
+            | IrFileInput::Error { descriptor, target } => {
                 validate_descriptor(descriptor, "descriptor")?;
                 validate_target(target, format_args!("{path}.target"))?;
                 if matches!(target, IrFileInputTarget::Real { .. }) {
-                    return self.fail(path, "file line input target cannot be real storage");
+                    return self.fail(path, "file text destination cannot be real storage");
                 }
             }
             IrFileInput::ScanFile {

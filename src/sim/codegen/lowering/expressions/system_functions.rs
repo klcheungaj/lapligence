@@ -432,6 +432,44 @@ impl<'a> Codegen<'a> {
         })
     }
 
+    /// `$bits` shall not "enclose a function that returns a dynamically sized
+    /// data type" (SV 20.6.2): its value needs no evaluation of the argument.
+    /// `$typename` is a constant of the elaborated design.
+    fn check_bits_calls(&self, scope_path: &str, node: NodeId) -> Result<(), String> {
+        let dynamic = self.is_string_expr(scope_path, node)
+            || self.query_descriptor(node).is_some_and(|descriptor| {
+                matches!(
+                    descriptor.shape,
+                    TypeShape::String | TypeShape::Container { .. }
+                )
+            });
+        if !dynamic {
+            return Ok(());
+        }
+        let operands = match self.kind(node) {
+            NodeKind::SysCall { name } if name == "$typename" => return Ok(()),
+            NodeKind::SysCall { name }
+            | NodeKind::MethodCall { name, .. }
+            | NodeKind::FuncCall { name, .. } => {
+                return Err(self.locate_error(
+                    node,
+                    format!(
+                        "$bits cannot enclose `{name}`, which returns a dynamically sized type, in `{scope_path}` (SV 20.6.2)"
+                    ),
+                ))
+            }
+            NodeKind::Expr(ExprKind::Operation { operands, .. }) => operands.clone(),
+            NodeKind::Expr(ExprKind::Cast { operand, .. }) => vec![*operand],
+            NodeKind::Expr(ExprKind::Conditional {
+                if_true, if_false, ..
+            }) => vec![*if_true, *if_false],
+            _ => Vec::new(),
+        };
+        operands
+            .into_iter()
+            .try_for_each(|operand| self.check_bits_calls(scope_path, operand))
+    }
+
     /// Lower system-function expressions ($system/$clog2/$time/$stime/$bits/
     /// $signed/$unsigned); timescale scaling happens here.
     pub(in super::super) fn lower_sys_func_expr(
@@ -748,39 +786,47 @@ impl<'a> Codegen<'a> {
                 ))
             }
             "$ferror" => {
-                if args.len() != 1 && args.len() != 2 {
+                let [descriptor, message] = args.as_slice() else {
                     return Err(format!(
-                        "$ferror requires a descriptor and optional string output in `{scope_path}`"
+                        "$ferror requires a descriptor and a message variable in `{scope_path}`"
                     ));
-                }
-                let descriptor = self.lower_expr(scope_path, args[0])?;
+                };
+                let descriptor = self.lower_expr(scope_path, *descriptor)?;
                 if descriptor.is_real() {
                     return Err(format!(
                         "$ferror requires a packed file descriptor in `{scope_path}`"
                     ));
                 }
-                let message = args
-                    .get(1)
-                    .map(|argument| {
-                        let argument = match self.kind(*argument) {
-                            NodeKind::Expr(ExprKind::Operation {
-                                op: Operation::Assignment,
-                                operands,
-                                ..
-                            }) => operands.first().copied().ok_or_else(|| {
-                                format!("$ferror output argument is malformed in `{scope_path}`")
-                            })?,
-                            _ => *argument,
-                        };
-                        self.ensure_string_actual_writable(scope_path, argument)?;
-                        self.lower_string_actual_address(scope_path, argument)
-                    })
-                    .transpose()?;
-                Ok(IrExpr::new(
-                    IrExprKind::SysFunc(Box::new(IrSysFunc::FileError {
-                        descriptor: Box::new(descriptor),
+                let message = self.file_input_actual(*message)?;
+                let target = if self.is_string_expr(scope_path, message) {
+                    self.ensure_string_actual_writable(scope_path, message)?;
+                    IrFileInputTarget::String {
+                        address: self.lower_string_actual_address(scope_path, message)?,
+                    }
+                } else {
+                    // A descriptor that is not open leaves the destination
+                    // unchanged, so a staged store has no value to write back.
+                    match self.lower_scan_destination(
+                        scope_path,
                         message,
-                    })),
+                        &format!("{}_0", call.0),
+                        false,
+                    )? {
+                        (target, None) if !matches!(target, IrFileInputTarget::Real { .. }) => {
+                            target
+                        }
+                        _ => {
+                            return Err(format!(
+                                "$ferror writes its message to a packed or string variable, not to this expression, in `{scope_path}`"
+                            ))
+                        }
+                    }
+                };
+                Ok(IrExpr::new(
+                    IrExprKind::SysFunc(Box::new(IrSysFunc::FileInput(IrFileInput::Error {
+                        descriptor: Box::new(descriptor),
+                        target,
+                    }))),
                     32,
                     true,
                     None,
@@ -1254,6 +1300,7 @@ impl<'a> Codegen<'a> {
                     .first()
                     .copied()
                     .ok_or_else(|| format!("$bits without argument in `{scope_path}`"))?;
+                self.check_bits_calls(scope_path, a)?;
                 if let Some(descriptor) = self.query_descriptor(a).cloned() {
                     if let Some(width) = descriptor.fixed_size_bits() {
                         return Ok(Self::query_integer(i128::from(width)));
@@ -1290,11 +1337,19 @@ impl<'a> Codegen<'a> {
                             None,
                         ));
                     }
-                    if descriptor.shape == TypeShape::String
-                        && self.object_of(scope_path, a).is_some_and(|index| {
-                            self.model.objects[index].ty == IrObjectType::String
-                        })
-                    {
+                    if descriptor.shape == TypeShape::String && self.is_string_expr(scope_path, a) {
+                        let typename = matches!(
+                            self.kind(a),
+                            NodeKind::SysCall { name } if name == "$typename"
+                        );
+                        if !typename && !self.side_effect_free(a) {
+                            return Err(self.locate_error(
+                                a,
+                                format!(
+                                    "$bits of a string expression with a call or side effect is not supported in `{scope_path}`"
+                                ),
+                            ));
+                        }
                         let len = IrExpr::new(
                             IrExprKind::ObjectQuery(Box::new(IrObjectQuery::StringLen(
                                 self.lower_string(scope_path, a)?,
@@ -1367,7 +1422,7 @@ impl<'a> Codegen<'a> {
                         }
                         _ => {
                             return Err(format!(
-                                "VPI system function `{name}` has an unsupported result type in `{scope_path}`"
+                                "system function `{name}` has an unsupported result type in `{scope_path}`"
                             ));
                         }
                     },

@@ -71,47 +71,14 @@ impl<'a> Codegen<'a> {
         self.lower_expr(path, initializer).map(Some)
     }
 
-    /// Lower a parameter that no instance collection records: a localparam
-    /// of a subroutine, or any parameter of a class. Each class
-    /// specialization owns its own parameter nodes, so the frontend value of
-    /// the referenced node is that specialization's value (SV 8.24).
-    fn lower_scoped_parameter_value(
-        &self,
-        scope_path: &str,
-        parameter: NodeId,
-    ) -> Result<Option<IrExpr>, String> {
-        let NodeKind::Param { value, local, .. } = self.kind(parameter) else {
+    /// The value of a referenced parameter as a constant expression.
+    fn lower_parameter_value(&self, parameter: NodeId) -> Result<Option<IrExpr>, String> {
+        let Some(value) = self.parameter_value(parameter) else {
             return Ok(None);
         };
-        let mut parent = self.node(parameter).parent;
-        let mut admitted = false;
-        while let Some(scope) = parent {
-            match self.kind(scope) {
-                NodeKind::FuncTask { .. } => {
-                    admitted = *local;
-                    break;
-                }
-                NodeKind::ClassDef => {
-                    admitted = true;
-                    break;
-                }
-                NodeKind::ModuleInst { .. } | NodeKind::GenScope => break,
-                _ => parent = self.node(scope).parent,
-            }
-        }
-        if !admitted {
-            return Ok(None);
-        }
-        let Some(parent) = self.node(parameter).parent else {
-            return Ok(None);
-        };
-        let value = self.collected_parameter_value(parent, parameter, value.as_ref())?;
-        let Some(value) = value else {
-            return Ok(None);
-        };
-        match value {
+        match value.as_ref() {
             Val::Bits(value) => {
-                let constant = val_to_const(&value)?;
+                let constant = val_to_const(value)?;
                 Ok(Some(IrExpr::new(
                     IrExprKind::Const(constant.clone()),
                     constant.width,
@@ -119,11 +86,11 @@ impl<'a> Codegen<'a> {
                     None,
                 )))
             }
-            Val::Real(value) => Ok(Some(real_literal_expr(value))),
+            Val::Real(value) => Ok(Some(real_literal_expr(*value))),
             Val::Str(value) => match self.kind(parameter) {
                 NodeKind::Param { ty, .. } if ty.kind != "string" => match ty.width {
                     Some(width) => {
-                        let constant = string_to_const(&value)?;
+                        let constant = string_to_const(value)?;
                         let expr = IrExpr::new(
                             IrExprKind::Const(constant.clone()),
                             constant.width,
@@ -133,12 +100,12 @@ impl<'a> Codegen<'a> {
                         Ok(Some(IrExpr::convert_to(expr, width, ty.signed)))
                     }
                     None => Err(format!(
-                        "string parameter `{}` used as a value is not supported in `{scope_path}`",
+                        "string parameter `{}` used as a value is not supported",
                         self.node(parameter).name
                     )),
                 },
                 _ => Err(format!(
-                    "string parameter `{}` used as a value is not supported in `{scope_path}`",
+                    "string parameter `{}` used as a value is not supported",
                     self.node(parameter).name
                 )),
             },
@@ -639,7 +606,8 @@ impl<'a> Codegen<'a> {
         width: u32,
         signed: bool,
     ) -> Result<IrExpr, String> {
-        let Some(Val::Bits(value)) = self.param_vals.get(&parameter) else {
+        let value = self.parameter_value(parameter);
+        let Some(Val::Bits(value)) = value.as_deref() else {
             return Err(format!(
                 "packed parameter `{}` has no integral value for member read",
                 self.node(parameter).name
@@ -1842,8 +1810,12 @@ impl<'a> Codegen<'a> {
             scope = self.node(candidate).parent;
         };
         let real_parameter = |name: &str| {
-            let shadowed = lexical_scopes.iter().any(|scope| {
-                self.node(*scope).children.iter().any(|declaration| {
+            let declaration = lexical_scopes
+                .iter()
+                .chain([&scope])
+                .flat_map(|scope| &self.node(*scope).children)
+                .copied()
+                .find(|declaration| {
                     self.node(*declaration).name == name
                         && matches!(
                             self.kind(*declaration),
@@ -1852,20 +1824,11 @@ impl<'a> Codegen<'a> {
                                 | NodeKind::Param { .. }
                                 | NodeKind::FuncArg { .. }
                         )
-                })
-            });
-            if shadowed {
-                return None;
+                })?;
+            match self.parameter_value(declaration).as_deref() {
+                Some(Val::Real(value)) => Some(*value),
+                _ => None,
             }
-            self.node(scope).children.iter().find_map(|parameter| {
-                (self.node(*parameter).name == name)
-                    .then(|| self.param_vals.get(parameter))
-                    .flatten()
-                    .and_then(|value| match value {
-                        Val::Real(value) => Some(*value),
-                        Val::Bits(_) | Val::Str(_) => None,
-                    })
-            })
         };
         let reverse = |op| match op {
             IrBinOp::Lt => IrBinOp::Gt,
@@ -2037,46 +2000,10 @@ impl<'a> Codegen<'a> {
                     }
                 }
             }
-            if let Some(v) = self.param_vals.get(&t) {
-                return match v {
-                    Val::Bits(b) => {
-                        let c = val_to_const(b)?;
-                        Ok(IrExpr::new(
-                            IrExprKind::Const(c.clone()),
-                            c.width,
-                            c.signed,
-                            None,
-                        ))
-                    }
-                    Val::Real(value) => Ok(real_literal_expr(*value)),
-                    Val::Str(value) => match self.kind(t) {
-                        NodeKind::Param { ty, .. } if ty.kind != "string" => match ty.width {
-                            Some(width) => {
-                                let c = string_to_const(value)?;
-                                let expr = IrExpr::new(
-                                    IrExprKind::Const(c.clone()),
-                                    c.width,
-                                    c.signed,
-                                    None,
-                                );
-                                Ok(IrExpr::convert_to(expr, width, ty.signed))
-                            }
-                            None => Err(format!(
-                                "string parameter `{}` used as a value is not supported",
-                                self.node(t).name
-                            )),
-                        },
-                        _ => Err(format!(
-                            "string parameter `{}` used as a value is not supported",
-                            self.node(t).name
-                        )),
-                    },
-                };
-            }
-            if let Some(value) = self.lower_fixed_array_parameter_value(scope_path, t)? {
+            if let Some(value) = self.lower_parameter_value(t)? {
                 return Ok(value);
             }
-            if let Some(value) = self.lower_scoped_parameter_value(scope_path, t)? {
+            if let Some(value) = self.lower_fixed_array_parameter_value(scope_path, t)? {
                 return Ok(value);
             }
             if let NodeKind::EnumConst { value } = self.kind(t) {

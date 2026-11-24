@@ -109,7 +109,7 @@ LLG_PROBE_SIMPLE_PROCESS(writer, 1) {
         llg_queue_pop_front_into(&queue, result);
         llg_value_scope_end(value_scope);
     } else if (mode == 5) {
-        (void)llg_value_plusargs_string("text=%s", &output_string);
+        (void)llg_value_plusargs_string("text=%s", sizeof("text=%s") - 1u, &output_string);
     } else if (mode == 6) {
         llg_file_input_target_t input = { .kind = LLG_FILE_INPUT_STRING, .string = &output_string };
         (void)llg_string_scanf("hello", 5, "%s", &input, 1);

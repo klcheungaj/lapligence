@@ -2228,16 +2228,6 @@ fn collect_expression_effects(
                 collect_expression_effects(ir, offset, effects, visited_calls);
                 collect_expression_effects(ir, operation, effects, visited_calls);
             }
-            IrSysFunc::FileError {
-                descriptor,
-                message,
-            } => {
-                effects.push(ExecutionEffect::RuntimeService);
-                if message.is_some() {
-                    effects.push(ExecutionEffect::ImmediateStore);
-                }
-                collect_expression_effects(ir, descriptor, effects, visited_calls)
-            }
             IrSysFunc::FileInput(input) => {
                 effects.push(ExecutionEffect::RuntimeService);
                 match input {
@@ -2251,7 +2241,8 @@ fn collect_expression_effects(
                         collect_expression_effects(ir, character, effects, visited_calls);
                         collect_expression_effects(ir, descriptor, effects, visited_calls);
                     }
-                    crate::sim::ir::IrFileInput::Gets { descriptor, target } => {
+                    crate::sim::ir::IrFileInput::Gets { descriptor, target }
+                    | crate::sim::ir::IrFileInput::Error { descriptor, target } => {
                         effects.push(ExecutionEffect::ImmediateStore);
                         collect_expression_effects(ir, descriptor, effects, visited_calls);
                         match target {
@@ -2572,7 +2563,9 @@ fn collect_mailbox_value_effects(
     visited_calls: &mut CallVisits,
 ) {
     match value {
-        IrMailboxValue::Packed { value, .. } | IrMailboxValue::Real { value, .. } => {
+        IrMailboxValue::Packed { value, .. }
+        | IrMailboxValue::Real { value, .. }
+        | IrMailboxValue::StringLiteral(value) => {
             collect_expression_effects(ir, value, effects, visited_calls)
         }
         IrMailboxValue::String(value) => collect_string_effects(ir, value, effects, visited_calls),
