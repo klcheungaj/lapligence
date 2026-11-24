@@ -3947,7 +3947,12 @@ the gaps below remain in the open-buffer path only.
 - A package the buffer names only through text that the lexical scan cannot
   see (a `[compile] defines` macro or a header the buffer does not include
   expanding to `pkg::`, a package name built by token pasting) stays unknown
-  in the open-buffer stream; its items get no token there.
+  in the open-buffer stream; its items get no token and no definition there.
+- An edited header that other files include is compiled alone until the
+  analysis of the edit commits, so the names it takes from the scope that
+  includes it (the package of a class library's header) have neither a token
+  nor a definition meanwhile. Definitions read the committed analysis before
+  they shared the table of the tokens, at the positions of the unedited text.
 - A definition the buffer names only through text the lexical scan cannot
   see (a `[compile] defines` macro or a header the buffer does not include
   expanding to the name, a name built by token pasting) stays unknown in the

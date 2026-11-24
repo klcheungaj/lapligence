@@ -423,7 +423,9 @@ resolved by spelling.
   the open-buffer stream (the buffer compiled with the root's `[compile]
   defines`, the committed include context and the committed package and
   definition units of ST-29 and ST-75) agree token for token for the same
-  text.
+  text. An edited header that other files include is compiled alone, without
+  the scope that includes it, until the analysis of the edit commits
+  ([known issues](known_issues.md#open-buffer-token-parse-sees-other-files-through-packages-and-definitions-only-llg_ls)).
 - **ST-25** An open buffer that defines or uses text macros is fully
   tokenized. A macro defined only in another project file is unknown in both
   paths (each file is its own compilation unit).
