@@ -157,7 +157,7 @@ static void* llg_alloc_items(size_t count, size_t item_size) {
     if (count > SIZE_MAX / item_size)
         llg_container_fatal("container allocation size overflow");
     void* result = malloc(count * item_size);
-    if (!result) llg_container_fatal("container allocation failed");
+    if (!result) llg_msg_abort_allocation("container", count, item_size);
     return result;
 }
 
@@ -169,7 +169,7 @@ static void* llg_realloc_items(void* old, size_t count, size_t item_size) {
     if (count > SIZE_MAX / item_size)
         llg_container_fatal("container allocation size overflow");
     void* result = realloc(old, count * item_size);
-    if (!result) llg_container_fatal("container allocation failed");
+    if (!result) llg_msg_abort_allocation("container", count, item_size);
     return result;
 }
 

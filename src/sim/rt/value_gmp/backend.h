@@ -121,6 +121,9 @@ void llg_gmp_sv4_fail(const char* message);
  * kernel call: 1 when GMP limbs are a C type distinct from uint64_t (macOS),
  * else 0. Exact allocation probes add it to their expectations. */
 size_t llg_gmp_sv4_kernel_scratch_allocations(void);
+/* Called once when a model starts (llg_value_require_abi): gives the GMP
+ * kernels the runtime's allocation failure report. */
+void llg_gmp_sv4_kernel_start(void);
 g4_t llg_gmp_sv4_zero_wide(uint32_t width, int8_t sign);
 g4_t llg_gmp_sv4_fill_wide(uint8_t state, uint32_t width, int8_t sign);
 g4_t llg_gmp_sv4_clone_wide(const g4_t* source);

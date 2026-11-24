@@ -857,7 +857,8 @@ static llg_cr_status_t cr_plan_build(cr_solve_t* st, cr_plan_t* plan, const uint
         size_t k = plan->dists.len - 1u;
         plan->dist_layer = (uint32_t*)realloc(plan->dist_layer, plan->dists.len * sizeof(uint32_t));
         dist_base = (uint32_t*)realloc(dist_base, plan->dists.len * sizeof(uint32_t));
-        if (!plan->dist_layer || !dist_base) cr_fatal("out of memory");
+        if (!plan->dist_layer || !dist_base)
+            llg_msg_abort_allocation("constraint solver", plan->dists.len, sizeof(uint32_t));
         plan->dist_layer[k] = LLG_CR_NONE;
         dist_base[k] = LLG_CR_NONE;
         plan->selectors += items + 1u;

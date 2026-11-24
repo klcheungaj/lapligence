@@ -1092,8 +1092,7 @@ static void* sv4_scratch_alloc(size_t count) {
     if (count == 0) count = 1;
     void* allocation = calloc(count, sizeof(uint64_t));
     if (allocation) return allocation;
-    llg_msg(LLG_MSG_INTERNAL, NULL, "value-operation allocation failed");
-    abort();
+    llg_msg_abort_allocation("packed value", count, sizeof(uint64_t));
 }
 
 // Divide known unsigned equal-width vectors in base 2^32. Quotient estimates
@@ -1144,10 +1143,7 @@ static void sv4_unsigned_divmod(const sv4_t* dividend, const sv4_t* divisor,
         abort();
     }
     uint32_t* scratch = (uint32_t*)calloc(count, sizeof(uint32_t));
-    if (!scratch) {
-        llg_msg(LLG_MSG_INTERNAL, NULL, "division scratch allocation failed");
-        abort();
-    }
+    if (!scratch) llg_msg_abort_allocation("packed value", count, sizeof(uint32_t));
     uint32_t* u = scratch;
     uint32_t* v = u + n + 1;
     uint32_t shift = 0;
@@ -1917,11 +1913,7 @@ void sv4_to_dec_string(sv4_t v, char* buf, size_t cap) {
     if (nl > 0) tmp[nl - 1] &= sv4_limb_mask(v.width, nl - 1);
     size_t digit_capacity = ((size_t)v.width * 30103u) / 100000u + 2u;
     char* digits = malloc(digit_capacity);
-    if (!digits) {
-        free(tmp);
-        llg_msg(LLG_MSG_INTERNAL, NULL, "value-format allocation failed");
-        abort();
-    }
+    if (!digits) llg_msg_abort_allocation("packed value", 1, digit_capacity);
     size_t n = 0;
     for (;;) {
         int32_t nonzero = 0;

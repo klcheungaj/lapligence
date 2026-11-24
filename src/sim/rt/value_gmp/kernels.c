@@ -25,7 +25,7 @@ static mp_limb_t* g4_limb_scratch(size_t limbs) {
         llg_gmp_sv4_fail("allocation size overflow");
     mp_limb_t* p = (mp_limb_t*)calloc(limbs, sizeof(mp_limb_t));
     if (!p)
-        llg_gmp_sv4_fail("allocation failed");
+        llg_msg_abort_allocation("packed value", limbs, sizeof(mp_limb_t));
     return p;
 }
 static void g4_mpn_mul(mp_limb_t* out, const mp_limb_t* a, const mp_limb_t* b, size_t n) {
@@ -152,10 +152,7 @@ void llg_gmp_sv4_kernel_div(uint64_t* result, const uint64_t* dividend, const ui
         abort();
     }
     uint32_t* scratch = (uint32_t*)calloc(count, sizeof(uint32_t));
-    if (!scratch) {
-        llg_msg(LLG_MSG_INTERNAL, NULL, "compact value: division scratch allocation failed");
-        abort();
-    }
+    if (!scratch) llg_msg_abort_allocation("packed value", count, sizeof(uint32_t));
     uint32_t* u = scratch;
     uint32_t* v = u + n + 1;
     uint32_t shift = 0;
@@ -226,6 +223,43 @@ void llg_gmp_sv4_kernel_div(uint64_t* result, const uint64_t* dividend, const ui
 }
 
 #endif
+
+#if LLG_SV4_GMP_KERNELS
+/* GMP takes the scratch of a multiplication, division or conversion that is
+ * too large for its stack limit from these three pointers (its memory.c). Its
+ * own functions answer a failed request with a line of their own and abort();
+ * a model reports it like every other allocation failure. Operands of some
+ * 100,000 bits and more reach them. */
+extern void* (*__gmp_allocate_func)(size_t);
+extern void* (*__gmp_reallocate_func)(void*, size_t, size_t);
+extern void (*__gmp_free_func)(void*, size_t);
+
+LLG_OUTLYING static void* g4_gmp_allocate(size_t bytes) {
+    void* memory = malloc(bytes);
+    if (!memory) llg_msg_abort_allocation("packed value arithmetic", 1, bytes);
+    return memory;
+}
+
+LLG_OUTLYING static void* g4_gmp_reallocate(void* old, size_t old_bytes, size_t bytes) {
+    (void)old_bytes;
+    void* memory = realloc(old, bytes);
+    if (!memory) llg_msg_abort_allocation("packed value arithmetic", 1, bytes);
+    return memory;
+}
+
+LLG_OUTLYING static void g4_gmp_free(void* memory, size_t bytes) {
+    (void)bytes;
+    free(memory);
+}
+#endif
+
+LLG_OUTLYING void llg_gmp_sv4_kernel_start(void) {
+#if LLG_SV4_GMP_KERNELS
+    __gmp_allocate_func = g4_gmp_allocate;
+    __gmp_reallocate_func = g4_gmp_reallocate;
+    __gmp_free_func = g4_gmp_free;
+#endif
+}
 
 size_t llg_gmp_sv4_kernel_scratch_allocations(void) {
 #if LLG_SV4_GMP_KERNELS

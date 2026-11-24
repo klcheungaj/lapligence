@@ -195,7 +195,8 @@ static sv4_t* llg_class_handle_dependency(void* handle) {
     if (!object->handle_dependency) {
         sv4_t empty = SV4_EMPTY;
         object->handle_dependency = (sv4_t*)malloc(sizeof *object->handle_dependency);
-        if (!object->handle_dependency) abort();
+        if (!object->handle_dependency)
+            llg_msg_abort_allocation("class handle dependency", 1, sizeof *object->handle_dependency);
         *object->handle_dependency = empty;
     }
     return object->handle_dependency;
@@ -210,7 +211,8 @@ static sv4_t* llg_class_string_dependency(void* handle, uint32_t expected, size_
     if (!value->dependency) {
         sv4_t empty = SV4_EMPTY;
         value->dependency = (sv4_t*)malloc(sizeof *value->dependency);
-        if (!value->dependency) abort();
+        if (!value->dependency)
+            llg_msg_abort_allocation("class string dependency", 1, sizeof *value->dependency);
         *value->dependency = empty;
         value->notify = llg_dependency_changed;
     }
@@ -296,7 +298,7 @@ static sv4_t* llg_class_record_dependency(void* handle, uint32_t expected, size_
         };
         out.push_str(&format!("static void* llg_class_{allocate}_{index}(void) {{\n    llg_class_object_t* object = (llg_class_object_t*)llg_gc_alloc(sizeof(*object), {gc_type});\n    object->class_id = {index};\n    object->count = {};\n", class.fields.len()));
         if !class.fields.is_empty() {
-            out.push_str("    object->fields = (llg_class_field_t*)calloc(object->count, sizeof(*object->fields));\n    if (!object->fields) { free(object); abort(); }\n");
+            out.push_str("    object->fields = (llg_class_field_t*)calloc(object->count, sizeof(*object->fields));\n    if (!object->fields) llg_msg_abort_allocation(\"class properties\", object->count, sizeof(*object->fields));\n");
         }
 
         // The collected heap owns the object from allocation; no collection
@@ -317,7 +319,7 @@ static sv4_t* llg_class_record_dependency(void* handle, uint32_t expected, size_
                 match super::super::containers::activation_storage(container, &target) {
                     Ok((ty, init, drop)) => {
                         out.push_str(&format!(
-                            "    {slot}.kind = 4; {slot}.drop = {drop}; {slot}.value.handle = malloc(sizeof({ty}));\n    if (!{slot}.value.handle) abort();\n{init}"
+                            "    {slot}.kind = 4; {slot}.drop = {drop}; {slot}.value.handle = malloc(sizeof({ty}));\n    if (!{slot}.value.handle) llg_msg_abort_allocation(\"class property\", 1, sizeof({ty}));\n{init}"
                         ));
                         // A fixed-array property (SIM-011) starts with its
                         // declared default elements.
@@ -351,7 +353,7 @@ static sv4_t* llg_class_record_dependency(void* handle, uint32_t expected, size_
                 // registered native root: the object traces it (SIM-018).
                 let slot = format!("object->fields[{field_index}]");
                 out.push_str(&format!(
-                    "    {slot}.kind = 4; {slot}.drop = llg_native_value_destroy; {slot}.value.handle = calloc(1, sizeof(llg_native_root_t));\n    if (!{slot}.value.handle) abort();\n    llg_native_value_init(&((llg_native_root_t*){slot}.value.handle)->value, &{});\n",
+                    "    {slot}.kind = 4; {slot}.drop = llg_native_value_destroy; {slot}.value.handle = calloc(1, sizeof(llg_native_root_t));\n    if (!{slot}.value.handle) llg_msg_abort_allocation(\"class property\", 1, sizeof(llg_native_root_t));\n    llg_native_value_init(&((llg_native_root_t*){slot}.value.handle)->value, &{});\n",
                     super::super::owned::native_values::native_type_descriptor(value.ty)
                 ));
                 continue;

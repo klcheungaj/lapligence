@@ -169,7 +169,7 @@ static void llg_value_default(llg_value_t* value,
                               const llg_value_desc_t* desc) {
     llg_value_drop(value);
     if (!llg_value_try_default(value, desc))
-        llg_container_fatal("container allocation failed");
+        llg_msg_abort_allocation("container", 0, 0);
 }
 
 static int32_t llg_value_desc_compatible(const llg_value_desc_t* dst,
@@ -354,7 +354,7 @@ static void llg_value_copy(llg_value_t* target,
                            const llg_value_desc_t* target_desc,
                            const llg_value_t* source) {
     if (!llg_value_try_copy(target, target_desc, source))
-        llg_container_fatal("container allocation failed");
+        llg_msg_abort_allocation("container", 0, 0);
 }
 
 static int32_t llg_value_equal(const llg_value_t* a, const llg_value_t* b) {
@@ -667,7 +667,7 @@ void llg_native_value_init(llg_value_t* value, const llg_value_desc_t* desc) {
     if (!value || !desc)
         llg_container_fatal("missing native value descriptor");
     if (!llg_value_try_default(value, desc))
-        llg_container_fatal("container allocation failed");
+        llg_msg_abort_allocation("container", 0, 0);
 }
 
 void llg_native_value_destroy(void* value) {
@@ -683,14 +683,14 @@ int32_t llg_native_value_try_copy(llg_value_t* dst, const llg_value_t* src) {
 
 void llg_native_value_copy(llg_value_t* dst, const llg_value_t* src) {
     if (!llg_native_value_try_copy(dst, src))
-        llg_container_fatal("container allocation failed");
+        llg_msg_abort_allocation("container", 0, 0);
 }
 
 void llg_native_value_clone(llg_value_t* dst, const llg_value_t* src) {
     if (!dst || !src || !src->desc)
         llg_container_fatal("missing native value descriptor");
     if (!llg_value_try_construct_copy(dst, src->desc, src))
-        llg_container_fatal("container allocation failed");
+        llg_msg_abort_allocation("container", 0, 0);
 }
 
 static llg_native_root_t* llg_native_roots_head;

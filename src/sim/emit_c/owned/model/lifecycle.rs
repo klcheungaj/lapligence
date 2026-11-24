@@ -392,7 +392,7 @@ pub(in crate::sim::emit_c) fn main(
     out.push_str(&crate::sim::emit_c::owned::coverage::startup(model));
     if !model.classes.is_empty() {
         // Collector roots precede storage initializers, which may allocate.
-        out.push_str("    if (!llg_model_gc_register()) {\n        llg_msg(LLG_MSG_ALLOCATION, NULL, \"allocation failed registering collector roots\");\n        goto start_failed;\n    }\n");
+        out.push_str("    if (!llg_model_gc_register()) llg_msg_abort_allocation(\"collector roots\", 0, 0);\n");
     }
     // Static processes, and objects that static initializers create, seed
     // from their instance's initialization stream only where some stream is

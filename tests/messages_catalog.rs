@@ -49,7 +49,8 @@ fn every_legacy_family_has_one_catalog_entry() {
 }
 
 /// Every runtime id is used by the runtime or the emitter, so the catalog
-/// lists no message the model cannot print.
+/// lists no message the model cannot print. The reporter (`llg_msg.h`) names
+/// one id itself: the allocation failure every unit reports through it.
 #[test]
 fn every_runtime_id_is_used() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/sim");
@@ -63,8 +64,7 @@ fn every_runtime_id_is_used() {
             } else if matches!(
                 path.extension().and_then(|e| e.to_str()),
                 Some("c" | "h" | "rs")
-            ) && path.file_name().and_then(|n| n.to_str()) != Some("llg_msg.h")
-            {
+            ) {
                 text.push_str(&std::fs::read_to_string(&path).unwrap_or_default());
             }
         }

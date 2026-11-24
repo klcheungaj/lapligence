@@ -27,10 +27,7 @@ static uint64_t* randomize_scratch(uint32_t width) {
     size_t need = width ? (width + 63u) / 64u : 1u;
     if (need > capacity) {
         uint64_t* grown = (uint64_t*)realloc(buffer, need * sizeof(uint64_t));
-        if (!grown) {
-            llg_msg(LLG_MSG_INTERNAL, NULL, "randomize: out of memory");
-            abort();
-        }
+        if (!grown) llg_fatal_allocation("randomize scratch", need, sizeof(uint64_t));
         buffer = grown;
         capacity = need;
     }

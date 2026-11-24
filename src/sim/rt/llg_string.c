@@ -15,7 +15,7 @@ static llg_string_t string_alloc(size_t length) {
     llg_string_t value = {NULL, length, NULL, NULL};
     if (length) {
         value.data = malloc(length + 1);
-        if (!value.data) string_fail("out of memory");
+        if (!value.data) llg_msg_abort_allocation("string", 1, length + 1);
         value.data[length] = 0;
     }
     return value;

@@ -234,10 +234,7 @@ static void llg_dpi_walk_from_c(const llg_dpi_type_t* type, const uint8_t* in,
 
 static svLogicVecVal* llg_dpi_scratch(size_t count) {
     svLogicVecVal* chunks = (svLogicVecVal*)calloc(count ? count : 1u, sizeof(svLogicVecVal));
-    if (!chunks) {
-        llg_msg(LLG_MSG_INTERNAL, NULL, "out of memory converting a DPI-C argument");
-        abort();
-    }
+    if (!chunks) llg_msg_abort_allocation("DPI-C argument", count, sizeof(svLogicVecVal));
     return chunks;
 }
 
@@ -363,10 +360,8 @@ static void llg_dpi_string_read(llg_dpi_strings_t* strings, const uint8_t* in,
     if (strings->count == strings->capacity) {
         size_t capacity = strings->capacity ? strings->capacity * 2u : 8u;
         void* grown = realloc(strings->stores, capacity * sizeof(*strings->stores));
-        if (!grown) {
-            llg_msg(LLG_MSG_INTERNAL, NULL, "out of memory converting a DPI-C argument");
-            abort();
-        }
+        if (!grown)
+            llg_msg_abort_allocation("DPI-C argument", capacity, sizeof(*strings->stores));
         strings->stores = (struct llg_dpi_string_store*)grown;
         strings->capacity = capacity;
     }

@@ -176,7 +176,7 @@ llg_dpi_context_t* llg_dpi_context_begin(llg_co_chain_t* chain, llg_dpi_body_fn 
         g_contexts.idle = context->next;
     } else {
         context = (llg_dpi_context_t*)calloc(1, sizeof(*context));
-        if (!context) return NULL;
+        if (!context) llg_msg_abort_allocation("DPI-C call context", 1, sizeof(*context));
         llg_cond_init(&context->party.wake);
         char error[128];
         if (llg_thread_start_sized(&context->thread, contexts_thread, context,

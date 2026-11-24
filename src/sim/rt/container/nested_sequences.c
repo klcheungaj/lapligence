@@ -68,7 +68,7 @@ static uint64_t llg_nested_seq_limit(const llg_value_desc_t* desc) {
 
 llg_nested_seq_t* llg_nested_seq_new(const llg_value_desc_t* desc) {
     llg_nested_seq_t* seq = llg_value_try_items(1, sizeof(*seq));
-    if (!seq) llg_container_fatal("container allocation failed");
+    if (!seq) llg_msg_abort_allocation("container", 0, 0);
     memset(seq, 0, sizeof(*seq));
     seq->pins = 1;
     seq->desc = desc;

@@ -54,10 +54,8 @@ static uint64_t* sdf_path_limits(llg_module_path_t* path) {
         uint64_t** tables = realloc(sdf_limit_tables.tables, capacity * sizeof(*tables));
         llg_module_path_t** paths =
             tables ? realloc(sdf_limit_tables.paths, capacity * sizeof(*paths)) : NULL;
-        if (!tables || !paths) {
-            llg_msg(LLG_MSG_INTERNAL, NULL, "out of memory for SDF pulse limits");
-            abort();
-        }
+        if (!tables || !paths)
+            llg_fatal_allocation("SDF pulse limits", capacity, sizeof(*tables));
         sdf_limit_tables.tables = tables;
         sdf_limit_tables.paths = paths;
         sdf_limit_tables.capacity = capacity;
