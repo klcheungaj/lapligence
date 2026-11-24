@@ -432,6 +432,44 @@ impl<'a> Codegen<'a> {
         })
     }
 
+    /// `$bits` shall not "enclose a function that returns a dynamically sized
+    /// data type" (SV 20.6.2): its value needs no evaluation of the argument.
+    /// `$typename` is a constant of the elaborated design.
+    fn check_bits_calls(&self, scope_path: &str, node: NodeId) -> Result<(), String> {
+        let dynamic = self.is_string_expr(scope_path, node)
+            || self.query_descriptor(node).is_some_and(|descriptor| {
+                matches!(
+                    descriptor.shape,
+                    TypeShape::String | TypeShape::Container { .. }
+                )
+            });
+        if !dynamic {
+            return Ok(());
+        }
+        let operands = match self.kind(node) {
+            NodeKind::SysCall { name } if name == "$typename" => return Ok(()),
+            NodeKind::SysCall { name }
+            | NodeKind::MethodCall { name, .. }
+            | NodeKind::FuncCall { name, .. } => {
+                return Err(self.locate_error(
+                    node,
+                    format!(
+                        "$bits cannot enclose `{name}`, which returns a dynamically sized type, in `{scope_path}` (SV 20.6.2)"
+                    ),
+                ))
+            }
+            NodeKind::Expr(ExprKind::Operation { operands, .. }) => operands.clone(),
+            NodeKind::Expr(ExprKind::Cast { operand, .. }) => vec![*operand],
+            NodeKind::Expr(ExprKind::Conditional {
+                if_true, if_false, ..
+            }) => vec![*if_true, *if_false],
+            _ => Vec::new(),
+        };
+        operands
+            .into_iter()
+            .try_for_each(|operand| self.check_bits_calls(scope_path, operand))
+    }
+
     /// Lower system-function expressions ($system/$clog2/$time/$stime/$bits/
     /// $signed/$unsigned); timescale scaling happens here.
     pub(in super::super) fn lower_sys_func_expr(
@@ -1262,6 +1300,7 @@ impl<'a> Codegen<'a> {
                     .first()
                     .copied()
                     .ok_or_else(|| format!("$bits without argument in `{scope_path}`"))?;
+                self.check_bits_calls(scope_path, a)?;
                 if let Some(descriptor) = self.query_descriptor(a).cloned() {
                     if let Some(width) = descriptor.fixed_size_bits() {
                         return Ok(Self::query_integer(i128::from(width)));
@@ -1298,11 +1337,19 @@ impl<'a> Codegen<'a> {
                             None,
                         ));
                     }
-                    if descriptor.shape == TypeShape::String
-                        && self.object_of(scope_path, a).is_some_and(|index| {
-                            self.model.objects[index].ty == IrObjectType::String
-                        })
-                    {
+                    if descriptor.shape == TypeShape::String && self.is_string_expr(scope_path, a) {
+                        let typename = matches!(
+                            self.kind(a),
+                            NodeKind::SysCall { name } if name == "$typename"
+                        );
+                        if !typename && !self.side_effect_free(a) {
+                            return Err(self.locate_error(
+                                a,
+                                format!(
+                                    "$bits of a string expression with a call or side effect is not supported in `{scope_path}`"
+                                ),
+                            ));
+                        }
                         let len = IrExpr::new(
                             IrExprKind::ObjectQuery(Box::new(IrObjectQuery::StringLen(
                                 self.lower_string(scope_path, a)?,
@@ -1375,7 +1422,7 @@ impl<'a> Codegen<'a> {
                         }
                         _ => {
                             return Err(format!(
-                                "VPI system function `{name}` has an unsupported result type in `{scope_path}`"
+                                "system function `{name}` has an unsupported result type in `{scope_path}`"
                             ));
                         }
                     },
