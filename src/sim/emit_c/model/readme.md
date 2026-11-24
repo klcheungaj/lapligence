@@ -58,7 +58,10 @@ object rows on first VPI use and the code rows on first access to them
 ([I/O](../../rt/io.md)). Struct initializers for these rows
 were most of a large catalog model's compile time; a string literal of the
 same data parses in a fraction of it. Only catalog models register the blob
-(`llg_vpi_model_packed`), so models without the catalog are unchanged.
+(`llg_vpi_model_packed`), so models without the catalog are unchanged. A
+catalog model also lists its continuously driven variables with their
+release markers (`llg_vpi_release_marks`, registered by
+`llg_vpi_model_release_marks`) for releases through `vpi_put_value`.
 Type, dynamic, UDP and call-site tables stay C initializers (small, or read
 at start-up).
 

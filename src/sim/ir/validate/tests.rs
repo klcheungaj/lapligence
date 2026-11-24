@@ -2593,6 +2593,40 @@ fn dependency_names_resolve_like_a_signal_scan() {
 }
 
 #[test]
+fn a_release_mark_names_a_variable_and_a_two_state_bit() {
+    use crate::sim::ir::{IrType, IrVpiReleaseMark, IrVpiReleaseTarget};
+    let mut model = valid_model();
+    let mut marker = model.signals[0].clone();
+    marker.c_name = "llg_release_mark_0".to_string();
+    marker.ty = IrType::Packed {
+        width: 1,
+        signed: false,
+        two_state: true,
+    };
+    model.signals.push(marker);
+    let marker = model.signals.len() - 1;
+    model.vpi_release_marks.push(IrVpiReleaseMark {
+        target: IrVpiReleaseTarget::Signal(0),
+        marker,
+    });
+    if let Err(error) = model.validate() {
+        panic!("{}: {}", error.path(), error.detail());
+    }
+    model.vpi_release_marks[0].target = IrVpiReleaseTarget::Signal(marker + 1);
+    assert!(model.validate().is_err(), "the variable must exist");
+    model.vpi_release_marks[0].target = IrVpiReleaseTarget::Array(model.arrays.len());
+    assert!(model.validate().is_err(), "the array must exist");
+    model.vpi_release_marks[0].target = IrVpiReleaseTarget::Signal(0);
+    model.vpi_release_marks[0].marker = marker + 1;
+    assert!(model.validate().is_err(), "the marker must exist");
+    if let IrType::Packed { two_state, .. } = &mut model.signals[marker].ty {
+        *two_state = false;
+    }
+    model.vpi_release_marks[0].marker = marker;
+    assert!(model.validate().is_err(), "the marker is a two-state bit");
+}
+
+#[test]
 fn a_member_cell_array_names_one_signal_per_cell_of_its_ranges() {
     let mut model = valid_model();
     let mut cell = model.signals[0].clone();

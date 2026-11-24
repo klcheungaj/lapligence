@@ -1058,7 +1058,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   only the named bits). Release recomputes a net from its current drivers
   immediately; a variable keeps the forced value until its next procedural
   write, except that a variable driven by a continuous assignment or an output
-  port is re-established by a scheduled reevaluation (SV §10.6.2). A force
+  port is re-established by a scheduled reevaluation (SV §10.6.2; a read in
+  the releasing process before it suspends still sees the forced value,
+  CS-D3), also when a VPI application releases it (CS-D4). A force
   outlives the process that applied it (kill, `disable`, task return), and the
   model closes cleanly with forces active
   ([sim_023](../tests/fixtures/sim/feature_completion/sim_023/readme.md),

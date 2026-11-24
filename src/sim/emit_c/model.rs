@@ -34,7 +34,10 @@ pub(super) mod storage;
 pub(in crate::sim::emit_c) use storage::path_source_storage;
 use storage::{render_signal_decls, render_static_local_decls};
 pub(in crate::sim::emit_c) mod vpi;
-use vpi::{render_vpi_builtin_calls, render_vpi_compile_calls, render_vpi_metadata};
+use vpi::{
+    render_vpi_builtin_calls, render_vpi_compile_calls, render_vpi_metadata,
+    render_vpi_release_marks,
+};
 mod functions;
 pub(super) use functions::handle_marker_param;
 pub(super) use functions::native_companion_param;
@@ -1631,6 +1634,7 @@ fn render_model(
     );
     render_vpi_compile_calls(model, &mut out);
     render_vpi_builtin_calls(model, &mut out);
+    render_vpi_release_marks(model, &mut out);
     // After the signal storage the FSM parts point at.
     super::owned::coverage::fsm_tables(model, &mut out);
     super::owned::coverage::toggle_tables(model, &mut out);

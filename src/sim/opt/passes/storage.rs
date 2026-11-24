@@ -175,6 +175,7 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         vpi_call_rows: _,
         vpi_compile_calls: _,
         vpi_builtin_calls: _,
+        vpi_release_marks,
         vpi_catalog: _,
         vpi_delays_writable: _,
         vpi_delay_select: _,
@@ -196,6 +197,15 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         access
             .receiver
             .expressions(&mut |child| collect_expr_reads(child, model, &mut rw));
+    }
+    // A release through VPI finds a variable and toggles its marker by
+    // address.
+    for mark in vpi_release_marks {
+        if let IrVpiReleaseTarget::Signal(signal) = mark.target {
+            rw.read(signal);
+        }
+        rw.read(mark.marker);
+        rw.write(mark.marker);
     }
     // Startup registers each clocking history source by address.
     for name in clocking_history {

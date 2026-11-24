@@ -348,6 +348,32 @@ impl Validator<'_> {
             }
         }
 
+        for (idx, mark) in self.model.vpi_release_marks.iter().enumerate() {
+            let path = format!("vpi_release_marks[{idx}]");
+            let target_in_bounds = match mark.target {
+                crate::sim::ir::IrVpiReleaseTarget::Signal(signal) => {
+                    signal < self.model.signals.len()
+                }
+                crate::sim::ir::IrVpiReleaseTarget::Array(array) => array < self.model.arrays.len(),
+            };
+            if !target_in_bounds {
+                return self.fail(path, "VPI release mark names no variable");
+            }
+            let one_bit_marker = self.model.signals.get(mark.marker).is_some_and(|marker| {
+                matches!(
+                    marker.ty,
+                    crate::sim::ir::IrType::Packed {
+                        width: 1,
+                        two_state: true,
+                        ..
+                    }
+                )
+            });
+            if !one_bit_marker {
+                return self.fail(path, "VPI release marker must be a two-state bit");
+            }
+        }
+
         let mut storage_names = HashSet::new();
         for (idx, container) in self.model.containers.iter().enumerate() {
             if !storage_names.insert(container.c_name.as_str()) {

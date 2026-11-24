@@ -6524,3 +6524,20 @@ fn cs_d2_ambiguous_known_strength() {
         include_str!("fixtures/sim/lrm_decisions/CS-D2_ambiguous_known_strength.out"),
     );
 }
+
+#[test]
+fn cs_d3_release_schedules_reevaluation() {
+    run_decision(
+        "CS-D3_release_schedules_reevaluation",
+        include_str!("fixtures/sim/lrm_decisions/CS-D3_release_schedules_reevaluation.out"),
+    );
+}
+
+#[test]
+fn cs_d4_vpi_release_reestablishes_assignment() {
+    run_vpi_decision(
+        "CS-D4_vpi_release_reestablishes_assignment",
+        &["task $d4(int enable)"],
+        include_str!("fixtures/sim/lrm_decisions/CS-D4_vpi_release_reestablishes_assignment.out"),
+    );
+}

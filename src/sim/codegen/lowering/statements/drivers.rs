@@ -2,7 +2,7 @@
 
 use super::super::collection::EventEvaluation;
 use super::*;
-use crate::sim::ir::IrRuntimeQuery;
+use crate::sim::ir::{IrRuntimeQuery, IrVpiReleaseMark, IrVpiReleaseTarget};
 use crate::sim::legacy_unsupported::LegacyFamily;
 
 impl EmitCtx<'_, '_> {
@@ -451,6 +451,13 @@ impl EmitCtx<'_, '_> {
     }
 }
 
+/// Whether signal `index` (after alias resolution) is a variable: a
+/// released variable keeps its value, a released net resolves its drivers.
+fn is_variable(model: &IrModel, index: usize) -> bool {
+    let signal = model.signal(index);
+    signal.net_driver.is_none() && signal.net_alias.is_empty()
+}
+
 /// Persistent variables (not nets) released by `lhs`, in target order.
 fn released_variables(model: &IrModel, lhs: &IrLhs, out: &mut Vec<usize>) {
     match lhs {
@@ -458,8 +465,7 @@ fn released_variables(model: &IrModel, lhs: &IrLhs, out: &mut Vec<usize>) {
         // release; with a run-time index every leaf may be the one released.
         IrLhs::Whole(index) | IrLhs::Part(index, ..) => {
             let index = model.signal(*index).alias.unwrap_or(*index);
-            let signal = model.signal(index);
-            if signal.net_driver.is_none() && signal.net_alias.is_empty() && !out.contains(&index) {
+            if is_variable(model, index) && !out.contains(&index) {
                 out.push(index);
             }
         }
@@ -544,14 +550,19 @@ impl Codegen<'_> {
     /// variable's release marker (IEEE 1800-2009 10.6.2). Continuous
     /// assignments and port links are the synthetic evaluate-then-wait
     /// processes; procedural writers are not re-run, so a variable they write
-    /// keeps its forced value until the next procedural assignment. Runs once
-    /// after every process and subroutine body is lowered; designs without a
-    /// released variable are unchanged.
-    pub(in super::super) fn attach_release_reevaluation(&mut self) {
-        if self.release_markers.is_empty() && self.release_array_markers.is_empty() {
+    /// keeps its forced value until the next procedural assignment. A VPI
+    /// application may release any variable (38.34), so with `vpi_release`
+    /// every continuously driven variable has a marker, listed in
+    /// `IrModel::vpi_release_marks` for the runtime. Runs once after every
+    /// process and subroutine body is lowered; designs without a released
+    /// variable and without a VPI application are unchanged.
+    pub(in super::super) fn attach_release_reevaluation(&mut self, vpi_release: bool) {
+        if !vpi_release && self.release_markers.is_empty() && self.release_array_markers.is_empty()
+        {
             return;
         }
-        for process in &mut self.model.processes {
+        for index in 0..self.model.processes.len() {
+            let process = &self.model.processes[index];
             if process.kind != IrProcessKind::Synthetic
                 || !matches!(process.shape, IrShape::RunOnce | IrShape::SensLoop { .. })
             {
@@ -569,6 +580,17 @@ impl Codegen<'_> {
             written.dedup();
             written_arrays.sort_unstable();
             written_arrays.dedup();
+            if vpi_release {
+                for &signal in &written {
+                    if is_variable(&self.model, signal) {
+                        self.release_marker(signal);
+                    }
+                }
+                for &array in &written_arrays {
+                    self.release_array_marker(array);
+                }
+            }
+            let process = &mut self.model.processes[index];
             let markers = written
                 .iter()
                 .filter_map(|signal| self.release_markers.get(signal))
@@ -586,6 +608,24 @@ impl Codegen<'_> {
                 IrShape::SensLoop { reads } => reads.extend(markers),
                 shape => *shape = IrShape::SensLoop { reads: markers },
             }
+        }
+        if vpi_release {
+            // Markers of `release` statements included: the application may
+            // release the same variables. Ordered for a reproducible model.
+            let signals = self
+                .release_markers
+                .iter()
+                .map(|(&signal, &marker)| (IrVpiReleaseTarget::Signal(signal), marker));
+            let arrays = self
+                .release_array_markers
+                .iter()
+                .map(|(&array, &marker)| (IrVpiReleaseTarget::Array(array), marker));
+            let mut marks: Vec<IrVpiReleaseMark> = signals
+                .chain(arrays)
+                .map(|(target, marker)| IrVpiReleaseMark { target, marker })
+                .collect();
+            marks.sort_unstable_by_key(|mark| mark.marker);
+            self.model.vpi_release_marks = marks;
         }
     }
 }

@@ -175,8 +175,8 @@ mod vpi;
 pub use vpi::{
     IrVpiArgRef, IrVpiBuiltinCall, IrVpiCode, IrVpiCompileArg, IrVpiCompileCall, IrVpiConn,
     IrVpiConnRole, IrVpiConstant, IrVpiContainer, IrVpiDirection, IrVpiImport, IrVpiInstance,
-    IrVpiObject, IrVpiObjectKind, IrVpiQualifiers, IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind,
-    IrVpiTypespecMember, IrVpiUdp, IrVpiVarKind,
+    IrVpiObject, IrVpiObjectKind, IrVpiQualifiers, IrVpiReleaseMark, IrVpiReleaseTarget,
+    IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind, IrVpiTypespecMember, IrVpiUdp, IrVpiVarKind,
 };
 mod vpi_dynamic;
 pub use vpi_dynamic::{
@@ -716,6 +716,10 @@ pub struct IrModel {
     /// call site; checked against VPI registrations at startup. Empty for
     /// hand-built IR fixtures.
     pub(in crate::sim) vpi_builtin_calls: Vec<IrVpiBuiltinCall>,
+    /// The continuously driven variables a release through `vpi_put_value`
+    /// re-evaluates, with their markers. Empty for a model no VPI
+    /// application can reach.
+    pub(in crate::sim) vpi_release_marks: Vec<IrVpiReleaseMark>,
     /// Whether the model emits its VPI object catalog. Generation clears it,
     /// with `vpi_objects`, when no application can reach the catalog: no
     /// user system task call site and no `CodegenOptions::vpi`.
@@ -927,6 +931,7 @@ impl IrModel {
             vpi_call_rows: Default::default(),
             vpi_compile_calls: Vec::new(),
             vpi_builtin_calls: Vec::new(),
+            vpi_release_marks: Vec::new(),
             vpi_catalog: true,
             vpi_delays_writable: false,
             vpi_delay_select: 1,

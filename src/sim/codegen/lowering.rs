@@ -927,7 +927,7 @@ fn lower_model_with(
     if !cg.checker_free.is_empty() {
         cg.emit_free_variable_sets()?;
     }
-    cg.attach_release_reevaluation();
+    cg.attach_release_reevaluation(keeps_vpi_catalog(options, &cg.model));
     cg.finish_switch_network()?;
     // Sampled-value event clocks may be requested by any body lowered above.
     let sampled_clock_processes = cg.emit_sampled_clock_processes();
@@ -1113,6 +1113,13 @@ fn db_dumps_waveforms(db: &Db) -> bool {
     )
 }
 
+/// Whether a VPI application can reach the model, which then keeps its
+/// object catalog: generated for one (`CodegenOptions::vpi`) or calling a
+/// user system task or function.
+fn keeps_vpi_catalog(options: &CodegenOptions, model: &IrModel) -> bool {
+    options.vpi || !model.vpi_compile_calls.is_empty()
+}
+
 fn finish_generation(
     lowered: LoweredModel,
     options: &CodegenOptions,
@@ -1126,7 +1133,7 @@ fn finish_generation(
         monitor_reads,
         ..
     } = lowered;
-    if !options.vpi && model.vpi_compile_calls.is_empty() {
+    if !keeps_vpi_catalog(options, &model) {
         model.vpi_objects.clear();
         model.vpi_typespecs.clear();
         model.vpi_dynamic = Default::default();

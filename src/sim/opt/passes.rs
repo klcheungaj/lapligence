@@ -32,7 +32,8 @@ use crate::sim::execution::{ExecutionModel, ExecutionProcess, TriggerPlan};
 use crate::sim::ir::{
     IrBinOp, IrCallArg, IrCaseKind, IrConst, IrDependency, IrExpr, IrExprKind, IrFormal,
     IrInsideItem, IrLeafMerge, IrLhs, IrModel, IrPreFn, IrRealBinOp, IrRealUnOp, IrStmt,
-    IrStochasticStmt, IrStreamSelector, IrStreamTarget, IrSysFunc, IrUnOp, IrWaitSrc,
+    IrStochasticStmt, IrStreamSelector, IrStreamTarget, IrSysFunc, IrUnOp, IrVpiReleaseTarget,
+    IrWaitSrc,
 };
 
 mod constants;

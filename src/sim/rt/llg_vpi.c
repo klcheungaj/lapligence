@@ -328,6 +328,11 @@ typedef struct {
     int32_t quiet_force;              /* vpi_put_value force/release: not a statement */
     llg_vpi_storage_t* storage;   /* rows with storage by address, built on demand */
     size_t storage_count;
+    /* Continuously driven variables (llg_vpi_model_release_marks) and their
+     * copy ordered by storage address, built by the first release. */
+    const llg_vpi_release_mark_t* release_marks;
+    size_t release_mark_count;
+    llg_vpi_release_mark_t* release_sorted;
     struct llg_vpi_link* links;   /* connectivity links by referenced row, built on demand */
     size_t link_count;
     size_t link_capacity;
@@ -5631,6 +5636,69 @@ static int32_t code_nodes_valid(const llg_vpi_code_tables_t* t) {
 int32_t llg_vpi_model_code(const llg_vpi_code_tables_t* tables) {
     g_vpi.code = tables;
     return 1;
+}
+
+/* ── variables a release re-evaluates (llg_vpi_release_mark_t) ──────────── */
+
+int32_t llg_vpi_model_release_marks(const llg_vpi_release_mark_t* marks, size_t count) {
+    if (!g_vpi.initialized || g_vpi.indexed) {
+        vpi_set_error(vpiCompile, vpiError, "LLG_VPI_MODEL",
+                      "VPI release marks registered outside model initialization");
+        return 0;
+    }
+    g_vpi.release_marks = marks;
+    g_vpi.release_mark_count = marks ? count : 0u;
+    return 1;
+}
+
+static int32_t compare_release_marks(const void* left, const void* right) {
+    uintptr_t a = (uintptr_t)((const llg_vpi_release_mark_t*)left)->storage;
+    uintptr_t b = (uintptr_t)((const llg_vpi_release_mark_t*)right)->storage;
+    return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/* Run the continuous assignments that drive the variable at `storage`
+ * again: a released variable they drive takes their value at once (IEEE
+ * 1800-2009 10.6.2), while one only procedures write keeps the forced value
+ * and has no mark. The toggle is a blocking write, so the assignments wake
+ * in the Active region as after a release statement. */
+static void release_reevaluate(const void* storage) {
+    if (!storage || !g_vpi.release_mark_count) return;
+    if (!g_vpi.release_sorted) {
+        llg_vpi_release_mark_t* sorted = (llg_vpi_release_mark_t*)calloc(
+            g_vpi.release_mark_count, sizeof(*sorted));
+        if (!sorted) {
+            vpi_error("LLG_VPI_NOMEM", "VPI release mark index allocation failed");
+            return;
+        }
+        memcpy(sorted, g_vpi.release_marks, g_vpi.release_mark_count * sizeof(*sorted));
+        qsort(sorted, g_vpi.release_mark_count, sizeof(*sorted), compare_release_marks);
+        g_vpi.release_sorted = sorted;
+    }
+    uintptr_t key = (uintptr_t)storage;
+    size_t low = 0, high = g_vpi.release_mark_count;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2u;
+        if ((uintptr_t)g_vpi.release_sorted[middle].storage < key) low = middle + 1u;
+        else high = middle;
+    }
+    if (low == g_vpi.release_mark_count || g_vpi.release_sorted[low].storage != storage) return;
+    sv4_t* marker = g_vpi.release_sorted[low].marker;
+    sv4_t toggled = sv4_bitneg(*marker);
+    llg_ba(marker, toggled);
+    sv4_destroy(&toggled);
+}
+
+/* The storage a release mark of `target` names: the variable's cell, or the
+ * first cell or the keyed container of the array an element belongs to. */
+static const void* release_storage(const llg_vpi_target_t* target) {
+    const llg_vpi_model_object_t* object = row_object(target->object);
+    if (!object) return NULL;
+    if (object->flags & LLG_VPI_OBJ_SPARSE) return object->storage;
+    /* A member array kept as one signal per cell has no first cell: each
+     * cell is a variable of its own. */
+    if (object->is_real) return object->real ? (const void*)object->real : (const void*)real_cell(target);
+    return object->packed ? (const void*)object->packed : (const void*)packed_cell(target);
 }
 
 /* ── packed catalog rows (llg_vpi_packed_t) ─────────────────────────────── */
@@ -11891,6 +11959,7 @@ vpiHandle vpi_put_value(vpiHandle handle, p_vpi_value input, p_vpi_time time,
                 llg_release_parts(&part, 1, 0, 0);
             }
             --g_vpi.quiet_force;
+            release_reevaluate(release_storage(&target));
             /* 38.34: value_p receives the value after the release. */
             if (input) {
                 llg_vpi_datum_t datum;
@@ -14485,6 +14554,7 @@ void llg_vpi_shutdown(void) {
     free(g_vpi.array_values);
     free(g_vpi.decompiled);
     free(g_vpi.storage);
+    free(g_vpi.release_sorted);
     free(g_vpi.links);
     free(g_vpi.port_links);
     for (int32_t i = 0; i < g_vpi.plugin_count; ++i) llg_dl_close(g_vpi.plugin_handles[i]);
