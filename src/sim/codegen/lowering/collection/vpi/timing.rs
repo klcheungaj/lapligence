@@ -1,7 +1,8 @@
 //! VPI timing objects and delays (IEEE 1800-2009 37.35, 37.36, 38.10,
-//! 38.32): one catalog row per module path declaration and timing check of
-//! every instance, and the delays of primitives and continuous assignments,
-//! each with the model values back-annotation writes. `vpi_put_delays`
+//! 38.32): one catalog row per input and output pair of every module path
+//! declaration and per timing check of every instance, and the delays of
+//! primitives and continuous assignments, each with the model values
+//! back-annotation writes. `vpi_put_delays`
 //! applies new values through the same runtime operations as an SDF
 //! annotation (`llg_sdf_apply`), so the two cannot disagree.
 
@@ -23,6 +24,16 @@ const EDGE_X0: u8 = 0x20;
 const POSEDGE: u8 = EDGE_X1 | EDGE_01 | EDGE_0X;
 const NEGEDGE: u8 = EDGE_X0 | EDGE_10 | EDGE_1X;
 
+/// The delay expressions of a module path declaration or timing check and
+/// the rows that have them (`vpiDelay`, 37.3.4): the pairs of a declaration
+/// share theirs.
+pub(super) struct VpiRowDelays {
+    /// The keys of the rows.
+    pub(super) rows: Vec<String>,
+    pub(super) scope: String,
+    pub(super) expressions: Vec<NodeId>,
+}
+
 /// The timing rows and delays [`Codegen::populate_vpi_metadata`] adds to
 /// the catalog.
 #[derive(Default)]
@@ -34,9 +45,8 @@ pub(in super::super::super) struct VpiTimingMetadata {
     /// The delay expressions of each primitive, continuous assignment and
     /// net that declares delays (`vpiDelay`, 37.3.4).
     pub(super) delay_nodes: HashMap<NodeId, Vec<NodeId>>,
-    /// The key, scope and delay expressions of each module path and timing
-    /// check row.
-    pub(super) row_delays: Vec<(String, String, Vec<NodeId>)>,
+    /// The delay expressions of the module path and timing check rows.
+    pub(super) row_delays: Vec<VpiRowDelays>,
     /// The SDF interconnect loads of each port: its bits with a load and
     /// the load (module input port delays, 37.14).
     pub(super) port_loads: HashMap<NodeId, Vec<(u32, u32)>>,
@@ -151,15 +161,19 @@ impl Codegen<'_> {
             }
             false
         };
-        let mut path_rows: HashMap<NodeId, Vec<SdfPathRow>> = HashMap::new();
-        for (node, row) in &self.sdf_path_rows {
-            path_rows.entry(*node).or_default().push(*row);
-        }
+        let path_rows: HashMap<PathPair, SdfPathRow> = self
+            .sdf_path_rows
+            .iter()
+            .map(|(node, row)| ((*node, row.input, row.output), *row))
+            .collect();
         let mut check_rows: HashMap<NodeId, Vec<SdfCheckRow>> = HashMap::new();
         for (node, row) in &self.sdf_check_rows {
             check_rows.entry(*node).or_default().push(*row);
         }
         let db = self.db;
+        // The first pair of every declaration comes before the other pairs
+        // (decision A19-D9).
+        let mut other_pairs = Vec::new();
         for path in db.module_paths() {
             if !reachable(self, path.node) {
                 continue;
@@ -167,15 +181,24 @@ impl Codegen<'_> {
             let Some(instance) = self.owning_inst(path.node) else {
                 continue;
             };
-            let rows = path_rows.remove(&path.node).unwrap_or_default();
-            let row = self.vpi_path_row(path, instance, &rows);
-            metadata.row_delays.push((
-                row.full_name.clone(),
-                self.vpi_full_name(instance),
-                path.delays.clone(),
-            ));
-            metadata.rows.push(row);
+            let mut rows = Vec::new();
+            for (pair, row) in self.vpi_path_rows(path, instance, &path_rows) {
+                rows.push(row.full_name.clone());
+                if pair == (0, 0) {
+                    metadata.rows.push(row);
+                } else {
+                    other_pairs.push(row);
+                }
+            }
+            if !rows.is_empty() {
+                metadata.row_delays.push(VpiRowDelays {
+                    rows,
+                    scope: self.vpi_full_name(instance),
+                    expressions: path.delays.clone(),
+                });
+            }
         }
+        metadata.rows.append(&mut other_pairs);
         for check in db.timing_checks() {
             if !reachable(self, check.node) {
                 continue;
@@ -188,17 +211,17 @@ impl Codegen<'_> {
                 // The limits are the check's delays (37.36, 37.3.4); a
                 // `$width` threshold is not one.
                 let limits = row.timing.as_ref().map_or(0, |timing| timing.count) as usize;
-                metadata.row_delays.push((
-                    row.full_name.clone(),
-                    self.vpi_full_name(instance),
-                    check
+                metadata.row_delays.push(VpiRowDelays {
+                    rows: vec![row.full_name.clone()],
+                    scope: self.vpi_full_name(instance),
+                    expressions: check
                         .limits
                         .iter()
                         .take(limits)
                         .flatten()
                         .copied()
                         .collect(),
-                ));
+                });
                 metadata.rows.push(row);
             }
         }
@@ -273,23 +296,26 @@ impl Codegen<'_> {
         }
     }
 
-    /// The row of one module path declaration of `instance` (37.35): its
-    /// terminals, condition and delays, with the model rows it became.
+    /// The rows of one module path declaration of `instance` (37.35), one
+    /// per input and output terminal pair, inputs first, each with its pair:
+    /// its terminals, the declaration's condition and delays, and the model
+    /// path it became. A pair an `ifnone` declaration of the same path
+    /// replaces is no path (decision A8-D3) and has no row.
     /// `vpiModPathHasIfNone` holds for an `ifnone` path only, not for the
     /// state-dependent paths sharing its terminals (decision A19-D9).
-    fn vpi_path_row(
+    fn vpi_path_rows(
         &mut self,
         path: &crate::core::db::ModulePath,
         instance: NodeId,
-        rows: &[SdfPathRow],
-    ) -> IrVpiObject {
+        rows: &HashMap<PathPair, SdfPathRow>,
+    ) -> Vec<((u32, u32), IrVpiObject)> {
         let values = path
             .delays
             .iter()
             .map(|delay| self.path_delay_ticks(path.node, *delay))
             .collect::<Result<Vec<_>, _>>()
             .ok();
-        let declared = values
+        let declared: Vec<i64> = values
             .as_deref()
             .and_then(expand_path_delays)
             .map(|table| {
@@ -310,27 +336,35 @@ impl Codegen<'_> {
             edge,
             ..cg.vpi_conn(node, direction)
         };
-        let mut conns = Vec::new();
-        for input in &path.inputs {
-            conns.push(term(
-                self,
-                *input,
-                IrVpiDirection::Input,
-                IrVpiConnRole::PathIn,
-                edge,
-            ));
-        }
-        for output in &path.outputs {
-            conns.push(term(
-                self,
-                *output,
-                IrVpiDirection::Output,
-                IrVpiConnRole::PathOut,
-                0,
-            ));
-        }
+        let terminals = |cg: &Self, nodes: &[NodeId], direction, role, edge| {
+            nodes
+                .iter()
+                .map(|node| {
+                    (
+                        term(cg, *node, direction, role, edge),
+                        cg.vpi_terminal_text(*node),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let inputs = terminals(
+            self,
+            &path.inputs,
+            IrVpiDirection::Input,
+            IrVpiConnRole::PathIn,
+            edge,
+        );
+        let outputs = terminals(
+            self,
+            &path.outputs,
+            IrVpiDirection::Output,
+            IrVpiConnRole::PathOut,
+            0,
+        );
+        // The terminals every pair has.
+        let mut shared = Vec::new();
         if let Some(data) = path.data_source {
-            conns.push(term(
+            shared.push(term(
                 self,
                 data,
                 IrVpiDirection::Input,
@@ -339,7 +373,7 @@ impl Codegen<'_> {
             ));
         }
         if let PathCondition::If(condition) = path.condition {
-            conns.push(term(
+            shared.push(term(
                 self,
                 condition,
                 IrVpiDirection::None,
@@ -348,62 +382,75 @@ impl Codegen<'_> {
             ));
         }
         let scope = self.vpi_full_name(instance);
-        // A path is never found by name, but reports `<scope>.<in>$<out>`
-        // from its first input and output terminals as both vpiName and
-        // vpiFullName (decision A19-D9).
-        let name = match (path.inputs.first(), path.outputs.first()) {
-            (Some(input), Some(output)) => self
-                .vpi_terminal_text(*input)
-                .zip(self.vpi_terminal_text(*output))
-                .map(|(input, output)| {
-                    format!("{}.{input}${output}", scope.replace(SEPARATOR, "."))
-                })
-                .unwrap_or_default(),
-            _ => String::new(),
-        };
+        let shown = scope.replace(SEPARATOR, ".");
+        let key = self.vpi_unnamed_key(&scope, 'm', path.node);
         let node = self.node(path.node);
-        IrVpiObject {
-            full_name: self.vpi_unnamed_key(&scope, 'm', path.node),
-            name,
-            kind: IrVpiObjectKind::ModPath,
-            unnamed: true,
-            file: node.file().map(str::to_owned),
-            line: node.line,
-            time_unit_fs: self.timescale_of_node(path.node).unit_fs,
-            detail: Some(match path.connection {
-                PathConnection::Full => "vpiPathFull",
-                _ => "vpiPathParallel",
-            }),
-            conns,
-            timing: Some(IrVpiTiming {
-                targets: rows
-                    .iter()
-                    .map(|row| {
-                        (
-                            0,
-                            IrSdfTarget::Path {
-                                set: row.set,
-                                destination: row.destination,
-                                path: row.path,
-                            },
-                        )
-                    })
-                    .collect(),
-                declared,
-                count: path.delays.len() as u32,
-                polarity: polarity_code(path.polarity),
-                // Without a data source the data path is the path itself, so
-                // its polarity is the path's (decision A19-D9).
-                data_polarity: if path.edge.is_some() {
-                    polarity_code(path.edge_polarity)
-                } else {
-                    polarity_code(path.polarity)
-                },
-                has_ifnone: path.condition == PathCondition::IfNone,
-                delay: None,
-            }),
-            ..IrVpiObject::default()
+        let time_unit_fs = self.timescale_of_node(path.node).unit_fs;
+        let mut pairs = Vec::with_capacity(inputs.len() * outputs.len());
+        for (input, (input_term, input_text)) in (0u32..).zip(&inputs) {
+            for (output, (output_term, output_text)) in (0u32..).zip(&outputs) {
+                let identity = (path.node, input, output);
+                if self.dropped_path_pairs.contains(&identity) {
+                    continue;
+                }
+                let mut conns = Vec::with_capacity(2 + shared.len());
+                conns.extend([input_term.clone(), output_term.clone()]);
+                conns.extend(shared.iter().cloned());
+                let row = IrVpiObject {
+                    full_name: format!("{key}.{input}.{output}"),
+                    // A path is never found by name, but reports
+                    // `<scope>.<in>$<out>` as both vpiName and vpiFullName
+                    // (decision A19-D9).
+                    name: input_text
+                        .as_ref()
+                        .zip(output_text.as_ref())
+                        .map(|(input, output)| format!("{shown}.{input}${output}"))
+                        .unwrap_or_default(),
+                    kind: IrVpiObjectKind::ModPath,
+                    unnamed: true,
+                    file: node.file().map(str::to_owned),
+                    line: node.line,
+                    time_unit_fs,
+                    detail: Some(match path.connection {
+                        PathConnection::Full => "vpiPathFull",
+                        _ => "vpiPathParallel",
+                    }),
+                    conns,
+                    timing: Some(IrVpiTiming {
+                        targets: rows
+                            .get(&identity)
+                            .map(|row| {
+                                (
+                                    0,
+                                    IrSdfTarget::Path {
+                                        set: row.set,
+                                        destination: row.destination,
+                                        path: row.path,
+                                    },
+                                )
+                            })
+                            .into_iter()
+                            .collect(),
+                        declared: declared.clone(),
+                        count: path.delays.len() as u32,
+                        polarity: polarity_code(path.polarity),
+                        // Without a data source the data path is the path
+                        // itself, so its polarity is the path's (decision
+                        // A19-D9).
+                        data_polarity: if path.edge.is_some() {
+                            polarity_code(path.edge_polarity)
+                        } else {
+                            polarity_code(path.polarity)
+                        },
+                        has_ifnone: path.condition == PathCondition::IfNone,
+                        delay: None,
+                    }),
+                    ..IrVpiObject::default()
+                };
+                pairs.push(((input, output), row));
+            }
         }
+        pairs
     }
 
     /// The row of one timing check of `instance` (37.36): its terminals, its

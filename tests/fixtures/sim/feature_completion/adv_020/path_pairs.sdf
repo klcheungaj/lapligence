@@ -1,0 +1,17 @@
+(DELAYFILE
+  (SDFVERSION "3.0")
+  (DESIGN "tb")
+  (DIVIDER .)
+  (TIMESCALE 1ns)
+  (CELL
+    (CELLTYPE "cell3")
+    (INSTANCE u)
+    (DELAY
+      (ABSOLUTE
+        (IOPATH b y (11) (12))
+        (IOPATH c z (13) (14))
+        (COND en (IOPATH e w (15) (16)))
+      )
+    )
+  )
+)

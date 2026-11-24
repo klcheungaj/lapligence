@@ -468,7 +468,7 @@ with a notifier, an edge-sensitive path, conditioned setup checks) and
 generated majority cells (a combinational UDP with a multiple-source path),
 annotated from SDF. A late scan input makes one flip-flop x and the x travels
 down the chain and through the majority cells. The VPI application inspects
-the primitives, the path and the timing checks of one cell instance.
+the primitives, the paths and the timing checks of three cell instances.
 
 - 29.3.4, L48801-48802: "All combinations of input values that are not
   explicitly specified result in a default output state of x."
@@ -484,12 +484,14 @@ the primitives, the path and the timing checks of one cell instance.
 | `[60.000] notifiers xxx0` | The scan input changes 0.2 before the edge at 60: inside `ff[0]`'s 0.4 setup limit. |
 | `q=110x`, `q=10x0`, `q=0x00` | The x shifts one flip-flop per edge. |
 | `vote=1`, `vote=x`, `vote=0` | The majority UDP is known whenever two known inputs agree. |
-| `path: 0.50 0.55`, `check limit: 0.40`, `0.70`, `0.10` | *Clause-derived*: the delays and limits after annotation (`IOPATH` 0.50/0.55 and `SETUP SI` 0.7 on `ff[2]`); some simulators report the values before annotation. |
+| `path tb.dut.ff[2].CK$Q: 0.50 0.55`, `check limit: 0.40`, `0.70`, `0.10` | *Clause-derived*: the delays and limits after annotation (`IOPATH` 0.50/0.55 and `SETUP SI` 0.7 on `ff[2]`); some simulators report the values before annotation, or after it only with an access option. |
 
-A multiple-source declaration such as the majority cell's `(A, B, C *> Y)`
-is one `vpiModPath` in llg
-([known issue](../../../../../docs/known_issues.md#vpi-object-model-limits-sim-042)),
-so the scenario inspects only the flip-flop cell.
+30.4.6, L49858-49859: "Multiple module paths may be described in a single
+statement by using the symbol *> to connect a comma-separated list of sources
+to a comma-separated list of destinations." So the majority cell's
+`(A, B, C *> Y)` is three `vpiModPath` objects (decision A19-D9), each with the
+delays of its own input: the declared 0.12 and 0.14 in `v[0].m`, the three
+annotated `IOPATH` pairs in `v[1].m` (*clause-derived*, as above).
 
 ### `gl_pad_force.sv` (VPI application `shared_force_vpi.c`)
 

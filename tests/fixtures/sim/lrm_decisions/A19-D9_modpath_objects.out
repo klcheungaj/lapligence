@@ -3,3 +3,29 @@ path 1: name=tb.u.clk$q type=2 polarity=3 data_polarity=2 has_ifnone=0 in(tb.u.c
 path 2: name=tb.u.b$y type=1 polarity=3 data_polarity=3 has_ifnone=0 in(tb.u.b dir=1 edge=0x00) out(tb.u.y dir=2 edge=0x00) data=NULL condition=tb.u.en
 path 3: name=tb.u.b$y type=1 polarity=3 data_polarity=3 has_ifnone=1 in(tb.u.b dir=1 edge=0x00) out(tb.u.y dir=2 edge=0x00) data=NULL condition=NULL
 path 4: name=tb.u.d$y type=1 polarity=3 data_polarity=3 has_ifnone=0 in(tb.u.d dir=1 edge=0x00) out(tb.u.y dir=2 edge=0x00) data=NULL condition=tb.u.en
+pair 0: tb.p.v$w polarity=1 has_ifnone=0 condition=tb.p.en in=tb.p.v out=tb.p.w more=0 delays=4,4
+pair 1: tb.p.v[1]$w[0] polarity=3 has_ifnone=0 condition=NULL in=tb.p.v[1] out=tb.p.w[0] more=0 delays=5,6
+pair 2: tb.p.a$y polarity=3 has_ifnone=1 condition=NULL in=tb.p.a out=tb.p.y more=0 delays=7,7
+pair 3: tb.p.c$u polarity=3 has_ifnone=0 condition=NULL in=tb.p.c out=tb.p.u more=0 delays=8,8
+pair 4: tb.p.a$z polarity=3 has_ifnone=0 condition=NULL in=tb.p.a out=tb.p.z more=0 delays=2,3
+pair 5: tb.p.b$z polarity=3 has_ifnone=0 condition=NULL in=tb.p.b out=tb.p.z more=0 delays=2,3
+pair 6: tb.p.c$y polarity=3 has_ifnone=0 condition=NULL in=tb.p.c out=tb.p.y more=0 delays=2,3
+pair 7: tb.p.c$z polarity=3 has_ifnone=0 condition=NULL in=tb.p.c out=tb.p.z more=0 delays=2,3
+pair 8: tb.p.v$z polarity=1 has_ifnone=0 condition=tb.p.en in=tb.p.v out=tb.p.z more=0 delays=4,4
+pair 9: tb.p.a$w polarity=1 has_ifnone=0 condition=tb.p.en in=tb.p.a out=tb.p.w more=0 delays=4,4
+pair 10: tb.p.a$z polarity=1 has_ifnone=0 condition=tb.p.en in=tb.p.a out=tb.p.z more=0 delays=4,4
+pair 11: tb.p.b$w[0] polarity=3 has_ifnone=0 condition=NULL in=tb.p.b out=tb.p.w[0] more=0 delays=5,6
+pair 12: tb.p.b$y polarity=3 has_ifnone=1 condition=NULL in=tb.p.b out=tb.p.y more=0 delays=7,7
+after 0: tb.p.v$w polarity=1 has_ifnone=0 condition=tb.p.en in=tb.p.v out=tb.p.w more=0 delays=4,4
+after 1: tb.p.v[1]$w[0] polarity=3 has_ifnone=0 condition=NULL in=tb.p.v[1] out=tb.p.w[0] more=0 delays=5,6
+after 2: tb.p.a$y polarity=3 has_ifnone=1 condition=NULL in=tb.p.a out=tb.p.y more=0 delays=7,7
+after 3: tb.p.c$u polarity=3 has_ifnone=0 condition=NULL in=tb.p.c out=tb.p.u more=0 delays=8,8
+after 4: tb.p.a$z polarity=3 has_ifnone=0 condition=NULL in=tb.p.a out=tb.p.z more=0 delays=2,3
+after 5: tb.p.b$z polarity=3 has_ifnone=0 condition=NULL in=tb.p.b out=tb.p.z more=0 delays=20,21
+after 6: tb.p.c$y polarity=3 has_ifnone=0 condition=NULL in=tb.p.c out=tb.p.y more=0 delays=22,23
+after 7: tb.p.c$z polarity=3 has_ifnone=0 condition=NULL in=tb.p.c out=tb.p.z more=0 delays=2,3
+after 8: tb.p.v$z polarity=1 has_ifnone=0 condition=tb.p.en in=tb.p.v out=tb.p.z more=0 delays=4,4
+after 9: tb.p.a$w polarity=1 has_ifnone=0 condition=tb.p.en in=tb.p.a out=tb.p.w more=0 delays=4,4
+after 10: tb.p.a$z polarity=1 has_ifnone=0 condition=tb.p.en in=tb.p.a out=tb.p.z more=0 delays=4,4
+after 11: tb.p.b$w[0] polarity=3 has_ifnone=0 condition=NULL in=tb.p.b out=tb.p.w[0] more=0 delays=5,6
+after 12: tb.p.b$y polarity=3 has_ifnone=1 condition=NULL in=tb.p.b out=tb.p.y more=0 delays=7,7

@@ -104,6 +104,31 @@ fn assert_prints(output: &Output, expected: &str) {
     assert_eq!(stdout(output), expected, "{}", stderr(output));
 }
 
+/// A missing source directory is a warning, once, and the others supply their
+/// sources; with nothing left there are no source files.
+#[test]
+fn a_missing_source_directory_leaves_the_others() {
+    let project = Project::new();
+    project.write(
+        "llg.toml",
+        &BASE_CONFIG.replace("[\"rtl\"]", "[\"gone\", \"rtl\"]"),
+    );
+    let output = project.run(&["--config", "llg.toml"]);
+    assert_prints(&output, "mode=fast depth=8 inc=1\n");
+    let warning = "configured source directory does not exist";
+    assert_eq!(stderr(&output).matches(warning).count(), 1, "{output:?}");
+
+    project.write("llg.toml", &BASE_CONFIG.replace("[\"rtl\"]", "[\"gone\"]"));
+    let output = project.run(&["--config", "llg.toml"]);
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    assert_eq!(stderr(&output).matches(warning).count(), 1, "{output:?}");
+    assert!(
+        stderr(&output).contains("no source files given"),
+        "{}",
+        stderr(&output)
+    );
+}
+
 #[test]
 fn an_explicit_config_alone_drives_a_run() {
     let project = Project::new();

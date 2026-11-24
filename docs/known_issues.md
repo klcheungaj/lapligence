@@ -3554,14 +3554,6 @@ with no error status, as for a name that denotes nothing (S42-D11):
   inout port between two nets is always one simulated net. The delays of delayed timing
   check signals stay fixed, as for SDF. There are no delay device or delay
   term objects (37.41);
-- a module path declaration with several inputs or outputs
-  (`(A, B, C *> Y)`) is one `vpiModPath` object (decision A19-D9), named
-  after its first input and output: `vpi_get_delays` reads the delays of
-  that first pair, so delays an SDF file annotated to the other inputs
-  (`IOPATH B Y`) are simulated but not readable through VPI. Some
-  simulators give one path object per input and output pair. Declare the
-  pairs as separate paths to read each
-  ([fin_002](../tests/fixtures/sim/feature_completion/fin_002/readme.md));
 - `vpiTchkTerm` and `vpiPathTerm` handles have no own source location;
 - `vpi_handle_multi` with a type other than `vpiInterModPath` (no
   `vpiPortInst` objects) and the routines `vpi_get_data`/`vpi_put_data` (no
