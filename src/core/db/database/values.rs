@@ -50,7 +50,14 @@ pub(super) fn val_from_slang(value: &SlangConstantValue) -> Option<Val> {
         }
         SlangConstantValue::Real(value) => Some(Val::Real(*value)),
         SlangConstantValue::ShortReal(value) => Some(Val::Real(f64::from(*value))),
-        SlangConstantValue::String(value) => Val::from_string_bytes(value),
+        // A value of the string type holds no NUL character (6.16).
+        SlangConstantValue::String(value) => Some(Val::from_string_bytes(
+            &value
+                .iter()
+                .copied()
+                .filter(|byte| *byte != 0)
+                .collect::<Vec<u8>>(),
+        )),
         SlangConstantValue::None | SlangConstantValue::Other(_) => None,
     }
 }

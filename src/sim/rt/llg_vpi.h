@@ -15,7 +15,7 @@ extern "C" {
 #define LLG_VPI_OBJ_LOCAL_PARAM 0x04u /* localparam / genvar value */
 #define LLG_VPI_OBJ_SHORTREAL 0x08u   /* writes round through float */
 #define LLG_VPI_OBJ_RANGE 0x10u       /* left/right hold the packed range */
-#define LLG_VPI_OBJ_TEXT 0x20u        /* `constant` is string-parameter text */
+#define LLG_VPI_OBJ_TEXT 0x20u        /* `constant` is a string literal body */
 #define LLG_VPI_OBJ_MEMBER 0x40u      /* member of the struct/union row `parent` */
 #define LLG_VPI_OBJ_SLICE 0x80u       /* value: low `width` bits of `packed` */
 #define LLG_VPI_OBJ_RECORD 0x100u     /* unpacked struct/union: members hold the value */
@@ -150,7 +150,7 @@ typedef struct {
 #define LLG_VPI_CODE_USER 0x80u       /* vpiUserDefn of a system task or function call */
 #define LLG_VPI_CODE_LOCALS 0x100u    /* vpiLocalVarDecls of a for statement */
 #define LLG_VPI_CODE_TWO_STATE 0x200u /* a conversion to, or select of, a two-state type */
-#define LLG_VPI_CODE_STRING 0x400u    /* a constant whose text is the string's characters */
+#define LLG_VPI_CODE_STRING 0x400u    /* a constant whose text is the body of a string literal */
 #define LLG_VPI_CODE_INFERRED 0x800u  /* an assertion whose clocking event is inferred */
 #define LLG_VPI_CODE_LINK 0x1000u     /* stands for root row `first` (no children) */
 #define LLG_VPI_CODE_FILL 0x2000u     /* an unbased unsized literal ('0, '1, 'x, 'z) */
@@ -171,7 +171,7 @@ typedef struct {
     uint32_t scope;           /* enclosing scope: catalog row + 1 */
     uint32_t first;           /* first child row */
     uint32_t count;           /* children */
-    uint32_t data;            /* text index + 1 (constant digits or text, a call, object or
+    uint32_t data;            /* text index + 1 (constant digits or literal body, a call, object or
                                * label name); range index + 1 of a select */
     uint32_t typespec;        /* vpiTypespec (a cast, select, call or typed formal):
                                * typespec index + 1 */
@@ -342,7 +342,7 @@ typedef struct llg_vpi_model_object {
                                           * modport of an interface port; an
                                           * instance's default clocking block */
     llg_net_t* net;           /* resolved net behind `packed`, for force/release */
-    const char* constant;     /* parameter: 0/1/x/z digits MSB first, or text */
+    const char* constant;     /* parameter: 0/1/x/z digits MSB first, or a literal body */
     double real_constant;     /* real parameter value */
     uint32_t typespec;        /* vpiTypespec: typespec index + 1, 0: none */
     int32_t detail;               /* vpiAlwaysType, vpiPrimType, vpiFuncType, vpiPortType,
@@ -483,7 +483,7 @@ typedef struct {
     uint32_t owner;           /* an argument's method: item index (in its class) + 1 */
     uint32_t code;            /* root code row + 1: a constraint's items, a method's body */
     uint32_t mode;            /* object field + 1 holding a constraint's off bit (18.9) */
-    const char* value;        /* a parameter's digits (MSB first) or text; NULL for a real */
+    const char* value;        /* a parameter's digits (MSB first) or literal body; NULL for a real */
     double real;              /* a real parameter's value */
     const sv4_t* mode_signal; /* a static constraint's class-wide off bit (18.9), or NULL */
 } llg_vpi_class_item_t;

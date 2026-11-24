@@ -357,7 +357,9 @@ impl<'a> Codegen<'a> {
             NodeKind::Expr(ExprKind::Ref {
                 target: Some(target),
             }) => match self.param_vals.get(target)? {
-                Val::Str(text) => Some(text.clone()),
+                Val::Str(text) => decode_verilog_string(text)
+                    .ok()
+                    .map(|bytes| String::from_utf8_lossy(&bytes).into_owned()),
                 _ => None,
             },
             _ => None,

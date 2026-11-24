@@ -1798,7 +1798,8 @@ sensitivity includes unpacked-array, container or string storage, and event
 handles other than declared named events in such a list or as the target of
 such a `->>`. Stores a `$monitor`/`$strobe` helper makes to its own static
 storage publish no event, so a hierarchical wait on that storage does not
-wake.
+wake. A `force` whose right-hand side calls a function that prints is an error
+(some simulators run it).
 
 ### Cause
 
@@ -1816,7 +1817,8 @@ publish the private evaluation's static stores.
 [`neg_named_event_array.sv`](../tests/fixtures/sim/feature_completion/rtl_007b/neg_named_event_array.sv)
 (a named event beside a helper that reads array storage) and
 `tests/fixtures/sim/feature_completion/ki_audit/neg_helper_event_handle.sv`
-(an event handle other than a declared named event in a helper's list).
+(an event handle other than a declared named event in a helper's list),
+[`neg_force_printing_helper.sv`](../tests/fixtures/sim/feature_completion/sim_023/neg_force_printing_helper.sv).
 
 ## Waited `ref` formals with unobservable actuals
 

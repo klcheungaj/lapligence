@@ -188,6 +188,9 @@ fn typed_strobe_callback_observes_the_nba_value() {
         private_effects: false,
         prelude: Vec::new(),
         receiver: None,
+        origin: crate::sim::semantic::Origin::Synthetic {
+            reason: "test".to_owned(),
+        },
         args: vec![IrDisplayArg::Packed(IrExpr::new(
             IrExprKind::SigRead(0),
             65,
@@ -234,6 +237,9 @@ fn force_evaluator_owns_its_result_and_release_keeps_variable_value() {
         c_name: "force_value".to_owned(),
         value: number(42, 65),
         real: false,
+        origin: crate::sim::semantic::Origin::Synthetic {
+            reason: "test".to_owned(),
+        },
     });
     model.processes[0].body = vec![
         IrStmt::Assign {

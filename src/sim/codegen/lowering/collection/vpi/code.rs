@@ -956,10 +956,10 @@ impl<'c, 'a> CodeTables<'c, 'a> {
                 return (code, Vec::new());
             }
             ConstantType::String => {
-                if let Ok(text) = decoded_string_text(value, "string") {
+                if let Ok(bytes) = decoded_string_bytes(value) {
                     code.flags |= IrVpiCode::STRING;
-                    code.width = u32::try_from(text.len().max(1) * 8).unwrap_or(u32::MAX);
-                    code.text = Some(text);
+                    code.width = u32::try_from(bytes.len().max(1) * 8).unwrap_or(u32::MAX);
+                    code.text = Some(elab::string_literal_body(&bytes));
                     return (code, Vec::new());
                 }
             }

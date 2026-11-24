@@ -52,6 +52,11 @@ fn neg_reversed_and_runtime_width_ranges() {
     );
     sim_cli::reject_case(
         SUITE,
+        "neg_reversed_range",
+        "neg_reversed_range.sv:6:11 unsupported executable node `Invalid` in `tb`",
+    );
+    sim_cli::reject_case(
+        SUITE,
         "neg_runtime_width",
         "reference to non-constant variable 'n' is not allowed in a constant expression",
     );

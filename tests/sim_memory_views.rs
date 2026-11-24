@@ -99,7 +99,7 @@ fn unsupported_memory_view_shapes_fail_at_lowering() {
     sim_cli::reject_case_with_args(
         "memory_views",
         "reject_range",
-        "reject_range.sv:4:5 unsupported executable node `Invalid` in `tb`",
+        "reject_range.sv:4:13 unsupported executable node `Invalid` in `tb`",
         &["--edition", "sv2009"],
     );
     sim_cli::reject_case_with_args(

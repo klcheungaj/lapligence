@@ -62,6 +62,8 @@ pub enum IrPreFn {
         /// The local that names the report's class-method receiver, which the
         /// evaluator binds to its context.
         receiver: Option<String>,
+        /// The report statement.
+        origin: crate::sim::semantic::Origin,
     },
     /// `static void c_name(llg_display_read_t* out, void* context)`: writes
     /// the storage each of `reads` selects now, one entry per dependency.
@@ -72,6 +74,8 @@ pub enum IrPreFn {
         reads: Vec<IrDependency>,
         /// As in [`IrPreFn::DisplayEval`].
         receiver: Option<String>,
+        /// The report statement.
+        origin: crate::sim::semantic::Origin,
     },
     /// `static void c_name(double* out, void* context) { *out = value; }` for
     /// real event expressions. The callback is side-effect free and
@@ -98,10 +102,42 @@ pub enum IrPreFn {
         c_name: String,
         value: IrExpr,
         real: bool,
+        /// The `force` statement.
+        origin: crate::sim::semantic::Origin,
     },
 }
 
 impl IrPreFn {
+    pub(in crate::sim) fn c_name(&self) -> &str {
+        match self {
+            Self::Branch { c_name, .. }
+            | Self::CapturedBranch { c_name, .. }
+            | Self::MonEval { c_name, .. }
+            | Self::EventAssign { c_name, .. }
+            | Self::DisplayEval { c_name, .. }
+            | Self::MonitorReads { c_name, .. }
+            | Self::RealEval { c_name, .. }
+            | Self::DeferredAssertion { c_name, .. }
+            | Self::ForceEval { c_name, .. } => c_name,
+        }
+    }
+
+    /// The statement that registers the callback, for the kinds whose
+    /// emission can refuse an expression of it.
+    pub(in crate::sim) fn origin(&self) -> Option<&crate::sim::semantic::Origin> {
+        match self {
+            Self::DisplayEval { origin, .. }
+            | Self::MonitorReads { origin, .. }
+            | Self::ForceEval { origin, .. } => Some(origin),
+            Self::Branch { .. }
+            | Self::CapturedBranch { .. }
+            | Self::MonEval { .. }
+            | Self::EventAssign { .. }
+            | Self::RealEval { .. }
+            | Self::DeferredAssertion { .. } => None,
+        }
+    }
+
     /// Whether the callback of a class method binds the method's `this`.
     pub(super) fn binds_this(&self) -> bool {
         let this = |name: &str| name == "_this";

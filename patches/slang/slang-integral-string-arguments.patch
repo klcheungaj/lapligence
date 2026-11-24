@@ -1,0 +1,59 @@
+--- a/source/ast/SystemSubroutine.cpp
++++ b/source/ast/SystemSubroutine.cpp
+@@ -10,6 +10,7 @@
+ #include "slang/ast/Compilation.h"
+ #include "slang/ast/EvalContext.h"
+ #include "slang/ast/Expression.h"
++#include "slang/ast/expressions/ConversionExpression.h"
+ #include "slang/ast/symbols/VariableSymbols.h"
+ #include "slang/ast/types/Type.h"
+ #include "slang/diagnostics/ExpressionsDiags.h"
+@@ -88,6 +89,26 @@ bool SystemSubroutine::noHierarchical(EvalContext& context, const Expression& ex
+     return true;
+ }
+ 
++// Subroutines whose string arguments may also be "an integral data type containing a
++// character string" (SV 21.3.1, 21.7): the value converts as by a cast to string.
++static bool acceptsIntegralString(parsing::KnownSystemName name) {
++    using parsing::KnownSystemName;
++    switch (name) {
++        case KnownSystemName::FOpen:
++        case KnownSystemName::TestPlusArgs:
++        case KnownSystemName::System:
++        case KnownSystemName::DumpFile:
++        case KnownSystemName::DumpPortsOn:
++        case KnownSystemName::DumpPortsOff:
++        case KnownSystemName::DumpPortsAll:
++        case KnownSystemName::DumpPortsLimit:
++        case KnownSystemName::DumpPortsFlush:
++            return true;
++        default:
++            return false;
++    }
++}
++
+ const Expression& SimpleSystemSubroutine::bindArgument(size_t argIndex, const ASTContext& context,
+                                                        const ExpressionSyntax& syntax,
+                                                        const Args& args) const {
+@@ -97,8 +118,19 @@ const Expression& SimpleSystemSubroutine::bindArgument(size_t argIndex, const AS
+     if (argIndex >= argTypes.size())
+         return SystemSubroutine::bindArgument(argIndex, context, syntax, args);
+ 
+-    return Expression::bindArgument(*argTypes[argIndex], ArgumentDirection::In, {}, syntax,
+-                                    context);
++    auto& type = *argTypes[argIndex];
++    if (type.isString() && acceptsIntegralString(knownNameId)) {
++        auto argContext = context.resetFlags({});
++        auto& expr = const_cast<Expression&>(
++            Expression::bind(syntax, argContext, ASTFlags::StreamingAllowed));
++        if (expr.type->isIntegral() && !expr.isImplicitString()) {
++            return *context.getCompilation().emplace<ConversionExpression>(
++                type, ConversionKind::Explicit, expr, expr.sourceRange);
++        }
++        return Expression::convertAssignment(argContext, type, expr, expr.sourceRange);
++    }
++
++    return Expression::bindArgument(type, ArgumentDirection::In, {}, syntax, context);
+ }
+ 
+ const Type& SimpleSystemSubroutine::checkArguments(const ASTContext& context, const Args& args,

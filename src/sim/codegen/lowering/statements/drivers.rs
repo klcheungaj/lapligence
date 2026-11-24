@@ -62,6 +62,7 @@ impl EmitCtx<'_, '_> {
             c_name: eval.clone(),
             value: value.clone(),
             real: target_real,
+            origin: self.cg.origin(h),
         });
         let (read_names, dependencies) =
             self.cg.collect_force_read_signals(&diagnostic_path, rhs)?;
@@ -248,6 +249,7 @@ impl EmitCtx<'_, '_> {
             c_name: eval.clone(),
             value: read.clone(),
             real,
+            origin: self.cg.origin(h),
         });
         Ok(IrStmt::Block(vec![
             evaluate,

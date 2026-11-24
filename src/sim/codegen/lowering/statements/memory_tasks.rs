@@ -76,11 +76,34 @@ impl EmitCtx<'_, '_> {
                 self.path
             ));
         }
-        let source = MemorySource {
-            path: self.cg.lower_string(&self.path, args[0])?,
-            text: None,
+        let path = match self.string_literal_bytes(args[0])? {
+            Some(_) => self.cg.lower_string(&self.path, args[0])?,
+            None => self.string_argument(args[0], || {
+                format!("the file name of {name} must be a string or integral expression (IEEE 1800-2009 21.4)")
+            })?,
         };
+        let source = MemorySource { path, text: None };
         self.lower_memory_task_from(name, args, write, source)
+    }
+
+    /// The text of an argument that is a string or "an integral data type
+    /// containing a character string": an integral value is its characters,
+    /// NULs left out. `misuse` describes any other argument.
+    fn string_argument(
+        &mut self,
+        node: NodeId,
+        misuse: impl Fn() -> String,
+    ) -> Result<IrStringExpr, String> {
+        if self.cg.is_string_expr(&self.path, node) {
+            return self.cg.lower_string(&self.path, node);
+        }
+        let value = self.cg.lower_expr(&self.path, node)?;
+        if value.is_real() {
+            return Err(self
+                .cg
+                .locate_error(node, format!("{} in `{}`", misuse(), self.path)));
+        }
+        Ok(IrStringExpr::FromPacked(Box::new(value)))
     }
 
     /// `$sreadmemb/$sreadmemh (memory, start_address, finish_address, string
@@ -124,26 +147,15 @@ impl EmitCtx<'_, '_> {
         for (index, node) in strings.iter().enumerate() {
             let piece = match self.string_literal_bytes(*node)? {
                 Some(bytes) => IrStringExpr::Literal(bytes),
-                None if self.cg.is_string_expr(&self.path, *node) => {
-                    self.cg.lower_string(&self.path, *node)?
-                }
                 // An integral argument holds its text as bytes, as a
                 // Verilog-2001 string in a reg vector does (1364-2001 C.13
                 // names the arguments "string arguments").
-                None => {
-                    let value = self.cg.lower_expr(&self.path, *node)?;
-                    if value.is_real() {
-                        return Err(self.cg.locate_error(
-                            *node,
-                            format!(
-                                "a data argument of {name} must be a string or integral \
-                             expression (IEEE 1800-2009 D.14) in `{}`",
-                                self.path
-                            ),
-                        ));
-                    }
-                    IrStringExpr::FromPacked(Box::new(value))
-                }
+                None => self.string_argument(*node, || {
+                    format!(
+                        "a data argument of {name} must be a string or integral \
+                         expression (IEEE 1800-2009 D.14)"
+                    )
+                })?,
             };
             if index != 0 {
                 push_text_piece(&mut pieces, IrStringExpr::Literal(b"\n".to_vec()));

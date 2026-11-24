@@ -1153,6 +1153,27 @@ where llg keeps the var bit of 37.17 detail 19 (`vpiRegBit`); it refuses the cal
 `r.arr[0]` (NULL without an error) and does not wake the process waiting on
 `r.arr[1]` after the put; and it serves `lr.sa` and `lr.ia`.
 
+## string_literals (5.9, 6.16, 37.55, decisions A19-D11 and A19-D92)
+
+`string_literals.sv` holds string literals, string parameters, class
+parameters and an attribute with NUL, control and non-UTF-8 characters;
+`string_literals.c` prints each constant's `vpiDecompile`, `vpiStringVal`,
+`vpiHexStrVal` and `vpiSize`, and copies a vector with a NUL character by
+`vpiVectorVal`.
+`adv_019::string_literals_keep_every_character` runs it in both optimizer
+modes with both value backends.
+
+- 37.55 detail 2 (SystemVerilog-1800-2009.txt L60883-60884): "The property
+  vpiDecompile shall return a string with a functionally equivalent
+  expression to the original expression", so the text is a literal with the
+  same characters: `"a\000b"`, and `"\000007"` for the four characters NUL,
+  `0`, `0`, `7`.
+- 5.9 (Table 5-1) gives the escapes; the packed image of a literal is its
+  characters, 8 bits each (`"a\000b"` is `610062`).
+- 6.16 (L5676): "All "\0" characters in the string literal are ignored (i.e.,
+  removed from the string)", so the string parameters hold `ab` and `cd\`;
+  the packed class parameter `CV` keeps its NUL.
+
 ## element_members (37.17, 37.24, 37.29, 38.15, decision A19-D89)
 
 `element_members.sv` declares the structure type `er_t` (an `int`, a

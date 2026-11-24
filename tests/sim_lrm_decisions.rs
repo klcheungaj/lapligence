@@ -3453,6 +3453,15 @@ fn a19_d10_tchk_objects() {
 }
 
 #[test]
+fn a19_d92_nul_characters() {
+    run_vpi_decision(
+        "A19-D92_nul_characters",
+        &["$d92"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D92_nul_characters.out"),
+    );
+}
+
+#[test]
 fn a19_d11_decompile_format() {
     run_vpi_decision(
         "A19-D11_decompile_format",
@@ -5469,6 +5478,14 @@ fn s26_d17_string_variable_data() {
     run_decision(
         "S26-D17_string_variable_data",
         include_str!("fixtures/sim/lrm_decisions/S26-D17_string_variable_data.out"),
+    );
+}
+
+#[test]
+fn s26_d23_integral_file_names() {
+    run_decision(
+        "S26-D23_integral_file_names",
+        include_str!("fixtures/sim/lrm_decisions/S26-D23_integral_file_names.out"),
     );
 }
 

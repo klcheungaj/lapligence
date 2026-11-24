@@ -86,8 +86,8 @@ checked against a run; no line was accepted only because the run printed it.
   `fed4`, octal `177324`, decimal `       -300` (a signed 16-bit value takes
   11 characters), real -300. The 72-bit `wide` vector has three
   `aval/bval` words, the top one `00000081/00000000`. `"Hi!"` in 32 bits reads
-  back as the string `Hi!` (leading zero bytes skipped). A real object rounds
-  -2.5 to -3 for `vpiIntVal`; its `vpiBinStrVal` is the real truncated toward
+  back as the string ` Hi!` and `"OK"` as `  OK`: a NUL group prints as a space
+  (decision A19-D92). A real object rounds -2.5 to -3 for `vpiIntVal`; its `vpiBinStrVal` is the real truncated toward
   zero as a signed 64-bit value, -2 = 63 ones and a 0 (S42-D9).
   `vpiStrengthVal` reports strong (0x40) for 0/1 and high impedance (0x01) for
   z (38.15).

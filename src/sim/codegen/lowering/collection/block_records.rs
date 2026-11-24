@@ -37,18 +37,21 @@ impl Codegen<'_> {
         self.block_record_declarations(process, &mut found);
         for declaration in found.records {
             let statement = found.statements.get(&declaration).copied();
-            self.collect_block_record(path, declaration, statement)?;
+            self.collect_block_record(path, declaration, statement)
+                .map_err(|error| self.locate_error(declaration, error))?;
         }
         for declaration in found.natives {
             // Declarations the frontend creates without a declaration
             // statement (pattern variables) keep their own storage paths.
             if let Some(statement) = found.statements.get(&declaration).copied() {
-                self.collect_block_native(path, declaration, statement)?;
+                self.collect_block_native(path, declaration, statement)
+                    .map_err(|error| self.locate_error(declaration, error))?;
             }
         }
         for declaration in found.events {
             if let Some(statement) = found.statements.get(&declaration).copied() {
-                self.collect_block_event(path, declaration, statement)?;
+                self.collect_block_event(path, declaration, statement)
+                    .map_err(|error| self.locate_error(declaration, error))?;
             }
         }
         Ok(())

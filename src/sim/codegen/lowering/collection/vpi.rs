@@ -104,10 +104,8 @@ fn vpi_parameter_constant(value: &Val) -> Option<(IrVpiConstant, u32, bool, bool
         }
         Val::Real(real) => Some((IrVpiConstant::Real(*real), 0, false, true)),
         Val::Str(text) => {
-            if text.contains('\0') {
-                return None;
-            }
-            let width = u32::try_from(text.len().saturating_mul(8))
+            let bytes = decode_verilog_string(text).ok()?;
+            let width = u32::try_from(bytes.len().saturating_mul(8))
                 .unwrap_or(u32::MAX)
                 .min(LLG_MAX_WIDTH);
             Some((IrVpiConstant::Text(text.clone()), width, false, false))

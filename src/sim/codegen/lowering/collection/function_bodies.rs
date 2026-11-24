@@ -468,6 +468,7 @@ impl<'a> Codegen<'a> {
         // as an assignment target or a user-defined `ref` actual, register
         // the same storage as a hidden signal so reads and writes share one
         // owner.
+        let mut result_written_outside = false;
         let static_return_signal = if !automatic {
             let return_variable = self
                 .node(ft)
@@ -475,10 +476,10 @@ impl<'a> Codegen<'a> {
                 .iter()
                 .copied()
                 .find(|child| matches!(self.kind(*child), NodeKind::Var { .. }))
+                .filter(|variable| self.db.variable_lifetime(*variable) == VariableLifetime::Static)
                 .filter(|variable| {
-                    self.db.variable_lifetime(*variable) == VariableLifetime::Static
-                        && (self.vpi_return_signals
-                            || self.static_return_requires_signal(*variable))
+                    result_written_outside = self.static_return_requires_signal(*variable);
+                    self.vpi_return_signals || result_written_outside
                 });
             match (return_variable, ret) {
                 (Some(return_variable), Some((width, signed, two_state, shortreal))) => {
@@ -1371,7 +1372,7 @@ impl<'a> Codegen<'a> {
         let callback_return_independent = automatic
             || ret.is_none()
             || (static_local_signals.is_empty()
-                && static_return_signal.is_none()
+                && !result_written_outside
                 && self.static_return_is_callback_independent(body, ft));
         let observed_outputs = shared_outputs
             .iter()

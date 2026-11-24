@@ -34,14 +34,13 @@ impl Validator<'_> {
         for (index, ty) in self.model.native_types.iter().enumerate() {
             validate_native_type(ty, format_args!("native_types[{index}]"))?;
         }
-        let mut names = HashSet::new();
         for (index, value) in self.model.native_values.iter().enumerate() {
             let path = format_args!("native_values[{index}]");
             if value.ty >= self.model.native_types.len() {
                 return self.fail(path, "native value type is out of bounds");
             }
-            if !value.activation && (value.c_name.is_empty() || !names.insert(&value.c_name)) {
-                return self.fail(path, "persistent native value needs a unique storage name");
+            if !value.activation && value.c_name.is_empty() {
+                return self.fail(path, "persistent native value needs a storage name");
             }
             for (position, companion) in value.companions.iter().enumerate() {
                 let Some(container) = self.model.containers.get(*companion) else {

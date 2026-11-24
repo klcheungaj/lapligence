@@ -166,6 +166,21 @@ for `8'b1x0z_01xz` (aval word then bval word, see below), and `34 12 00 00`
   no result for a descriptor that is not open, and L37090 covers only read
   errors on an open file).
 
+## String arguments in integral values (decision S26-D23)
+
+`integral_strings.sv` runs with `+ABC=1 +V=42`. 21.3.1
+(SystemVerilog-1800-2009.txt L36569-36573): "filename is an expression that is
+a string literal, string data type, or an integral data type containing a
+character string", and the same for the type argument. A packed value's
+characters are its 8-bit groups, NULs left out: `"w"` padded in 64 bits and
+`{"r", 56'h0}` are the types `w` and `r`. 21.6 (`$test$plusargs`,
+`$value$plusargs`): `ABC` and its prefix `AB` match `+ABC=1`, `AC` does not;
+`V=%d` gives 42.
+
+`neg_real_file_name`, `neg_unpacked_file_name` and `neg_real_plusarg` are
+neither; `neg_integral_coverage_name`: the coverage database tasks take a name
+of type string (decision S26-D23).
+
 ## A03: illegal destinations
 
 - `neg_unpacked_array`, `neg_string_into_int_array` and `neg_unpacked_struct`:

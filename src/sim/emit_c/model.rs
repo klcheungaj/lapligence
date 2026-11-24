@@ -560,19 +560,6 @@ fn render_coroutine_branches(
     upper_bounds: &BTreeMap<usize, usize>,
     threshold: usize,
 ) -> Result<BTreeMap<CoroutineId, CoroutineArtifact>, String> {
-    fn pre_name(pre: &crate::sim::ir::IrPreFn) -> &str {
-        match pre {
-            crate::sim::ir::IrPreFn::Branch { c_name, .. }
-            | crate::sim::ir::IrPreFn::CapturedBranch { c_name, .. }
-            | crate::sim::ir::IrPreFn::MonEval { c_name, .. }
-            | crate::sim::ir::IrPreFn::EventAssign { c_name, .. }
-            | crate::sim::ir::IrPreFn::DisplayEval { c_name, .. }
-            | crate::sim::ir::IrPreFn::MonitorReads { c_name, .. }
-            | crate::sim::ir::IrPreFn::RealEval { c_name, .. }
-            | crate::sim::ir::IrPreFn::DeferredAssertion { c_name, .. }
-            | crate::sim::ir::IrPreFn::ForceEval { c_name, .. } => c_name,
-        }
-    }
     fn fork_branch(pre: &crate::sim::ir::IrPreFn) -> bool {
         matches!(
             pre,
@@ -636,7 +623,7 @@ fn render_coroutine_branches(
                 policy.outlines(&format!("f:{location}")),
             )
             .map_err(|error| locate_at_origin(definition.origin(), error))?;
-            let name = pre_name(pre);
+            let name = pre.c_name();
             artifacts.insert(
                 owner,
                 CoroutineArtifact {
@@ -675,7 +662,7 @@ fn render_coroutine_branches(
                 policy.outlines(&format!("p:{location}")),
             )
             .map_err(|error| locate_at_origin(definition.origin(), error))?;
-            let name = pre_name(pre);
+            let name = pre.c_name();
             artifacts.insert(
                 owner,
                 CoroutineArtifact {
