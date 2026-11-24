@@ -32,7 +32,7 @@ mod assertions;
 use assertions::{assertion_predicate_name, assertion_sequence_name};
 pub(super) mod storage;
 pub(in crate::sim::emit_c) use storage::path_source_storage;
-use storage::{render_signal_decls, render_static_local_decls};
+use storage::{event_array_tables, render_signal_decls, render_static_local_decls};
 pub(in crate::sim::emit_c) mod vpi;
 use vpi::{render_vpi_builtin_calls, render_vpi_compile_calls, render_vpi_metadata};
 mod functions;
@@ -1501,6 +1501,10 @@ fn render_model(
     super::owned::coverage::assertion_tables(model, &mut out);
     super::owned::coverage::statement_tables(model, &mut out);
     render_signal_decls(model, &mut out);
+    // As above: an event array no event control, trigger or wait names leaves
+    // its tables unreferenced.
+    let event_tables_at = out.len();
+    let event_tables = event_array_tables(model);
     render_static_local_decls(model, &mut out);
     super::owned::model::persistent_returns(model, &mut out);
     super::owned::model::vpi_automatic_tables(model, &mut out);
@@ -1766,6 +1770,8 @@ fn render_model(
     out.push_str(&unobserved);
     unobserved_real_columns(model, &mut out, &start);
     out.push_str(&start);
+    let referenced = referenced_descriptor_tables(&out, &event_tables);
+    out.insert_str(event_tables_at, &referenced);
     let referenced = referenced_descriptor_tables(&out, &activation_descriptors);
     out.insert_str(activation_descriptors_at, &referenced);
     out.insert_str(constant_declarations_at, &constants.declarations());

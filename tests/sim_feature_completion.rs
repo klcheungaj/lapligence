@@ -321,6 +321,8 @@ mod sim_099;
 mod ki_elab_tasks;
 #[path = "sim_feature_completion/ki_typename_resolved.rs"]
 mod ki_typename_resolved;
+#[path = "sim_feature_completion/ki_unread_tables.rs"]
+mod ki_unread_tables;
 
 #[path = "sim_feature_completion/ki_audit.rs"]
 mod ki_audit;

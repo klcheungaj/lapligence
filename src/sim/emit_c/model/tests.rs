@@ -1,5 +1,7 @@
 use super::*;
-use crate::sim::ir::{IrArray, IrConst, IrExpr, IrExprKind, IrProcess, IrShape, IrSignal, IrStmt};
+use crate::sim::ir::{
+    IrArray, IrConst, IrEvent, IrExpr, IrExprKind, IrProcess, IrShape, IrSignal, IrStmt,
+};
 
 fn packed_const(value: u64) -> IrExpr {
     IrExpr::new(
@@ -605,6 +607,26 @@ fn unreferenced_activation_descriptor_tables_are_omitted() {
     let rendered = "f(&S_b_llg_value_desc_1, \"S_c\");\nS_a_llg_value_desc_00 = 0;\n";
     assert_eq!(referenced_descriptor_tables(rendered, &tables), tables[1].1);
     assert!(referenced_descriptor_tables(rendered, &[]).is_empty());
+}
+
+#[test]
+fn event_array_tables_stay_only_where_an_element_is_selected() {
+    let mut model = IrModel::new("events".to_owned(), 1).unwrap();
+    for name in ["E_tb_aZl0", "E_tb_bZl0"] {
+        model.events.push(IrEvent::new(name.to_owned()));
+    }
+    for (name, element) in [("E_tb_a", 0), ("E_tb_b", 1)] {
+        model.events.push(IrEvent::new_array(
+            name.to_owned(),
+            vec![(0, 0)],
+            vec![element],
+        ));
+    }
+    let tables = event_array_tables(&model);
+    assert_eq!(tables.len(), 2);
+    let rendered = "E_tb_aZl0.object = &E_tb_aZl0__object;\n\
+                    llg_event_array_select(E_tb_b__elements, 1ULL, E_tb_b__left, E_tb_b__right, i, 1);\n";
+    assert_eq!(referenced_descriptor_tables(rendered, &tables), tables[1].1);
 }
 
 /// Every whole model defines the owned drop helpers, but a model without
