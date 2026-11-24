@@ -158,7 +158,7 @@ does not apply; the owning source guides hold the details.
 | Failure or boundary | Required coverage when affected |
 | --- | --- |
 | Invalid IDs/shapes | Focused owned DB/IR validator tests reject malformed descriptors before emission. |
-| Allocation failure | Use the allocator's existing fault-injection path; verify partial-initialization cleanup and unchanged destinations. If none exists, report the missing probe rather than infer success. |
+| Allocation failure | Generated models: fail every request of a model that uses the new code with the [allocation fault injection](#allocation-fault-injection) and assert its defined result. Components: the allocator's existing fault-injection probe; verify partial-initialization cleanup and unchanged destinations. If neither reaches the code, report the missing probe rather than infer success. |
 | Suspension/cancellation | Public HDL cancels at each new suspension point; verify wakeup detachment, no late publication and exactly-once cleanup. |
 | Aliasing | Public HDL covers overlapping source/destination, copied values and captured values surviving mutation. |
 | Source maps/lifetimes | Generate after snapshot destruction and build/execute after Db destruction with `sim_cli::run_case_after_db_drop`; check surviving fixture identity. Add source-location assertions for new descriptors. |
@@ -1585,6 +1585,61 @@ that only for the checked-in range). The run-time readers are C: run their
 suite with the [generated-runtime sanitizers](#generated-runtime-sanitizers-gcc)
 for memory-safety evidence. Miri is not part of the toolchain, so the
 capture-stream receivers are covered by the Rust tests above only.
+
+### Allocation fault injection
+
+A model built with `--cflags -DLLG_ALLOC_FAULT` (or `LLG_CFLAGS`) renames every
+`malloc`, `calloc` and `realloc` call of the runtime units and of `model.c` to
+a counting wrapper (`src/sim/rt/llg_alloc_fault.h`, included by `llg_msg.h` in
+such a build only: without the definition the header is not read and the
+model and runtime objects are those of a normal build). The built model
+then takes its instructions from the environment:
+
+| Variable | Effect |
+| --- | --- |
+| `LLG_ALLOC_FAULT=<n>` | Request `n` returns NULL (counted from 1; the three calls together, in call order). |
+| `LLG_ALLOC_FAULT=<n>+` | Request `n` and every later one return NULL. |
+| `LLG_ALLOC_FAULT_COUNT=<file>` | A run that ends through `exit()` writes the number of requests it made to `<file>`. |
+
+Not covered, because the code is not the runtime's own: the C library's
+internal allocations (stdio buffers, `fopen`), the vendored FST writer and its
+compressors (`fstapi.c`, `lz4.c`, zlib), and the DPI-C and VPI libraries of the
+user. GMP's scratch is covered: a model replaces GMP's allocation functions
+when it starts. The standalone component probes of `runtime_value_storage`
+do not link the wrapper; they keep their own injectors.
+
+Results a test may assert for a failed request:
+
+- **`FATAL: [SIM-031] cannot allocate ...` and `abort()`** for every request
+  of the runtime and the model, a VPI routine and a DPI-C call context
+  included. Output printed before it is the beginning of the fault-free
+  transcript. Through `llg` the run ends with `RUN-002` (terminated by a
+  signal) and exit status 1.
+  An abort, not a clean exit status: at the failing request the model is in
+  the middle of an operation, and every orderly end (final procedures, the
+  coverage database, closing a dump) needs memory and consistent state that
+  cannot be promised there; the abort needs neither and cannot fail again.
+- **`ERROR: [SIM-018] ...` and exit status 1** for the waveform writer's own
+  requests: before time 0 when a signal cannot be registered, otherwise the
+  run completes and the dump is unusable.
+- **No visible effect** where the request only serves bookkeeping that can
+  wait (the collector puts a collection off), and for the growth of a
+  message buffer (the message is cut short).
+- `$q_initialize` and `$q_add` return status 7, "Not enough memory, cannot
+  create queue" (IEEE 1364-2001 17.6.6).
+
+Anything else is a defect: another signal, a line on stderr that is not a
+catalogued message, output that differs from the fault-free run before the
+failure, an exit status 0 with missing output.
+
+The matrix is `-E 'binary(sim_feature_completion) & test(fin_002d::)'`: one
+model per subsystem (`fixtures/sim/feature_completion/fin_002d/`), built once
+and run for a bounded spread of failed requests; `LLG_ALLOC_FAULT_ALL=1` runs
+every request, in both modes. Run it with the
+[generated-runtime sanitizers](#generated-runtime-sanitizers-gcc) as well: a
+sanitizer or leak report is an uncatalogued line and fails the run that
+printed it. `allocation_fault_build_renames_every_runtime_allocation` lists
+the objects of such a build that still call the C library directly.
 
 ### One readable fixture
 

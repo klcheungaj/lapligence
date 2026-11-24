@@ -1,0 +1,10 @@
+dynamic 12 16 77 107
+queue 54 0 1000 13 0
+slice 16 12 16 0000000000027
+assoc 29 11 30 n3 42 1
+walk 203 key1
+nested 5 23 2 2
+items 8 item6 6 008
+stream 48 12 0
+empty 0 0 0
+done

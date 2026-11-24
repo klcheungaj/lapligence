@@ -474,6 +474,21 @@ pub(crate) fn canonical_messages(stderr: &str) -> String {
         .collect()
 }
 
+/// Whether a child process ended through the C library's `abort()`: killed
+/// by `SIGABRT` on Unix, exit status 3 from the Microsoft C runtime.
+pub(crate) fn ended_by_abort(status: &ExitStatus) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        // SIGABRT is signal 6 on every Unix llg supports.
+        status.signal() == Some(6)
+    }
+    #[cfg(not(unix))]
+    {
+        status.code() == Some(3)
+    }
+}
+
 pub(crate) fn run_command(command: &mut Command, timeout: Duration) -> Result<Output, String> {
     #[cfg(unix)]
     {

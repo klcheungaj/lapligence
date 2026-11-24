@@ -1,0 +1,23 @@
+sum 165
+join left+vpi text!
+wide 9abcdef012345678900000001
+note tb 1
+note tb 2
+note tb 3
+walk 6 at 25 close 7
+inspect tb.clk 1 1
+inspect tb.counter 8 02
+inspect tb.wide 100 123456789abcdef0123456789
+inspect vector 23456789
+inspect decimal   90144042682896311822508713865
+inspect tb.echoed 100 9abcdef012345678900000001
+inspect vector 00000001
+inspect decimal  766224357767427745396392198145
+inspect tb.text 8 vpi text
+inspect top tb tb
+inspect objects 10
+watch counter 5
+poked 77 1234
+later at 73 after 5 changes
+done
+end of simulation after 7 changes

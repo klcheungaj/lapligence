@@ -79,6 +79,9 @@ mod fin_002;
 #[path = "sim_feature_completion/fin_002b.rs"]
 mod fin_002b;
 
+#[path = "sim_feature_completion/fin_002d.rs"]
+mod fin_002d;
+
 #[path = "sim_feature_completion/fnd_003.rs"]
 mod fnd_003;
 

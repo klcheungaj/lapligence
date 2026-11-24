@@ -1,0 +1,12 @@
+allocation ALLOCATION locat 27
+120 -ab-ab-ab-
+0 123456:beef:10x1z
+1 allocation/123456:beef:10x1z
+2      right|left      |1.234500e+03
+3 allocation/123456:beef:10x1zallocation/123456:beef:10x1zallocation/123456:beef:10x1z
+123456 864192 216048
+beef 100101 48879 37
+packed text 642074657874616761696e20
+name_0_p name_5_packed 1
+Name_4_packe 4 1 0
+done
