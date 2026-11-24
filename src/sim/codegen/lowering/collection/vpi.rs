@@ -2575,6 +2575,15 @@ impl Codegen<'_> {
         for row in timing.rows {
             insert(row);
         }
+        if code {
+            owners.extend(timing.row_terms.into_iter().map(|term| {
+                (
+                    term.row,
+                    term.scope,
+                    CodeOwner::Conn(term.conn, term.expression),
+                )
+            }));
+        }
         for (owner, key) in attribute_owners.take() {
             for (index, attribute) in self.db.attributes(owner).iter().enumerate() {
                 let Some((constant, width, signed, real)) =

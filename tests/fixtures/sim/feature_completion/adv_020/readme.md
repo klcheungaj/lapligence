@@ -377,6 +377,13 @@ entries of `path_edges.sdf`. The edge is on the first input of a list
 - Simulation. With a change of `b` at 401 and 601 `tb.u.y` moves after `b$y`
   (21 rise, 22 fall); the fall of `b` at 601 starts that path as the rise does.
 
+## path_selects (30.4.2, 37.16, 37.35)
+
+`path_selects.sv` has paths from indexed part-selects, a part-select, a bit and
+a vector of two inputs. The terminal expression (`vpiExpr`) of an indexed
+part-select is a `vpiIndexedPartSelect`, and the path is a `vpiPathTerm` of its
+net: two of `a`, three of `b` and two of `y`.
+
 ## actions (38.36.3)
 
 `actions.c` registers `cbError`, a `cbSignal` record for `SIGTERM` and, last,

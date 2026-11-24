@@ -1,0 +1,8 @@
+ vpiIndexedPartSelect vpiPartSelect
+ vpiIndexedPartSelect vpiPartSelect
+ vpiPartSelect vpiPartSelect
+ vpiNetBit vpiNetBit
+ vpiNet vpiPartSelect
+tb.u.a path terms 2
+tb.u.b path terms 3
+tb.u.y path terms 2

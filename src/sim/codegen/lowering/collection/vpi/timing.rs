@@ -34,6 +34,14 @@ pub(super) struct VpiRowDelays {
     pub(super) expressions: Vec<NodeId>,
 }
 
+/// The expression of connection `conn` of a timing row, a terminal.
+pub(super) struct VpiRowTerm {
+    pub(super) row: String,
+    pub(super) scope: String,
+    pub(super) conn: usize,
+    pub(super) expression: NodeId,
+}
+
 /// The timing rows and delays [`Codegen::populate_vpi_metadata`] adds to
 /// the catalog.
 #[derive(Default)]
@@ -47,6 +55,8 @@ pub(in super::super::super) struct VpiTimingMetadata {
     pub(super) delay_nodes: HashMap<NodeId, Vec<NodeId>>,
     /// The delay expressions of the module path and timing check rows.
     pub(super) row_delays: Vec<VpiRowDelays>,
+    /// The terminal expressions of the module path and timing check rows.
+    pub(super) row_terms: Vec<VpiRowTerm>,
     /// The SDF interconnect loads of each port: its bits with a load and
     /// the load (module input port delays, 37.14).
     pub(super) port_loads: HashMap<NodeId, Vec<(u32, u32)>>,
@@ -181,9 +191,22 @@ impl Codegen<'_> {
             let Some(instance) = self.owning_inst(path.node) else {
                 continue;
             };
+            let scope = self.vpi_full_name(instance);
             let mut rows = Vec::new();
             for (pair, row) in self.vpi_path_rows(path, instance, &path_rows) {
                 rows.push(row.full_name.clone());
+                // The first connections of a path are its input and output.
+                let terminals = [path.inputs[pair.0 as usize], path.outputs[pair.1 as usize]];
+                metadata
+                    .row_terms
+                    .extend(terminals.into_iter().enumerate().map(|(conn, expression)| {
+                        VpiRowTerm {
+                            row: row.full_name.clone(),
+                            scope: scope.clone(),
+                            conn,
+                            expression,
+                        }
+                    }));
                 if pair == (0, 0) {
                     metadata.rows.push(row);
                 } else {
@@ -193,7 +216,7 @@ impl Codegen<'_> {
             if !rows.is_empty() {
                 metadata.row_delays.push(VpiRowDelays {
                     rows,
-                    scope: self.vpi_full_name(instance),
+                    scope,
                     expressions: path.delays.clone(),
                 });
             }
@@ -211,9 +234,26 @@ impl Codegen<'_> {
                 // The limits are the check's delays (37.36, 37.3.4); a
                 // `$width` threshold is not one.
                 let limits = row.timing.as_ref().map_or(0, |timing| timing.count) as usize;
+                let scope = self.vpi_full_name(instance);
+                // The first connections of a check are its events.
+                metadata
+                    .row_terms
+                    .extend(
+                        check
+                            .events
+                            .iter()
+                            .flatten()
+                            .enumerate()
+                            .map(|(conn, event)| VpiRowTerm {
+                                row: row.full_name.clone(),
+                                scope: scope.clone(),
+                                conn,
+                                expression: event.terminal,
+                            }),
+                    );
                 metadata.row_delays.push(VpiRowDelays {
                     rows: vec![row.full_name.clone()],
-                    scope: self.vpi_full_name(instance),
+                    scope,
                     expressions: check
                         .limits
                         .iter()
