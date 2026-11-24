@@ -3264,9 +3264,19 @@ impl<'a> Codegen<'a> {
         let name = self.covergroup_name(group);
         match method {
             CoverageMethod::GetCoverage | CoverageMethod::GetInstCoverage => {
-                // A discarded query has no effect beyond its arguments.
-                self.lower_coverage_expr(path, node)?;
-                Ok(Some(IrStmt::Nop))
+                // A discarded query still stores its covered and total bin
+                // arguments (19.8); without them it has no effect.
+                let stores_counts = |query: &IrExpr| {
+                    matches!(
+                        query.kind(),
+                        IrExprKind::SysFunc(call)
+                            if matches!(call.as_ref(), IrSysFunc::CoverageCounts { .. })
+                    )
+                };
+                Ok(Some(match self.lower_coverage_expr(path, node)? {
+                    Some(query) if stores_counts(&query) => IrStmt::PlusArg(query),
+                    _ => IrStmt::Nop,
+                }))
             }
             CoverageMethod::SetInstName => {
                 // 19.8: the instance name (option.name) becomes the argument.
