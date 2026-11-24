@@ -314,7 +314,7 @@ const STRING_OPERATIONS: &[(&str, &str, &[Param])] = &[
     (
         "llg_string_format_bound",
         "llg_string_format_bound_to",
-        &[T, S, S, S, S],
+        &[T, S, S, S, S, S],
     ),
     (
         "llg_dyn_value_get_string",

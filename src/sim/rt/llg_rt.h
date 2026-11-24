@@ -2008,9 +2008,12 @@ void llg_write_typed(const char* fmt, llg_fmt_arg_t* args, int32_t n,
 llg_string_t llg_string_format_typed(llg_string_t format, llg_fmt_arg_t* args,
                                      int32_t n, const char* scope);
 // A format known only at run time: `binding` is the caller's `%l` text
-// (`library.cell`). Literal formats have `%l` expanded during lowering.
+// (`library.cell`), `defaults` holds one conversion (`%d`, `%s`, ...) per
+// argument for those the format does not consume. Literal formats have both
+// expanded during lowering.
 llg_string_t llg_string_format_bound(llg_string_t format, llg_fmt_arg_t* args,
-                                     int32_t n, const char* scope, const char* binding);
+                                     int32_t n, const char* scope, const char* binding,
+                                     const char* defaults);
 // Runtime severity tasks use the same typed formatter as display tasks and
 // write one source-context diagnostic to stderr. The argument array is
 // consumed exactly once, including destruction of owned packed values and strings.
@@ -3884,7 +3887,7 @@ void llg_rt_ref_read_to(sv4_t* dst, const llg_ref_t* ref);
 void llg_process_get_randstate_to(llg_string_t* dst);
 void llg_process_handle_get_randstate_to(llg_string_t* dst, llg_process_handle_t* handle);
 void llg_string_format_typed_to(llg_string_t* dst, llg_string_t* format, llg_fmt_arg_t* args, int32_t n, const char* scope);
-void llg_string_format_bound_to(llg_string_t* dst, llg_string_t* format, llg_fmt_arg_t* args, int32_t n, const char* scope, const char* binding);
+void llg_string_format_bound_to(llg_string_t* dst, llg_string_t* format, llg_fmt_arg_t* args, int32_t n, const char* scope, const char* binding, const char* defaults);
 /* Implemented with the container runtime; declared in both headers. */
 void llg_fixed_stream_source_to(sv4_t* dst, const sv4_t* values, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int32_t selector_kind, const sv4_t* first, const sv4_t* second);
 void llg_stream_unpack_source_to(sv4_t* dst, const sv4_t* value, uint64_t bits, uint32_t slice, int32_t right_to_left);

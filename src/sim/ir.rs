@@ -52,9 +52,9 @@ pub use objects::{
     IrArrayDimension, IrArrayQuery, IrArrayQueryKind, IrArrayQueryTarget, IrChandleExpr, IrClass,
     IrClassField, IrClassFieldType, IrDisplayArg, IrMailboxElement, IrMailboxExpr, IrMailboxTarget,
     IrMailboxValue, IrObject, IrObjectQuery, IrObjectStmt, IrObjectType, IrProcessControl,
-    IrProcessExpr, IrProcessRandom, IrStringExpr, IrStringInsideItem, IrVirtualInterface,
-    IrVirtualInterfaceInstance, IrVirtualInterfaceMember, IrVirtualInterfaceMethod,
-    IrVirtualInterfaceNested,
+    IrProcessExpr, IrProcessRandom, IrRunTimeFormat, IrStringExpr, IrStringInsideItem,
+    IrVirtualInterface, IrVirtualInterfaceInstance, IrVirtualInterfaceMember,
+    IrVirtualInterfaceMethod, IrVirtualInterfaceNested,
 };
 
 pub use validate::IrValidationError;

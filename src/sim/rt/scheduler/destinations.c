@@ -48,8 +48,8 @@ void llg_process_get_randstate_to(llg_string_t* dst) {
 void llg_process_handle_get_randstate_to(llg_string_t* dst, llg_process_handle_t* handle) {
     llg_string_replace(dst, llg_process_handle_get_randstate(handle));
 }
-void llg_string_format_bound_to(llg_string_t* dst, llg_string_t* format, llg_fmt_arg_t* args, int32_t n, const char* scope, const char* binding) {
-    llg_string_replace(dst, llg_string_format_bound(llg_string_take(format), args, n, scope, binding));
+void llg_string_format_bound_to(llg_string_t* dst, llg_string_t* format, llg_fmt_arg_t* args, int32_t n, const char* scope, const char* binding, const char* defaults) {
+    llg_string_replace(dst, llg_string_format_bound(llg_string_take(format), args, n, scope, binding, defaults));
 }
 
 void llg_string_format_typed_to(llg_string_t* dst, llg_string_t* format, llg_fmt_arg_t* args, int32_t n, const char* scope) {

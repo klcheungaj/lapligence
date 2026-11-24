@@ -210,7 +210,7 @@ impl Frame<'_, '_> {
                 format,
                 args,
                 scope,
-                binding,
+                run_time,
                 time_unit_fs,
             } => {
                 let format = self.string(format)?;
@@ -224,13 +224,14 @@ impl Frame<'_, '_> {
                 let arguments = self.formatted_arguments(args, unit)?;
                 self.line(super::super::destinations::assign_string(
                     &result.address,
-                    &match binding {
-                        Some(binding) => format!(
-                            "llg_string_format_bound({}, {arguments}, {}, {}, {})",
+                    &match run_time {
+                        Some(run_time) => format!(
+                            "llg_string_format_bound({}, {arguments}, {}, {}, {}, {})",
                             format.take_string(),
                             args.len(),
                             c_string_literal(scope),
-                            c_string_literal(binding)
+                            c_string_literal(&run_time.binding),
+                            c_string_literal(&run_time.defaults)
                         ),
                         None => format!(
                             "llg_string_format_typed({}, {arguments}, {}, {})",

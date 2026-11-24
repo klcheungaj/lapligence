@@ -2124,7 +2124,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   empty arguments print a space. A real without a format specification prints
   in C's shortest `%g` form (`1.5`, `2`, [S24-D3](lrm_decisions.md#display-formatting-sim-024)).
   `%s` prints a zero byte of a packed vector as a space and `%0s` drops it
-  (S24-D4). `%m` names the enclosing named block,
+  (S24-D4); arguments a run-time format leaves over print in their default
+  formats (S24-D5). `%m` names the enclosing named block,
   subroutine or generate block; in a class method it names the method below its
   class and the scope that declares the class (`C.f`, `p.D.g`, `tb.L.k`,
   S99-D10), followed by its named blocks (`C.f.fb`); a named `fork`-`join`

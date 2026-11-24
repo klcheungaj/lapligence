@@ -733,9 +733,15 @@ static void llg_emit_field(char* out, size_t cap, size_t* len,
 
 }
 
-// The `%l` text of the run-time format being expanded; formatting neither
-// yields nor nests, so `llg_string_format_bound` holds it for one call.
-static const char* llg_format_binding;
+// The run-time format being expanded, if any (see `llg_string_format_bound`,
+// which holds it for one call; formatting neither yields nor nests).
+static struct {
+    const char* binding;
+    const char* defaults;
+} llg_format_run_time;
+
+// Bytes of one conversion in `llg_format_run_time.defaults` (`%d`).
+#define LLG_FORMAT_DEFAULT_LENGTH 2
 
 static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
                                const llg_fmt_arg_t* args, int32_t n,
@@ -767,9 +773,9 @@ static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
             // `%l` has no width-bearing form in the Slang grammar, so append
             // the library-qualified HDL scope directly and avoid allocating a
             // model-width temporary on the coroutine stack.
-            if (llg_format_binding) {
-                llg_append_text(out, cap, &len, llg_format_binding,
-                                strlen(llg_format_binding));
+            if (llg_format_run_time.binding) {
+                llg_append_text(out, cap, &len, llg_format_run_time.binding,
+                                strlen(llg_format_run_time.binding));
                 continue;
             }
             llg_append_text(out, cap, &len, "work.", 5);
@@ -902,6 +908,20 @@ static size_t llg_format_typed(char* out, size_t cap, const char* fmt,
         }
         llg_emit_field(out, cap, &len, raw, raw_len, spec, conversion);
         if (raw != inline_raw) free(raw);
+    }
+    if (argi < n && llg_format_run_time.defaults) {
+        // The arguments the format does not consume print in their default
+        // formats, as lowering does for a literal format, with a warning (SV
+        // 21.3.3), reported once. The defaults consume every argument.
+        static int32_t reported_extra_argument;
+        if (!reported_extra_argument) {
+            reported_extra_argument = 1;
+            llg_msg(LLG_MSG_RUNTIME_WARNING, NULL, "format `%s` has fewer specifications than arguments; the rest are printed in their default formats", fmt);
+        }
+        return len + llg_format_typed(out + len, cap - len,
+                                      llg_format_run_time.defaults +
+                                          argi * LLG_FORMAT_DEFAULT_LENGTH,
+                                      args + argi, n - argi, scope);
     }
     out[len] = 0;
     return len;
