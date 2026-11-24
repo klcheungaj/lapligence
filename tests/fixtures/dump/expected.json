@@ -3,7 +3,7 @@
   "fixture": "proj",
   "schema": "llg.tokenDump/v1",
   "summary": {
-    "bindings": 20,
+    "bindings": 18,
     "modules": 3,
     "outcome": "valid"
   },

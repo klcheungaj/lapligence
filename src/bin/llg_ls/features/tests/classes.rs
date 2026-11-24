@@ -134,21 +134,11 @@ fn hover_on_class_name_shows_members() {
 #[test]
 fn hover_on_class_method_shows_signature() {
     let a = class_analysis();
-    // `function int get()` at 1-based (6,3) → 0-based (5,2).
-    let hover = hover_at(&a, hp("/x/c.sv"), 5, 2).expect("hover on get decl");
-    let value = match hover.contents {
-        HoverContents::Markup(m) => m.value,
-        _ => panic!("expected markup hover"),
-    };
+    // `get` at 1-based (6,16) → 0-based (5,15); the `function` keyword before
+    // it names nothing.
+    let value = hover_text(hover_at(&a, hp("/x/c.sv"), 5, 15));
     assert!(value.contains("function int get()"), "value: {value}");
-    // Hover on the method *name* (0-based (5,15)) falls back to the
-    // parse-tree token and still shows the signature.
-    let hover = hover_at(&a, hp("/x/c.sv"), 5, 15).expect("hover on get name");
-    let value = match hover.contents {
-        HoverContents::Markup(m) => m.value,
-        _ => panic!("expected markup hover"),
-    };
-    assert!(value.contains("function int get()"), "value: {value}");
+    assert!(hover_at(&a, hp("/x/c.sv"), 5, 2).is_none());
 }
 
 #[test]

@@ -204,8 +204,8 @@ fn db_build_failure_is_reported_at_unknown_source_position_and_invalidates_analy
         empty_design(),
         Vec::new(),
         Vec::new(),
-        HashMap::new(),
-        ConnectionInputs::default(),
+        tokens::Bindings::default(),
+        None,
     );
 
     assert_eq!(analysis.outcome, AnalysisOutcome::Compile);
@@ -272,8 +272,8 @@ fn has_feature_data_truth_table() {
             model,
             tokens,
             Vec::new(),
-            HashMap::new(),
-            ConnectionInputs::default(),
+            tokens::Bindings::default(),
+            None,
         );
         assert!(
             analysis.has_feature_data(),
@@ -289,8 +289,8 @@ fn has_feature_data_truth_table() {
         model,
         tokens,
         Vec::new(),
-        HashMap::new(),
-        ConnectionInputs::default(),
+        tokens::Bindings::default(),
+        None,
     );
     assert!(!fatal.has_feature_data());
 
@@ -306,8 +306,8 @@ fn has_feature_data_truth_table() {
             empty_design(),
             Vec::new(),
             Vec::new(),
-            HashMap::new(),
-            ConnectionInputs::default(),
+            tokens::Bindings::default(),
+            None,
         );
         assert!(
             !analysis.has_feature_data(),

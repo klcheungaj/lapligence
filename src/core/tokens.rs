@@ -1,7 +1,11 @@
 //! Owned lexical tokens and exact semantic bindings captured by Slang.
 
-use crate::ffi::slang::{LexicalKind, LexicalRole, SemanticKind, Snapshot, SourceRange};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use crate::core::macros::MacroTable;
+use crate::ffi::slang::{
+    LexicalKind, LexicalRole, LexicalTargetRef, LexicalToken, SemanticDefinitionKind, SemanticKind,
+    SemanticNode, Snapshot, SourceRange,
+};
+use std::collections::{HashMap, HashSet};
 
 pub const TOKEN_SLANG_MODULE: i32 = -1;
 pub const TOKEN_SLANG_INTERFACE: i32 = -2;
@@ -61,14 +65,104 @@ pub const TOKEN_SLANG_MACRO_FORMAL: i32 = -34;
 /// [`TOKEN_DECLARATION_OFFSET`]) or a reference bound to it. Other functions,
 /// tasks and methods are [`TOKEN_SLANG_FUNCTION`].
 pub const TOKEN_SLANG_STATIC_FUNCTION: i32 = -35;
+/// Attribute name (IEEE 1800-2009 5.12), which no declaration introduces.
+pub const TOKEN_SLANG_ATTRIBUTE: i32 = -36;
 pub const TOKEN_DECLARATION_OFFSET: i32 = -1_000;
 /// Added to the kind (declaration offset included) of a name written in a
-/// `` `define `` directive: a body name bound from the macro's expansions, an
-/// unbound body name, or a formal argument. Such a token is text of the
-/// macro, not a declaration or reference of the design, so name indexes skip
-/// it (its kind matches none of theirs); [`macro_body_kind`] recovers the
-/// kind for highlighting.
+/// `` `define `` directive: a body name bound from the macro's expansions, or
+/// a formal argument. Such a token is text of the macro, not a declaration or
+/// reference of the design, so name indexes skip it (its kind matches none of
+/// theirs); [`token_class`] recovers the kind.
 pub const TOKEN_MACRO_BODY_OFFSET: i32 = -10_000;
+/// Added to the kind of a name that no source declares; see
+/// [`TokenRule::Undeclared`]. Name indexes skip it too.
+pub const TOKEN_UNDECLARED_OFFSET: i32 = -100_000;
+
+/// Whether a token names a declaration. Highlighting and go-to-definition
+/// read the same tokens and [`Bindings`], so this is the one rule for both: an
+/// identifier has a token exactly when it has a definition, and the
+/// [`Undeclared`](TokenRule::Undeclared) names are the complete list of
+/// exceptions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenRule {
+    /// A keyword, literal, operator or punctuation, or the scope names `$unit`
+    /// and `$root`: no name of a declaration. The path of a resolved
+    /// `` `include `` is the only one that has a definition, the included file.
+    Lexical,
+    /// A name that does not resolve to one kind of declaration: an unknown
+    /// name, one used before its declaration, an undefined macro. It has
+    /// neither a semantic token nor a definition.
+    Unresolved,
+    /// A highlighted name that no source declares, so it has no definition:
+    ///
+    /// * a system task or function and a built-in method
+    ///   ([`TOKEN_SLANG_SYSTEM_SUBROUTINE`]);
+    /// * a name the language declares: the `std` package, its classes
+    ///   (`process`, `semaphore`, `mailbox`) and their members, the implicit
+    ///   iterator `item`;
+    /// * an attribute name ([`TOKEN_SLANG_ATTRIBUTE`]);
+    /// * a macro that a `[compile] defines` entry or the language defines, the
+    ///   operand of `` `ifdef ``, `` `ifndef ``, `` `elsif `` or `` `undef ``
+    ///   that is not defined there, and the operand words of the other
+    ///   directives (`` `pragma ``).
+    Undeclared,
+    /// A name that declares itself. Its definition is itself, except that an
+    /// instance name is bound to the definition it instantiates.
+    Declaration,
+    /// A name bound to at least one declaration, all of one kind.
+    Reference,
+}
+
+/// A token kind without its offsets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TokenClass {
+    /// One of the `TOKEN_*` kinds.
+    pub kind: i32,
+    pub declaration: bool,
+    /// Written in a `` `define `` directive.
+    pub macro_body: bool,
+    pub undeclared: bool,
+}
+
+impl TokenClass {
+    pub fn rule(self) -> TokenRule {
+        match self.kind {
+            TOKEN_SLANG_KEYWORD
+            | TOKEN_SLANG_CONTROL_KEYWORD
+            | TOKEN_SLANG_STRING
+            | TOKEN_SLANG_NUMBER
+            | TOKEN_SLANG_OPERATOR
+            | 0 => TokenRule::Lexical,
+            _ if self.declaration => TokenRule::Declaration,
+            TOKEN_SLANG_SYSTEM_SUBROUTINE | TOKEN_SLANG_ATTRIBUTE => TokenRule::Undeclared,
+            _ if self.undeclared => TokenRule::Undeclared,
+            TOKEN_SLANG_IDENTIFIER => TokenRule::Unresolved,
+            _ => TokenRule::Reference,
+        }
+    }
+}
+
+/// Split a token kind into its base kind and offsets.
+pub fn token_class(kind: i32) -> TokenClass {
+    // Every smaller offset and base kind lies above half of an offset.
+    let mut kind = kind;
+    let mut take = |offset: i32| {
+        let present = kind <= offset / 2;
+        if present {
+            kind -= offset;
+        }
+        present
+    };
+    let undeclared = take(TOKEN_UNDECLARED_OFFSET);
+    let macro_body = take(TOKEN_MACRO_BODY_OFFSET);
+    let declaration = take(TOKEN_DECLARATION_OFFSET);
+    TokenClass {
+        kind,
+        declaration: declaration || kind == TOKEN_GENVAR_DECL,
+        macro_body,
+        undeclared,
+    }
+}
 
 /// Source-positioned lexical item. Coordinates are one-based UTF-16 to retain
 /// the existing feature/index representation; Slang byte ranges are converted
@@ -124,224 +218,545 @@ impl DeclTarget {
     }
 }
 
-pub type RefBindings = HashMap<(String, u32, u32), DeclTarget>;
-/// Reference or connection-label positions for which Slang did not provide
-/// one unique declaration identity. Consumers must not resolve these by name.
-pub type UnresolvedBindings = HashSet<(String, u32, u32)>;
-pub type DeclDetails = HashMap<(String, u32, u32), String>;
-pub type ParseDeclPositions = HashSet<(String, u32, u32)>;
+/// Position of one token: its file and 0-based line and UTF-16 column.
+pub type TokenKey = (String, u32, u32);
+pub type RefBindings = HashMap<TokenKey, DeclTarget>;
+pub type DeclDetails = HashMap<TokenKey, String>;
+pub type ParseDeclPositions = HashSet<TokenKey>;
 
+/// [`DeclTarget::kind`] of a `` `define `` name.
+pub const TARGET_MACRO: &str = "macro";
+/// [`DeclTarget::kind`] of a `` `define `` formal argument.
+pub const TARGET_MACRO_FORMAL: &str = "macro formal";
+/// [`DeclTarget::kind`] of an included file: its start.
+pub const TARGET_FILE: &str = "file";
+
+/// The targets of every bound token, by the token's position. Definition
+/// requests read both tables; a token has an entry in at most one.
 #[derive(Debug, Default)]
-pub struct ParseGenvarFacts {
-    pub bindings: RefBindings,
+pub struct Bindings {
+    /// Names of the design bound to exactly one declaration. Hover,
+    /// references and rename read these.
+    pub references: RefBindings,
+    /// Tokens that have a definition but are no reference of the design:
+    /// names in `` `define `` text, macro names and `` `include `` paths,
+    /// instance names (bound to the definition they instantiate), and names
+    /// bound to several declarations.
+    pub navigation: HashMap<TokenKey, Vec<DeclTarget>>,
 }
 
-/// Convert Slang's bounded lexical table into the representation consumed by
-/// the language-server feature index.
-pub fn from_slang_snapshot(snapshot: &Snapshot, sources: &[(&str, &str)]) -> Vec<FileTokens> {
-    project_slang(snapshot, sources).0
+/// What a token's definition is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Definition<'a> {
+    /// The token declares the name.
+    Itself,
+    /// At least one target.
+    Targets(&'a [DeclTarget]),
 }
 
-/// Project tokens, exact reference bindings, declaration details, and the
-/// declaration-position set from one owned Slang snapshot.
-pub fn project_slang(
-    snapshot: &Snapshot,
-    sources: &[(&str, &str)],
-) -> (
-    Vec<FileTokens>,
-    RefBindings,
-    UnresolvedBindings,
-    DeclDetails,
-    ParseDeclPositions,
-) {
-    let files: HashMap<_, _> = snapshot
-        .files
-        .iter()
-        .map(|file| (file.id, file.name.as_str()))
-        .collect();
-    let texts: HashMap<_, _> = sources
-        .iter()
-        .map(|&(file, text)| (file, SourcePositions::new(text)))
-        .collect();
-    let semantic: HashMap<_, _> = snapshot
-        .semantic_nodes
-        .iter()
-        .map(|node| (node.id, node))
-        .collect();
-    let mut grouped: BTreeMap<String, Vec<TokenInfo>> = BTreeMap::new();
-    let mut bindings = RefBindings::new();
-    let mut unresolved_bindings = UnresolvedBindings::new();
-    let mut details = DeclDetails::new();
-    let mut declarations = ParseDeclPositions::new();
+impl Bindings {
+    /// The targets bound at a token's 0-based position.
+    pub fn targets(&self, file: &str, line0: u32, col0: u32) -> &[DeclTarget] {
+        let key = (file.to_owned(), line0, col0);
+        match self.references.get(&key) {
+            Some(target) => std::slice::from_ref(target),
+            None => self.navigation.get(&key).map_or(&[], Vec::as_slice),
+        }
+    }
 
-    for token in &snapshot.lexical_tokens {
-        // Macro body tokens all span their use site, where the `` `NAME ``
-        // usage token stands; projecting them would paint the body's first
-        // token over the usage. Argument tokens keep their written range.
-        if token.is_missing
-            || token.is_skipped
-            || (token.is_macro_expansion && !token.is_macro_argument)
-        {
+    /// The definition of `token`, a token of the projection these bindings
+    /// came with ([`TokenRule`]).
+    pub fn definition(&self, token: &TokenInfo) -> Option<Definition<'_>> {
+        let targets = self.targets(
+            &token.file,
+            token.line.checked_sub(1)?,
+            token.col.checked_sub(1)?,
+        );
+        if !targets.is_empty() {
+            return Some(Definition::Targets(targets));
+        }
+        (token_class(token.kind).rule() == TokenRule::Declaration).then_some(Definition::Itself)
+    }
+}
+
+/// The token at a 0-based position of one file's tokens, which are sorted by
+/// position: the token that covers it or ends there. A name that ends there
+/// goes before the punctuation that starts there.
+pub fn token_at(nodes: &[TokenInfo], line0: u32, col0: u32) -> Option<&TokenInfo> {
+    let position = (line0.checked_add(1)?, col0.checked_add(1)?);
+    let after = nodes.partition_point(|node| (node.line, node.col) <= position);
+    let (token, before) = nodes[..after].split_last()?;
+    if (token.line, token.col) == position && token_class(token.kind).rule() == TokenRule::Lexical {
+        let name = before
+            .last()
+            .filter(|before| (before.end_line, before.end_col) == position);
+        if name.is_some() {
+            return name;
+        }
+    }
+    ((token.end_line, token.end_col) >= position).then_some(token)
+}
+
+/// Everything one owned Slang snapshot says about the names written in its
+/// sources, in LSP coordinates.
+#[derive(Debug, Default)]
+pub struct Projection {
+    /// Tokens by file, sorted by position with one token per position.
+    pub tokens: Vec<FileTokens>,
+    pub bindings: Bindings,
+    pub macros: MacroTable,
+    pub details: DeclDetails,
+    /// Positions (1-based) of the design's declaration tokens.
+    pub declarations: ParseDeclPositions,
+}
+
+/// The tokens of `file`, or of every admitted file.
+pub fn from_slang_snapshot(snapshot: &Snapshot, file: Option<&str>) -> Vec<FileTokens> {
+    project_slang(snapshot, file, &[]).tokens
+}
+
+/// Project tokens, bindings and macros from one owned Slang snapshot compiled
+/// with `defines`. With `file`, only that file's tokens are projected; their
+/// targets may lie in any admitted file.
+pub fn project_slang(snapshot: &Snapshot, file: Option<&str>, defines: &[String]) -> Projection {
+    let sources = SnapshotSources::new(snapshot);
+    let macros = MacroTable::from_slang(snapshot, &sources, defines);
+    let mut projector = Projector {
+        snapshot,
+        sources: &sources,
+        macros: &macros,
+        bindings: Bindings::default(),
+        declarations: ParseDeclPositions::new(),
+    };
+    let mut tokens: Vec<FileTokens> = Vec::new();
+    let mut file_id = None;
+    let lexical = &snapshot.lexical_tokens;
+    let mut start = 0;
+    while start < lexical.len() {
+        // A header of several trees has one token per tree at each range.
+        let range = lexical[start].range;
+        let mut end = start + 1;
+        while end < lexical.len() && lexical[end].range == range {
+            end += 1;
+        }
+        let group = start..end;
+        start = end;
+        let Some(range) = range else {
+            continue;
+        };
+        let Some(source) = sources.file(range.file_id) else {
+            continue;
+        };
+        if file.is_some_and(|file| file != source.name) {
             continue;
         }
-        let Some(range) = token.range else {
+        let Some(token) = projector.project(group, range, source) else {
             continue;
         };
-        let Some((file, _, line, col, end_line, end_col)) = source_position(range, &files, &texts)
-        else {
-            continue;
-        };
-        let role_kind = if token.kind == LexicalKind::Genvar {
-            if token.role == LexicalRole::Declaration {
-                TOKEN_GENVAR_DECL
-            } else {
-                TOKEN_GENVAR_REF
-            }
-        } else if token.role == LexicalRole::ConnectionLabel {
-            match token
-                .semantic_id
-                .and_then(|id| semantic.get(&id).map(|node| node.kind))
-            {
-                Some(SemanticKind::Parameter) => TOKEN_SLANG_PARAMETER_CONNECTION_LABEL,
-                None if matches!(
-                    token.kind,
-                    LexicalKind::Parameter | LexicalKind::TypeParameter
-                ) =>
-                {
-                    TOKEN_SLANG_PARAMETER_CONNECTION_LABEL
-                }
-                _ => TOKEN_SLANG_PORT_CONNECTION_LABEL,
-            }
-        } else {
-            let mut kind = lexical_kind(token.kind);
-            if matches!(token.kind, LexicalKind::Function | LexicalKind::Task)
-                && token
-                    .semantic_id
-                    .and_then(|id| semantic.get(&id))
-                    .is_some_and(|node| {
-                        node.kind == SemanticKind::Subroutine
-                            && node.auxiliary & crate::ffi::slang::SUBROUTINE_STATIC != 0
-                    })
-            {
-                kind = TOKEN_SLANG_STATIC_FUNCTION;
-            }
-            if token.role == LexicalRole::Declaration {
-                kind + TOKEN_DECLARATION_OFFSET
-            } else if token.kind == LexicalKind::Identifier
-                && token.semantic_id.is_some()
-                && matches!(
-                    token.role,
-                    LexicalRole::Reference | LexicalRole::ConnectionActual
-                )
-            {
-                TOKEN_SLANG_BOUND_IDENTIFIER
-            } else if token.kind == LexicalKind::Keyword && token.is_control_flow {
-                TOKEN_SLANG_CONTROL_KEYWORD
-            } else {
-                kind
-            }
-        };
-        // A name in a `define is macro text: it keeps its kind for
-        // highlighting but binds and declares nothing of the design.
-        let macro_body = token.is_directive
-            && !matches!(
-                token.kind,
-                LexicalKind::Macro
-                    | LexicalKind::Keyword
-                    | LexicalKind::Operator
-                    | LexicalKind::String
-                    | LexicalKind::Number
-                    | LexicalKind::SystemSubroutine
-            );
-        if macro_body {
-            grouped.entry(file.to_owned()).or_default().push(TokenInfo {
-                line,
-                col,
-                end_line,
-                end_col,
-                kind: role_kind + TOKEN_MACRO_BODY_OFFSET,
-                name: (!token.text.is_empty()).then(|| token.text.clone()),
-                file: file.to_owned(),
+        if file_id != Some(range.file_id) {
+            file_id = Some(range.file_id);
+            tokens.push(FileTokens {
+                path: source.name.to_owned(),
+                nodes: Vec::new(),
             });
+        }
+        if let Some(file) = tokens.last_mut() {
+            file.nodes.push(token);
+        }
+    }
+    let Projector {
+        bindings,
+        declarations,
+        ..
+    } = projector;
+
+    let mut details = DeclDetails::new();
+    for node in &snapshot.semantic_nodes {
+        let Some((source, line, col)) = node.range.and_then(|range| sources.start(range)) else {
+            continue;
+        };
+        if file.is_some_and(|file| file != source) {
             continue;
         }
-        let node = TokenInfo {
+        let detail = declaration_detail(node, snapshot);
+        if !detail.is_empty() {
+            details
+                .entry((source.to_owned(), line, col))
+                .or_insert(detail);
+        }
+    }
+    Projection {
+        tokens,
+        bindings,
+        macros,
+        details,
+        declarations,
+    }
+}
+
+/// One token's kind and what it names, before its copies in other syntax
+/// trees are merged.
+struct Resolved {
+    kind: i32,
+    targets: Vec<DeclTarget>,
+    /// The targets are references of the design.
+    reference: bool,
+}
+
+struct Projector<'a> {
+    snapshot: &'a Snapshot,
+    sources: &'a SnapshotSources<'a>,
+    macros: &'a MacroTable,
+    bindings: Bindings,
+    declarations: ParseDeclPositions,
+}
+
+impl Projector<'_> {
+    /// Project the tokens at one range, one per syntax tree that holds it.
+    /// Copies that disagree on the kind are unresolved.
+    fn project(
+        &mut self,
+        group: std::ops::Range<usize>,
+        range: SourceRange,
+        source: &SnapshotFile<'_>,
+    ) -> Option<TokenInfo> {
+        let (line, col) = source.positions.position(range.start);
+        let mut merged: Option<Resolved> = None;
+        let mut text = "";
+        for index in group {
+            let token = &self.snapshot.lexical_tokens[index];
+            // Macro body tokens all span their use site, where the `` `NAME ``
+            // usage token stands; projecting them would paint the body's first
+            // token over the usage. Argument tokens keep their written range.
+            if token.is_missing
+                || token.is_skipped
+                || (token.is_macro_expansion && !token.is_macro_argument)
+            {
+                continue;
+            }
+            text = &token.text;
+            let resolved = self.resolve(index, token, source, line, col);
+            merged = Some(match merged {
+                None => resolved,
+                Some(previous) => merge_copies(previous, resolved),
+            });
+        }
+        let Resolved {
+            kind,
+            mut targets,
+            reference,
+        } = merged?;
+        let class = token_class(kind);
+        if !targets.is_empty() {
+            let key = (source.name.to_owned(), line - 1, col - 1);
+            if reference && targets.len() == 1 {
+                self.bindings
+                    .references
+                    .extend(targets.pop().map(|target| (key, target)));
+            } else {
+                self.bindings.navigation.insert(key, targets);
+            }
+        }
+        if class.declaration && !class.macro_body && class.kind != TOKEN_SLANG_MACRO {
+            self.declarations
+                .insert((source.name.to_owned(), line, col));
+        }
+        let (end_line, end_col) = source.positions.position(range.end.max(range.start));
+        Some(TokenInfo {
             line,
             col,
             end_line,
             end_col,
-            kind: role_kind,
-            name: (!token.text.is_empty()).then(|| token.text.clone()),
-            file: file.to_owned(),
-        };
-        if token.role == LexicalRole::Declaration {
-            declarations.insert((file.to_owned(), line, col));
-        }
+            kind,
+            name: (!text.is_empty()).then(|| text.to_owned()),
+            file: source.name.to_owned(),
+        })
+    }
 
-        let semantic_node = token.semantic_id.and_then(|id| semantic.get(&id).copied());
-        let instance_definition = semantic_node
-            .filter(|node| {
-                token.role == LexicalRole::Declaration && node.kind == SemanticKind::Instance
-            })
-            .and_then(|node| node.target_id())
-            .and_then(|id| semantic.get(&id).copied())
-            .filter(|node| node.kind == SemanticKind::Definition);
-        if matches!(
-            token.role,
-            LexicalRole::Reference | LexicalRole::ConnectionLabel | LexicalRole::ConnectionActual
-        ) || instance_definition.is_some()
-        {
-            let key = (file.to_owned(), line - 1, col - 1);
-            if let Some(target) = instance_definition
-                .or(semantic_node)
-                .and_then(|node| decl_target(node, &files, &texts))
-            {
-                let mut target = target;
+    /// The kind and targets of one token ([`TokenRule`]).
+    fn resolve(
+        &self,
+        index: usize,
+        token: &LexicalToken,
+        source: &SnapshotFile<'_>,
+        line: u32,
+        col: u32,
+    ) -> Resolved {
+        let lexical = |kind| Resolved {
+            kind,
+            targets: Vec::new(),
+            reference: false,
+        };
+        match token.kind {
+            LexicalKind::Unknown
+            | LexicalKind::Number
+            | LexicalKind::Operator
+            | LexicalKind::SystemSubroutine => return lexical(lexical_kind(token.kind)),
+            LexicalKind::Keyword if token.is_control_flow => {
+                return lexical(TOKEN_SLANG_CONTROL_KEYWORD)
+            }
+            LexicalKind::Keyword => return lexical(TOKEN_SLANG_KEYWORD),
+            LexicalKind::String => {
+                return Resolved {
+                    kind: TOKEN_SLANG_STRING,
+                    targets: self.include_targets(token),
+                    reference: false,
+                }
+            }
+            LexicalKind::Macro => return self.resolve_macro(token, source, line, col),
+            _ => {}
+        }
+        let macro_body = token.is_directive;
+        let offset = if macro_body {
+            TOKEN_MACRO_BODY_OFFSET
+        } else {
+            0
+        };
+        if token.kind == LexicalKind::Attribute {
+            return lexical(TOKEN_SLANG_ATTRIBUTE + offset);
+        }
+        let node = token
+            .semantic_id
+            .and_then(|id| semantic_node(self.snapshot, id));
+        let mut targets: Vec<DeclTarget> = Vec::new();
+        if token.role == LexicalRole::Declaration {
+            let mut kind = if token.kind == LexicalKind::Genvar {
+                TOKEN_GENVAR_DECL
+            } else {
+                name_kind(token, node) + TOKEN_DECLARATION_OFFSET
+            };
+            kind += offset;
+            // An instance name leads to the definition it instantiates.
+            let definition = node
+                .filter(|node| !macro_body && is_instance(node))
+                .and_then(|node| node.target_id())
+                .and_then(|id| semantic_node(self.snapshot, id))
+                .filter(|node| node.kind == SemanticKind::Definition);
+            targets.extend(definition.and_then(|node| self.decl_target(node)));
+            return Resolved {
+                kind,
+                targets,
+                reference: false,
+            };
+        }
+        if token.role != LexicalRole::None {
+            for target in self.lexical_targets(index) {
+                let target = match target {
+                    LexicalTargetRef::Semantic(id) => {
+                        semantic_node(self.snapshot, id).and_then(|node| self.decl_target(node))
+                    }
+                    LexicalTargetRef::Token(index) => self.token_target(index),
+                };
+                targets.extend(target.filter(|target| !targets.contains(target)));
+            }
+            if targets.is_empty() {
+                targets.extend(node.and_then(|node| self.decl_target(node)));
+            }
+            for target in &mut targets {
                 if token.kind == LexicalKind::Genvar {
                     target.kind = "genvar".to_owned();
                 }
                 target.via_label = token.role == LexicalRole::ConnectionLabel;
                 target.via_connection = token.role == LexicalRole::ConnectionActual;
-                if !unresolved_bindings.contains(&key) {
-                    match bindings.get(&key) {
-                        None => {
-                            bindings.insert(key, target);
-                        }
-                        Some(previous) if previous == &target => {}
-                        Some(_) => {
-                            bindings.remove(&key);
-                            unresolved_bindings.insert(key);
-                        }
-                    }
-                }
-            } else {
-                bindings.remove(&key);
-                unresolved_bindings.insert(key);
             }
         }
-        grouped.entry(file.to_owned()).or_default().push(node);
-    }
-
-    for node in &snapshot.semantic_nodes {
-        let Some(range) = node.range else {
-            continue;
-        };
-        let Some((file, _, line, col, _, _)) = source_position(range, &files, &texts) else {
-            continue;
-        };
-        let detail = declaration_detail(node, snapshot);
-        if !detail.is_empty() {
-            details
-                .entry((file.to_owned(), line, col))
-                .or_insert(detail);
+        if targets.is_empty() {
+            // A node without a source range is a name of the language; the
+            // capture sends the `std` package itself without a node.
+            let language = match node {
+                Some(node) => node.range.is_none(),
+                None => token.kind == LexicalKind::Package && token.role == LexicalRole::None,
+            };
+            let kind = if language {
+                reference_kind(token, node) + TOKEN_UNDECLARED_OFFSET
+            } else {
+                TOKEN_SLANG_IDENTIFIER
+            };
+            return lexical(kind + offset);
+        }
+        Resolved {
+            kind: reference_kind(token, node) + offset,
+            targets,
+            reference: !macro_body,
         }
     }
 
-    let tokens = grouped
-        .into_iter()
-        .map(|(path, nodes)| FileTokens { path, nodes })
-        .collect();
-    (tokens, bindings, unresolved_bindings, details, declarations)
+    /// A macro name: the name in a `` `define ``, a use, or an operand word of
+    /// another directive.
+    fn resolve_macro(
+        &self,
+        token: &LexicalToken,
+        source: &SnapshotFile<'_>,
+        line: u32,
+        col: u32,
+    ) -> Resolved {
+        let site = self.macros.site_at(source.name, line - 1, col - 1);
+        let targets = match site {
+            Some(site) if token.role != LexicalRole::Declaration => {
+                self.macros.targets(site).collect()
+            }
+            _ => Vec::new(),
+        };
+        let kind = match token.role {
+            LexicalRole::Declaration => TOKEN_SLANG_MACRO + TOKEN_DECLARATION_OFFSET,
+            _ if !targets.is_empty() => TOKEN_SLANG_MACRO,
+            LexicalRole::Reference if !site.is_some_and(|site| site.predefined) => {
+                TOKEN_SLANG_IDENTIFIER
+            }
+            _ => TOKEN_SLANG_MACRO + TOKEN_UNDECLARED_OFFSET,
+        };
+        Resolved {
+            kind,
+            targets,
+            reference: false,
+        }
+    }
+
+    fn include_targets(&self, token: &LexicalToken) -> Vec<DeclTarget> {
+        let Some(range) = token.range.filter(|_| token.is_directive) else {
+            return Vec::new();
+        };
+        let key = |range: SourceRange| (range.file_id, range.start, range.end);
+        let includes = &self.snapshot.includes;
+        let first = includes.partition_point(|include| key(include.operand) < key(range));
+        includes[first..]
+            .iter()
+            .take_while(|include| include.operand == range)
+            .filter_map(|include| self.sources.file(include.file_id))
+            .map(|file| DeclTarget {
+                name: token.text.clone(),
+                kind: TARGET_FILE.to_owned(),
+                file: file.name.to_owned(),
+                line0: 0,
+                col0: 0,
+                via_label: false,
+                via_connection: false,
+            })
+            .collect()
+    }
+
+    fn lexical_targets(&self, index: usize) -> impl Iterator<Item = LexicalTargetRef> + '_ {
+        let targets = &self.snapshot.lexical_targets;
+        let first = targets.partition_point(|target| target.token < index);
+        targets[first..]
+            .iter()
+            .take_while(move |target| target.token == index)
+            .map(|target| target.target)
+    }
+
+    /// A declaration token as a target.
+    fn token_target(&self, index: usize) -> Option<DeclTarget> {
+        let token = self.snapshot.lexical_tokens.get(index)?;
+        let (file, line, col) = self.sources.start(token.range?)?;
+        let kind = match token.kind {
+            LexicalKind::MacroFormal => TARGET_MACRO_FORMAL,
+            _ => "scope",
+        };
+        DeclTarget::from_decl_coords(&token.text, kind, file, line, col)
+    }
+
+    fn decl_target(&self, node: &SemanticNode) -> Option<DeclTarget> {
+        let (file, line, col) = self.sources.start(node.range?)?;
+        // An instance that is not elaborated has the kind of its definition.
+        let described = is_unelaborated_instance(node)
+            .then(|| node.target_id())
+            .flatten()
+            .and_then(|id| semantic_node(self.snapshot, id))
+            .unwrap_or(node);
+        let kind = match described.definition_kind {
+            Some(SemanticDefinitionKind::Module) => "module",
+            Some(SemanticDefinitionKind::Interface) => "interface",
+            Some(SemanticDefinitionKind::Program) => "program",
+            None => semantic_kind(node.kind),
+        };
+        DeclTarget::from_decl_coords(&node.name, kind, file, line, col)
+    }
+}
+
+/// Merge two copies of one written token.
+fn merge_copies(left: Resolved, right: Resolved) -> Resolved {
+    let (left_class, right_class) = (token_class(left.kind), token_class(right.kind));
+    if left_class.rule() == TokenRule::Unresolved {
+        return right;
+    }
+    if right_class.rule() == TokenRule::Unresolved {
+        return left;
+    }
+    // An argument of a macro is text of the directive in a tree that does not
+    // expand it.
+    if left_class.macro_body != right_class.macro_body {
+        return if left_class.macro_body { right } else { left };
+    }
+    if left.kind != right.kind {
+        return Resolved {
+            kind: TOKEN_SLANG_IDENTIFIER,
+            targets: Vec::new(),
+            reference: false,
+        };
+    }
+    let mut merged = left;
+    for target in right.targets {
+        if !merged.targets.contains(&target) {
+            merged.targets.push(target);
+        }
+    }
+    merged
+}
+
+/// An instance, also one that is not elaborated: of an unknown definition, or
+/// in a scope that is not instantiated.
+fn is_instance(node: &SemanticNode) -> bool {
+    node.kind == SemanticKind::Instance || is_unelaborated_instance(node)
+}
+
+fn is_unelaborated_instance(node: &SemanticNode) -> bool {
+    node.kind == SemanticKind::Unsupported && node.detail == "UninstantiatedDef"
+}
+
+fn semantic_node(snapshot: &Snapshot, id: u64) -> Option<&SemanticNode> {
+    // Node ids are their indices.
+    usize::try_from(id)
+        .ok()
+        .and_then(|index| snapshot.semantic_nodes.get(index))
+}
+
+/// The token kind of a name by its lexical kind.
+fn name_kind(token: &LexicalToken, node: Option<&SemanticNode>) -> i32 {
+    let static_method = matches!(token.kind, LexicalKind::Function | LexicalKind::Task)
+        && node.is_some_and(|node| {
+            node.kind == SemanticKind::Subroutine
+                && node.auxiliary & crate::ffi::slang::SUBROUTINE_STATIC != 0
+        });
+    if static_method {
+        TOKEN_SLANG_STATIC_FUNCTION
+    } else {
+        lexical_kind(token.kind)
+    }
+}
+
+/// The token kind of a bound reference.
+fn reference_kind(token: &LexicalToken, node: Option<&SemanticNode>) -> i32 {
+    if token.kind == LexicalKind::Genvar {
+        return TOKEN_GENVAR_REF;
+    }
+    if token.role == LexicalRole::ConnectionLabel {
+        let parameter = match node {
+            Some(node) => node.kind == SemanticKind::Parameter,
+            None => matches!(
+                token.kind,
+                LexicalKind::Parameter | LexicalKind::TypeParameter
+            ),
+        };
+        return if parameter {
+            TOKEN_SLANG_PARAMETER_CONNECTION_LABEL
+        } else {
+            TOKEN_SLANG_PORT_CONNECTION_LABEL
+        };
+    }
+    match name_kind(token, node) {
+        TOKEN_SLANG_IDENTIFIER => TOKEN_SLANG_BOUND_IDENTIFIER,
+        kind => kind,
+    }
 }
 
 fn declaration_detail(node: &crate::ffi::slang::SemanticNode, snapshot: &Snapshot) -> String {
@@ -404,10 +819,9 @@ fn declaration_detail(node: &crate::ffi::slang::SemanticNode, snapshot: &Snapsho
         // An instance of a definition Slang could not resolve (an unknown
         // module is a black box): describe it like an instance, by the
         // written definition name.
-        SemanticKind::Unsupported
-            if node.detail == "UninstantiatedDef"
-                && !name.is_empty()
-                && !node.definition_name.is_empty() =>
+        _ if is_unelaborated_instance(node)
+            && !name.is_empty()
+            && !node.definition_name.is_empty() =>
         {
             format!("{} {name}", node.definition_name)
         }
@@ -416,33 +830,44 @@ fn declaration_detail(node: &crate::ffi::slang::SemanticNode, snapshot: &Snapsho
     }
 }
 
-fn decl_target(
-    node: &crate::ffi::slang::SemanticNode,
-    files: &HashMap<u64, &str>,
-    texts: &HashMap<&str, SourcePositions<'_>>,
-) -> Option<DeclTarget> {
-    use crate::ffi::slang::SemanticDefinitionKind;
-    let range = node.range?;
-    let (file, _, line, col, _, _) = source_position(range, files, texts)?;
-    let kind = match node.definition_kind {
-        Some(SemanticDefinitionKind::Module) => "module",
-        Some(SemanticDefinitionKind::Interface) => "interface",
-        Some(SemanticDefinitionKind::Program) => "program",
-        None => semantic_kind(node.kind),
-    };
-    DeclTarget::from_decl_coords(&node.name, kind, file, line, col)
+/// One admitted file of a snapshot.
+pub(crate) struct SnapshotFile<'a> {
+    pub name: &'a str,
+    pub positions: SourcePositions<'a>,
 }
 
-fn source_position<'a>(
-    range: SourceRange,
-    files: &HashMap<u64, &'a str>,
-    texts: &HashMap<&'a str, SourcePositions<'a>>,
-) -> Option<(&'a str, &'a str, u32, u32, u32, u32)> {
-    let file = *files.get(&range.file_id)?;
-    let positions = texts.get(file)?;
-    let (line, col) = positions.position(range.start);
-    let (end_line, end_col) = positions.position(range.end.max(range.start));
-    Some((file, positions.text, line, col, end_line, end_col))
+/// The admitted files of a snapshot by id.
+pub(crate) struct SnapshotSources<'a>(HashMap<u64, SnapshotFile<'a>>);
+
+impl<'a> SnapshotSources<'a> {
+    pub fn new(snapshot: &'a Snapshot) -> Self {
+        Self(
+            snapshot
+                .files
+                .iter()
+                .map(|file| {
+                    (
+                        file.id,
+                        SnapshotFile {
+                            name: file.name.as_str(),
+                            positions: SourcePositions::new(&file.text),
+                        },
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    pub fn file(&self, id: u64) -> Option<&SnapshotFile<'a>> {
+        self.0.get(&id)
+    }
+
+    /// The file and one-based position of a range's start.
+    pub fn start(&self, range: SourceRange) -> Option<(&'a str, u32, u32)> {
+        let file = self.file(range.file_id)?;
+        let (line, col) = file.positions.position(range.start);
+        Some((file.name, line, col))
+    }
 }
 
 /// Borrowed source text with a newline index for repeated byte-to-UTF-16 lookups.
@@ -467,6 +892,14 @@ impl<'a> SourcePositions<'a> {
             }
         }
         Self { text, line_starts }
+    }
+
+    /// The text of `range`, empty when it is not inside the source.
+    pub fn text(&self, range: SourceRange) -> &'a str {
+        let bound = |offset| usize::try_from(offset).unwrap_or(usize::MAX);
+        self.text
+            .get(bound(range.start)..bound(range.end))
+            .unwrap_or_default()
     }
 
     /// Return one-based line and UTF-16 column, clamping to a character boundary.
@@ -523,14 +956,8 @@ fn lexical_kind(kind: LexicalKind) -> i32 {
         LexicalKind::TypeParameter => TOKEN_SLANG_TYPE_PARAMETER,
         LexicalKind::Field => TOKEN_SLANG_FIELD,
         LexicalKind::MacroFormal => TOKEN_SLANG_MACRO_FORMAL,
+        LexicalKind::Attribute => TOKEN_SLANG_ATTRIBUTE,
     }
-}
-
-/// The kind of a `` `define `` name token without [`TOKEN_MACRO_BODY_OFFSET`],
-/// or `None` for every other token.
-pub fn macro_body_kind(kind: i32) -> Option<i32> {
-    // Every other kind, declaration offset included, is above half the offset.
-    (kind <= TOKEN_MACRO_BODY_OFFSET / 2).then_some(kind - TOKEN_MACRO_BODY_OFFSET)
 }
 
 pub fn token_base_kind(kind: i32) -> (i32, bool) {

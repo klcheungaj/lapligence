@@ -42,12 +42,11 @@ use llg::core::model::{
     ClassDef, ClassFieldDef, DesignModel, Direction, EnumConstDef, FuncArgDef, FuncDef,
     InstanceModel, ModuleDef, PackageDef, ParamModel, PortModel, SignalModel, SymKind, TypeInfo,
 };
-use llg::core::tokens::{self, DeclTarget, FileTokens, ParseDeclPositions, RefBindings, TokenInfo};
+use llg::core::tokens::{self, DeclTarget, FileTokens, ParseDeclPositions, TokenInfo};
 
 // ── Analysis ──────────────────────────────────────────────────────────────────
 
 mod analysis;
-mod fallback;
 mod package_context;
 mod protected;
 mod requests;
@@ -56,7 +55,6 @@ mod source_graph;
 mod symbol_index;
 
 pub(crate) use analysis::*;
-pub(crate) use fallback::*;
 pub(crate) use package_context::*;
 pub(crate) use protected::*;
 pub(crate) use requests::*;

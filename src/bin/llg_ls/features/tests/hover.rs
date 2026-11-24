@@ -32,97 +32,97 @@ fn hover_on_missing_position_is_none() {
     assert!(hover_at(&a, hp("/x/top.sv"), 9, 9).is_none());
 }
 
-/// An [`Analysis`] carrying a macro table over one synthetic source:
-/// `` `define WIDTH 8 `` on line 1, a usage of it on line 4, an
-/// undefined usage on line 5.
+const MACROS: &str = concat!(
+    "`define WIDTH 8\n",
+    "`define MAX(a, b) ((a) > (b)) ? (a) : (b)\n",
+    "`define ENABLE\n",
+    "module m;\n",
+    "  int x = `WIDTH;\n",
+    "  int y = `MISSING;\n",
+    "  int z = `MAX(x, y);\n",
+    "`ifdef ENABLE\n",
+    "`endif\n",
+    "`ifdef ABSENT\n",
+    "`endif\n",
+    "  string f = `__FILE__;\n",
+    "  int c = `CONFIGURED;\n",
+    "endmodule\n",
+);
+
+/// [`MACROS`] compiled with `CONFIGURED=3`. The caller holds
+/// [`analysis_guards`].
 fn macro_analysis() -> Analysis {
-    let text = concat!(
-        "`define WIDTH 8\n",
-        "module m;\n",
-        "endmodule\n",
-        "x = `WIDTH;\n",
-        "y = `MISSING;\n",
-    );
-    let (model, tokens) = sample_parts();
-    Analysis::new(Vec::new(), model, tokens, Vec::new()).with_macros(macros::build_table(
-        &[],
-        &[(hp("/x/top.sv"), text)],
-        Some("llg.toml"),
-    ))
+    let mut a = analyze(&CompileOpts {
+        sources: vec![compile::OwnedSource::compilation_unit(
+            hp("/x/top.sv"),
+            MACROS,
+        )],
+        defines: vec!["CONFIGURED=3".to_owned()],
+        editor: true,
+        ..Default::default()
+    });
+    a.attach_macro_config_note("llg.toml");
+    a
+}
+
+fn macro_hover(a: &Analysis, marked: &str) -> Option<Hover> {
+    let (line, col) = cursor(MACROS, marked);
+    hover_at(a, hp("/x/top.sv"), line, col)
 }
 
 #[test]
 fn hover_on_macro_usage_shows_resolved_value() {
+    let _guards = analysis_guards();
     let a = macro_analysis();
-    // `` `WIDTH `` starts at 0-based col 4 on line 3; click mid-name.
-    let hover = hover_at(&a, hp("/x/top.sv"), 3, 6).expect("hover on macro usage");
-    let value = match hover.contents {
-        HoverContents::Markup(m) => m.value,
-        _ => panic!("expected markup hover"),
-    };
-    assert_eq!(
-        value,
+    let expected = |value: &str, line: u32| {
         format!(
-            "```systemverilog\nmacro WIDTH = 8\n\ndefined at {}:1\n```",
+            "```systemverilog\n{value}\n\ndefined at {}:{line}\n```",
             hp("/x/top.sv")
         )
+    };
+    let width = macro_hover(&a, "`WI|DTH;");
+    assert_eq!(
+        width.as_ref().and_then(|hover| hover.range),
+        Some(Range::new(Position::new(4, 10), Position::new(4, 16)))
     );
-    let range = hover.range.expect("hover range");
-    assert_eq!(range.start, Position::new(3, 4));
-    assert_eq!(range.end, Position::new(3, 10));
+    assert_eq!(hover_text(width), expected("macro WIDTH = 8", 1));
+    for marked in ["= `|MAX(x", "`define |MAX(a"] {
+        assert_eq!(
+            hover_text(macro_hover(&a, marked)),
+            expected("macro MAX(a, b) = ((a) > (b)) ? (a) : (b)", 2)
+        );
+    }
+    for marked in ["`define |ENABLE", "`ifdef EN|ABLE"] {
+        assert_eq!(
+            hover_text(macro_hover(&a, marked)),
+            expected("macro ENABLE", 3)
+        );
+    }
+    assert_eq!(
+        hover_text(macro_hover(&a, "`define |WIDTH")),
+        expected("macro WIDTH = 8", 1)
+    );
+    assert_eq!(
+        hover_text(macro_hover(&a, "`|CONFIGURED")),
+        "```systemverilog\nmacro CONFIGURED = 3\n```"
+    );
 }
 
 #[test]
 fn hover_on_undefined_macro_names_the_config() {
+    let _guards = analysis_guards();
     let a = macro_analysis();
-    let hover = hover_at(&a, hp("/x/top.sv"), 4, 5).expect("hover on undefined macro");
-    let value = match hover.contents {
-        HoverContents::Markup(m) => m.value,
-        _ => panic!("expected markup hover"),
-    };
+    let value = hover_text(macro_hover(&a, "`|MISSING"));
     assert!(
         value.contains("`MISSING` is not defined under the current configuration."),
-        "value: {value}"
+        "{value}"
     );
     assert!(
         value.contains("Checked the `[compile] defines` in llg.toml"),
         "the config note must name the checked source: {value}"
     );
-}
-
-#[test]
-fn hover_on_define_site_shows_the_same_value() {
-    let a = macro_analysis();
-    // The NAME identifier of `` `define WIDTH 8 `` (0-based col 8).
-    let hover = hover_at(&a, hp("/x/top.sv"), 0, 9).expect("hover on define site");
-    let value = match hover.contents {
-        HoverContents::Markup(m) => m.value,
-        _ => panic!("expected markup hover"),
-    };
-    assert!(value.contains("macro WIDTH = 8"), "value: {value}");
-}
-
-#[test]
-fn hover_on_function_like_macro_renders_args() {
-    let text = "`define MAX(a, b) ((a) > (b)) ? (a) : (b)\nx = `MAX(p, q);\n";
-    let (model, tokens) = sample_parts();
-    let a = Analysis::new(Vec::new(), model, tokens, Vec::new()).with_macros(macros::build_table(
-        &[],
-        &[(hp("/x/top.sv"), text)],
-        None,
-    ));
-    let hover = hover_at(&a, hp("/x/top.sv"), 1, 5).expect("hover on function-like usage");
-    let value = match hover.contents {
-        HoverContents::Markup(m) => m.value,
-        _ => panic!("expected markup hover"),
-    };
-    assert_eq!(
-        value,
-        format!(
-            "```systemverilog\nmacro MAX(a, b) = ((a) > (b)) ? (a) : (b)\n\ndefined at {}:1\n```",
-            hp("/x/top.sv")
-        )
-    );
+    assert!(macro_hover(&a, "`ifdef AB|SENT").is_none());
+    assert!(macro_hover(&a, "`__FI|LE__").is_none());
 }
 
 #[test]
@@ -173,14 +173,25 @@ fn hover_on_param_decl_shows_elaborated_value_line() {
     );
 }
 
+/// The value comes from the model at the target's coordinates, wherever the
+/// reference is written.
 #[test]
 fn hover_on_bound_param_reference_shows_elaborated_value() {
-    // A ref position bound through `ref_bindings` to the W declaration
-    // (0-based line0=1, col0=4): the value must come from the committed
-    // model via the TARGET's coordinates — even when the reference sits
-    // in a different file than its declaration.
-    let mut bindings: RefBindings = HashMap::new();
-    bindings.insert(
+    let (_, mut token_files) = sample_parts();
+    token_files.push(FileTokens {
+        path: hp("/x/other.sv").to_owned(),
+        nodes: vec![TokenInfo {
+            line: 7,
+            col: 3,
+            end_line: 7,
+            end_col: 4,
+            kind: tokens::TOKEN_SLANG_PARAMETER,
+            name: Some("W".to_owned()),
+            file: hp("/x/other.sv").to_owned(),
+        }],
+    });
+    let mut bindings = tokens::Bindings::default();
+    bindings.references.insert(
         (hp("/x/other.sv").to_owned(), 6, 2),
         DeclTarget {
             name: "W".to_owned(),
@@ -192,12 +203,8 @@ fn hover_on_bound_param_reference_shows_elaborated_value() {
             via_connection: false,
         },
     );
-    let a = sample_analysis_with_bindings(bindings);
-    let hover = hover_at(&a, hp("/x/other.sv"), 6, 2).expect("hover on bound W ref");
-    let value = match hover.contents {
-        HoverContents::Markup(m) => m.value,
-        _ => panic!("expected markup hover"),
-    };
+    let a = sample_analysis_with_bindings(token_files, bindings);
+    let value = hover_text(hover_at(&a, hp("/x/other.sv"), 6, 2));
     assert!(
         value.contains("parameter W") && value.contains("\nvalue = 32'sd8"),
         "cross-file ref-site hover must show the declaration's value: {value}"
@@ -206,37 +213,6 @@ fn hover_on_bound_param_reference_shows_elaborated_value() {
         !value.contains("= 32'sd8\nvalue"),
         "the value must not render twice: {value}"
     );
-}
-
-#[test]
-fn unresolved_semantic_reference_does_not_fall_back_by_name() {
-    let (model, mut token_files) = sample_parts();
-    token_files[0].nodes.push(TokenInfo {
-        line: 7,
-        col: 3,
-        end_line: 7,
-        end_col: 4,
-        kind: tokens::TOKEN_SLANG_PARAMETER,
-        name: Some("W".to_owned()),
-        file: hp("/x/top.sv").to_owned(),
-    });
-    let key = (hp("/x/top.sv").to_owned(), 6, 2);
-    let analysis = Analysis::new_with_outcome(
-        AnalysisOutcome::Valid,
-        Vec::new(),
-        model,
-        token_files,
-        Vec::new(),
-        HashMap::new(),
-        ConnectionInputs {
-            unresolved_bindings: [key].into_iter().collect(),
-            ..ConnectionInputs::default()
-        },
-    );
-
-    assert!(definition_at(&analysis, hp("/x/top.sv"), 6, 2).is_none());
-    assert!(hover_at(&analysis, hp("/x/top.sv"), 6, 2).is_none());
-    assert!(references_at(&analysis, hp("/x/top.sv"), 6, 2).is_empty());
 }
 
 #[test]

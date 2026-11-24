@@ -432,7 +432,7 @@ fn lsp_stdio_semantic_tokens_send_grouped_words_as_keywords_with_llg_modifiers()
     );
     assert_eq!(
         types.last().map(String::as_str),
-        Some("operator"),
+        Some("decorator"),
         "{types:?}"
     );
     let connection_label = modifiers

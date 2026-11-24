@@ -1,4 +1,5 @@
-//! Editor capture omits the facts only simulation reads and nothing else.
+//! Editor capture omits the facts only simulation reads, and adds the names
+//! only tokens and navigation need.
 
 use super::*;
 use llg::core::db::Db;
@@ -59,11 +60,20 @@ fn inherited_aliases(snapshot: &slang::Snapshot) -> usize {
         .count()
 }
 
-fn token_kinds(files: &[tokens::FileTokens]) -> Vec<(u32, u32, i32, Option<&str>)> {
-    files
+fn token_fields(token: &tokens::TokenInfo) -> (u32, u32, i32, Option<&str>) {
+    (token.line, token.col, token.kind, token.name.as_deref())
+}
+
+/// Every token with its definition.
+fn defined_tokens(projection: &tokens::Projection) -> Vec<(&tokens::TokenInfo, String)> {
+    projection
+        .tokens
         .iter()
         .flat_map(|file| &file.nodes)
-        .map(|token| (token.line, token.col, token.kind, token.name.as_deref()))
+        .map(|token| {
+            let definition = projection.bindings.definition(token);
+            (token, format!("{definition:?}"))
+        })
         .collect()
 }
 
@@ -97,13 +107,32 @@ fn editor_capture_omits_only_simulation_facts() {
     Db::from_slang(&full).expect("full database");
     Db::from_slang(&editor).expect("editor database");
 
-    // Tokens and every reference binding are the same.
-    let sources = [("editor.sv", SOURCE)];
-    let full = tokens::project_slang(&full, &sources);
-    let editor = tokens::project_slang(&editor, &sources);
-    assert_eq!(token_kinds(&editor.0), token_kinds(&full.0));
-    assert!(!editor.1.is_empty());
-    assert_eq!(editor.1, full.1);
-    assert_eq!(editor.2, full.2);
-    assert_eq!(editor.4, full.4);
+    // Every token with a definition is the same, and the base class name of a
+    // class header gains one.
+    let full = tokens::project_slang(&full, None, &[]);
+    let editor = tokens::project_slang(&editor, None, &[]);
+    let (full_tokens, editor_tokens) = (defined_tokens(&full), defined_tokens(&editor));
+    assert_eq!(full_tokens.len(), editor_tokens.len());
+    let added: Vec<_> = full_tokens
+        .iter()
+        .zip(&editor_tokens)
+        .filter(|(full, editor)| {
+            (token_fields(full.0), &full.1) != (token_fields(editor.0), &editor.1)
+        })
+        .collect();
+    let [(before, after)] = added.as_slice() else {
+        panic!("{added:?}");
+    };
+    assert_eq!(before.0.kind, tokens::TOKEN_SLANG_IDENTIFIER);
+    assert_eq!(after.0.kind, tokens::TOKEN_SLANG_CLASS);
+    assert_eq!(after.0.name.as_deref(), Some("base"));
+    assert_eq!((after.0.line, after.0.col), (8, 25));
+    assert!(after.1.contains("line0: 3"), "{after:?}");
+    assert!(!editor.bindings.references.is_empty());
+    assert_eq!(
+        editor.bindings.references.len(),
+        full.bindings.references.len() + 1
+    );
+    assert_eq!(editor.bindings.navigation, full.bindings.navigation);
+    assert_eq!(editor.details, full.details);
 }

@@ -347,6 +347,15 @@ fn memo_definition(client: &mut LspProcess, uri: &str, position: &Value) -> Valu
         .expect("definition request")
 }
 
+fn memo_hover(client: &mut LspProcess, uri: &str, position: &Value) -> Value {
+    client
+        .request(
+            "textDocument/hover",
+            json!({ "textDocument": { "uri": uri }, "position": position }),
+        )
+        .expect("hover request")
+}
+
 /// Waits until the navigation-request miss counter grows past `baseline`,
 /// which proves a commit bumped the analysis epoch (invalidation landed)
 /// without depending on wall-clock timing or diagnostic payloads.
@@ -357,7 +366,7 @@ fn memo_definition(client: &mut LspProcess, uri: &str, position: &Value) -> Valu
 fn memo_wait_for_epoch_bump(client: &mut LspProcess, uri: &str, probe: &Value, baseline: u64) {
     let deadline = Instant::now() + POLL_TIMEOUT;
     loop {
-        let _ = memo_definition(client, uri, probe);
+        let _ = memo_hover(client, uri, probe);
         let (_, misses) = memo_cache_stats(client, uri);
         if misses > baseline {
             return;
@@ -371,7 +380,7 @@ fn memo_wait_for_epoch_bump(client: &mut LspProcess, uri: &str, probe: &Value, b
 }
 
 #[test]
-fn lsp_stdio_repeats_identical_definition_requests_from_memo_cache() {
+fn lsp_stdio_repeats_identical_hover_requests_from_memo_cache() {
     let text = "module memo_mod;\n\
                 \x20 logic clk;\n\
                 \x20 assign clk = 1'b0;\n\
@@ -392,13 +401,14 @@ fn lsp_stdio_repeats_identical_definition_requests_from_memo_cache() {
 
     // Cold request computes; the identical repeat answers from the cache with
     // a byte-identical response.
-    let cold = memo_definition(&mut client, &uri, &clk_use);
-    let warm = memo_definition(&mut client, &uri, &clk_use);
+    let cold = memo_hover(&mut client, &uri, &clk_use);
+    let warm = memo_hover(&mut client, &uri, &clk_use);
     assert_eq!(
         warm, cold,
         "the identical repeat request must return the identical response"
     );
-    let (target_uri, target_start) = single_location(&cold, "cold definition");
+    let definition = memo_definition(&mut client, &uri, &clk_use);
+    let (target_uri, target_start) = single_location(&definition, "definition");
     assert_eq!(target_uri, uri, "definition must stay inside the document");
     assert_eq!(
         target_start, clk_decl_start,
@@ -439,7 +449,7 @@ fn lsp_stdio_repeats_identical_definition_requests_from_memo_cache() {
         .expect("restore original text");
     let (_, misses_before_restore) = memo_cache_stats(&mut client, &uri);
     memo_wait_for_epoch_bump(&mut client, &uri, &clk_use, misses_before_restore);
-    let restored = memo_definition(&mut client, &uri, &clk_use);
+    let restored = memo_hover(&mut client, &uri, &clk_use);
     assert_eq!(
         restored, cold,
         "after restore, the original query must answer exactly like before"
@@ -453,7 +463,7 @@ fn lsp_stdio_repeats_identical_definition_requests_from_memo_cache() {
     client.change(&path, 4, text).expect("identical re-send");
     let deadline = Instant::now() + Duration::from_secs(8);
     loop {
-        let warm_noop = memo_definition(&mut client, &uri, &clk_use);
+        let warm_noop = memo_hover(&mut client, &uri, &clk_use);
         let (hits_after_noop, misses_after_noop) = memo_cache_stats(&mut client, &uri);
         assert_eq!(warm_noop, cold, "response drifted without any input change");
         assert!(

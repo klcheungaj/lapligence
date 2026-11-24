@@ -280,26 +280,6 @@ fn sym_field(
     Some((ty.clone(), modifiers))
 }
 
-/// Binding lookup mirroring `features::definition_at`: exact key position
-/// first, then the containing identifier's start column via the index.
-fn binding_at<'a>(
-    analysis: &'a Analysis,
-    file: &str,
-    line: u32,
-    col: u32,
-) -> Option<&'a llg::core::tokens::DeclTarget> {
-    let bindings = &analysis.ref_bindings;
-    if let Some(target) = bindings.get(&(file.to_owned(), line, col)) {
-        return Some(target);
-    }
-    if let Some(entry) = analysis.index.entry_at(file, line, col) {
-        if let Some(target) = bindings.get(&(file.to_owned(), line, entry.col)) {
-            return Some(target);
-        }
-    }
-    None
-}
-
 /// Collect the dump rows for one analysis, relativizing display paths against
 /// `display_root`.
 ///
@@ -382,7 +362,12 @@ pub(crate) fn collect_rows_for(
             };
             let sym =
                 sem.and_then(|toks| sym_field(&legend_types, &legend_modifiers, toks, line0, col0));
-            let bind = binding_at(analysis, &ft.path, line0, col0).map(|target| BindOut {
+            // A name bound to several declarations has no single target.
+            let bind = match analysis.bindings.targets(&ft.path, line0, col0) {
+                [target] => Some(target),
+                _ => None,
+            };
+            let bind = bind.map(|target| BindOut {
                 abs_file: target.file.clone(),
                 line: target.line0,
                 col: target.col0,
@@ -490,7 +475,7 @@ pub(crate) fn format_rows(files_label: &str, rows: &[OutRow], analysis: &Analysi
         "# analysis: outcome={} modules={} bindings={}",
         outcome_label(analysis.outcome),
         analysis.model.modules.len(),
-        analysis.ref_bindings.len()
+        analysis.bindings.references.len()
     ));
     lines
 }

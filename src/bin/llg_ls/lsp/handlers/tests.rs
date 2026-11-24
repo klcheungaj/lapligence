@@ -257,71 +257,36 @@ fn open_token_cache_key_tracks_text_defines_and_epoch() {
     );
 }
 
-#[test]
-fn cached_semantic_tokens_keep_recovered_tokens_of_syntax_invalid_aliases() {
-    // Arrange
-    let real = PathBuf::from(hp("/tmp/llg-lsp-token-alias/src/thing.sv"));
-    let shadow = PathBuf::from(hp("/tmp/llg-lsp-token-alias-shadow/src/thing.sv"));
-    let paths = vec![
-        shadow.to_string_lossy().into_owned(),
-        real.to_string_lossy().into_owned(),
-    ];
-    let mut analysis = features::empty_analysis();
-    analysis.tokens.push(semantic_token_file(&shadow, 4));
-    analysis.diagnostics.push(llg::core::compile::Diag {
-        severity: llg::core::compile::Severity::Syntax,
-        logical: None,
-        file: Some(real.to_string_lossy().into_owned()),
-        line: 4,
-        col: 1,
-        message: "incomplete declaration".to_owned(),
-        id: None,
-        option: None,
-    });
-
-    // Act
-    let cached = cached_semantic_tokens(Some(&analysis), &paths, false);
-
-    // Assert: a syntax error degrades per token, so the recovered token of
-    // the exact alias is served.
-    assert_eq!(cached.data.len(), 1);
-    assert_eq!(cached.data[0].delta_line, 3);
-
-    // Repeat with the diagnostic and token aliases reversed.
-    analysis.tokens.clear();
-    analysis.tokens.push(semantic_token_file(&real, 4));
-    analysis.diagnostics[0].file = Some(shadow.to_string_lossy().into_owned());
-    let cached = cached_semantic_tokens(Some(&analysis), &paths, false);
-    assert_eq!(cached.data.len(), 1);
+/// The zero-based lines of the committed tokens of `path`.
+fn committed_token_lines(analysis: &Analysis, path: &Path) -> Vec<u32> {
+    let tokens = features::semantic_tokens_for(analysis, &path.to_string_lossy());
+    absolute_semantic_tokens(&tokens)
+        .iter()
+        .map(|token| token.0)
+        .collect()
 }
 
 #[test]
-fn cached_semantic_tokens_checks_canonical_aliases_before_fallback() {
-    // Arrange
+fn committed_tokens_match_a_path_exactly_or_canonically() {
     let root = temp_root("token_canonical_alias");
     let source_dir = root.join("src");
     std::fs::create_dir_all(&source_dir).expect("create canonical alias root");
     let real = source_dir.join("thing.sv");
-    let lexical_alias = source_dir.join(".").join("thing.sv");
     std::fs::write(&real, "module m; endmodule\n").expect("write canonical alias source");
     let mut analysis = features::empty_analysis();
     analysis.tokens.push(semantic_token_file(&real, 4));
 
-    // Act
-    let cached = cached_semantic_tokens(
-        Some(&analysis),
-        &[lexical_alias.to_string_lossy().into_owned()],
-        false,
-    );
-
-    // Assert: the canonical identity matches without a basename fallback.
-    assert_eq!(cached.data.len(), 1);
+    assert_eq!(committed_token_lines(&analysis, &real), [3]);
+    let lexical_alias = source_dir.join(".").join("thing.sv");
+    assert_eq!(committed_token_lines(&analysis, &lexical_alias), [3]);
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// Files of one name have their own tokens, and another file's are never
+/// guessed from its name. A syntax error degrades tokens one by one, so those
+/// the frontend recovered are served.
 #[test]
-fn cached_semantic_tokens_isolates_same_basename_files_and_preserves_closed_fallbacks() {
-    // Arrange
+fn committed_tokens_are_never_matched_by_base_name() {
     let left = PathBuf::from(hp("/tmp/llg-lsp-token-left/dup.sv"));
     let right = PathBuf::from(hp("/tmp/llg-lsp-token-right/dup.sv"));
     let mut analysis = features::empty_analysis();
@@ -338,40 +303,10 @@ fn cached_semantic_tokens_isolates_same_basename_files_and_preserves_closed_fall
         option: None,
     });
 
-    // Act / Assert: the syntax-invalid left file keeps its own recovered
-    // token and the valid right file's exact path returns its own stream.
-    let left_tokens = cached_semantic_tokens(
-        Some(&analysis),
-        &[left.to_string_lossy().into_owned()],
-        false,
-    );
-    assert_eq!(left_tokens.data.len(), 1);
-    assert_eq!(left_tokens.data[0].delta_line, 1);
-    let right_tokens = cached_semantic_tokens(
-        Some(&analysis),
-        &[right.to_string_lossy().into_owned()],
-        false,
-    );
-    assert_eq!(right_tokens.data.len(), 1);
-    assert_eq!(right_tokens.data[0].delta_line, 19);
-
-    // An open-buffer fallback never guesses from another same-basename
-    // file.  The closed/project compatibility path retains the historic
-    // basename lookup when no exact entry exists.
-    analysis.diagnostics.clear();
+    assert_eq!(committed_token_lines(&analysis, &left), [1]);
+    assert_eq!(committed_token_lines(&analysis, &right), [19]);
     let missing = PathBuf::from(hp("/tmp/llg-lsp-token-missing/dup.sv"));
-    let open_fallback = cached_semantic_tokens(
-        Some(&analysis),
-        &[missing.to_string_lossy().into_owned()],
-        false,
-    );
-    assert!(open_fallback.data.is_empty());
-    let closed_fallback = cached_semantic_tokens(
-        Some(&analysis),
-        &[missing.to_string_lossy().into_owned()],
-        true,
-    );
-    assert_eq!(closed_fallback.data.len(), 1);
+    assert!(committed_token_lines(&analysis, &missing).is_empty());
 }
 
 #[test]
@@ -396,28 +331,12 @@ fn source_limit_guidance_distinguishes_sizes_from_unreadable_files() {
 }
 
 #[test]
-fn oversized_open_token_buffer_is_rejected_before_flight_admission() {
+fn an_open_buffer_over_the_file_limit_is_rejected() {
     let path = PathBuf::from(hp("/tmp/llg-open-too-large.sv"));
-    let document = |text: &str| OpenTokenDocument {
-        real: path.clone(),
-        text: Arc::new(text.to_owned()),
-        defines: Vec::new(),
-        includes: Arc::default(),
-        epoch: 0,
-    };
-    let open_document = document("12345");
-    let limit = open_token_size_limit(Some(&open_document), Some(4)).expect("over-limit buffer");
+    let limit = open_input_size_limit(&path, "12345", 4).expect("over-limit buffer");
     assert_eq!(limit.measured_bytes, 5);
     assert!(limit.message().contains("max_file_bytes=4"));
-
-    // The semantic-token handler returns on this decision before it
-    // constructs a cache key or calls `OpenTokenFlightRegistry::acquire`.
-    let registry = Arc::new(OpenTokenFlightRegistry::new());
-    assert_eq!(registry.len(), 0);
-    let boundary_document = document("1234");
-    assert!(open_token_size_limit(Some(&boundary_document), Some(4)).is_none());
-    assert!(open_token_size_limit(None, Some(4)).is_none());
-    assert_eq!(registry.len(), 0);
+    assert!(open_input_size_limit(&path, "1234", 4).is_none());
 }
 
 #[test]
@@ -926,6 +845,13 @@ fn open_token_flights_refuse_overflow_without_a_second_parse() {
     assert_eq!(registry.len(), 0);
 }
 
+fn empty_identifiers() -> Arc<features::DocumentIdentifiers> {
+    Arc::new(features::DocumentIdentifiers::new(
+        Vec::new(),
+        Default::default(),
+    ))
+}
+
 #[test]
 fn detached_token_coordinator_survives_leader_cancellation() {
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -954,7 +880,7 @@ fn detached_token_coordinator_survives_leader_cancellation() {
             started_tx.send(()).expect("worker started");
             release_rx.recv().expect("worker release");
             let mut coordinator = coordinator;
-            coordinator.finish(Ok(empty_semantic_tokens()));
+            coordinator.finish(Ok(empty_identifiers()));
         });
         // Dropping the join handle models request cancellation.  The
         // blocking closure still owns the coordinator and must finish.
@@ -998,11 +924,11 @@ fn token_flight_stays_joinable_through_cache_publication() {
         let (published_tx, published_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
         let worker = tokio::task::spawn_blocking(move || {
-            published_worker.put("publication-race".to_owned(), empty_semantic_tokens());
+            published_worker.put("publication-race".to_owned(), empty_identifiers());
             published_tx.send(()).expect("cache publication");
             release_rx.recv().expect("coordinator release");
             let mut coordinator = coordinator;
-            coordinator.finish(Ok(empty_semantic_tokens()));
+            coordinator.finish(Ok(empty_identifiers()));
         });
         drop(worker);
         published_rx.recv().expect("published before completion");
@@ -1252,8 +1178,8 @@ fn commit_job_serves_features_from_partial_analyses() {
             model,
             Vec::new(),
             Vec::new(),
-            HashMap::new(),
-            features::ConnectionInputs::default(),
+            Default::default(),
+            None,
         )
     }
 
@@ -1789,14 +1715,14 @@ fn semantic_staging_guard_does_not_recreate_shadow_state_after_shutdown() {
     assert!(!base.exists(), "precondition: shadow base is absent");
 
     // Act
-    let result = open_document_semantic_tokens_if_current(
-        &source,
-        "module top; endmodule\n",
-        &[],
-        &features::IncludeContext::default(),
-        || false,
-        None,
-    );
+    let document = OpenTokenDocument {
+        real: source,
+        text: Arc::new("module top; endmodule\n".to_owned()),
+        defines: Vec::new(),
+        includes: Arc::default(),
+        epoch: 0,
+    };
+    let result = open_document_identifiers_if_current(&document, || false, None);
 
     // Assert
     assert!(result.is_err(), "stale semantic work must be rejected");
@@ -1831,15 +1757,9 @@ fn isolated_tokens(
     defines: &[String],
     includes: &features::IncludeContext,
 ) -> Vec<(u32, u32, u32, u32)> {
-    let tokens = features::semantic_tokens_for_open_document_with_parent(
-        path,
-        defines,
-        Some(source),
-        includes,
-        None,
-    )
-    .expect("isolated semantic parse");
-    absolute_semantic_tokens(&tokens)
+    let identifiers = features::open_document_identifiers(path, defines, source, includes)
+        .expect("isolated semantic parse");
+    absolute_semantic_tokens(&identifiers.semantic_tokens())
 }
 
 /// Zero-based line and UTF-16 column of the first `needle` in `source`.
@@ -2139,58 +2059,6 @@ fn semantic_parse_ignores_directive_text_in_comments_and_strings() {
         token_type_at(&tokens, source, "\"`begin_keywords\""),
         Some(legend_index("string"))
     );
-}
-
-#[test]
-fn stale_open_buffer_semantic_result_uses_cached_snapshot() {
-    // Arrange
-    let fresh = SemanticTokens {
-        result_id: None,
-        data: vec![SemanticToken {
-            delta_line: 7,
-            delta_start: 0,
-            length: 1,
-            token_type: 0,
-            token_modifiers_bitset: 0,
-        }],
-    };
-    let cached = SemanticTokens {
-        result_id: None,
-        data: vec![SemanticToken {
-            delta_line: 1,
-            delta_start: 0,
-            length: 1,
-            token_type: 0,
-            token_modifiers_bitset: 0,
-        }],
-    };
-
-    // Act
-    let selected = select_semantic_tokens(Some(Ok(fresh)), cached, false);
-
-    // Assert
-    assert_eq!(selected.data[0].delta_line, 1);
-}
-
-#[test]
-fn current_empty_open_buffer_semantic_result_is_authoritative() {
-    // Arrange
-    let cached = SemanticTokens {
-        result_id: None,
-        data: vec![SemanticToken {
-            delta_line: 1,
-            delta_start: 0,
-            length: 1,
-            token_type: 0,
-            token_modifiers_bitset: 0,
-        }],
-    };
-
-    // Act
-    let selected = select_semantic_tokens(Some(Ok(empty_semantic_tokens())), cached, true);
-
-    // Assert
-    assert!(selected.data.is_empty());
 }
 
 #[test]
@@ -3269,13 +3137,15 @@ fn a_job_of_a_replaced_root_does_not_release_the_new_roots_slot() {
 }
 
 /// A commit asks for a semantic-token refresh only when a stream served
-/// since the previous commit may differ: an isolated parse whose defines or
-/// include context (compared by text, as every commit snapshots anew) changed,
-/// or a project stream whose snapshot was replaced.
+/// since the previous refresh may differ: a closed file's when the snapshot
+/// was replaced, an open document's when the new snapshot's stream of its text
+/// is another one, or, where no snapshot compiled its text, when the defines
+/// or the include context (compared by text, as every commit snapshots anew)
+/// changed.
 #[test]
-fn served_token_inputs_refresh_only_when_a_served_stream_may_differ() {
+fn served_tokens_refresh_only_when_a_served_stream_may_differ() {
     use crate::features::{IncludeContext, PackageContext};
-    use state::ServedTokenInputs;
+    use state::ServedTokens;
     let context = |package: &str, header: &str| {
         Arc::new(IncludeContext {
             include_dirs: vec!["/r".to_owned()],
@@ -3289,25 +3159,34 @@ fn served_token_inputs_refresh_only_when_a_served_stream_may_differ() {
     let pkg = "package p; localparam X = 1; endpackage\n";
     let edited = "package p; localparam X = 2; endpackage\n";
     let defines = vec!["A=1".to_owned()];
-    let mut served = ServedTokenInputs::default();
+    let uri = Url::parse("file:///r/a.sv").unwrap();
+    let other = Url::parse("file:///r/b.sv").unwrap();
+    let uncommitted = |_: &Url| None;
+    let is_open = |_: &Url| true;
+
+    let mut served = ServedTokens::default();
     assert!(
-        !served.take_refresh(true, &defines, &context(pkg, "")),
+        !served.take_refresh(true, &defines, &context(pkg, ""), is_open, uncommitted),
         "nothing served"
     );
 
-    served.record_isolated(&defines, &context(pkg, ""));
-    served.record_isolated(&defines, &context(pkg, ""));
+    // Isolated streams.
+    served.record_open(&uri, &defines, &context(pkg, ""));
+    for _ in 0..2 {
+        assert!(
+            !served.take_refresh(true, &defines, &context(pkg, ""), is_open, uncommitted),
+            "equal texts in new allocations"
+        );
+    }
     assert!(
-        !served.take_refresh(true, &defines, &context(pkg, "")),
-        "equal texts in new allocations"
+        served.take_refresh(true, &defines, &context(edited, ""), is_open, uncommitted),
+        "a commit that changes nothing keeps the record"
     );
     assert!(
-        !served.take_refresh(true, &defines, &context(edited, "")),
-        "the decision clears the record"
+        !served.take_refresh(true, &defines, &context(pkg, ""), is_open, uncommitted),
+        "a refresh clears the record"
     );
-
     for (what, new_defines, new_context) in [
-        ("package text", defines.clone(), context(edited, "")),
         ("header text", defines.clone(), context(pkg, "`define H")),
         ("defines", Vec::new(), context(pkg, "")),
         (
@@ -3316,36 +3195,61 @@ fn served_token_inputs_refresh_only_when_a_served_stream_may_differ() {
             Arc::new(IncludeContext::default()),
         ),
     ] {
-        served.record_isolated(&defines, &context(pkg, ""));
+        served.record_open(&other, &defines, &context(pkg, ""));
+        served.record_open(&uri, &defines, &context(pkg, ""));
         assert!(
-            served.take_refresh(true, &new_defines, &new_context),
+            served.take_refresh(true, &new_defines, &new_context, is_open, uncommitted),
             "{what} changed"
         );
     }
-    served.record_isolated(&defines, &Arc::new(IncludeContext::default()));
+    served.record_open(&uri, &defines, &context(pkg, ""));
     assert!(
-        served.take_refresh(false, &defines, &context(pkg, "")),
-        "a stream served before the first commit gains packages"
+        !served.take_refresh(true, &[], &context(edited, ""), |_| false, uncommitted),
+        "a closed document has no stream on screen"
     );
 
-    served.record_isolated(&defines, &context(pkg, ""));
-    served.record_isolated(&[], &context(pkg, ""));
+    // The new snapshot compiled the document's text: only the streams count.
+    let digest = |line| {
+        stream_digest(&SemanticTokens {
+            result_id: None,
+            data: vec![SemanticToken {
+                delta_line: line,
+                delta_start: 0,
+                length: 1,
+                token_type: 0,
+                token_modifiers_bitset: 0,
+            }],
+        })
+    };
+    let committed = |line| move |_: &Url| Some(digest(line));
+    served.record_open(&uri, &defines, &context(pkg, ""));
+    served.record_stream(&uri, digest(1));
     assert!(
-        served.take_refresh(true, &defines, &context(pkg, "")),
-        "isolated parses with different inputs"
+        !served.take_refresh(true, &[], &context(edited, ""), is_open, committed(1)),
+        "the same stream"
+    );
+    assert!(
+        served.take_refresh(true, &[], &context(edited, ""), is_open, committed(2)),
+        "another stream"
+    );
+    served.record_open(&uri, &defines, &context(pkg, ""));
+    assert!(
+        served.take_refresh(true, &defines, &context(pkg, ""), is_open, committed(1)),
+        "a stream that is still computed from other inputs"
     );
 
-    served.record_snapshot();
+    // Closed files.
+    served.record_closed();
     assert!(
-        !served.take_refresh(false, &defines, &context(pkg, "")),
+        !served.take_refresh(false, &defines, &context(pkg, ""), is_open, uncommitted),
         "the snapshot was kept"
     );
     assert!(
-        served.take_refresh(true, &defines, &context(pkg, "")),
+        served.take_refresh(true, &defines, &context(pkg, ""), is_open, uncommitted),
         "the kept record refreshes once the snapshot is replaced"
     );
     assert!(
-        !served.take_refresh(true, &defines, &context(pkg, "")),
+        !served.take_refresh(true, &defines, &context(pkg, ""), is_open, uncommitted),
         "a refresh clears the record"
     );
 }

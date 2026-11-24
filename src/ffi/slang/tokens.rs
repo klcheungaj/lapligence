@@ -80,6 +80,7 @@ fn decode_lexical_kind(raw: u32) -> Result<LexicalKind, SlangError> {
         27 => LexicalKind::TypeParameter,
         28 => LexicalKind::Field,
         29 => LexicalKind::MacroFormal,
+        30 => LexicalKind::Attribute,
         _ => return Err(invalid_native("lexical token has an unknown kind")),
     })
 }
@@ -175,6 +176,11 @@ mod tests {
             LexicalKind::MacroFormal
         );
         token.kind = 30;
+        assert_eq!(
+            decode_lexical_token(&token, &[], 0).unwrap().kind,
+            LexicalKind::Attribute
+        );
+        token.kind = 31;
         assert!(decode_lexical_token(&token, &[], 0).is_err());
     }
 }

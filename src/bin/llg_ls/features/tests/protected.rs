@@ -51,16 +51,6 @@ fn base64_block(seed: u64, bytes: usize) -> String {
     text
 }
 
-fn analyze_sources(sources: &[(&'static str, &str)]) -> Analysis {
-    analyze(&CompileOpts {
-        sources: sources
-            .iter()
-            .map(|(name, text)| compile::OwnedSource::compilation_unit(hp(name), *text))
-            .collect(),
-        ..Default::default()
-    })
-}
-
 fn severities(a: &Analysis, file: &'static str) -> Vec<(Option<DiagnosticSeverity>, String)> {
     lsp_diagnostics(a)
         .remove(hp(file))

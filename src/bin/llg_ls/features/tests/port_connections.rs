@@ -143,21 +143,6 @@ fn analyze_full_pipeline_multiline_named_ports_resolve_to_child() {
     );
     let clk_pos = (clk_label.line - 1, clk_label.col - 1);
     let o_pos = (o_label.line - 1, o_label.col - 1);
-    // Both continuation-line labels are registered as port labels.
-    assert!(
-        a.index
-            .port_labels
-            .contains_key(&(b_path.clone(), clk_pos.0, clk_pos.1)),
-        "port_labels: {:?}",
-        a.index.port_labels
-    );
-    assert!(
-        a.index
-            .port_labels
-            .contains_key(&(b_path.clone(), o_pos.0, o_pos.1)),
-        "port_labels: {:?}",
-        a.index.port_labels
-    );
     // `.clk` → m's clk port decl in a.sv (1-based (2,15) → 0-based
     // (1,14)), NOT top's `logic clk` (0-based (1,8)).
     let loc = definition_at(&a, &b_path, clk_pos.0, clk_pos.1).expect("definition of .clk label");

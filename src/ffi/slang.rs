@@ -13,6 +13,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::{fmt, ptr, slice, str};
 
+mod preprocessor;
 mod sources;
 use sources::{
     decode_edition_finding, decode_line_directive, decode_protected_envelope,
@@ -42,7 +43,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 79;
+const ABI_VERSION: u32 = 80;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -467,8 +468,8 @@ pub struct CompileOptions {
     /// Treat compilation units as library units so definitions are checked
     /// once without inferring and recursively elaborating design tops.
     pub library_units: bool,
-    /// Omit the captured facts that only simulation reads
-    /// (`LLG_SLANG_COMPILE_EDITOR`).
+    /// Omit the captured facts that only simulation reads, and bind the names
+    /// that only tokens and navigation need (`LLG_SLANG_COMPILE_EDITOR`).
     pub editor: bool,
     /// Search order for named source libraries used by configuration rules.
     pub library_order: Vec<String>,
@@ -1801,6 +1802,8 @@ pub enum LexicalKind {
     /// A formal argument of a `` `define ``: its name in the formal list
     /// (role `Declaration`) or a body token that spells it.
     MacroFormal,
+    /// The name of an attribute instance, which no declaration introduces.
+    Attribute,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1883,6 +1886,68 @@ pub struct Attribute {
     pub name: String,
     /// The value was written as a string literal.
     pub string: bool,
+}
+
+/// What one lexical token names when its `semantic_id` cannot say
+/// (`LlgSlangLexicalTarget`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LexicalTargetRef {
+    /// A semantic node.
+    Semantic(u64),
+    /// A declaration token without a semantic node, by its index in
+    /// [`Snapshot::lexical_tokens`].
+    Token(usize),
+}
+
+/// One target of the lexical token at `token`, an index in
+/// [`Snapshot::lexical_tokens`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LexicalTarget {
+    pub token: usize,
+    pub target: LexicalTargetRef,
+}
+
+/// A `` `define `` directive that took effect (`LlgSlangMacroDefinition`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MacroDefinition {
+    /// The name in the directive.
+    pub name: SourceRange,
+    /// The directive, from its grave accent to the end of `body`.
+    pub range: SourceRange,
+    /// The replacement text; empty at the end of `range` without one.
+    pub body: SourceRange,
+    /// The directive has a formal argument list.
+    pub function_like: bool,
+}
+
+/// How a written macro name is used (`LLG_SLANG_MACRO_*`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum MacroReferenceKind {
+    /// `` `NAME ``.
+    Use,
+    /// The operand of `` `ifdef ``, `` `ifndef `` or `` `elsif ``.
+    Test,
+    /// The operand of `` `undef ``.
+    Undef,
+}
+
+/// One resolution of a written macro name (`LlgSlangMacroReference`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MacroReference {
+    pub range: SourceRange,
+    pub kind: MacroReferenceKind,
+    /// Index in [`Snapshot::macro_definitions`]; `None` for a predefined
+    /// macro, which has no source.
+    pub definition: Option<usize>,
+}
+
+/// An `` `include `` directive the preprocessor resolved (`LlgSlangInclude`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Include {
+    /// The written path with its delimiters.
+    pub operand: SourceRange,
+    /// [`File::id`] of the included file.
+    pub file_id: u64,
 }
 
 /// Source library recorded for one elaborated instance, package or
@@ -2045,6 +2110,16 @@ pub struct Snapshot {
     /// Attribute instances (IEEE 1800-2009 5.12) by owner, each owner's in
     /// source order.
     pub attributes: Vec<Attribute>,
+    /// Targets of lexical tokens that their `semantic_id` cannot name, sorted
+    /// by token.
+    pub lexical_targets: Vec<LexicalTarget>,
+    /// The effective `` `define `` directives, one per written directive.
+    pub macro_definitions: Vec<MacroDefinition>,
+    /// Resolved macro names, sorted by range and distinct; a name with
+    /// several resolutions has one record each.
+    pub macro_references: Vec<MacroReference>,
+    /// Resolved `` `include `` operands, sorted by operand and distinct.
+    pub includes: Vec<Include>,
 }
 
 impl Snapshot {
@@ -2310,6 +2385,40 @@ struct RawAttribute {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+struct RawLexicalTarget {
+    token_index: u64,
+    semantic_id: u64,
+    target_token: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawMacroDefinition {
+    name: RawRange,
+    range: RawRange,
+    body: RawRange,
+    flags: u32,
+    reserved: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawMacroReference {
+    range: RawRange,
+    definition_id: u64,
+    kind: u32,
+    flags: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawInclude {
+    operand: RawRange,
+    file_id: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 struct RawFsmPragma {
     range: RawRange,
     scope: RawRange,
@@ -2437,6 +2546,10 @@ struct RawStreamHeader {
     protected_envelope_count: u64,
     fsm_pragma_count: u64,
     attribute_count: u64,
+    lexical_target_count: u64,
+    macro_definition_count: u64,
+    macro_reference_count: u64,
+    include_count: u64,
 }
 
 type RawBatch<T> = unsafe extern "C" fn(*mut std::ffi::c_void, *const T, u64) -> u32;
@@ -2467,6 +2580,10 @@ struct RawSink {
     protected_envelopes: RawBatch<RawProtectedEnvelope>,
     fsm_pragmas: RawBatch<RawFsmPragma>,
     attributes: RawBatch<RawAttribute>,
+    lexical_targets: RawBatch<RawLexicalTarget>,
+    macro_definitions: RawBatch<RawMacroDefinition>,
+    macro_references: RawBatch<RawMacroReference>,
+    includes: RawBatch<RawInclude>,
     end: unsafe extern "C" fn(*mut std::ffi::c_void) -> u32,
 }
 

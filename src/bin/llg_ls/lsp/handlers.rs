@@ -24,6 +24,7 @@ use crate::workspace::{self, RootDescriptor};
 use llg::core::lint::LintConfig;
 
 mod diagnostics;
+mod identifiers;
 mod scheduling;
 mod staging;
 mod state;
@@ -36,7 +37,10 @@ pub(crate) use staging::{emergency_shadow_cleanup, emergency_shadow_cleanup_and_
 pub(crate) use state::Backend;
 #[cfg(test)]
 use state::RootState;
-use state::{BackendState, CommitOutcome, CompileResult, DiscoveryOutcome, RescanResult, RootJob};
+use state::{
+    stream_digest, BackendState, CommitOutcome, CompileResult, DiscoveryOutcome, RescanResult,
+    RootJob,
+};
 
 /// Trailing-edge quiet period for root re-analyses.  Bursts of didOpen/
 /// didChange/didClose and watched-file events collapse into ONE scheduled
@@ -192,84 +196,6 @@ fn insert_cache_stats_line(lines: &mut Vec<String>, (stats, entries): (CacheStat
     {
         Some(position) => lines.insert(position, line),
         None => lines.push(line),
-    }
-}
-
-impl Backend {
-    /// Start an isolated open-document parse whose completion is detached
-    /// from the request future.  The blocking closure owns the coordinator,
-    /// so request cancellation cannot remove the flight while Slang is
-    /// still running.  Successful cache publication happens before the
-    /// coordinator removes the registry entry and wakes followers.
-    fn spawn_open_token_coordinator(
-        &self,
-        mut coordinator: OpenTokenFlightCoordinator,
-        key: String,
-        uri: Url,
-        captured_text: SharedText,
-        open_document: OpenTokenDocument,
-        parent_id: Option<u64>,
-    ) -> Arc<OpenTokenFlight> {
-        let flight = Arc::clone(&coordinator.flight);
-        let cache = Arc::clone(&self.open_token_cache);
-        let state = Arc::clone(&self.state);
-        let coordinator_started = std::time::Instant::now();
-        let file_for_log = crate::logging::enabled(crate::logging::Level::Debug)
-            .then(|| open_document.real.display().to_string());
-        let text_bytes = open_document.text.len();
-        let define_count = open_document.defines.len();
-        let detached = tokio::task::spawn_blocking(move || {
-            crate::llg_debug!(
-                "event=semantic_tokens.coordinator.begin file={} bytes={} defines={} parent_id={:?}",
-                file_for_log.as_deref().unwrap_or("-"),
-                text_bytes,
-                define_count,
-                parent_id
-            );
-            let result = compute_open_document_semantic_tokens(
-                open_document,
-                {
-                    let state = Arc::clone(&state);
-                    let uri = uri.clone();
-                    let captured_text = captured_text.clone();
-                    move || open_document_is_current(&state, &uri, captured_text.as_str())
-                },
-                parent_id,
-            );
-            // Keep this post-compute check: a revision may change after the
-            // final pre-frontend check, so stale results must never enter the
-            // request cache.
-            let buffer_is_current = open_document_is_current(&state, &uri, &captured_text);
-            let token_count = result.as_ref().map_or(0, |tokens| tokens.data.len());
-            let mut cache_published = false;
-            if let Ok(tokens) = &result {
-                if buffer_is_current {
-                    cache.put(key, tokens.clone());
-                    cache_published = true;
-                }
-            }
-            crate::llg_debug!(
-                "event=semantic_tokens.coordinator.publish outcome={} current={} cache_published={} token_count={} elapsed_us={}",
-                if result.is_ok() { "ok" } else { "error" },
-                buffer_is_current,
-                cache_published,
-                token_count,
-                coordinator_started.elapsed().as_micros()
-            );
-            coordinator.finish(result);
-            crate::llg_debug!(
-                "event=semantic_tokens.coordinator.end outcome=complete current={} cache_published={} token_count={} elapsed_us={}",
-                buffer_is_current,
-                cache_published,
-                token_count,
-                coordinator_started.elapsed().as_micros()
-            );
-        });
-        // The coordinator is deliberately detached.  Dropping this handle
-        // does not abort a started `spawn_blocking` task, and the coordinator
-        // remains responsible for waking followers on completion or panic.
-        drop(detached);
-        flight
     }
 }
 
@@ -845,422 +771,20 @@ impl LanguageServer for Backend {
                 Self::log_uri_identity(&params.text_document.uri)
             });
         let uri = params.text_document.uri;
-        let (analysis, paths, open_document, max_file_bytes, shared_owner) = {
-            let mut state = self.lock_state();
-            let Some((root, real, paths)) = Self::root_context(&state, &uri) else {
-                return Ok(None);
-            };
-            let root_key = root.descriptor.root.clone();
-            request.set_root(|| root.descriptor.id.clone());
-            let analysis = root.last_good.clone();
-            let open_document = state.documents.get(&uri).cloned().map(|text| {
-                // The include context comes from the same committed snapshot
-                // as the cached fallback, and its epoch keys the memoized
-                // stream, so a snapshot replacement re-parses the buffer.
-                OpenTokenDocument {
-                    real: real.clone(),
-                    text,
-                    defines: root.descriptor.effective_config().compile.defines,
-                    includes: analysis
-                        .as_ref()
-                        .map(|analysis| Arc::clone(&analysis.include_context))
-                        .unwrap_or_default(),
-                    epoch: root.analysis_epoch,
-                }
-            });
-            let max_file_bytes = open_document
-                .as_ref()
-                .map(|_| root.descriptor.effective_config().analysis.max_file_bytes);
-            // Semantic-token policy: the owner root wins.  In v1 only the
-            // owner holds token data for a shared file, so a stream comparison
-            // is not possible; log the ownership decision instead.
-            let shared = shared_tracker_count(&state, &real) > 1;
-            let owner_name = root.descriptor.id.clone();
-            // Recorded under the same lock as the captured inputs, so a
-            // commit that lands while this request computes sees them and
-            // asks the client to re-request a stream that is already old.
-            let refresh_supported = state.semantic_tokens_refresh;
-            if let Some(root) = state.roots.get_mut(&root_key).filter(|_| refresh_supported) {
-                match &open_document {
-                    Some(document) => root
-                        .served_tokens
-                        .record_isolated(&document.defines, &document.includes),
-                    None => root.served_tokens.record_snapshot(),
-                }
-            }
-            (
-                analysis,
-                paths,
-                open_document,
-                max_file_bytes,
-                shared.then_some((owner_name, real)),
-            )
+        let Some(document) = self.document_request(&uri, true, &mut request).await else {
+            return Ok(None);
         };
-        if let Some((owner_name, real)) = &shared_owner {
-            crate::llg_trace!(
-                "semantic tokens: owner root {owner_name} wins for shared file {}",
-                real.display()
-            );
-        }
-        let captured_text = open_document.as_ref().map(|document| document.text.clone());
-        let allow_filename_fallback = captured_text.is_none();
-        let fallback_analysis = analysis.clone();
-        let fallback_paths = paths.clone();
-
-        // The request released BackendState after capturing this text.  Do
-        // not even inspect/serve an open-buffer cache entry for an obsolete
-        // revision; it must fall back to the committed snapshot without
-        // acquiring a flight or starting isolated work.
-        if let Some(captured_text) = captured_text.as_deref() {
-            if !open_document_is_current(&self.state, &uri, captured_text) {
-                let tokens = cached_semantic_tokens(
-                    fallback_analysis.as_deref(),
-                    &fallback_paths,
-                    allow_filename_fallback,
-                );
-                request.complete("stale", tokens.data.len());
-                return Ok(Some(SemanticTokensResult::Tokens(tokens)));
-            }
-        }
-        if let Some(limit) = open_token_size_limit(open_document.as_ref(), max_file_bytes) {
-            // Recheck after measuring so a concurrent edit cannot turn a
-            // stale captured revision into a size-limit result.  This is
-            // deliberately before key construction, flight admission,
-            // staging, and spawn_blocking.
-            if let Some(document) = open_document.as_ref() {
-                if !open_document_is_current(&self.state, &uri, &document.text) {
-                    let tokens = cached_semantic_tokens(
-                        fallback_analysis.as_deref(),
-                        &fallback_paths,
-                        allow_filename_fallback,
-                    );
-                    request.complete("stale", tokens.data.len());
-                    return Ok(Some(SemanticTokensResult::Tokens(tokens)));
-                }
-                limit.log_rejection();
-                crate::llg_debug!("semantic tokens rejected: {}", limit.message());
-                let tokens = cached_semantic_tokens(
-                    fallback_analysis.as_deref(),
-                    &fallback_paths,
-                    allow_filename_fallback,
-                );
-                request.complete("too-large", tokens.data.len());
-                return Ok(Some(SemanticTokensResult::Tokens(tokens)));
-            }
-        }
-        // Memoize the request-local parse: the isolated stream is a pure
-        // function of (buffer text, -D defines, committed include context),
-        // so a repeat request with unchanged inputs short-circuits the whole
-        // stage+parse pipeline. A config hot reload that changes
-        // `compile.defines` changes the key, and every snapshot replacement
-        // advances the epoch that names the include context.
-        let token_key = open_document.as_ref().map(|document| {
-            open_token_cache_key(
-                uri.as_str(),
-                &document.text,
-                &document.defines,
-                document.epoch,
-            )
-        });
-        let request_id = request.id();
-        let started = std::time::Instant::now();
-        if let Some(key) = &token_key {
-            if let Some(tokens) = self.open_token_cache.get(key) {
-                // didChange can race between the initial barrier and this
-                // cache read.  Validate again immediately before serving it.
-                let cache_is_current = captured_text
-                    .as_deref()
-                    .is_some_and(|text| open_document_is_current(&self.state, &uri, text));
-                if !cache_is_current {
-                    let tokens = cached_semantic_tokens(
-                        fallback_analysis.as_deref(),
-                        &fallback_paths,
-                        allow_filename_fallback,
-                    );
-                    request.complete("stale", tokens.data.len());
-                    return Ok(Some(SemanticTokensResult::Tokens(tokens)));
-                }
-                crate::llg_trace!(
-                    "semantic tokens: served from request cache elapsed_us={} uri={}",
-                    started.elapsed().as_micros(),
-                    uri
-                );
-                request.complete("cache-hit", tokens.data.len());
-                return Ok(Some(SemanticTokensResult::Tokens(tokens)));
-            }
-        }
-
-        // Repeat the barrier after the cache miss and immediately before
-        // flight admission.  A stale revision therefore cannot consume a
-        // bounded flight slot merely because an edit landed during cache
-        // lookup.
-        if let Some(captured_text) = captured_text.as_deref() {
-            if !open_document_is_current(&self.state, &uri, captured_text) {
-                let tokens = cached_semantic_tokens(
-                    fallback_analysis.as_deref(),
-                    &fallback_paths,
-                    allow_filename_fallback,
-                );
-                request.complete("stale", tokens.data.len());
-                return Ok(Some(SemanticTokensResult::Tokens(tokens)));
-            }
-        }
-        let lease = token_key
-            .as_ref()
-            .map(|key| self.open_token_flights.acquire(key.clone()));
-        if crate::logging::enabled(crate::logging::Level::Trace) {
-            let lease_kind = match lease.as_ref() {
-                Some(OpenTokenFlightLease::Leader(_)) => "leader",
-                Some(OpenTokenFlightLease::Follower(_)) => "follower",
-                Some(OpenTokenFlightLease::Saturated) => "saturated",
-                None => "no-flight",
-            };
-            crate::llg_trace!(
-                "event=semantic_tokens.flight_admission outcome={} uri={} key_present={} active_flights={}",
-                lease_kind,
-                uri,
-                token_key.is_some(),
-                self.open_token_flights.len()
-            );
-        }
-        let (fresh, cached, outcome) = match lease {
-            Some(OpenTokenFlightLease::Follower(flight)) => {
-                crate::llg_trace!(
-                    "event=semantic_tokens.flight_wait.begin outcome=follower uri={}",
-                    uri
-                );
-                let fresh = Some(flight.wait().await);
-                crate::llg_trace!(
-                    "event=semantic_tokens.flight_wait.end outcome=ready uri={} fresh_ok={}",
-                    uri,
-                    fresh.as_ref().is_some_and(|result| result.is_ok())
-                );
-                let cached_analysis = fallback_analysis.clone();
-                let cached_paths = fallback_paths.clone();
-                let cached = tokio::task::spawn_blocking(move || {
-                    cached_semantic_tokens(
-                        cached_analysis.as_deref(),
-                        &cached_paths,
-                        allow_filename_fallback,
-                    )
-                })
-                .await
-                .unwrap_or_else(|_| {
-                    cached_semantic_tokens(
-                        fallback_analysis.as_deref(),
-                        &fallback_paths,
-                        allow_filename_fallback,
-                    )
-                });
-                (fresh, cached, "single-flight")
-            }
-            Some(OpenTokenFlightLease::Leader(mut leader)) => {
-                crate::llg_debug!(
-                    "event=semantic_tokens.flight_leader.begin uri={} request_id={}",
-                    uri,
-                    request_id
-                );
-                let key = token_key
-                    .as_ref()
-                    .expect("a leader always has an open-document cache key");
-                // A request can miss the cache, then race a coordinator that
-                // publishes and removes its flight before this request calls
-                // `acquire`.  Recheck after becoming leader; if the result is
-                // already cached, complete this short-lived flight from the
-                // cache instead of launching a duplicate parse.
-                if let Some(tokens) = self.open_token_cache.get(key) {
-                    crate::llg_trace!(
-                        "event=semantic_tokens.flight_leader.end outcome=cache-race uri={} token_count={}",
-                        uri,
-                        tokens.data.len()
-                    );
-                    let cache_is_current = captured_text
-                        .as_deref()
-                        .is_some_and(|text| open_document_is_current(&self.state, &uri, text));
-                    if !cache_is_current {
-                        let error = STALE_OPEN_TOKEN_ERROR.to_owned();
-                        leader.finish(Err(error.clone()));
-                        (
-                            Some(Err(error)),
-                            cached_semantic_tokens(
-                                fallback_analysis.as_deref(),
-                                &fallback_paths,
-                                allow_filename_fallback,
-                            ),
-                            "stale",
-                        )
-                    } else {
-                        leader.finish(Ok(tokens.clone()));
-                        let cached_analysis = fallback_analysis.clone();
-                        let cached_paths = fallback_paths.clone();
-                        let cached = tokio::task::spawn_blocking(move || {
-                            cached_semantic_tokens(
-                                cached_analysis.as_deref(),
-                                &cached_paths,
-                                allow_filename_fallback,
-                            )
-                        })
-                        .await
-                        .unwrap_or_else(|_| {
-                            cached_semantic_tokens(
-                                fallback_analysis.as_deref(),
-                                &fallback_paths,
-                                allow_filename_fallback,
-                            )
-                        });
-                        (Some(Ok(tokens)), cached, "cache-race")
-                    }
-                } else {
-                    match open_document {
-                        Some(open_document) => {
-                            let captured_text = captured_text
-                                .clone()
-                                .expect("open-document inputs always carry captured text");
-                            if !open_document_is_current(&self.state, &uri, &captured_text) {
-                                let error = STALE_OPEN_TOKEN_ERROR.to_owned();
-                                leader.finish(Err(error.clone()));
-                                (
-                                    Some(Err(error)),
-                                    cached_semantic_tokens(
-                                        fallback_analysis.as_deref(),
-                                        &fallback_paths,
-                                        allow_filename_fallback,
-                                    ),
-                                    "stale",
-                                )
-                            } else {
-                                let coordinator = leader.detach();
-                                crate::llg_debug!(
-                            "event=semantic_tokens.flight_leader.detach outcome=compute uri={} request_id={}",
-                            uri,
-                            request_id
-                        );
-                                let flight = self.spawn_open_token_coordinator(
-                                    coordinator,
-                                    key.clone(),
-                                    uri.clone(),
-                                    captured_text,
-                                    open_document,
-                                    Some(request_id),
-                                );
-                                let fresh = Some(flight.wait().await);
-                                let cached_analysis = fallback_analysis.clone();
-                                let cached_paths = fallback_paths.clone();
-                                let cached = tokio::task::spawn_blocking(move || {
-                                    cached_semantic_tokens(
-                                        cached_analysis.as_deref(),
-                                        &cached_paths,
-                                        allow_filename_fallback,
-                                    )
-                                })
-                                .await
-                                .unwrap_or_else(|_| {
-                                    cached_semantic_tokens(
-                                        fallback_analysis.as_deref(),
-                                        &fallback_paths,
-                                        allow_filename_fallback,
-                                    )
-                                });
-                                (fresh, cached, "computed")
-                            }
-                        }
-                        None => {
-                            let error =
-                                "open-document semantic-token inputs disappeared".to_owned();
-                            leader.finish(Err(error.clone()));
-                            (
-                                Some(Err(error)),
-                                cached_semantic_tokens(
-                                    fallback_analysis.as_deref(),
-                                    &fallback_paths,
-                                    allow_filename_fallback,
-                                ),
-                                "no-document",
-                            )
-                        }
-                    }
-                }
-            }
-            Some(OpenTokenFlightLease::Saturated) => {
-                // Saturation is a deliberate refusal: bypassing the bounded
-                // registry here would recreate the unbounded spawn_blocking
-                // queue this guard is meant to prevent.  Serve the project
-                // snapshot (or an empty authoritative-safe result) inline.
-                crate::llg_debug!(
-                    "event=semantic_tokens.flight_admission.end outcome=saturated uri={} active_flights={}",
-                    uri,
-                    self.open_token_flights.len()
-                );
-                (
-                    None,
-                    cached_semantic_tokens(
-                        fallback_analysis.as_deref(),
-                        &fallback_paths,
-                        allow_filename_fallback,
-                    ),
-                    "saturated",
-                )
-            }
-            None => {
-                crate::llg_trace!(
-                    "event=semantic_tokens.flight_admission.end outcome=project-analysis uri={}",
-                    uri
-                );
-                let current_state = Arc::clone(&self.state);
-                let current_uri = uri.clone();
-                let current_text = captured_text.clone();
-                let task = tokio::task::spawn_blocking(move || {
-                    compute_semantic_tokens(
-                        analysis,
-                        paths,
-                        open_document,
-                        move || match current_text.as_deref() {
-                            Some(text) => {
-                                open_document_is_current(&current_state, &current_uri, text)
-                            }
-                            None => !shutdown_requested(),
-                        },
-                        Some(request_id),
-                    )
-                });
-                let result = task.await.unwrap_or_else(|error| {
+        let (tokens, document) =
+            match tokio::task::spawn_blocking(move || (document.semantic_tokens(), document)).await
+            {
+                Ok(result) => result,
+                Err(error) => {
                     crate::llg_debug!("semantic tokens: blocking task failed: {error}");
-                    (
-                        None,
-                        cached_semantic_tokens(
-                            fallback_analysis.as_deref(),
-                            &fallback_paths,
-                            allow_filename_fallback,
-                        ),
-                    )
-                });
-                (result.0, result.1, "computed")
-            }
-        };
-        let buffer_is_current = captured_text
-            .as_deref()
-            .is_some_and(|text| open_document_is_current(&self.state, &uri, text));
-        let outcome = if captured_text.is_some() && !buffer_is_current {
-            "stale"
-        } else {
-            outcome
-        };
-        // Only successful fresh streams are memoized: failures fall back to
-        // the project snapshot and must be retried on the next request.
-        if let Some(Ok(fresh_tokens)) = &fresh {
-            if buffer_is_current {
-                if let Some(key) = &token_key {
-                    self.open_token_cache.put(key.clone(), fresh_tokens.clone());
+                    return Ok(None);
                 }
-            }
-        }
-        crate::llg_trace!(
-            "semantic tokens: computed elapsed_us={} uri={}",
-            started.elapsed().as_micros(),
-            uri
-        );
-        let tokens = select_semantic_tokens(fresh, cached, buffer_is_current);
-        request.complete(outcome, tokens.data.len());
+            };
+        self.record_served_stream(&uri, &document, &tokens);
+        request.complete(document.outcome, tokens.data.len());
         Ok(Some(SemanticTokensResult::Tokens(tokens)))
     }
 
@@ -1352,70 +876,22 @@ impl LanguageServer for Backend {
         let mut request = crate::logging::LifecycleSpan::request("textDocument/definition", || {
             Self::log_uri_identity(&params.text_document_position_params.text_document.uri)
         });
-        let text_document = params.text_document_position_params.text_document;
+        let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
-        let (analysis, epoch, paths) = {
-            let state = self.lock_state();
-            let Some((root, _, paths)) = Self::root_context(&state, &text_document.uri) else {
-                return Ok(None);
-            };
-            request.set_root(|| root.descriptor.id.clone());
-            let Some(analysis) = root.last_good.clone() else {
-                request.complete("no-analysis", 0);
-                return Ok(None);
-            };
-            (analysis, root.analysis_epoch, paths)
+        let Some(document) = self.document_request(&uri, false, &mut request).await else {
+            return Ok(None);
         };
-        let key = RequestKey::new(
-            RequestKind::Definition,
-            text_document.uri.as_str(),
-            position.line,
-            position.character,
-            epoch,
-        );
-        let started = std::time::Instant::now();
-        if let Some(cached) = self.definition_cache.get(&key) {
-            crate::llg_trace!(
-                "definition: served from request cache elapsed_us={} uri={} line={} col={}",
-                started.elapsed().as_micros(),
-                key.uri,
-                key.line,
-                key.character
-            );
-            let value = cached.map(|value| {
-                GotoDefinitionResponse::Scalar(Self::map_location(&self.lock_state(), value))
-            });
-            request.complete(
-                if value.is_some() {
-                    "cache-hit"
-                } else {
-                    "no-data"
-                },
-                1,
-            );
-            return Ok(value);
-        }
-        let value = tokio::task::spawn_blocking(move || {
-            paths.into_iter().find_map(|path| {
-                features::definition_at(&analysis, &path, position.line, position.character)
-            })
+        let outcome = document.outcome;
+        let locations = tokio::task::spawn_blocking(move || document.definitions_at(position))
+            .await
+            .unwrap_or_default();
+        let mut locations = self.map_locations(&locations);
+        request.complete(outcome, locations.len());
+        Ok(match locations.len() {
+            0 => None,
+            1 => locations.pop().map(GotoDefinitionResponse::Scalar),
+            _ => Some(GotoDefinitionResponse::Array(locations)),
         })
-        .await
-        .ok()
-        .flatten();
-        self.definition_cache.put(key.clone(), value.clone());
-        crate::llg_trace!(
-            "definition: computed elapsed_us={} uri={} line={} col={}",
-            started.elapsed().as_micros(),
-            key.uri,
-            key.line,
-            key.character
-        );
-        let value = value.map(|value| {
-            GotoDefinitionResponse::Scalar(Self::map_location(&self.lock_state(), value))
-        });
-        request.complete(if value.is_some() { "ok" } else { "no-data" }, 1);
-        Ok(value)
     }
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {

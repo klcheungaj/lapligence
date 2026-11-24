@@ -436,6 +436,7 @@ impl<'a> Hierarchy<'a> {
                         | LexicalKind::SystemSubroutine
                         | LexicalKind::Macro
                         | LexicalKind::MacroFormal
+                        | LexicalKind::Attribute
                 )
             {
                 return None;

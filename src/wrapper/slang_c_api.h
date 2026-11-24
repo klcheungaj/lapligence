@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 79u
+#define LLG_SLANG_ABI_VERSION 80u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -117,7 +117,13 @@ enum {
    * attribute instances, the IMPORTED edges of import declarations, the
    * FORWARD_DECLARATION edges of classes, and the transparent members through
    * which a derived class shows inherited members. LIBRARY_UNITS captures
-   * omit all but the last as well. */
+   * omit all but the last as well. (ABI v80) Also bind the names that only
+   * tokens and navigation need: class headers, definitions outside their
+   * class, parameter assignments in type names, generate conditions, generic
+   * classes that nothing specializes, and the connections of instances that
+   * are not elaborated. These are lexical data alone, except for the
+   * definitions that only a shadowed definition instantiates, which are
+   * captured as that one is. */
   LLG_SLANG_COMPILE_EDITOR = 1u << 6
 };
 
@@ -1480,6 +1486,11 @@ enum {
   LLG_SLANG_LEXICAL_FUNCTION = 15,
   LLG_SLANG_LEXICAL_TASK = 16,
   LLG_SLANG_LEXICAL_METHOD = 17,
+  /* A text macro name: the name a `define declares (role DECLARATION), the
+   * operand of a conditional directive or `undef and any other name in a
+   * directive (role NONE), and since v79 a use site `NAME, its grave accent
+   * included (role REFERENCE). The definitions a name resolves to are
+   * LlgSlangMacroReference records. */
   LLG_SLANG_LEXICAL_MACRO = 18,
   LLG_SLANG_LEXICAL_KEYWORD = 19,
   LLG_SLANG_LEXICAL_STRING = 20,
@@ -1512,7 +1523,10 @@ enum {
    * the target only when every expansion agrees, and stay unbound
    * identifiers when the expansions disagree or there is none. The net type
    * of `default_nettype, `none` included, is LLG_SLANG_LEXICAL_KEYWORD. */
-  LLG_SLANG_LEXICAL_MACRO_FORMAL = 29
+  LLG_SLANG_LEXICAL_MACRO_FORMAL = 29,
+  /* The name of an attribute instance (IEEE 1800-2009 5.12, ABI v80), which
+   * no declaration introduces: role NONE, no semantic target. */
+  LLG_SLANG_LEXICAL_ATTRIBUTE = 30
 };
 
 enum {
@@ -1723,6 +1737,78 @@ typedef struct {
   LlgSlangString name;
 } LlgSlangAttribute;
 
+/* A target of the lexical token at index token_index of the lexical token
+ * table (ABI v80); a token with records names these instead of its
+ * semantic_id. Exactly one of semantic_id (a semantic node) and target_token
+ * (the index of a token of role DECLARATION) is valid. A name that refers to a
+ * written declaration without a semantic node (an end label, a formal
+ * argument in a `define body, a name in a generic class that nothing
+ * specializes) has one record. A name in a `define body that refers to one a
+ * `define body declares has that name, and one whose expansions bind different
+ * declarations of one kind and role has one record per distinct declaration
+ * (at most LLG_SLANG_MAX_LEXICAL_TARGETS; a name with more has none), first
+ * bound first. Records are sorted by token_index. */
+enum { LLG_SLANG_MAX_LEXICAL_TARGETS = 16 };
+
+typedef struct {
+  uint64_t token_index;
+  uint64_t semantic_id;
+  uint64_t target_token;
+} LlgSlangLexicalTarget;
+
+/* A `define directive that took effect (IEEE 1800-2009 22.5.1, ABI v80), one
+ * record per directive however many syntax trees include its file. A
+ * directive in inactive conditional text, with an invalid name, or for a
+ * macro that the language or the request predefines has none. `name` is the
+ * name in the directive, `range` runs from the directive's grave accent to
+ * the end of its replacement text and `body` is the replacement text (empty
+ * at the end of `range` when there is none). Formal arguments are the
+ * LLG_SLANG_LEXICAL_MACRO_FORMAL tokens of role DECLARATION in `range`. */
+enum { LLG_SLANG_MACRO_FUNCTION_LIKE = 1u << 0 };
+
+typedef struct {
+  LlgSlangSourceRange name;
+  LlgSlangSourceRange range;
+  LlgSlangSourceRange body;
+  uint32_t flags;
+  uint32_t reserved;
+} LlgSlangMacroDefinition;
+
+/* One resolution of a written macro name (ABI v80), in the state of the
+ * preprocessor at that name; the walk meets the active directives and uses of
+ * a tree, headers included in place, in the order the preprocessor did.
+ * definition_id indexes the macro definition table, or is
+ * LLG_SLANG_INVALID_ID with LLG_SLANG_MACRO_PREDEFINED for a macro without
+ * source (a request define or a built-in macro). A name that is not defined
+ * at its position has no record; a name that several syntax trees, or several
+ * expansions of the `define body it is written in, resolve differently has
+ * one record per resolution. A use in a `define body is resolved where the
+ * macro is expanded; when it never is, at the directive, or else at the end
+ * of the syntax tree. Records are sorted by range and distinct. */
+enum {
+  LLG_SLANG_MACRO_USE = 1,   /* `NAME */
+  LLG_SLANG_MACRO_TEST = 2,  /* the operand of `ifdef, `ifndef or `elsif */
+  LLG_SLANG_MACRO_UNDEF = 3  /* the operand of `undef */
+};
+
+enum { LLG_SLANG_MACRO_PREDEFINED = 1u << 0 };
+
+typedef struct {
+  LlgSlangSourceRange range;
+  uint64_t definition_id;
+  uint32_t kind;
+  uint32_t flags;
+} LlgSlangMacroReference;
+
+/* An `include directive (IEEE 1800-2009 22.4, ABI v80) that the preprocessor
+ * resolved to an admitted file: `operand` is the written path with its
+ * delimiters. A macro operand, whose path is not written there, and an
+ * unresolved one have no record. Records are sorted by operand and distinct. */
+typedef struct {
+  LlgSlangSourceRange operand;
+  uint64_t file_id;
+} LlgSlangInclude;
+
 /* Capture stream (ABI v15).
  *
  * llg_slang_compile() does not return a snapshot owner. After Slang has
@@ -1775,6 +1861,10 @@ typedef struct {
   uint64_t protected_envelope_count;
   uint64_t fsm_pragma_count;
   uint64_t attribute_count;
+  uint64_t lexical_target_count;
+  uint64_t macro_definition_count;
+  uint64_t macro_reference_count;
+  uint64_t include_count;
 } LlgSlangStreamHeader;
 
 typedef struct {
@@ -1824,6 +1914,17 @@ typedef struct {
                           uint64_t count);
   uint32_t (*attributes)(void* context, const LlgSlangAttribute* records,
                          uint64_t count);
+  uint32_t (*lexical_targets)(void* context,
+                              const LlgSlangLexicalTarget* records,
+                              uint64_t count);
+  uint32_t (*macro_definitions)(void* context,
+                                const LlgSlangMacroDefinition* records,
+                                uint64_t count);
+  uint32_t (*macro_references)(void* context,
+                               const LlgSlangMacroReference* records,
+                               uint64_t count);
+  uint32_t (*includes)(void* context, const LlgSlangInclude* records,
+                       uint64_t count);
   uint32_t (*end)(void* context);
 } LlgSlangSink;
 

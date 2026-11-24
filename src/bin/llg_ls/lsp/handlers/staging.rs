@@ -136,21 +136,7 @@ pub(super) fn open_input_size_limit(
     })
 }
 
-/// Apply the open-buffer admission check used by the isolated semantic-token
-/// handler.  Keeping the tuple/options plumbing here makes the helper test
-/// exercise the same decision that must happen before cache-key construction
-/// and single-flight admission.
-pub(super) fn open_token_size_limit(
-    open_document: Option<&OpenTokenDocument>,
-    max_file_bytes: Option<u64>,
-) -> Option<InputSizeLimit> {
-    let (Some(document), Some(max_file_bytes)) = (open_document, max_file_bytes) else {
-        return None;
-    };
-    open_input_size_limit(&document.real, document.text.as_str(), max_file_bytes)
-}
-
-/// The inputs of one isolated open-buffer token parse, captured under the
+/// The inputs of one isolated open-buffer parse, captured under the
 /// backend state lock: the real path, the admitted buffer revision, the
 /// effective configured defines and the include context of the root's
 /// committed analysis together with that analysis' epoch.
@@ -169,8 +155,29 @@ pub(super) struct OpenTokenDocument {
 /// absent keys are refused and degraded to the fallback while the table is
 /// saturated.
 pub(super) const OPEN_TOKEN_FLIGHT_CAPACITY: usize = 32;
-type OpenTokenResult = std::result::Result<SemanticTokens, String>;
-pub(super) const STALE_OPEN_TOKEN_ERROR: &str = "semantic-token request is no longer current";
+pub(super) type OpenTokenResult =
+    std::result::Result<Arc<features::DocumentIdentifiers>, OpenTokenError>;
+
+/// Why an isolated parse gave no table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct OpenTokenError {
+    pub(super) message: String,
+    /// Another attempt with the same inputs may succeed.
+    pub(super) transient: bool,
+}
+
+impl OpenTokenError {
+    pub(super) fn transient(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            transient: true,
+        }
+    }
+
+    fn stale() -> Self {
+        Self::transient("the open document has a newer revision")
+    }
+}
 
 /// Check a captured open-buffer revision without retaining the backend state
 /// lock across any staging or frontend work.  The request can only use the
@@ -343,7 +350,9 @@ impl Drop for OpenTokenFlightLeader {
         // panic between acquisition and task submission).  Once detached,
         // the coordinator owns completion and the request may be cancelled
         // without exposing a second parser for the same key.
-        self.finish(Err("semantic-token leader cancelled".to_owned()));
+        self.finish(Err(OpenTokenError::transient(
+            "isolated parse leader cancelled",
+        )));
     }
 }
 
@@ -369,7 +378,9 @@ impl OpenTokenFlightCoordinator {
 impl Drop for OpenTokenFlightCoordinator {
     fn drop(&mut self) {
         if !self.completed {
-            self.finish(Err("semantic-token coordinator cancelled".to_owned()));
+            self.finish(Err(OpenTokenError::transient(
+                "isolated parse coordinator cancelled",
+            )));
         }
     }
 }
@@ -470,106 +481,7 @@ pub(super) fn empty_semantic_tokens() -> SemanticTokens {
     }
 }
 
-pub(super) fn cached_semantic_tokens(
-    analysis: Option<&Analysis>,
-    paths: &[String],
-    allow_filename_fallback: bool,
-) -> SemanticTokens {
-    let Some(analysis) = analysis else {
-        return empty_semantic_tokens();
-    };
-
-    // Prefer exact/canonical token paths.  Once an exact path entry exists,
-    // an empty stream is authoritative for that file and must not fall
-    // through to an unrelated same-basename file.  A file with syntax errors
-    // keeps the tokens the frontend recovered (per-token degradation).
-    let mut found_exact = false;
-    for path in paths {
-        for file_tokens in &analysis.tokens {
-            if !cached_semantic_file_matches(&file_tokens.path, path) {
-                continue;
-            }
-            found_exact = true;
-            let tokens = crate::semantic_tokens::encode(&file_tokens.nodes);
-            if !tokens.data.is_empty() {
-                return tokens;
-            }
-        }
-    }
-    if found_exact || !allow_filename_fallback {
-        return empty_semantic_tokens();
-    }
-
-    // Preserve the historical basename lookup for closed/project requests,
-    // where Slang can report a compatible path spelling.  It is disabled
-    // for open buffers so two files with the same basename cannot contaminate
-    // an isolated request's cache fallback.
-    for path in paths {
-        let Some(file_name) = Path::new(path).file_name() else {
-            continue;
-        };
-        for file_tokens in &analysis.tokens {
-            if Path::new(&file_tokens.path).file_name() != Some(file_name) {
-                continue;
-            }
-            let tokens = crate::semantic_tokens::encode(&file_tokens.nodes);
-            if !tokens.data.is_empty() {
-                return tokens;
-            }
-        }
-    }
-    empty_semantic_tokens()
-}
-
-pub(super) fn cached_semantic_file_matches(left: &str, right: &str) -> bool {
-    if Path::new(left) == Path::new(right) {
-        return true;
-    }
-    match (
-        llg::ffi::platform::canonicalize(left),
-        llg::ffi::platform::canonicalize(right),
-    ) {
-        (Ok(left), Ok(right)) => left == right,
-        _ => false,
-    }
-}
-
-pub(super) fn compute_semantic_tokens(
-    analysis: Option<Arc<Analysis>>,
-    paths: Vec<String>,
-    open_document: Option<OpenTokenDocument>,
-    current: impl Fn() -> bool,
-    parent_id: Option<u64>,
-) -> (Option<OpenTokenResult>, SemanticTokens) {
-    let cached = cached_semantic_tokens(analysis.as_deref(), &paths, open_document.is_none());
-    let fresh = open_document.map(|document| {
-        let result = compute_open_document_semantic_tokens(document, current, parent_id);
-        if let Err(error) = &result {
-            crate::llg_debug!(
-                "semantic tokens: isolated collection failed before producing tokens: {error}"
-            );
-        }
-        result
-    });
-    (fresh, cached)
-}
-
-pub(super) fn compute_open_document_semantic_tokens(
-    document: OpenTokenDocument,
-    current: impl Fn() -> bool,
-    parent_id: Option<u64>,
-) -> OpenTokenResult {
-    open_document_semantic_tokens_if_current(
-        &document.real,
-        &document.text,
-        &document.defines,
-        &document.includes,
-        current,
-        parent_id,
-    )
-}
-
-/// Memoization key of one open-buffer isolated token stream: document URI,
+/// Memoization key of one open-buffer isolated parse: document URI,
 /// buffer text digest, effective configured defines and the epoch of the
 /// committed analysis whose include context the parse reads. These are
 /// exactly the inputs of the request-local run, so any edit, defines
@@ -590,14 +502,18 @@ pub(super) fn open_token_cache_key(
     format!("open-tokens|{uri}|{epoch}|{:016x}", hasher.finish())
 }
 
-pub(super) fn open_document_semantic_tokens_if_current(
-    real: &Path,
-    text: &str,
-    defines: &[String],
-    includes: &features::IncludeContext,
+pub(super) fn open_document_identifiers_if_current(
+    document: &OpenTokenDocument,
     current: impl Fn() -> bool,
     parent_id: Option<u64>,
-) -> std::result::Result<SemanticTokens, String> {
+) -> OpenTokenResult {
+    let OpenTokenDocument {
+        real,
+        text,
+        defines,
+        includes,
+        ..
+    } = document;
     let started = std::time::Instant::now();
     crate::llg_debug!(
         "event=semantic_tokens.open_parse.begin file={} bytes={} defines={} parent_id={:?}",
@@ -616,7 +532,7 @@ pub(super) fn open_document_semantic_tokens_if_current(
             real.display(),
             started.elapsed().as_micros()
         );
-        return Err(STALE_OPEN_TOKEN_ERROR.to_owned());
+        return Err(OpenTokenError::stale());
     }
     // Project jobs acquire these locks in the same order.  Holding the
     // staging lock through parse and cleanup also prevents shutdown from
@@ -641,7 +557,7 @@ pub(super) fn open_document_semantic_tokens_if_current(
             real.display(),
             started.elapsed().as_micros()
         );
-        return Err(STALE_OPEN_TOKEN_ERROR.to_owned());
+        return Err(OpenTokenError::stale());
     }
     let stage_started = std::time::Instant::now();
     // Held until the parse and scratch cleanup finish; dropping it removes the
@@ -661,7 +577,7 @@ pub(super) fn open_document_semantic_tokens_if_current(
                 real.display(),
                 started.elapsed().as_micros()
             );
-            return Err(error);
+            return Err(OpenTokenError::transient(error));
         }
     };
     crate::llg_debug!(
@@ -676,7 +592,7 @@ pub(super) fn open_document_semantic_tokens_if_current(
     );
     let result = real
         .to_str()
-        .ok_or_else(|| "semantic source path is not UTF-8".to_owned())
+        .ok_or_else(|| OpenTokenError::transient("semantic source path is not UTF-8"))
         .and_then(|path| {
             // A revision can change while the request-local stage is being
             // written.  Check again immediately before entering Slang so a
@@ -687,20 +603,20 @@ pub(super) fn open_document_semantic_tokens_if_current(
                     real.display(),
                     started.elapsed().as_micros()
                 );
-                Err(STALE_OPEN_TOKEN_ERROR.to_owned())
+                Err(OpenTokenError::stale())
             } else {
                 // Slang consumes the admitted buffer and never reads this
                 // path. Preserve the real document identity in its snapshot,
                 // so includes resolve beside the real file exactly as in the
                 // project compile; the private stage only serializes cleanup.
-                features::semantic_tokens_for_open_document_with_parent(
-                    path,
-                    defines,
-                    Some(text),
-                    includes,
-                    parent_id,
-                )
-                    .map_err(|error| error.to_string())
+                // A frontend refusal is as much a function of the inputs as a
+                // table is.
+                features::open_document_identifiers(path, defines, text, includes)
+                    .map(Arc::new)
+                    .map_err(|error| OpenTokenError {
+                        message: error.to_string(),
+                        transient: false,
+                    })
             }
         });
     clean_analysis_scratch();
@@ -708,26 +624,12 @@ pub(super) fn open_document_semantic_tokens_if_current(
         "event=semantic_tokens.open_parse.end outcome={} file={} token_count={} elapsed_us={}",
         if result.is_ok() { "ok" } else { "error" },
         real.display(),
-        result.as_ref().map_or(0, |tokens| tokens.data.len()),
+        result
+            .as_ref()
+            .map_or(0, |identifiers| identifiers.token_count()),
         started.elapsed().as_micros()
     );
     result
-}
-
-pub(super) fn select_semantic_tokens(
-    fresh: Option<std::result::Result<SemanticTokens, String>>,
-    cached: SemanticTokens,
-    buffer_is_current: bool,
-) -> SemanticTokens {
-    // A successful isolated parse is authoritative for the current buffer,
-    // including the partial stream of a buffer with syntax errors and an
-    // empty stream.  The cache is used only when staging/session work (or
-    // the blocking task) fails before producing a result.
-    if buffer_is_current {
-        fresh.and_then(std::result::Result::ok).unwrap_or(cached)
-    } else {
-        cached
-    }
 }
 
 /// Whether a full-text `didChange` actually carries new content.  Identical

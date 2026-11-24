@@ -1,9 +1,8 @@
 //! Request-level memoization for read-only LSP feature queries.
 //!
-//! Read-only requests (`textDocument/definition`, `hover`, `references`, and
-//! the isolated open-buffer `semanticTokens/full` parse) are pure functions of
-//! explicit inputs: the query parameters plus the immutable per-root analysis
-//! snapshot they read.  This module bounds and stores those results so a
+//! Read-only requests (`textDocument/hover`, `references`, and the isolated
+//! open-buffer parse) are pure functions of explicit inputs: the query
+//! parameters plus the immutable per-root analysis snapshot they read.  This module bounds and stores those results so a
 //! repeat identical request is served from memory instead of recomputing.
 //!
 //! Correctness model — no TTLs, only input-derived keys:
@@ -16,12 +15,13 @@
 //!   param_overrides) changes the epoch and invalidates the affected entries
 //!   structurally.  Entries keyed by a superseded epoch can never be served
 //!   again; they age out through the LRU bound.
-//! * Open-buffer token streams depend on `(buffer text, -D defines)` only
-//!   (isolated Slang compilation over one admitted buffer); both are folded into the
-//!   key, so a `[compile] defines` hot reload or any edit misses the cache.
+//! * Open-buffer parses depend on `(buffer text, -D defines, include context)`
+//!   (isolated Slang compilation over one admitted buffer); all are folded into
+//!   the key, the context as the epoch, so a `[compile] defines` hot reload or
+//!   any edit misses the cache.
 //!
 //! The cache is thread-safe (`Mutex`) and bounded (small LRU); values are
-//! cheap clones (`Location`, `Hover`, token vectors), so entries never pin a
+//! cheap clones (`Location`, `Hover`, shared tables), so entries never pin a
 //! retired `Analysis`.
 
 use std::collections::HashMap;
@@ -31,8 +31,8 @@ use std::sync::Mutex;
 /// Default entry bound for navigation-result caches.
 pub(crate) const NAVIGATION_CACHE_CAPACITY: usize = 128;
 
-/// Entry bound for open-buffer semantic-token payloads (each payload can be
-/// large for big buffers, so the bound stays small).
+/// Entry bound for open-buffer parses (each table can be large for big
+/// buffers, so the bound stays small).
 pub(crate) const TOKEN_CACHE_CAPACITY: usize = 8;
 
 static NEXT_ANALYSIS_EPOCH: AtomicU64 = AtomicU64::new(1);
@@ -50,7 +50,6 @@ pub(crate) fn next_analysis_epoch() -> u64 {
 /// in (parameters that change the answer must change the key).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum RequestKind {
-    Definition,
     Hover,
     References { include_declaration: bool },
 }
@@ -203,7 +202,7 @@ mod tests {
     use std::sync::Arc;
 
     fn nav_key(uri: &str, line: u32, col: u32, epoch: u64) -> RequestKey {
-        RequestKey::new(RequestKind::Definition, uri, line, col, epoch)
+        RequestKey::new(RequestKind::Hover, uri, line, col, epoch)
     }
 
     #[test]
@@ -222,11 +221,6 @@ mod tests {
         assert_ne!(base, nav_key("file:///p.sv", 3, 7, 12), "analysis epoch");
         assert_ne!(
             base,
-            RequestKey::new(RequestKind::Hover, "file:///p.sv", 3, 7, 11),
-            "request kind"
-        );
-        assert_ne!(
-            base,
             RequestKey::new(
                 RequestKind::References {
                     include_declaration: true
@@ -236,7 +230,7 @@ mod tests {
                 7,
                 11
             ),
-            "references parameter"
+            "request kind"
         );
         assert_ne!(
             RequestKey::new(

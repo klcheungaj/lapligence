@@ -208,57 +208,66 @@ pub(super) fn semantic_file_matches(left: &str, right: &str) -> bool {
     }
 }
 
-/// Parse one open document in isolation and encode its lexical
-/// semantic tokens.
-///
-/// This path deliberately does not build or update an [`Analysis`]. Slang
-/// receives the admitted in-memory buffer when one is available, preprocessed
-/// with the configured defines and the include context of the root's
-/// committed project compile, so macros from the buffer itself, its admitted
-/// headers and the configuration expand exactly as in the project stream.
-/// The committed units that declare the packages and definitions the buffer
-/// names join the parse as library units ([`PackageContext::sources_for`]),
-/// so imported and scope-qualified package items, instances, interface ports
-/// and hierarchical names resolve as in the project stream.
-/// Frontend diagnostics do not make this return an error and do not empty
-/// the stream: the tokens the frontend recovered are encoded (missing and
-/// skipped tokens are never captured), so a syntax error or an unknown macro
-/// degrades the stream per token.
-#[allow(dead_code)] // compatibility wrapper; production uses the parent-aware variant
-pub fn semantic_tokens_for_open_document(
-    file: &str,
-    defines: &[String],
-) -> Result<SemanticTokens, OpenDocumentTokensError> {
-    semantic_tokens_for_open_document_with_parent(
-        file,
-        defines,
-        None,
-        &IncludeContext::default(),
-        None,
-    )
+/// The identifiers of one open document from its isolated parse: the tokens
+/// highlighting sends and the bindings go-to-definition follows.
+#[derive(Debug)]
+pub struct DocumentIdentifiers {
+    nodes: Vec<TokenInfo>,
+    bindings: tokens::Bindings,
 }
 
-/// Parent-aware variant used by an LSP semantic-token request.  Direct
-/// callers retain the wrapper above and intentionally produce a no-parent
-/// parse trace.
-pub(crate) fn semantic_tokens_for_open_document_with_parent(
+impl DocumentIdentifiers {
+    pub(crate) fn new(nodes: Vec<TokenInfo>, bindings: tokens::Bindings) -> Self {
+        Self { nodes, bindings }
+    }
+
+    pub fn semantic_tokens(&self) -> SemanticTokens {
+        semantic_tokens::encode(&self.nodes)
+    }
+
+    pub fn token_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    pub fn definitions_at(&self, line: u32, col: u32) -> Vec<Location> {
+        definitions_in(&self.nodes, &self.bindings, line, col)
+    }
+
+    /// The tokens and their bindings.
+    #[cfg(test)]
+    pub fn parts(&self) -> (&[TokenInfo], &tokens::Bindings) {
+        (&self.nodes, &self.bindings)
+    }
+}
+
+/// Parse one open document in isolation.
+///
+/// This path deliberately does not build or update an [`Analysis`]. Slang
+/// receives the admitted in-memory buffer, preprocessed with the configured
+/// defines and the include context of the root's committed project compile,
+/// so macros from the buffer itself, its admitted headers and the
+/// configuration expand exactly as in the project stream. The committed units
+/// that declare the packages and definitions the buffer names join the parse
+/// as library units ([`PackageContext::sources_for`]), so imported and
+/// scope-qualified package items, instances, interface ports and hierarchical
+/// names resolve as in the project stream. Frontend diagnostics do not make
+/// this return an error and do not empty the table: the tokens the frontend
+/// recovered stay (missing and skipped tokens are never captured), so a syntax
+/// error or an unknown macro degrades it per token.
+pub(crate) fn open_document_identifiers(
     file: &str,
     defines: &[String],
-    source: Option<&str>,
+    source: &str,
     includes: &IncludeContext,
-    _parent_id: Option<u64>,
-) -> Result<SemanticTokens, OpenDocumentTokensError> {
-    let parsed = match source {
-        Some(source) => compile::parse_source_in_context(
-            file,
-            source,
-            defines,
-            &includes.include_dirs,
-            includes.sources(),
-            includes.packages.sources_for(file, source),
-        ),
-        None => compile::parse_only(file, defines),
-    }
+) -> Result<DocumentIdentifiers, OpenDocumentTokensError> {
+    let parsed = compile::parse_source_in_context(
+        file,
+        source,
+        defines,
+        &includes.include_dirs,
+        includes.sources(),
+        includes.packages.sources_for(file, source),
+    )
     .map_err(|error| {
         if error.kind() == compile::StartupErrorKind::LimitExceeded {
             crate::llg_error!(
@@ -287,11 +296,11 @@ pub(crate) fn semantic_tokens_for_open_document_with_parent(
     }
     let nodes = parsed
         .tokens
-        .iter()
+        .into_iter()
         .find(|tokens| semantic_file_matches(&tokens.path, file))
-        .map(|tokens| tokens.nodes.as_slice())
+        .map(|tokens| tokens.nodes)
         .unwrap_or_default();
-    Ok(semantic_tokens::encode(nodes))
+    Ok(DocumentIdentifiers::new(nodes, parsed.bindings))
 }
 
 // ── Hover ─────────────────────────────────────────────────────────────────────
@@ -414,223 +423,182 @@ fn normalize_inline_elab_value(detail: String) -> String {
 
 /// Return a hover for the symbol at the 0-based `(line, col)` position, if any.
 ///
-/// Macro usages (`` `NAME ``) and `` `define `` NAME identifiers are served
-/// FIRST from the analysis' macro table: their positions never carry indexed
-/// symbols (preprocessing removes the directives and expands the usages), so
-/// the macro answer is authoritative there.  Everything else follows the
-/// reference-binding map (mirroring [`definition_at`]): a position that
-/// exactly matches a captured binding key serves the bound declaration's
-/// detail, which is precise even under inner-scope shadowing where the
-/// name-based index would describe the outer same-named object.  Otherwise
-/// the identifier is resolved through the symbol index (so reference sites
-/// resolve to their declaration, cross-file included); the hover body is a
-/// SystemVerilog code block (e.g. `input logic [7:0] count`).
-/// Parameter/localparam hovers additionally show the elaborated value from
-/// the committed model as a `value = <const>` line (omitted when
-/// unresolved/ambiguous).  Function/task declarations additionally show the
-/// instance scope and the `automatic`/`static` storage class from the model's
-/// per-instance clone.  Falls back to the token-based v1 lookup when the
-/// index has nothing.
+/// A macro name is described from the analysis' macro table. Every other name
+/// follows its definition ([`definitions_at`]): the hover describes the one
+/// declaration it is bound to, or the declaration the cursor is on, as a
+/// SystemVerilog code block (e.g. `input logic [7:0] count`). A name with
+/// several definitions has no hover. Parameter/localparam hovers additionally
+/// show the elaborated value from the committed model as a `value = <const>`
+/// line (omitted when unresolved/ambiguous). Function/task declarations
+/// additionally show the instance scope and the `automatic`/`static` storage
+/// class from the model's per-instance clone.
 pub fn hover_at(a: &Analysis, file: &str, line: u32, col: u32) -> Option<Hover> {
-    // Macro positions are disjoint from every indexed symbol, so checking
-    // them first is behavior-preserving for all non-macro clicks while a
-    // click on a usage span can never be captured by an expanded-content
-    // reference bound near the preprocessed columns.
     if let Some(hover) = macro_hover_at(a, file, line, col) {
         return Some(hover);
     }
-    // Cursor normalization mirrors `definition_at`: a click mid-identifier
-    // must reuse the token's start column, where bindings are keyed.
-    let clicked = a.index.entry_at(file, line, col);
-    if unresolved_binding_at(a, file, line, col, clicked) {
-        return None;
-    }
-    let bound = a
-        .ref_bindings
-        .get(&(file.to_string(), line, col))
-        .or_else(|| clicked.and_then(|e| a.ref_bindings.get(&(file.to_string(), line, e.col))));
-    if let Some(target) = bound {
-        let anchor_len = clicked
-            .map(|e| lsp_name_len(&e.name))
-            .unwrap_or_else(|| lsp_name_len(&target.name));
-        let range_col = clicked.map(|e| e.col).unwrap_or(col);
-        if let Some(hover) = hover_for_target(a, target, line, range_col, anchor_len) {
-            return Some(hover);
-        }
-    }
-    if let Some(e) = a.index.entry_at(file, line, col) {
-        let decl = a.index.resolve(e).into_iter().next().unwrap_or(e);
-        let mut detail = decl
-            .detail
-            .clone()
-            .or_else(|| hover_detail(a, file, &e.name));
-        if matches!(decl.kind, SymKind::Param) {
-            if let Some(d) = detail.take() {
-                detail = Some(
-                    match param_elab_value(a, &decl.file, decl.line, &decl.name) {
-                        Some(v) => with_elab_value(d, v),
-                        None => normalize_inline_elab_value(d),
-                    },
-                );
-            }
-        }
-        if let Some(f) = func_from_decl(&a.model, decl) {
-            let extra = format!(
-                "scope: {}\n{}",
-                f.scope,
-                if f.automatic { "automatic" } else { "static" }
-            );
-            detail = Some(format!("{}\n\n{extra}", func_signature(f)));
-        }
-        if let Some(detail) = detail {
-            let len = lsp_name_len(&e.name);
-            let range = Range::new(
-                Position::new(e.line, e.col),
-                Position::new(e.line, e.col + len),
-            );
-            return Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: format!("```systemverilog\n{detail}\n```"),
-                }),
-                range: Some(range),
-            });
-        }
-    }
-    hover_fallback(a, file, line, col)
-}
-
-/// Macro-usage / `` `define ``-site hover, rendered purely from the committed
-/// macro table ([`Analysis`]'s `core::macros::MacroTable`).
-///
-/// House style mirrors parameter hovers: a fenced SystemVerilog block with
-/// one short detail line — `macro WIDTH = 8`, `macro MAX(a, b) = …`, or
-/// `macro ENABLE` for a body-less macro — plus a `defined at <file>:<line>`
-/// line for source-origin definitions (config defines name no site; the
-/// shared-file hover annotation already labels config-derived text).  An
-/// undefined usage renders an explicit not-defined message naming the
-/// configuration source instead of any value.
-pub(super) fn macro_hover_at(a: &Analysis, file: &str, line: u32, col: u32) -> Option<Hover> {
-    if a.macros.is_empty() {
-        return None;
-    }
-    let range_of = |col_start0: u32, col_end0: u32| -> Range {
-        Range::new(
-            Position::new(line, col_start0),
-            Position::new(line, col_end0),
-        )
+    let token = identifier_at(a, file, line, col)?;
+    let range = token_range(token);
+    let target = match a.bindings.definition(token)? {
+        tokens::Definition::Targets([target]) => target,
+        tokens::Definition::Targets(_) => return None,
+        tokens::Definition::Itself => return hover_declaration(a, token, range),
     };
-    if let Some(usage) = a.macros.usage_at(file, line, col) {
-        let range = range_of(usage.col_start0, usage.col_end0);
-        return Some(build_macro_hover(
-            usage.name(),
-            usage.definition.as_ref(),
-            a.macros.config_note(),
-            range,
-        ));
-    }
-    if let Some(decl) = a.macros.decl_at(file, line, col) {
-        let range = range_of(decl.col_start0, decl.col_end0);
-        return Some(build_macro_hover(
-            &decl.definition.name,
-            Some(&decl.definition),
-            a.macros.config_note(),
-            range,
-        ));
-    }
-    None
+    hover_for_target(a, target, range)
 }
 
-/// Assemble the macro hover payload: defined macros render their value in
-/// the standard code fence, undefined usages render the not-defined message
-/// as plain markdown.
-pub(super) fn build_macro_hover(
-    name: &str,
-    definition: Option<&macros::MacroDefinition>,
-    config_note: Option<&str>,
-    range: Range,
-) -> Hover {
-    let value = match definition {
-        Some(def) => {
-            let mut detail = format!("macro {}", def.name);
-            if let Some(args) = &def.args {
-                detail.push_str(&format!("({})", args.join(", ")));
-            }
-            if !def.body.is_empty() {
-                detail.push_str(&format!(" = {}", def.body));
-            }
-            if let (Some(file), 1..) = (&def.file, def.line1) {
-                // Open buffers compile under shadow paths; display the real
-                // project path so the site is recognizable to the user.
-                let display = real_path(Path::new(file), &process_shadow_base())
-                    .unwrap_or_else(|| PathBuf::from(file));
-                detail.push_str(&format!(
-                    "\n\ndefined at {}:{}",
-                    display.display(),
-                    def.line1
-                ));
-            }
-            format!("```systemverilog\n{detail}\n```")
-        }
-        None => {
-            let origin = match config_note {
-                Some(note) => format!(
-                    "Checked the `[compile] defines` in {note} and preceding \
-                     source `` `define `` directives."
-                ),
-                None => "Checked `[compile] defines` and preceding source `` `define `` \
-                     directives."
-                    .to_owned(),
+/// Hover of the declaration the cursor is on.
+fn hover_declaration(a: &Analysis, token: &TokenInfo, range: Range) -> Option<Hover> {
+    let entry = a
+        .index
+        .decl_at(&token.file, range.start.line, range.start.character);
+    let mut detail = entry.and_then(|entry| entry.detail.clone()).or_else(|| {
+        a.decl_details
+            .get(&(token.file.clone(), token.line, token.col))
+            .filter(|text| !text.is_empty())
+            .cloned()
+    })?;
+    if let Some(entry) = entry {
+        if entry.kind == SymKind::Param {
+            detail = match param_elab_value(a, &entry.file, entry.line, &entry.name) {
+                Some(value) => with_elab_value(detail, value),
+                None => normalize_inline_elab_value(detail),
             };
-            format!("`{name}` is not defined under the current configuration.\n\n{origin}")
         }
-    };
+        if let Some(function) = func_from_decl(&a.model, entry) {
+            detail = format!(
+                "{}\n\nscope: {}\n{}",
+                func_signature(function),
+                function.scope,
+                if function.automatic {
+                    "automatic"
+                } else {
+                    "static"
+                }
+            );
+        }
+    }
+    Some(code_hover(&detail, range))
+}
+
+fn code_hover(detail: &str, range: Range) -> Hover {
     Hover {
         contents: HoverContents::Markup(MarkupContent {
             kind: MarkupKind::Markdown,
-            value,
+            value: format!("```systemverilog\n{detail}\n```"),
         }),
         range: Some(range),
     }
 }
 
-/// Hover for a binding-bound declaration target.
+/// The range of a token's name.
+fn token_range(token: &TokenInfo) -> Range {
+    let start = Position::new(token.line.saturating_sub(1), token.col.saturating_sub(1));
+    Range::new(
+        start,
+        Position::new(
+            token.end_line.saturating_sub(1),
+            token.end_col.saturating_sub(1),
+        ),
+    )
+}
+
+/// Hover of a written macro name, rendered from the committed macro table
+/// ([`macros::MacroTable`]).
 ///
-/// Detail precedence: the indexed DECLARATION entry at the target position
+/// House style mirrors parameter hovers: a fenced SystemVerilog block with
+/// one short detail line — `macro WIDTH = 8`, `macro MAX(a, b) = …`, or
+/// `macro ENABLE` for a body-less macro — plus a `defined at <file>:<line>`
+/// line for source-origin definitions (config defines name no site; the
+/// shared-file hover annotation already labels config-derived text), one
+/// block per definition the name stands for. A use of a macro that is not
+/// defined renders an explicit message naming the configuration source
+/// instead of any value; the operand of a conditional directive or `` `undef ``
+/// that is not defined, and a macro of the language, have no hover.
+pub(super) fn macro_hover_at(a: &Analysis, file: &str, line: u32, col: u32) -> Option<Hover> {
+    let site = a.macros.site_at(file, line, col)?;
+    let range = Range::new(
+        Position::new(line, site.col_start0),
+        Position::new(line, site.col_end0),
+    );
+    let blocks: Vec<String> = a
+        .macros
+        .definitions(site)
+        .map(macro_definition_hover)
+        .collect();
+    let value = if !blocks.is_empty() {
+        blocks.join("\n\n")
+    } else if site.kind == macros::MacroSiteKind::Use && !site.predefined {
+        undefined_macro_hover(&site.name, a.macros.config_note())
+    } else {
+        return None;
+    };
+    Some(Hover {
+        contents: HoverContents::Markup(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value,
+        }),
+        range: Some(range),
+    })
+}
+
+fn macro_definition_hover(definition: &macros::MacroDefinition) -> String {
+    let mut detail = format!("macro {}", definition.name);
+    if let Some(args) = &definition.args {
+        detail.push_str(&format!("({})", args.join(", ")));
+    }
+    if !definition.body.is_empty() {
+        detail.push_str(&format!(" = {}", definition.body));
+    }
+    if let Some(source) = &definition.source {
+        // Open buffers compile under shadow paths; display the real project
+        // path so the site is recognizable to the user.
+        let display = real_path(Path::new(&source.file), &process_shadow_base())
+            .unwrap_or_else(|| PathBuf::from(&source.file));
+        detail.push_str(&format!(
+            "\n\ndefined at {}:{}",
+            display.display(),
+            source.line
+        ));
+    }
+    format!("```systemverilog\n{detail}\n```")
+}
+
+fn undefined_macro_hover(name: &str, config_note: Option<&str>) -> String {
+    let origin = match config_note {
+        Some(note) => format!(
+            "Checked the `[compile] defines` in {note} and preceding \
+             source `` `define `` directives."
+        ),
+        None => "Checked `[compile] defines` and preceding source `` `define `` \
+                 directives."
+            .to_owned(),
+    };
+    format!("`{name}` is not defined under the current configuration.\n\n{origin}")
+}
+
+/// Hover for the declaration a name is bound to.
+///
+/// Detail precedence: the indexed declaration entry at the target position
 /// (carries model data for functions/classes/instances), then the
 /// position-accurate snippet captured during the semantic walk
-/// ([`Analysis::decl_details`]), then the name-based model lookup.  Parameter
-/// targets additionally gain the elaborated-value line from the committed
-/// model (omitted when unresolved/ambiguous).  `None` when no detail can be
-/// produced — the caller falls through to the index path instead of rendering
-/// an empty hover.  The hover range stays anchored at the CLICKED identifier
-/// (`line`, `range_col`, `len`).
-pub(super) fn hover_for_target(
-    a: &Analysis,
-    target: &DeclTarget,
-    line: u32,
-    range_col: u32,
-    len: u32,
-) -> Option<Hover> {
-    let entry_detail = a
+/// ([`Analysis::decl_details`]). Parameter targets additionally gain the
+/// elaborated-value line from the committed model (omitted when
+/// unresolved/ambiguous). `None` when no detail can be produced. `range` is
+/// the clicked name.
+fn hover_for_target(a: &Analysis, target: &DeclTarget, range: Range) -> Option<Hover> {
+    let detail = a
         .index
-        .entry_at(&target.file, target.line0, target.col0)
-        .filter(|e| e.is_decl)
-        .and_then(|e| e.detail.clone());
-    let detail = entry_detail.or_else(|| {
-        a.decl_details
-            .get(&(target.file.clone(), target.line0 + 1, target.col0 + 1))
-            .filter(|text| !text.is_empty())
-            .cloned()
-            .or_else(|| {
-                // The captured snippet names the declared object; fall
-                // back to it even when only the name matches the model.
-                hover_detail(a, &target.file, &target.name)
-            })
-    })?;
+        .decl_at(&target.file, target.line0, target.col0)
+        .and_then(|entry| entry.detail.clone())
+        .or_else(|| {
+            a.decl_details
+                .get(&(target.file.clone(), target.line0 + 1, target.col0 + 1))
+                .filter(|text| !text.is_empty())
+                .cloned()
+        })?;
     // Parameter targets (elaboration-bound refs, override labels included)
     // gain the elaborated-value line from the committed model.
-    let detail = if matches!(target.kind.as_str(), "parameter" | "localparam") {
+    let detail = if target.kind == "parameter" {
         match param_elab_value(a, &target.file, target.line0, &target.name) {
             Some(v) => with_elab_value(detail, v),
             // The indexed model detail can already carry Slang's elaborated
@@ -641,115 +609,7 @@ pub(super) fn hover_for_target(
     } else {
         detail
     };
-    let range = Range::new(
-        Position::new(line, range_col),
-        Position::new(line, range_col + len),
-    );
-    Some(Hover {
-        contents: HoverContents::Markup(MarkupContent {
-            kind: MarkupKind::Markdown,
-            value: format!("```systemverilog\n{detail}\n```"),
-        }),
-        range: Some(range),
-    })
-}
-
-pub(super) fn hover_fallback(a: &Analysis, file: &str, line: u32, col: u32) -> Option<Hover> {
-    let node = token_at(a, file, line, col)?;
-    let name = node.name.as_deref()?;
-    let detail = hover_detail(a, file, name)?;
-    let len = lsp_name_len(name);
-    let start_col = node.col.saturating_sub(1);
-    let range = Range::new(
-        Position::new(line, start_col),
-        Position::new(line, start_col + len),
-    );
-    Some(Hover {
-        contents: HoverContents::Markup(MarkupContent {
-            kind: MarkupKind::Markdown,
-            value: format!("```systemverilog\n{detail}\n```"),
-        }),
-        range: Some(range),
-    })
-}
-
-pub(super) fn hover_detail(a: &Analysis, file: &str, name: &str) -> Option<String> {
-    // Module definitions declared in this file.
-    for m in a.model.modules_in(file) {
-        if clean_name(&m.name) == name {
-            return Some(format!("module {name}"));
-        }
-    }
-    // Packages declared in this file.
-    for p in &a.model.packages {
-        if clean_name(&p.name) == name && p.file.as_deref() == Some(file) {
-            return Some(format!("package {name}"));
-        }
-        // Package items (parameters and enum constants) declared in this file.
-        for param in &p.params {
-            if clean_name(&param.name) == name {
-                return Some(format_param(param));
-            }
-        }
-        for ec in &p.enum_consts {
-            if clean_name(&ec.name) == name {
-                return Some(format_enum_const(ec));
-            }
-        }
-    }
-    // Instances (declared in this file) and the ports/signals/params/gen-scope
-    // params of every instantiated module.
-    for inst in all_instances(&a.model.top_instances) {
-        if inst.file.as_deref() == Some(file) && inst.name == name {
-            let mut detail = format!("{} {}", clean_name(&inst.def_name), inst.name);
-            if let Some((f, l)) = def_site_line(a, &inst.def_name) {
-                detail.push_str(&format!("\n\ndefined at {f}:{l}"));
-            }
-            return Some(detail);
-        }
-        for port in &inst.ports {
-            if port.name == name {
-                return Some(format_port(port));
-            }
-        }
-        for sig in &inst.signals {
-            if sig.name == name {
-                return Some(format_signal(sig));
-            }
-        }
-        for p in &inst.params {
-            if p.name == name {
-                return Some(format_param(p));
-            }
-        }
-        for gs in &inst.gen_scopes {
-            for p in &gs.params {
-                if p.name == name {
-                    return Some(format_param(p));
-                }
-            }
-        }
-    }
-    // Classes declared in this file (and their methods/fields).
-    for c in &a.model.classes {
-        if c.file.as_deref() != Some(file) {
-            continue;
-        }
-        if clean_name(&c.name) == name {
-            return Some(format_class(c));
-        }
-        for m in &c.methods {
-            if clean_name(&m.name) == name {
-                return Some(func_signature(m));
-            }
-        }
-        for f in &c.fields {
-            if clean_name(&f.name) == name {
-                return Some(format_class_field(f));
-            }
-        }
-    }
-    None
+    Some(code_hover(&detail, range))
 }
 
 pub(super) fn format_port(p: &PortModel) -> String {
@@ -888,157 +748,111 @@ pub(super) fn func_from_decl<'m>(model: &'m DesignModel, decl: &SymEntry) -> Opt
     })
 }
 
-pub(super) fn def_site_line(a: &Analysis, def_name: &str) -> Option<(String, u32)> {
-    a.model
-        .modules
-        .iter()
-        .find(|m| clean_name(&m.name) == clean_name(def_name))
-        .and_then(|m| m.file.as_ref().map(|f| (f.clone(), m.line)))
-}
-
 // ── Definition ────────────────────────────────────────────────────────────────
 
-/// Resolve the declaration of the identifier at the 0-based position.
-///
-/// The reference-binding map is consulted FIRST: a position that exactly
-/// matches a captured binding key (the 0-based start of an emitted reference
-/// token from Slang or a resolved port/parameter connection
-/// label) serves the single bound declaration location, which is precise
-/// even where the name-based index would be ambiguous.  On a miss the symbol
-/// index resolves the entry at the position to its declaration (cross-file
-/// included); when the index has nothing to offer, the v1 name-based
-/// fallback applies:
-/// 1. a module definition declared in the same file;
-/// 2. an instance name → the module definition of its type (`def_name`);
-/// 3. a package name → the package declaration;
-/// 4. a same-file port/signal/parameter declaration nearest by line — never
-///    the clicked connection-label token itself, so an unresolvable label
-///    yields NO result instead of a no-op self jump;
-/// 5. a module definition in any file, as a cross-file fallback.
-pub fn definition_at(a: &Analysis, file: &str, line: u32, col: u32) -> Option<Location> {
-    if let Some(target) = a.ref_bindings.get(&(file.to_string(), line, col)) {
-        return Some(ref_target_location(target));
+/// The definitions of the name at the 0-based position: the targets its token
+/// is bound to, or the token itself when it declares the name. Highlighting
+/// encodes the same tokens ([`tokens::TokenRule`]), so a name has a definition
+/// exactly when it has a semantic token, apart from the exceptions listed
+/// there. Several targets, for a name several syntax trees or macro expansions
+/// resolve differently, are all returned.
+pub fn definitions_at(a: &Analysis, file: &str, line: u32, col: u32) -> Vec<Location> {
+    match file_tokens(a, file) {
+        Some(file_tokens) => definitions_in(&file_tokens.nodes, &a.bindings, line, col),
+        None => Vec::new(),
     }
-    if a.index.is_unresolved_enum_ref(file, line, col)
-        || unresolved_binding_at(a, file, line, col, a.index.entry_at(file, line, col))
-    {
-        return None;
+}
+
+fn definitions_in(
+    nodes: &[TokenInfo],
+    bindings: &tokens::Bindings,
+    line: u32,
+    col: u32,
+) -> Vec<Location> {
+    let Some(token) = tokens::token_at(nodes, line, col) else {
+        return Vec::new();
+    };
+    match bindings.definition(token) {
+        Some(tokens::Definition::Targets(targets)) => {
+            targets.iter().map(ref_target_location).collect()
+        }
+        Some(tokens::Definition::Itself) => vec![Location {
+            uri: file_uri(&token.file),
+            range: token_range(token),
+        }],
+        None => Vec::new(),
     }
-    // Cursor normalization: a click mid-identifier must reuse the token's
-    // start column, where semantic DB ref->decl bindings are keyed.
-    if let Some(e) = a.index.entry_at(file, line, col) {
-        if let Some(target) = a.ref_bindings.get(&(file.to_string(), line, e.col)) {
-            return Some(ref_target_location(target));
-        }
-    }
-    if let Some(e) = a.index.entry_at(file, line, col) {
-        if let Some(decl) = a.index.resolve(e).into_iter().next() {
-            return Some(entry_location(decl));
-        }
-        // A scanned parameter-override label that failed resolution: its
-        // namespace is the instantiated module, so the name-based fallback
-        // below would jump to a same-named object of the instantiating scope
-        // (or an arbitrary workspace match).  No result is the honest answer.
-        if a.index.is_unresolved_param_label(file, line, e.col) {
-            return None;
-        }
-        if a.index.is_unresolved_enum_ref(file, line, e.col) {
-            return None;
-        }
-    }
-    definition_fallback(a, file, line, col)
+}
+
+fn file_uri(file: &str) -> Url {
+    Url::from_file_path(file)
+        .unwrap_or_else(|_| Url::parse("untitled:llg").expect("static URL is valid"))
 }
 
 /// LSP location for a bound declaration target (already 0-based), spanning
 /// the target name with the same identifier-width convention as
-/// [`entry_location`].
+/// [`entry_location`]; an included file is its start.
 pub(super) fn ref_target_location(t: &DeclTarget) -> Location {
-    let uri = Url::from_file_path(&t.file)
-        .unwrap_or_else(|_| Url::parse("untitled:llg").expect("static URL is valid"));
-    let len = lsp_name_len(&t.name);
+    let start = Position::new(t.line0, t.col0);
+    let len = if t.kind == tokens::TARGET_FILE {
+        0
+    } else {
+        lsp_name_len(&t.name)
+    };
     Location {
-        uri,
-        range: Range::new(
-            Position::new(t.line0, t.col0),
-            Position::new(t.line0, t.col0 + len),
-        ),
+        uri: file_uri(&t.file),
+        range: Range::new(start, Position::new(t.line0, t.col0 + len)),
     }
-}
-
-pub(super) fn definition_fallback(
-    a: &Analysis,
-    file: &str,
-    line: u32,
-    col: u32,
-) -> Option<Location> {
-    let node = token_at(a, file, line, col)?;
-    let name = node.name.as_deref()?;
-
-    for m in a.model.modules_in(file) {
-        if clean_name(&m.name) == name {
-            return module_def_location(a, m);
-        }
-    }
-
-    if let Some(inst) = all_instances(&a.model.top_instances)
-        .into_iter()
-        .find(|i| i.name == name)
-    {
-        if let Some(def) = a
-            .model
-            .modules
-            .iter()
-            .find(|m| clean_name(&m.name) == clean_name(&inst.def_name))
-        {
-            return module_def_location(a, def);
-        }
-        return instance_location(inst);
-    }
-
-    if let Some(pkg) = a
-        .model
-        .packages
-        .iter()
-        .find(|p| clean_name(&p.name) == name)
-    {
-        return package_location(pkg);
-    }
-
-    if let Some((l1, c1)) =
-        nearest_declaration(a, file, name, line, skip_self_label(a, file, line, col))
-    {
-        return Some(location(file, l1, c1, lsp_name_len(name) as usize));
-    }
-
-    a.model
-        .modules
-        .iter()
-        .find(|m| clean_name(&m.name) == name)
-        .and_then(|m| module_def_location(a, m))
 }
 
 // ── References ────────────────────────────────────────────────────────────────
 
-/// All occurrences of the identifier at the 0-based position, including the
-/// declaration itself, deduplicated by position.  The symbol index resolves
-/// the entry to its declaration and collects every reference that resolves to
-/// the same declaration across the whole workspace; when the index has
-/// nothing, the v1 same-file name-based search applies.
+/// The declaration and every reference of the identifier at the 0-based
+/// position, deduplicated by position.
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn references_at(a: &Analysis, file: &str, line: u32, col: u32) -> Vec<Location> {
     references_at_with_options(a, file, line, col, true)
 }
 
+/// The token at the 0-based position.
+pub(crate) fn identifier_at<'a>(
+    a: &'a Analysis,
+    file: &str,
+    line: u32,
+    col: u32,
+) -> Option<&'a TokenInfo> {
+    tokens::token_at(&file_tokens(a, file)?.nodes, line, col)
+}
+
+/// The declaration that the identifier at the 0-based position names: the one
+/// its reference token is bound to, or itself. Names in `` `define `` text,
+/// macro names, include paths and names with several definitions are no
+/// references of the design and have none.
+pub(crate) fn declaration_at(
+    a: &Analysis,
+    file: &str,
+    line: u32,
+    col: u32,
+) -> Option<tokens::TokenKey> {
+    let token = identifier_at(a, file, line, col)?;
+    let key = (
+        token.file.clone(),
+        token.line.checked_sub(1)?,
+        token.col.checked_sub(1)?,
+    );
+    if let Some(target) = a.bindings.references.get(&key) {
+        return Some((target.file.clone(), target.line0, target.col0));
+    }
+    let class = tokens::token_class(token.kind);
+    (class.rule() == tokens::TokenRule::Declaration
+        && !class.macro_body
+        && class.kind != tokens::TOKEN_SLANG_MACRO)
+        .then_some(key)
+}
+
 /// All occurrences of the identifier at the 0-based position, honoring the
-/// LSP `ReferenceContext.includeDeclaration` option.
-///
-/// Binding-aware under inner-scope shadowing: when the queried identifier is
-/// itself bound (`ref_bindings`), the reference set belongs to exactly the
-/// bound declaration — occurrences whose own binding points at a DIFFERENT
-/// declaration are excluded even though the name-based resolution would
-/// conflate them, and precisely-bound occurrences outside the name-based
-/// candidate pool are included.  Positions without bindings keep the v1
-/// name+scope behavior (parse-fallback analyses have no bindings at all).
+/// LSP `ReferenceContext.includeDeclaration` option: every reference bound to
+/// the declaration it names ([`declaration_at`]).
 pub fn references_at_with_options(
     a: &Analysis,
     file: &str,
@@ -1046,206 +860,42 @@ pub fn references_at_with_options(
     col: u32,
     include_declaration: bool,
 ) -> Vec<Location> {
-    if let Some(e) = a.index.entry_at(file, line, col) {
-        if unresolved_binding_at(a, file, line, col, Some(e)) {
-            return Vec::new();
-        }
-        if a.index.is_unresolved_enum_ref(file, line, e.col) {
-            return Vec::new();
-        }
-        // Head declarations this query belongs to.  A binding on the query
-        // position anchors the set to exactly that declaration; otherwise the
-        // index resolution decides (a declaration resolves to itself).
-        let mut heads: HashSet<(String, u32, u32)> = HashSet::new();
-        match binding_target_at(a, file, line, col, e) {
-            Some(target) => {
-                heads.insert((target.file.clone(), target.line0, target.col0));
-            }
-            None => {
-                for d in a.index.resolve(e) {
-                    heads.insert((d.file.clone(), d.line, d.col));
-                }
-            }
-        }
-        if !heads.is_empty() {
-            let locations = shadow_aware_reference_locations(a, e, &heads, include_declaration);
-            return locations;
-        }
-    }
-    references_fallback_with_options(a, file, line, col, include_declaration)
-}
-
-fn unresolved_binding_at(
-    a: &Analysis,
-    file: &str,
-    line: u32,
-    col: u32,
-    entry: Option<&SymEntry>,
-) -> bool {
-    a.unresolved_bindings
-        .contains(&(file.to_owned(), line, col))
-        || entry.is_some_and(|entry| {
-            a.unresolved_bindings
-                .contains(&(file.to_owned(), line, entry.col))
-        })
-}
-
-/// The binding target for the query position: exact key first, then the
-/// containing identifier's start column (cursor normalization, matching
-/// [`definition_at`]).
-pub(super) fn binding_target_at<'a>(
-    a: &'a Analysis,
-    file: &str,
-    line: u32,
-    col: u32,
-    e: &SymEntry,
-) -> Option<&'a DeclTarget> {
-    a.ref_bindings
-        .get(&(file.to_string(), line, col))
-        .or_else(|| a.ref_bindings.get(&(file.to_string(), line, e.col)))
-}
-
-/// Collect the binding-aware occurrence set of `e`'s identifier for the head
-/// declarations in `heads`.
-///
-/// The v1 pool ([`SymbolIndex::all_references`]) stays the candidate base —
-/// it carries the resolution chains (instance → module definition,
-/// connection labels → child declarations, name/scope approximations).  On
-/// top of it:
-///
-/// * DECLARATION occurrences are kept iff their position is one of the heads
-///   (gated by `include_declaration`) — under shadowing the v1 pool contains
-///   every same-named declaration the conflated resolution produced, and
-///   only the queried declaration's own site may stay;
-/// * REFERENCE occurrences whose captured binding targets a DIFFERENT
-///   declaration are dropped — the property that keeps shadowed declarations'
-///   reference sets disjoint;
-/// * precisely-bound positions outside the v1 pool whose binding targets a
-///   head are added (connection labels/actuals, interior refs).
-pub(super) fn shadow_aware_reference_locations(
-    a: &Analysis,
-    e: &SymEntry,
-    heads: &HashSet<(String, u32, u32)>,
-    include_declaration: bool,
-) -> Vec<Location> {
-    let mut out: Vec<SymEntry> = Vec::new();
-    let mut seen: HashSet<(String, u32, u32)> = HashSet::new();
-
-    if include_declaration {
-        for (file, line, col) in heads {
-            if let Some(declaration) = a
-                .index
-                .entry_at(file, *line, *col)
-                .filter(|entry| entry.is_decl)
-            {
-                seen.insert((file.clone(), *line, *col));
-                out.push(declaration.clone());
-            }
-        }
-    }
-
-    // True declaration sites per the semantic DB capture: positions recorded as
-    // declared objects behave like declarations even when the multi-view
-    // classification left them REF-shaped.
-    let is_decl_position = |key: &(String, u32, u32)| a.decl_details.contains_key(key);
-
-    let targets_head =
-        |target: &DeclTarget| heads.contains(&(target.file.clone(), target.line0, target.col0));
-    let genvar_head = heads.iter().any(|(file, line, col)| {
-        a.ref_bindings
-            .get(&(file.clone(), *line, *col))
-            .is_some_and(|target| target.kind == "genvar")
-    });
-
-    for occurrence in a.index.all_references(e) {
-        let key = (occurrence.file.clone(), occurrence.line, occurrence.col);
-        if !seen.insert(key.clone()) {
-            continue;
-        }
-        if occurrence.is_decl || is_decl_position(&key) {
-            if include_declaration && heads.contains(&key) {
-                out.push(occurrence);
-            } else {
-                seen.remove(&key);
-            }
-            continue;
-        }
-        let keep = match binding_target_at(
-            a,
-            &occurrence.file,
-            occurrence.line,
-            occurrence.col,
-            &occurrence,
-        ) {
-            Some(target) => targets_head(target),
-            None if genvar_head => false,
-            None => a
-                .index
-                .resolve(&occurrence)
-                .iter()
-                .any(|d| heads.contains(&(d.file.clone(), d.line, d.col))),
-        };
-        if keep {
-            out.push(occurrence);
-        } else {
-            seen.remove(&key);
-        }
-    }
-
-    for ((bfile, bline, bcol), target) in &a.ref_bindings {
-        if target.name != e.name || !targets_head(target) {
-            continue;
-        }
-        let key = (bfile.clone(), *bline, *bcol);
-        if heads.contains(&key) {
-            continue;
-        }
-        if seen.insert(key.clone()) {
-            out.push(SymEntry {
-                name: e.name.clone(),
-                kind: SymKind::Var,
-                file: bfile.clone(),
-                line: *bline,
-                col: *bcol,
-                end_line: *bline,
-                end_col: bcol.saturating_add(lsp_name_len(&e.name)),
-                is_decl: false,
-                scope: None,
-                detail: None,
-            });
-        }
-    }
-
-    out.into_iter()
-        .map(|entry| entry_location(&entry))
-        .collect()
-}
-
-pub(super) fn references_fallback_with_options(
-    a: &Analysis,
-    file: &str,
-    line: u32,
-    col: u32,
-    include_declaration: bool,
-) -> Vec<Location> {
-    let Some(node) = token_at(a, file, line, col) else {
-        return Vec::new();
-    };
-    let Some(name) = node.name.as_deref() else {
+    let Some((head_file, head_line, head_col)) = declaration_at(a, file, line, col) else {
         return Vec::new();
     };
     let mut out = Vec::new();
-    let mut seen: HashSet<(u32, u32)> = HashSet::new();
-    if let Some(ft) = file_tokens(a, file) {
-        for n in &ft.nodes {
-            if n.name.as_deref() == Some(name)
-                && (include_declaration || !is_declaration_token(n.kind))
-                && seen.insert((n.line, n.col))
-            {
-                out.push(location(file, n.line, n.col, lsp_name_len(name) as usize));
-            }
+    if include_declaration {
+        let declaration = file_tokens(a, &head_file)
+            .and_then(|tokens| tokens::token_at(&tokens.nodes, head_line, head_col));
+        if let Some(declaration) = declaration {
+            out.push(Location {
+                uri: file_uri(&head_file),
+                range: token_range(declaration),
+            });
         }
     }
+    let mut references: Vec<_> = a
+        .bindings
+        .references
+        .iter()
+        .filter(|(key, target)| {
+            (target.line0, target.col0) == (head_line, head_col)
+                && target.file == head_file
+                && (&key.0, key.1, key.2) != (&head_file, head_line, head_col)
+        })
+        .collect();
+    references.sort_by(|left, right| left.0.cmp(right.0));
+    out.extend(
+        references
+            .into_iter()
+            .map(|((file, line, col), target)| Location {
+                uri: file_uri(file),
+                range: Range::new(
+                    Position::new(*line, *col),
+                    Position::new(*line, *col + lsp_name_len(&target.name)),
+                ),
+            }),
+    );
     out
 }
 
@@ -1813,7 +1463,7 @@ pub(super) fn child_symbol(
         .iter()
         .filter(|n| n.name.as_deref() == Some(name))
         .min_by_key(|n| {
-            let decl_rank = if is_declaration_token(n.kind) { 0 } else { 1 };
+            let decl_rank = i32::from(!tokens::token_class(n.kind).declaration);
             (decl_rank, n.line, n.col)
         })?;
     let line = node.line.saturating_sub(1);
@@ -2134,47 +1784,15 @@ pub(super) fn builtin_file(file: &str) -> bool {
     Path::new(file).file_name().and_then(|n| n.to_str()) == Some("builtin.sv")
 }
 
-/// The token list for `file`, by exact admitted source identity.
+/// The token list for `file`: the file itself, however its path is spelled.
 pub(super) fn file_tokens<'a>(a: &'a Analysis, file: &str) -> Option<&'a FileTokens> {
-    a.tokens.iter().find(|ft| ft.path == file)
-}
-
-/// The named token at 0-based `(line, col)`: prefer a token whose name range
-/// covers the column; otherwise the nearest token on the same line (longest
-/// name wins ties).
-pub(super) fn token_at<'a>(
-    a: &'a Analysis,
-    file: &str,
-    line: u32,
-    col: u32,
-) -> Option<&'a TokenInfo> {
-    let line1 = line + 1;
-    let col1 = col + 1;
-    let ft = file_tokens(a, file)?;
-    let mut candidates: Vec<&TokenInfo> = ft
-        .nodes
-        .iter()
-        .filter(|n| n.line == line1 && n.name.as_deref().is_some_and(|s| !s.is_empty()))
-        .collect();
-    if candidates.is_empty() {
-        return None;
+    if let Some(tokens) = a.tokens.iter().find(|tokens| tokens.path == file) {
+        return Some(tokens);
     }
-    if let Some(found) = candidates.iter().find(|n| {
-        let len = n.name.as_deref().map_or(0, lsp_name_len);
-        col1 >= n.col && col1 < n.col.saturating_add(len)
-    }) {
-        return Some(found);
-    }
-    candidates.sort_by(|x, y| {
-        let dx = (i64::from(x.col) - i64::from(col1)).abs();
-        let dy = (i64::from(y.col) - i64::from(col1)).abs();
-        dx.cmp(&dy).then_with(|| {
-            let lx = x.name.as_deref().map_or(0, |s| lsp_name_len(s) as usize);
-            let ly = y.name.as_deref().map_or(0, |s| lsp_name_len(s) as usize);
-            ly.cmp(&lx)
-        })
-    });
-    candidates.into_iter().next()
+    let file = llg::ffi::platform::canonicalize(file).ok()?;
+    a.tokens.iter().find(|tokens| {
+        llg::ffi::platform::canonicalize(&tokens.path).is_ok_and(|path| path == file)
+    })
 }
 
 /// All instances in the tree, depth-first.
@@ -2188,111 +1806,16 @@ pub(super) fn all_instances(insts: &[InstanceModel]) -> Vec<&InstanceModel> {
     out
 }
 
-/// The 1-based position of the token at the exact 0-based `(line, col)` when
-/// that token's semantic type is a named-connection label flavor;
-/// `None` otherwise.
-///
-/// Used to keep [`nearest_declaration`] from matching a connection label's
-/// OWN token: an unresolvable label must yield no definition, not a no-op
-/// jump onto itself.
-pub(super) fn skip_self_label(a: &Analysis, file: &str, line: u32, col: u32) -> Option<(u32, u32)> {
-    let ft = file_tokens(a, file)?;
-    let node = ft
-        .nodes
-        .iter()
-        .find(|n| n.line == line + 1 && n.col == col + 1)?;
-    let is_label_flavor = matches!(
-        tokens::token_base_kind(node.kind).0,
-        tokens::TOKEN_SLANG_PORT_CONNECTION_LABEL | tokens::TOKEN_SLANG_PARAMETER_CONNECTION_LABEL
-    );
-    is_label_flavor.then_some((node.line, node.col))
-}
-
-/// The same-file port/signal/parameter declaration of `name` nearest to
-/// 0-based `line`, from tokens whose semantic type is a declaration type.
-///
-/// `skip` excludes one 1-based position — the clicked connection-label token
-/// itself (see [`skip_self_label`]) — so a dropped/unbound label cannot
-/// self-match at distance zero.
-pub(super) fn nearest_declaration(
-    a: &Analysis,
-    file: &str,
-    name: &str,
-    line: u32,
-    skip: Option<(u32, u32)>,
-) -> Option<(u32, u32)> {
-    let ft = file_tokens(a, file)?;
-    ft.nodes
-        .iter()
-        .filter(|n| {
-            n.name.as_deref() == Some(name)
-                && is_declaration_token(n.kind)
-                && Some((n.line, n.col)) != skip
-        })
-        .min_by_key(|n| (n.line.abs_diff(line + 1), n.col))
-        .map(|n| (n.line, n.col))
-}
-
-/// Whether a lexical token represents a declaration.
-pub(super) fn is_declaration_token(t: i32) -> bool {
-    tokens::token_base_kind(t).1 || t == tokens::TOKEN_GENVAR_DECL
-}
-
 // ── Location construction ─────────────────────────────────────────────────────
-
-pub(super) fn location(file: &str, line1: u32, col1: u32, len: usize) -> Location {
-    let uri = Url::from_file_path(file)
-        .unwrap_or_else(|_| Url::parse("untitled:llg").expect("static URL is valid"));
-    let line = line1.saturating_sub(1);
-    let col = col1.saturating_sub(1);
-    let len = len as u32;
-    Location {
-        uri,
-        range: Range::new(Position::new(line, col), Position::new(line, col + len)),
-    }
-}
 
 /// LSP location for an index entry (already 0-based).
 pub(super) fn entry_location(e: &SymEntry) -> Location {
-    let uri = Url::from_file_path(&e.file)
-        .unwrap_or_else(|_| Url::parse("untitled:llg").expect("static URL is valid"));
     let len = lsp_name_len(&e.name);
     Location {
-        uri,
+        uri: file_uri(&e.file),
         range: Range::new(
             Position::new(e.line, e.col),
             Position::new(e.line, e.col + len),
         ),
     }
-}
-
-pub(super) fn module_def_location(a: &Analysis, m: &ModuleDef) -> Option<Location> {
-    // Prefer the token-refined position from the index (points at the module
-    // *name*, not the `module` keyword).
-    if let Some(d) = a.index.decls.iter().find(|d| {
-        d.kind == SymKind::Module
-            && d.name == clean_name(&m.name)
-            && Some(d.file.as_str()) == m.file.as_deref()
-    }) {
-        return Some(entry_location(d));
-    }
-    let file = m.file.as_deref()?;
-    let len = lsp_name_len(clean_name(&m.name)) as usize;
-    Some(location(file, m.line, m.col, len))
-}
-
-pub(super) fn package_location(p: &PackageDef) -> Option<Location> {
-    let file = p.file.as_deref()?;
-    let len = lsp_name_len(clean_name(&p.name)) as usize;
-    Some(location(file, p.line, p.col, len))
-}
-
-pub(super) fn instance_location(i: &InstanceModel) -> Option<Location> {
-    let file = i.file.as_deref()?;
-    Some(location(
-        file,
-        i.line,
-        i.col,
-        lsp_name_len(&i.name) as usize,
-    ))
 }

@@ -405,7 +405,8 @@ impl Backend {
         generation: u64,
         result: CompileResult,
     ) -> CommitOutcome {
-        let mut state = state.lock().unwrap_or_else(|error| error.into_inner());
+        let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
+        let state = &mut *guard;
         if state.shutting_down {
             return CommitOutcome::default();
         }
@@ -558,13 +559,26 @@ impl Backend {
         // refresh requests, so nothing is compared otherwise.
         let semantic_tokens_refresh = refresh_supported && {
             let defines = root.descriptor.effective_config().compile.defines;
-            let empty = features::IncludeContext::default();
-            let context = root
-                .last_good
-                .as_ref()
-                .map_or(&empty, |analysis| analysis.include_context.as_ref());
-            root.served_tokens
-                .take_refresh(snapshot_replaced, &defines, context)
+            let analysis = root.last_good.as_ref();
+            let context = analysis
+                .map(|analysis| Arc::clone(&analysis.include_context))
+                .unwrap_or_default();
+            let documents = &state.documents;
+            root.served_tokens.take_refresh(
+                snapshot_replaced,
+                &defines,
+                &context,
+                |uri| documents.contains_key(uri),
+                |uri| {
+                    let path = Self::uri_to_path(uri)?;
+                    let fingerprint = features::SourceFingerprint::of(documents.get(uri)?);
+                    let analysis = analysis?;
+                    let path = path.to_str()?;
+                    analysis
+                        .compiled_from(path, fingerprint)
+                        .then(|| stream_digest(&features::semantic_tokens_for(analysis, path)))
+                },
+            )
         };
         let mut keys: BTreeSet<Url> = root.diagnostics.keys().cloned().collect();
         keys.extend(current.keys().cloned());
@@ -600,11 +614,11 @@ impl Backend {
             state.initial_pending.len(),
             ready
         );
-        Self::rebuild_merged(&mut state);
-        rebuild_dep_dependents(&mut state);
+        Self::rebuild_merged(state);
+        rebuild_dep_dependents(state);
         let published_uris: BTreeSet<Url> =
             publications.iter().map(|(uri, _)| uri.clone()).collect();
-        let shared_publications = aggregate_shared_publications(&mut state, &published_uris);
+        let shared_publications = aggregate_shared_publications(state, &published_uris);
         let ticket = state.client_order.ticket();
         CommitOutcome {
             ticket,
