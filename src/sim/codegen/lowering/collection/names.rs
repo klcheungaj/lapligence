@@ -639,7 +639,8 @@ impl<'a> Codegen<'a> {
                 ));
             }
         }
-        variables.sort_by(|left, right| left.name.cmp(&right.name));
+        variables
+            .sort_by(|left, right| (&left.name, left.storage).cmp(&(&right.name, right.storage)));
         variables.dedup_by(|left, right| left.name == right.name);
         model.wave_variables = variables;
     }

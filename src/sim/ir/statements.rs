@@ -1187,7 +1187,7 @@ pub struct IrInertialEnable {
 pub type IrWaveScopes = String;
 
 /// Which storage an [`IrWaveVariable`] names.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum IrWaveStorage {
     /// A model signal that has no [`crate::sim::ir::IrSignal::hdl_name`].
     Signal(usize),
