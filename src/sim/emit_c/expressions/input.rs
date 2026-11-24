@@ -220,6 +220,16 @@ fn render_file_input_targets(
     Ok((declarations, array))
 }
 
+/// The runtime function of an input call that writes text to one destination;
+/// its packed form has the suffix `_packed`.
+pub(in crate::sim::emit_c) fn text_input_function(input: &IrFileInput) -> &'static str {
+    if matches!(input, IrFileInput::Error { .. }) {
+        "llg_file_error"
+    } else {
+        "llg_file_gets"
+    }
+}
+
 pub(super) fn render_file_input(
     ctx: &RCtx<'_>,
     input: &IrFileInput,
@@ -249,11 +259,12 @@ pub(super) fn render_file_input(
                 descriptor.code, character.code
             )
         }
-        IrFileInput::Gets { descriptor, target } => {
+        IrFileInput::Gets { descriptor, target } | IrFileInput::Error { descriptor, target } => {
             let descriptor = render_expr_impl(ctx, descriptor)?;
+            let function = text_input_function(input);
             match target {
                 IrFileInputTarget::String { address } => format!(
-                    "sv4_from_i64((int64_t)llg_file_gets(llg_file_descriptor({}), {address}), 32)",
+                    "sv4_from_i64((int64_t){function}(llg_file_descriptor({}), {address}), 32)",
                     descriptor.code
                 ),
                 IrFileInputTarget::Packed {
@@ -265,12 +276,12 @@ pub(super) fn render_file_input(
                     let (setup, target) =
                         render_file_lhs_ref(ctx, lhs, *width, *signed, *two_state)?;
                     format!(
-                        "({{ {setup} sv4_from_i64((int64_t)llg_file_gets_packed(llg_file_descriptor({}), {target}), 32); }})",
+                        "({{ {setup} sv4_from_i64((int64_t){function}_packed(llg_file_descriptor({}), {target}), 32); }})",
                         descriptor.code
                     )
                 }
                 IrFileInputTarget::Real { .. } => {
-                    return Err("file line input target cannot be real storage".to_owned());
+                    return Err("file text destination cannot be real storage".to_owned());
                 }
                 IrFileInputTarget::Element { .. } => {
                     return Err(

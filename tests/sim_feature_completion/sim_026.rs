@@ -225,3 +225,24 @@ fn neg_fread_and_fgets_destination_types() {
         "value of type 'real' is not a valid string argument",
     );
 }
+
+#[test]
+fn ferror_writes_integral_and_string_destinations() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "ferror_destinations",
+        include_str!("../fixtures/sim/feature_completion/sim_026/ferror_destinations.out"),
+        &[],
+        &[],
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_ferror_real",
+        "neg_ferror_real.sv:4:26 value of type 'real' is not a valid string argument",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_ferror_aggregate",
+        "neg_ferror_aggregate.sv:4:26 value of type 'reg[7:0]$[80]' is not a valid string argument",
+    );
+}

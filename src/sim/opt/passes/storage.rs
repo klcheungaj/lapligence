@@ -1722,7 +1722,6 @@ fn collect_expr_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
                 collect_expr_reads(offset, model, rw);
                 collect_expr_reads(operation, model, rw);
             }
-            IrSysFunc::FileError { descriptor, .. } => collect_expr_reads(descriptor, model, rw),
             IrSysFunc::FileInput(input) => {
                 input.expressions(&mut |expression| collect_expr_reads(expression, model, rw));
                 match input {
@@ -1747,7 +1746,8 @@ fn collect_expr_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
                         | crate::sim::ir::IrFileReadTarget::Array { .. }
                         | crate::sim::ir::IrFileReadTarget::Container { .. } => {}
                     },
-                    crate::sim::ir::IrFileInput::Gets { target, .. } => match target {
+                    crate::sim::ir::IrFileInput::Gets { target, .. }
+                    | crate::sim::ir::IrFileInput::Error { target, .. } => match target {
                         crate::sim::ir::IrFileInputTarget::Packed { lhs, .. }
                         | crate::sim::ir::IrFileInputTarget::Real { lhs, .. } => {
                             collect_lhs_rw(lhs, model, rw);

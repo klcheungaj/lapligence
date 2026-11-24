@@ -1022,12 +1022,6 @@ pub enum IrSysFunc {
         offset: Box<IrExpr>,
         operation: Box<IrExpr>,
     },
-    /// `$ferror(fd[, message])` reports the descriptor's error state and can
-    /// replace a caller-owned string actual with a diagnostic.
-    FileError {
-        descriptor: Box<IrExpr>,
-        message: Option<String>,
-    },
     /// `$feof(fd)` reports end-of-file for an ordinary descriptor.
     FileEof(Box<IrExpr>),
     /// File input functions and tasks.  Their destinations stay as owned
@@ -1115,6 +1109,12 @@ pub enum IrFileInput {
         descriptor: Box<IrExpr>,
         target: IrFileInputTarget,
     },
+    /// `$ferror(fd, message)`: the error state, and its text written to the
+    /// destination.
+    Error {
+        descriptor: Box<IrExpr>,
+        target: IrFileInputTarget,
+    },
     ScanFile {
         descriptor: Box<IrExpr>,
         format: IrPlusArgText,
@@ -1182,7 +1182,7 @@ impl IrFileInput {
                 visit(character);
                 visit(descriptor);
             }
-            Self::Gets { descriptor, target } => {
+            Self::Gets { descriptor, target } | Self::Error { descriptor, target } => {
                 visit(descriptor);
                 target.expressions(visit);
             }
@@ -1238,7 +1238,7 @@ impl IrFileInput {
                 visit(character);
                 visit(descriptor);
             }
-            Self::Gets { descriptor, target } => {
+            Self::Gets { descriptor, target } | Self::Error { descriptor, target } => {
                 visit(descriptor);
                 target.expressions_mut(visit);
             }

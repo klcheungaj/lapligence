@@ -748,39 +748,47 @@ impl<'a> Codegen<'a> {
                 ))
             }
             "$ferror" => {
-                if args.len() != 1 && args.len() != 2 {
+                let [descriptor, message] = args.as_slice() else {
                     return Err(format!(
-                        "$ferror requires a descriptor and optional string output in `{scope_path}`"
+                        "$ferror requires a descriptor and a message variable in `{scope_path}`"
                     ));
-                }
-                let descriptor = self.lower_expr(scope_path, args[0])?;
+                };
+                let descriptor = self.lower_expr(scope_path, *descriptor)?;
                 if descriptor.is_real() {
                     return Err(format!(
                         "$ferror requires a packed file descriptor in `{scope_path}`"
                     ));
                 }
-                let message = args
-                    .get(1)
-                    .map(|argument| {
-                        let argument = match self.kind(*argument) {
-                            NodeKind::Expr(ExprKind::Operation {
-                                op: Operation::Assignment,
-                                operands,
-                                ..
-                            }) => operands.first().copied().ok_or_else(|| {
-                                format!("$ferror output argument is malformed in `{scope_path}`")
-                            })?,
-                            _ => *argument,
-                        };
-                        self.ensure_string_actual_writable(scope_path, argument)?;
-                        self.lower_string_actual_address(scope_path, argument)
-                    })
-                    .transpose()?;
-                Ok(IrExpr::new(
-                    IrExprKind::SysFunc(Box::new(IrSysFunc::FileError {
-                        descriptor: Box::new(descriptor),
+                let message = self.file_input_actual(*message)?;
+                let target = if self.is_string_expr(scope_path, message) {
+                    self.ensure_string_actual_writable(scope_path, message)?;
+                    IrFileInputTarget::String {
+                        address: self.lower_string_actual_address(scope_path, message)?,
+                    }
+                } else {
+                    // A descriptor that is not open leaves the destination
+                    // unchanged, so a staged store has no value to write back.
+                    match self.lower_scan_destination(
+                        scope_path,
                         message,
-                    })),
+                        &format!("{}_0", call.0),
+                        false,
+                    )? {
+                        (target, None) if !matches!(target, IrFileInputTarget::Real { .. }) => {
+                            target
+                        }
+                        _ => {
+                            return Err(format!(
+                                "$ferror writes its message to a packed or string variable, not to this expression, in `{scope_path}`"
+                            ))
+                        }
+                    }
+                };
+                Ok(IrExpr::new(
+                    IrExprKind::SysFunc(Box::new(IrSysFunc::FileInput(IrFileInput::Error {
+                        descriptor: Box::new(descriptor),
+                        target,
+                    }))),
                     32,
                     true,
                     None,

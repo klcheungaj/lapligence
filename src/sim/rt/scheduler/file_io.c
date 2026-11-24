@@ -15,6 +15,12 @@ static void llg_file_global_failure(const char* message) {
     llg_file_set_message(llg_file_global_message, sizeof(llg_file_global_message), message);
 }
 
+// A failure the host reports: its error number and text (21.3.7).
+static void llg_file_host_failure(int32_t code) {
+    llg_file_global_failure(strerror(code));
+    llg_file_global_error = code;
+}
+
 static void llg_file_slot_failure(llg_file_slot_t* slot, const char* message) {
     slot->error = 1;
     llg_file_set_message(slot->message, sizeof(slot->message), message);
@@ -125,9 +131,7 @@ uint32_t llg_file_descriptor(sv4_t value) {
         llg_file_global_failure("file descriptor is not a known 32-bit value");
         return 0;
     }
-    uint32_t descriptor = (uint32_t)sv4_to_u64(value);
-    if (descriptor == 0) llg_file_global_failure("invalid file descriptor");
-    return descriptor;
+    return (uint32_t)sv4_to_u64(value);
 }
 
 uint32_t llg_file_open(llg_string_t path, llg_string_t mode, int32_t has_mode) {
@@ -171,7 +175,7 @@ uint32_t llg_file_open(llg_string_t path, llg_string_t mode, int32_t has_mode) {
         }
     }
     if (!mode_valid) {
-        llg_file_global_failure("unsupported file open mode");
+        llg_file_host_failure(EINVAL);
         free(path_copy);
         free(mode_copy);
         return 0;
@@ -183,11 +187,10 @@ uint32_t llg_file_open(llg_string_t path, llg_string_t mode, int32_t has_mode) {
                          ? llg_output_path(path_copy)
                          : NULL;
     FILE* stream = fopen(resolved ? resolved : path_copy, mode_copy);
+    int32_t open_error = errno;
     free(resolved);
     if (!stream) {
-        char message[160];
-        snprintf(message, sizeof(message), "file open failed: %s", strerror(errno));
-        llg_file_global_failure(message);
+        llg_file_host_failure(open_error);
         free(path_copy);
         free(mode_copy);
         return 0;
@@ -411,13 +414,17 @@ int32_t llg_file_seek(uint32_t descriptor, sv4_t offset, sv4_t operation) {
     return 0;
 }
 
-int32_t llg_file_error(uint32_t descriptor, llg_string_t* message) {
+// The error status of `descriptor`; `*message` is its text, or NULL when the
+// message destination keeps its value.
+static int32_t llg_file_error_status(uint32_t descriptor, const char** message) {
     const char* text = "";
     int32_t result = 0;
+    *message = NULL;
     llg_file_init_table();
     // A multichannel descriptor, or a file descriptor that is not open, has
     // no error status: the result is 0 and `str` keeps its value (decision
-    // S25-D7). Descriptor 0 reports the last global failure.
+    // S25-D7). Descriptor 0 reports the last failure without an open file,
+    // such as that of the `$fopen` which returned it (decision S26-D25).
     if (descriptor && !(descriptor & LLG_FILE_FD_TAG)) return 0;
     if (descriptor & LLG_FILE_FD_TAG) {
         uint32_t index = descriptor & ~LLG_FILE_FD_TAG;
@@ -425,8 +432,9 @@ int32_t llg_file_error(uint32_t descriptor, llg_string_t* message) {
             !llg_file_slots[index].open || !llg_file_slots[index].stream)
             return 0;
     }
-    if (!llg_file_mask_valid(descriptor)) {
-        result = 1;
+    if (!descriptor) {
+        if (!llg_file_global_error) llg_file_global_failure("invalid file descriptor");
+        result = llg_file_global_error;
         text = llg_file_global_message;
     } else {
         for (uint32_t i = 0; i < LLG_FILE_SLOTS; i++) {
@@ -440,7 +448,23 @@ int32_t llg_file_error(uint32_t descriptor, llg_string_t* message) {
             }
         }
     }
-    if (message) llg_string_move(message, llg_string_bytes(text, strlen(text)));
+    *message = text;
+    return result;
+}
+
+int32_t llg_file_error(uint32_t descriptor, llg_string_t* message) {
+    const char* text;
+    int32_t result = llg_file_error_status(descriptor, &text);
+    if (message && text) llg_string_move(message, llg_string_bytes(text, strlen(text)));
+    return result;
+}
+
+int32_t llg_file_error_packed(uint32_t descriptor, llg_ref_t* message) {
+    const char* text;
+    int32_t result = llg_file_error_status(descriptor, &text);
+    if (message && message->width && text)
+        llg_ref_write_owned(message, llg_string_to_packed(llg_string_bytes(text, strlen(text)),
+                                                          message->width, message->is_signed));
     return result;
 }
 

@@ -338,7 +338,6 @@ fn ident_children(e: &mut IrExpr) {
                 ident_expr(offset);
                 ident_expr(operation);
             }
-            IrSysFunc::FileError { descriptor, .. } => ident_expr(descriptor),
             IrSysFunc::FileInput(input) => {
                 input.expressions_mut(&mut |expression| ident_expr(expression));
             }

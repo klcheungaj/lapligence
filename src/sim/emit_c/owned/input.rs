@@ -2,6 +2,7 @@
 use super::native::{NativeKind, NativeValue};
 use super::stores::{Selection, Target};
 use super::*;
+use crate::sim::emit_c::expressions::text_input_function;
 
 impl Frame<'_, '_> {
     fn input_text(&mut self, text: &IrPlusArgText) -> Result<NativeValue, String> {
@@ -292,8 +293,9 @@ impl Frame<'_, '_> {
                 numeric.push(character);
                 call
             }
-            IrFileInput::Gets { descriptor, target } => {
-                // $fgets(target, fd): capture target selectors before fd.
+            IrFileInput::Gets { descriptor, target }
+            | IrFileInput::Error { descriptor, target } => {
+                // The selectors of the destination are captured before fd.
                 let (address, packed) = match target {
                     IrFileInputTarget::String { address } => (
                         self.native_address(address, NativeKind::String)?.address,
@@ -322,17 +324,14 @@ impl Frame<'_, '_> {
                         (address, true)
                     }
                     IrFileInputTarget::Real { .. } => {
-                        return Err("line input target cannot be real".to_owned())
+                        return Err("file text destination cannot be real".to_owned())
                     }
                 };
                 let descriptor = self.descriptor(descriptor)?;
                 format!(
-                    "{}({descriptor}, {address})",
-                    if packed {
-                        "llg_file_gets_packed"
-                    } else {
-                        "llg_file_gets"
-                    }
+                    "{}{}({descriptor}, {address})",
+                    text_input_function(input),
+                    if packed { "_packed" } else { "" }
                 )
             }
             IrFileInput::ScanFile {
@@ -570,18 +569,6 @@ impl Frame<'_, '_> {
                 self.discard(offset);
                 self.discard(operation);
                 result
-            }
-            IrSysFunc::FileError {
-                descriptor,
-                message,
-            } => {
-                let descriptor = self.descriptor(descriptor)?;
-                let address = if let Some(message) = message {
-                    self.native_address(message, NativeKind::String)?.address
-                } else {
-                    "NULL".to_owned()
-                };
-                self.integer_result(format!("llg_file_error({descriptor}, {address})"))
             }
             _ => return Err("not a file expression".to_owned()),
         })

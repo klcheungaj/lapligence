@@ -15,6 +15,7 @@ use queries::{render_enum_query, render_vpi_call};
 mod system_functions;
 use system_functions::render_legacy_random;
 mod input;
+pub(super) use input::text_input_function;
 use input::{render_file_input, render_test_plusargs, render_value_plusargs};
 mod lvalues;
 pub(crate) use lvalues::array_guard;
@@ -1215,27 +1216,6 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                     code: format!(
                         "sv4_from_u64((uint64_t)llg_file_seek(llg_file_descriptor({}), {}, {}), 32, 1)",
                         descriptor.code, offset.code, operation.code
-                    ),
-                    width: 32,
-                    signed: true,
-                    fill: None,
-                }
-            }
-            IrSysFunc::FileError {
-                descriptor,
-                message,
-            } => {
-                let descriptor = w(descriptor)?;
-                let target = message.as_deref().unwrap_or("NULL");
-                let message_arg = if message.is_some() {
-                    target.to_owned()
-                } else {
-                    "NULL".to_owned()
-                };
-                RenderedExpr {
-                    code: format!(
-                        "({{ int _llg_file_error = llg_file_error(llg_file_descriptor({}), {}); sv4_from_u64((uint64_t)_llg_file_error, 32, 1); }})",
-                        descriptor.code, message_arg
                     ),
                     width: 32,
                     signed: true,

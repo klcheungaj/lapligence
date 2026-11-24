@@ -2218,7 +2218,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   V §17.2.4.4; SV §21.3.4.4 **[2001/SV-2005]**.
 - 🟦 **File position/status** — `$ftell/$fseek/$rewind/$fflush/$ferror/$feof`
   preserve EOF/error and invalid/closed-descriptor status; `$rewind` is also a
-  function and a successful reposition clears the error status. V §§17.2.5–17.2.7;
+  function and a successful reposition clears the error status. `$ferror` writes
+  its message to a string or an integral variable (S26-D25). V §§17.2.5–17.2.7;
   SV §§21.3.5–21.3.8 **[2001/SV-2005]**.
 - 🟦 **Memory images** — `$readmemh/$readmemb` accept owned string paths,
   whitespace/comments, binary/hex digits, X/Z and `@` addresses.

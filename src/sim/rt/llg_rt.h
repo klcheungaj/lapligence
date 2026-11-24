@@ -2400,6 +2400,7 @@ void llg_file_display_typed(uint32_t descriptor, const char* fmt,
 // VPI multichannel-descriptor services (IEEE 1800-2009 38.24-38.29) over the
 // same table, for `llg_vpi.c`. Channel masks select bit 0 (stdout) and the
 // `$fopen` MCD channels; a descriptor with bit 31 set is an FD, which only
+int32_t llg_file_error_packed(uint32_t descriptor, llg_ref_t* message);
 // `llg_file_name` accepts.
 // `llg_file_mcd_open` borrows `path`, returns the open channel already named
 // `path` or opens a new one in write mode, and returns 0 on failure; it sets

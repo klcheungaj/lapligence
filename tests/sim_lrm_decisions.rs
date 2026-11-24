@@ -5498,6 +5498,14 @@ fn s26_d18_start_after_finish_descends() {
 }
 
 #[test]
+fn s26_d25_open_error_status() {
+    run_decision(
+        "S26-D25_open_error_status",
+        include_str!("fixtures/sim/lrm_decisions/S26-D25_open_error_status.out"),
+    );
+}
+
+#[test]
 fn s26_d19_errors_end_the_load() {
     run_decision(
         "S26-D19_errors_end_the_load",

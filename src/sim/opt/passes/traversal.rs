@@ -399,7 +399,6 @@ pub(in crate::sim) fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrEx
                 walk_expr_mut(offset, f);
                 walk_expr_mut(operation, f);
             }
-            IrSysFunc::FileError { descriptor, .. } => walk_expr_mut(descriptor, f),
             IrSysFunc::FileInput(input) => {
                 input.expressions_mut(&mut |expression| walk_expr_mut(expression, f));
             }
