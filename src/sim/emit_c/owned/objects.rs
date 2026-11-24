@@ -6,34 +6,48 @@ mod queries;
 impl Frame<'_, '_> {
     pub(super) fn chandle(&mut self, value: &IrChandleExpr) -> Result<String, String> {
         let code = match value {
-            IrChandleExpr::Conditional {
-                predicate,
-                then,
-                otherwise,
-            } => {
-                let selector = self.expression(predicate)?;
-                let result = self.scalar("void*", "NULL".to_owned());
-                self.line(format!("if ({}) {{", selector.truth()));
-                let left = self.chandle(then)?;
-                self.line(format!("{result} = {left};"));
-                if selector.width == 0 || super::known_predicate(predicate) {
-                    self.line("} else {");
-                    let right = self.chandle(otherwise)?;
-                    self.line(format!("{result} = {right};"));
-                } else {
-                    self.line(format!("}} else if (!{}) {{", selector.unknown_truth()));
-                    let right = self.chandle(otherwise)?;
-                    self.line(format!("{result} = {right};"));
-                    self.line("} else {");
-                    // SV 11.4.11: both arms are evaluated; unequal chandles
-                    // yield null, the type's default-uninitialized value.
-                    let left = self.chandle(then)?;
-                    let left = self.scalar("void*", left);
-                    let right = self.chandle(otherwise)?;
-                    self.line(format!("{result} = {left} == ({right}) ? {left} : NULL;"));
+            IrChandleExpr::Conditional { .. } => {
+                let mut levels = Vec::new();
+                let mut last = value;
+                while let IrChandleExpr::Conditional {
+                    predicate,
+                    then,
+                    otherwise,
+                } = last
+                {
+                    levels.push((predicate.as_ref(), then.as_ref()));
+                    last = otherwise;
                 }
-                self.line("}");
-                self.discard(selector);
+                let result = self.scalar("void*", "NULL".to_owned());
+                // SV 11.4.11: both arms are evaluated; unequal chandles
+                // yield null, the type's default-uninitialized value.
+                let kept = levels
+                    .iter()
+                    .any(|(predicate, _)| super::ambiguous_predicate(predicate))
+                    .then(|| self.scalar("void*", "NULL".to_owned()));
+                self.conditional_chain(
+                    &levels,
+                    last,
+                    &mut |frame, arm| {
+                        let arm = frame.chandle(arm)?;
+                        frame.line(format!("{result} = {arm};"));
+                        Ok(())
+                    },
+                    &mut |frame, first| {
+                        if let Some(kept) = &kept {
+                            if first {
+                                frame.line(format!("{kept} = {result};"));
+                            } else {
+                                frame.line(format!("{kept} = {kept} == {result} ? {kept} : NULL;"));
+                            }
+                        }
+                    },
+                    &mut |frame| {
+                        if let Some(kept) = &kept {
+                            frame.line(format!("{result} = {kept} == {result} ? {kept} : NULL;"));
+                        }
+                    },
+                )?;
                 return Ok(result);
             }
             IrChandleExpr::SemaphoreNew(keys) => {

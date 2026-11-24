@@ -227,15 +227,8 @@ impl Frame<'_, '_> {
                 };
                 self.replace(value, code, expr.width, expr.signed)
             }
-            IrExprKind::Mux { sel, a, b } => self.mux(sel, a, b, expr, None, None)?,
-            IrExprKind::ArrayMux {
-                sel,
-                a,
-                b,
-                element_default,
-            } => self.mux(sel, a, b, expr, Some(element_default), None)?,
-            IrExprKind::StructMux { sel, a, b, leaves } => {
-                self.mux(sel, a, b, expr, None, Some(leaves))?
+            IrExprKind::Mux { .. } | IrExprKind::ArrayMux { .. } | IrExprKind::StructMux { .. } => {
+                self.mux(expr)?
             }
             IrExprKind::UdpEval { table, inputs } => self.udp_eval(*table, inputs)?,
             IrExprKind::UdpState(state) => self.udp_state(*state),

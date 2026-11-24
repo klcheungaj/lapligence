@@ -308,6 +308,16 @@ convert packed/real truth to one bit, and allocate nothing for skipped clauses.
 Pattern member projections convert two-state fields before comparison or binding;
 dispose the raw slice when replacing it with the converted value.
 Ambiguous muxes evaluate both arms before merging (real results become zero).
+A conditional renders code in proportion to its source. Only one whose
+alternatives read and combine values, with conditionals nested at most
+`CONDITIONAL_REPEAT_LEVELS` deep (`owned/control.rs`), renders them again in
+the ambiguous branch, so its known paths pay the predicate test alone; every
+other conditional, with string and handle results always, goes through
+`Frame::conditional_chain`: the chain `p0 ? a0 : p1 ? a1 : ... : last` is one
+flat `do { } while (0)` block in which each predicate and alternative appears
+once, a true predicate leaves the block, and the alternatives of ambiguous
+predicates are kept and combined after it. Never render an alternative a
+second time outside that bound: nesting then doubles the code per level.
 Do not emit detached predicates or bypass eligibility through wrappers.
 
 `owned/repeated_values.rs` owns concatenation append emission (loop thresholds:

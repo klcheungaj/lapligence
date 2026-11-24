@@ -23,37 +23,59 @@ impl Frame<'_, '_> {
     pub(super) fn string(&mut self, expression: &IrStringExpr) -> Result<NativeValue, String> {
         use IrStringExpr::*;
         Ok(match expression {
-            Conditional {
-                predicate,
-                then,
-                otherwise,
-            } => {
-                let selector = self.expression(predicate)?;
-                let result = self.native_value(NativeKind::String, "(llg_string_t){0}".to_owned());
-                self.line(format!("if ({}) {{", selector.truth()));
-                self.string_arm(&result, then)?;
-                if selector.width == 0 || super::known_predicate(predicate) {
-                    self.line("} else {");
-                    self.string_arm(&result, otherwise)?;
-                } else {
-                    self.line(format!("}} else if (!{}) {{", selector.unknown_truth()));
-                    self.string_arm(&result, otherwise)?;
-                    self.line("} else {");
-                    // SV 11.4.11: an ambiguous predicate evaluates both arms;
-                    // unequal strings yield the empty default.
-                    let left = self.string(then)?;
-                    let right = self.string(otherwise)?;
-                    self.line(format!(
-                        "*({}) = llg_string_conditional_merge({}, {});",
-                        result.address,
-                        left.take_string(),
-                        right.take_string()
-                    ));
-                    self.native_discard(right);
-                    self.native_discard(left);
+            Conditional { .. } => {
+                let mut levels = Vec::new();
+                let mut last = expression;
+                while let Conditional {
+                    predicate,
+                    then,
+                    otherwise,
+                } = last
+                {
+                    levels.push((predicate.as_ref(), then.as_ref()));
+                    last = otherwise;
                 }
-                self.line("}");
-                self.discard(selector);
+                let result = self.native_value(NativeKind::String, "(llg_string_t){0}".to_owned());
+                // SV 11.4.11: an ambiguous predicate evaluates both arms;
+                // unequal strings yield the empty default.
+                let kept = levels
+                    .iter()
+                    .any(|(predicate, _)| super::ambiguous_predicate(predicate))
+                    .then(|| self.native_value(NativeKind::String, "(llg_string_t){0}".to_owned()));
+                let merge = |frame: &mut Self, destination: &NativeValue, kept: &NativeValue| {
+                    frame.line(format!(
+                        "*({}) = llg_string_conditional_merge({}, {});",
+                        destination.address,
+                        kept.take_string(),
+                        result.take_string()
+                    ));
+                };
+                self.conditional_chain(
+                    &levels,
+                    last,
+                    &mut |frame, arm| frame.string_arm(&result, arm),
+                    &mut |frame, first| {
+                        if let Some(kept) = &kept {
+                            if first {
+                                frame.line(format!(
+                                    "*({}) = {};",
+                                    kept.address,
+                                    result.take_string()
+                                ));
+                            } else {
+                                merge(frame, kept, kept);
+                            }
+                        }
+                    },
+                    &mut |frame| {
+                        if let Some(kept) = &kept {
+                            merge(frame, &result, kept);
+                        }
+                    },
+                )?;
+                if let Some(kept) = kept {
+                    self.native_discard(kept);
+                }
                 result
             }
             Literal(bytes) => {

@@ -1,6 +1,48 @@
 //! Branch-local expression lifetimes and four-state short circuiting.
 use super::*;
 
+/// A conditional operator whose alternatives only read and combine values,
+/// with conditionals nested at most this deep in all (itself included),
+/// renders them a second time in the branch of an ambiguous predicate: a
+/// known predicate then costs its test and nothing else. Each level doubles
+/// the code of the levels below it, so the code of such a conditional grows
+/// by at most two to this power; every other conditional renders each
+/// alternative once (`Frame::conditional_chain`).
+pub(super) const CONDITIONAL_REPEAT_LEVELS: u32 = 3;
+
+/// Whether a conditional with these alternatives renders them again for an
+/// ambiguous predicate (see [`CONDITIONAL_REPEAT_LEVELS`]).
+fn repeats_alternatives(left: &IrExpr, right: &IrExpr) -> bool {
+    let nested = CONDITIONAL_REPEAT_LEVELS - 1;
+    operands::stable_tree(left, nested) && operands::stable_tree(right, nested)
+}
+
+/// How the alternatives of an ambiguous packed conditional combine.
+#[derive(PartialEq)]
+enum ArmMerge<'e> {
+    /// Bit by bit (SV 11.4.11, Table 11-20).
+    Bits,
+    /// Leaf by leaf with one width and default (`IrExprKind::ArrayMux`).
+    Array(&'e IrConst),
+    /// Leaf by leaf with the leaves of a record (`IrExprKind::StructMux`).
+    Record(&'e IrLeafMerge),
+}
+
+/// Predicate, alternatives and merge of a packed or real conditional.
+fn conditional_parts(expr: &IrExpr) -> Option<(&IrExpr, &IrExpr, &IrExpr, ArmMerge<'_>)> {
+    match &expr.kind {
+        IrExprKind::Mux { sel, a, b } => Some((sel, a, b, ArmMerge::Bits)),
+        IrExprKind::ArrayMux {
+            sel,
+            a,
+            b,
+            element_default,
+        } => Some((sel, a, b, ArmMerge::Array(element_default))),
+        IrExprKind::StructMux { sel, a, b, leaves } => Some((sel, a, b, ArmMerge::Record(leaves))),
+        _ => None,
+    }
+}
+
 impl Frame<'_, '_> {
     pub(super) fn short_circuit(
         &mut self,
@@ -218,15 +260,19 @@ impl Frame<'_, '_> {
         Ok(matched)
     }
 
-    pub(super) fn mux(
-        &mut self,
-        selector: &IrExpr,
-        left: &IrExpr,
-        right: &IrExpr,
-        expr: &IrExpr,
-        element_default: Option<&IrConst>,
-        record_leaves: Option<&IrLeafMerge>,
-    ) -> Result<Value, String> {
+    /// A conditional operator with a packed or real result (SV 11.4.11).
+    pub(super) fn mux(&mut self, expr: &IrExpr) -> Result<Value, String> {
+        let (selector, left, right, merge) = conditional_parts(expr)
+            .ok_or_else(|| "a conditional operator was expected".to_owned())?;
+        if !repeats_alternatives(left, right) {
+            let result = if expr.width == 0 {
+                self.value("0.0".to_owned(), 0, true)
+            } else {
+                self.reserve(expr.width, expr.signed)
+            };
+            self.mux_chain(&result, expr)?;
+            return Ok(result);
+        }
         let known = super::known_predicate(selector);
         let selector = if operands::stable_expression(left) && operands::stable_expression(right) {
             self.operand(selector)?
@@ -251,7 +297,9 @@ impl Frame<'_, '_> {
         self.assign_arm(&result, b);
         if !known {
             self.line("} else {");
-            // Only an indeterminate condition evaluates both arms.
+            // Only an indeterminate condition evaluates both arms. They are
+            // rendered a second time here, which `CONDITIONAL_REPEAT_LEVELS`
+            // bounds.
             let a = self.expression(left)?;
             let a = self.mux_arm(a, expr.width, expr.signed);
             let b = self.expression(right)?;
@@ -260,35 +308,8 @@ impl Frame<'_, '_> {
                 // IEEE 1800-2009 11.4.11: still evaluate both alternatives,
                 // but an ambiguous conditional with a real result yields 0.
                 self.line(format!("{} = 0.0;", result.code));
-            } else if let Some(default) = element_default {
-                let default = self.constant(default, true);
-                self.assign(
-                    &format!("&{}", result.code),
-                    &format!(
-                        "sv4_array_conditional_merge({}, {}, {})",
-                        a.code, b.code, default.code
-                    ),
-                );
-                self.discard(default);
-            } else if let Some(leaves) = record_leaves {
-                // One period's leaf boundaries; the runtime repeats them
-                // across an array of records.
-                let default = self.constant(&leaves.default, true);
-                let starts = self.constant(&leaves.starts, true);
-                self.assign(
-                    &format!("&{}", result.code),
-                    &format!(
-                        "sv4_record_conditional_merge({}, {}, {}, {})",
-                        a.code, b.code, default.code, starts.code
-                    ),
-                );
-                self.discard(starts);
-                self.discard(default);
             } else {
-                self.assign(
-                    &format!("&{}", result.code),
-                    &format!("sv4_mux({}, {}, {})", selector.code, a.code, b.code),
-                );
+                self.merge_arms(&merge, &selector.code, &result, &a, &b);
             }
             self.discard(a);
             self.discard(b);
@@ -296,6 +317,260 @@ impl Frame<'_, '_> {
         self.line("}");
         self.discard(selector);
         Ok(result)
+    }
+
+    /// Put the combination of two evaluated alternatives of an ambiguous
+    /// conditional into the packed owner `destination`, which may be one of
+    /// them. `ambiguous` is a packed value whose truth is X.
+    fn merge_arms(
+        &mut self,
+        merge: &ArmMerge<'_>,
+        ambiguous: &str,
+        destination: &Value,
+        a: &Value,
+        b: &Value,
+    ) {
+        let destination = format!("&{}", destination.code);
+        match merge {
+            ArmMerge::Bits => self.assign(
+                &destination,
+                &format!("sv4_mux({ambiguous}, {}, {})", a.code, b.code),
+            ),
+            ArmMerge::Array(default) => {
+                let default = self.constant(default, true);
+                self.assign(
+                    &destination,
+                    &format!(
+                        "sv4_array_conditional_merge({}, {}, {})",
+                        a.code, b.code, default.code
+                    ),
+                );
+                self.discard(default);
+            }
+            ArmMerge::Record(leaves) => {
+                // One period's leaf boundaries; the runtime repeats them
+                // across an array of records.
+                let default = self.constant(&leaves.default, true);
+                let starts = self.constant(&leaves.starts, true);
+                self.assign(
+                    &destination,
+                    &format!(
+                        "sv4_record_conditional_merge({}, {}, {}, {})",
+                        a.code, b.code, default.code, starts.code
+                    ),
+                );
+                self.discard(starts);
+                self.discard(default);
+            }
+        }
+    }
+
+    /// Render the conditional `expr` into `result` without repeating an
+    /// alternative: `p0 ? a0 : p1 ? a1 : ... : last`, as long as the nested
+    /// conditional has the type and merge of the first, is one chain.
+    fn mux_chain(&mut self, result: &Value, expr: &IrExpr) -> Result<(), String> {
+        let (_, _, _, merge) = conditional_parts(expr)
+            .ok_or_else(|| "a conditional operator was expected".to_owned())?;
+        let mut levels = Vec::new();
+        let mut last = expr;
+        while let Some((predicate, then, otherwise, level_merge)) = conditional_parts(last) {
+            if level_merge != merge || last.width != expr.width || last.signed != expr.signed {
+                break;
+            }
+            levels.push((predicate, then));
+            last = otherwise;
+        }
+        let ambiguous = levels
+            .iter()
+            .any(|(predicate, _)| super::ambiguous_predicate(predicate));
+        // Alternatives of ambiguous predicates, combined so far.
+        let kept =
+            (ambiguous && result.width != 0).then(|| self.reserve(result.width, result.signed));
+        self.conditional_chain(
+            &levels,
+            last,
+            &mut |frame, arm| frame.mux_arm_into(result, arm),
+            &mut |frame, first| match &kept {
+                Some(kept) if first => {
+                    frame.line(format!("sv4_move(&{}, &{});", kept.code, result.code));
+                }
+                Some(kept) => frame.merge_kept(&merge, kept, kept, result),
+                // IEEE 1800-2009 11.4.11: a real result is 0 whatever the
+                // alternatives are, so none is kept.
+                None => {}
+            },
+            &mut |frame| match &kept {
+                Some(kept) => {
+                    frame.merge_kept(&merge, result, kept, result);
+                    frame.line(format!("sv4_destroy(&{});", kept.code));
+                }
+                None => frame.line(format!("{} = 0.0;", result.code)),
+            },
+        )?;
+        if let Some(kept) = kept {
+            // Destroyed where it was filled.
+            self.release_emptied(kept);
+        }
+        Ok(())
+    }
+
+    fn merge_kept(&mut self, merge: &ArmMerge<'_>, destination: &Value, a: &Value, b: &Value) {
+        if *merge == ArmMerge::Bits {
+            let ambiguous = self.packed_fill(2, 1, false, true);
+            self.merge_arms(merge, &ambiguous.code, destination, a, b);
+            self.discard(ambiguous);
+        } else {
+            self.merge_arms(merge, "", destination, a, b);
+        }
+    }
+
+    /// Evaluate one alternative of a conditional into `result`. A nested
+    /// conditional of the result's own type writes it directly instead of
+    /// moving its own result up, unless it renders in the repeated form.
+    fn mux_arm_into(&mut self, result: &Value, arm: &IrExpr) -> Result<(), String> {
+        if result.width != 0
+            && arm.width == result.width
+            && arm.signed == result.signed
+            && conditional_parts(arm)
+                .is_some_and(|(_, left, right, _)| !repeats_alternatives(left, right))
+        {
+            return self.mux_chain(result, arm);
+        }
+        let same_shape = arm.width == result.width && arm.signed == result.signed;
+        if let IrExprKind::Const(constant) = &arm.kind {
+            // A literal of the result's own shape is built in place.
+            if same_shape
+                && result.width != 0
+                && constant.real.is_none()
+                && constant.fill.is_none()
+                && arm.fill.is_none()
+                && constant.width == result.width
+                && constant.signed == result.signed
+            {
+                return self.constant_into(&format!("&{}", result.code), arm);
+            }
+        }
+        // Consumed at once: nothing runs between the read and the copy.
+        let value = self.operand(arm)?;
+        if value.width != 0 && value.slot.is_none() && value.fill.is_none() && same_shape {
+            self.assign(
+                &format!("&{}", result.code),
+                &format!("sv4_clone({})", value.address()),
+            );
+        } else {
+            self.assign_arm(result, value);
+        }
+        Ok(())
+    }
+
+    /// Render the chain `p0 ? a0 : p1 ? a1 : ... : last` (SV 11.4.11) as one
+    /// flat block in which every predicate and alternative appears once.
+    ///
+    /// `arm` evaluates an alternative into the caller's result. A true
+    /// predicate ends the chain there; a false one goes on. An ambiguous one
+    /// (X or Z) needs its alternative combined with the value of the rest of
+    /// the chain: `keep` moves the result to the caller's kept value (`true`:
+    /// nothing is kept yet) or combines it into the kept value, the chain
+    /// goes on, and at the end `finish` combines the kept value into the
+    /// result and releases it. Keeping the alternatives left to right instead
+    /// of combining from the innermost conditional outwards gives the same
+    /// value: each combination yields what all its operands agree on and the
+    /// type's default elsewhere, whatever the grouping.
+    pub(super) fn conditional_chain<A: ?Sized>(
+        &mut self,
+        levels: &[(&IrExpr, &A)],
+        last: &A,
+        arm: &mut dyn FnMut(&mut Self, &A) -> Result<(), String>,
+        keep: &mut dyn FnMut(&mut Self, bool),
+        finish: &mut dyn FnMut(&mut Self),
+    ) -> Result<(), String> {
+        if let [(predicate, then)] = levels {
+            if !super::ambiguous_predicate(predicate) {
+                // The predicate is read before either alternative runs.
+                let selector = self.operand(predicate)?;
+                self.line(format!("if ({}) {{", selector.truth()));
+                arm(self, then)?;
+                self.line("} else {");
+                arm(self, last)?;
+                self.line("}");
+                self.discard(selector);
+                return Ok(());
+            }
+        }
+        let ambiguous = levels
+            .iter()
+            .any(|(predicate, _)| super::ambiguous_predicate(predicate))
+            .then(|| {
+                // A block of its own: without a resume point in the chain
+                // the flag is a C local, not a field of a coroutine frame.
+                self.line("{");
+                self.scalar("uint32_t", "0u".to_owned())
+            });
+        // 0 false, 1 true, 2 X or Z; one variable serves every level.
+        let mut state: Option<String> = None;
+        let mut kept_any = false;
+        self.line("do {");
+        for (predicate, then) in levels {
+            // Every borrow of the predicate ends here, before an alternative
+            // can change what it read.
+            let selector = self.operand(predicate)?;
+            let known = selector.width == 0 || !super::ambiguous_predicate(predicate);
+            let test = if known && selector.slot.is_none() {
+                let test = selector.truth();
+                self.discard(selector);
+                test
+            } else {
+                let code = if known {
+                    format!("{} ? 1u : 0u", selector.truth())
+                } else {
+                    format!(
+                        "sv4_to_bool({0}) ? 1u : sv4_is_unknown({0}) ? 2u : 0u",
+                        selector.code
+                    )
+                };
+                let state = match &state {
+                    Some(state) => {
+                        self.line(format!("{state} = {code};"));
+                        state.clone()
+                    }
+                    None => state.insert(self.scalar("uint32_t", code)).clone(),
+                };
+                self.discard(selector);
+                format!("{state} != 0u")
+            };
+            self.line(format!("if ({test}) {{"));
+            arm(self, then)?;
+            match (&ambiguous, known) {
+                (Some(ambiguous), false) => {
+                    // An ambiguous level always has a state.
+                    let state = state.as_deref().unwrap_or_default();
+                    self.line(format!("if ({state} == 1u) break;"));
+                    if kept_any {
+                        self.line(format!("if ({ambiguous} != 0u) {{"));
+                        keep(self, false);
+                        self.line("} else {");
+                        keep(self, true);
+                        self.line(format!("{ambiguous} = 1u;"));
+                        self.line("}");
+                    } else {
+                        keep(self, true);
+                        self.line(format!("{ambiguous} = 1u;"));
+                        kept_any = true;
+                    }
+                }
+                _ => self.line("break;"),
+            }
+            self.line("}");
+        }
+        arm(self, last)?;
+        self.line("} while (0);");
+        if let Some(ambiguous) = ambiguous {
+            self.line(format!("if ({ambiguous} != 0u) {{"));
+            finish(self);
+            self.line("}");
+            self.line("}");
+        }
+        Ok(())
     }
 
     fn mux_arm(&mut self, arm: Value, width: u32, signed: bool) -> Value {
