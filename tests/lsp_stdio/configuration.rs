@@ -46,6 +46,87 @@ fn lsp_stdio_loads_per_root_lint_configuration() {
     client.shutdown();
 }
 
+/// Include patterns are relative to each source directory, so one that repeats
+/// the directory's name selects nothing. The config file says so, once, until a
+/// file is selected; edits of an open document do not repeat it.
+#[test]
+fn lsp_stdio_reports_a_config_that_selects_no_files() {
+    const NO_FILES: &str = "selects no files";
+    let fixture = FixtureTree::new();
+    let root = fixture.root("no-files");
+    let src = root.join("src");
+    fs::create_dir_all(&src).unwrap();
+    let path = src.join("design.sv");
+    let text = "module design(input logic a, output logic y); assign y = a; endmodule\n";
+    fs::write(&path, text).unwrap();
+    let config = root.join(CONFIG_FILE);
+    let config_text = |include: &str| {
+        format!(
+            "schema_version = 1\n[sources]\ndirectories = [\"src\"]\ninclude = [\"{include}\"]\n"
+        )
+    };
+    fs::write(&config, config_text("src/**/*.sv")).unwrap();
+    let config_uri = file_uri(&config);
+    let reported = |params: &Value| {
+        params["diagnostics"].as_array().is_some_and(|diagnostics| {
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains(NO_FILES))
+            })
+        })
+    };
+
+    let mut client = LspProcess::spawn(&fixture.root);
+    client
+        .initialize(&[("no-files", &root)], default_init_options())
+        .unwrap();
+    let first = wait_for_diagnostics(&mut client, &config_uri, |_| true);
+    assert_eq!(first["diagnostics"].as_array().map(Vec::len), Some(1));
+    let diagnostic = &first["diagnostics"][0];
+    assert_eq!(diagnostic["severity"], 2);
+    let message = diagnostic["message"].as_str().unwrap();
+    for part in [
+        NO_FILES,
+        "src`",
+        "`src/**/*.sv`",
+        "relative to each of these directories",
+    ] {
+        assert!(message.contains(part), "{part}: {message}");
+    }
+
+    // Edits and saves of a source leave the config's diagnostics alone.
+    client.open(&path, text).unwrap();
+    for version in 2..5 {
+        client
+            .change(&path, version, &format!("{text}// {version}\n"))
+            .unwrap();
+        client.send_watch_event(&path, 2).unwrap();
+    }
+    let edited = client.request(
+        "textDocument/documentSymbol",
+        json!({ "textDocument": { "uri": file_uri(&path) } }),
+    );
+    assert!(edited.is_ok(), "{edited:?}");
+    fs::write(&config, config_text("**/*.sv")).unwrap();
+    client.send_watch_event(&config, 2).unwrap();
+    let fixed = wait_for_diagnostics(&mut client, &config_uri, |_| true);
+    assert_eq!(
+        fixed["diagnostics"].as_array().map(Vec::len),
+        Some(0),
+        "the next publication is the fix, not a repeat: {fixed}"
+    );
+
+    // A removed last file brings it back, a new one removes it again.
+    fs::remove_file(&path).unwrap();
+    client.send_watch_event(&path, 3).unwrap();
+    wait_for_diagnostics(&mut client, &config_uri, &reported);
+    fs::write(&path, text).unwrap();
+    client.send_watch_event(&path, 1).unwrap();
+    wait_for_diagnostics(&mut client, &config_uri, |params| !reported(params));
+    client.shutdown();
+}
+
 #[test]
 fn lsp_stdio_lints_standalone_files_without_a_workspace_folder() {
     let cwd_fixture = FixtureTree::new();
