@@ -4,6 +4,7 @@ mod array_conditionals;
 mod fixed_array_cells;
 mod fixed_array_reductions;
 mod fixed_streams;
+mod lazy_paths;
 mod native_values;
 mod process_handles;
 mod real_values;

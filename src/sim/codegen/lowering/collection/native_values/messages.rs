@@ -31,7 +31,7 @@ impl Codegen<'_> {
         site: NodeId,
     ) -> Result<usize, String> {
         let element = lower_container_element(descriptor)?;
-        validate_native_type(&element, "mailbox message").map_err(|error| {
+        validate_native_type(&element, format_args!("mailbox message")).map_err(|error| {
             format!(
                 "mailbox message of type `{}` in `{path}` is not supported: {error}",
                 descriptor.name

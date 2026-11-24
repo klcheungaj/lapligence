@@ -165,10 +165,14 @@ fn fixed_array_reduction_restores_bindings_after_a_nested_map_error() {
     )));
     // The inner receiver reads the outer item before shadowing its binding.
     plan(&mut outer).value = inner.clone();
-    validator.validate_expr(&outer, &[], "fold").unwrap();
+    validator
+        .validate_expr(&outer, &[], format_args!("fold"))
+        .unwrap();
     assert!(validator.reduction_bindings.borrow().is_empty());
     plan(&mut inner).value = IrExpr::new(IrExprKind::LocalRead("index".into()), 8, false, None);
     plan(&mut outer).value = inner;
-    assert!(validator.validate_expr(&outer, &[], "fold").is_err());
+    assert!(validator
+        .validate_expr(&outer, &[], format_args!("fold"))
+        .is_err());
     assert!(validator.reduction_bindings.borrow().is_empty());
 }

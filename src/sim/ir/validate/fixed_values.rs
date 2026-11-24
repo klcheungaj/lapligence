@@ -6,7 +6,7 @@ impl Validator<'_> {
         &self,
         view: &IrMemoryView,
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         let Some(array) = self.model.arrays.get(view.array) else {
             return self.fail(path, "memory task array index is out of bounds");
@@ -36,7 +36,7 @@ impl Validator<'_> {
         &self,
         view: MemoryGeometry<'_>,
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         let array = MemorySource {
             dims: view.source_dims,
@@ -93,11 +93,11 @@ impl Validator<'_> {
                 self.validate_expr(
                     &selector.value,
                     formals,
-                    &format!("{path}.selector[{index}]"),
+                    format_args!("{path}.selector[{index}]"),
                 )?;
                 if selector.value.is_real() || selector.value.width == 0 {
                     return self.fail(
-                        format!("{path}.selector[{index}]"),
+                        format_args!("{path}.selector[{index}]"),
                         "memory selector must be a packed integer",
                     );
                 }
@@ -126,11 +126,11 @@ impl Validator<'_> {
             self.validate_expr(
                 &selector.value,
                 formals,
-                &format!("{path}.selector[{index}]"),
+                format_args!("{path}.selector[{index}]"),
             )?;
             if selector.value.is_real() || selector.value.width == 0 {
                 return self.fail(
-                    format!("{path}.selector[{index}]"),
+                    format_args!("{path}.selector[{index}]"),
                     "memory selector must be a packed integer",
                 );
             }
@@ -203,7 +203,7 @@ impl Validator<'_> {
         &self,
         task: &crate::sim::ir::IrMemoryAccess,
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         use crate::sim::ir::{IrMemoryImage, IrMemoryStorage};
         let IrMemoryStorage::Image(image) = &task.storage else {
@@ -217,14 +217,14 @@ impl Validator<'_> {
                 if task.write {
                     return self.fail(path, "a memory dump has no image target");
                 }
-                self.validate_lhs(lhs, formals, &format!("{path}.image"))?;
+                self.validate_lhs(lhs, formals, format_args!("{path}.image"))?;
                 self.lhs_packed_width(lhs)
             }
             IrMemoryImage::Value(value) => {
                 if !task.write {
                     return self.fail(path, "a memory load needs an image target");
                 }
-                self.validate_expr(value, formals, &format!("{path}.image"))?;
+                self.validate_expr(value, formals, format_args!("{path}.image"))?;
                 (!value.is_real()).then_some(value.width)
             }
         };
@@ -238,7 +238,7 @@ impl Validator<'_> {
     pub(super) fn validate_memory_access_storage(
         &self,
         task: &crate::sim::ir::IrMemoryAccess,
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         if task.element_width == 0 || task.element_width > LLG_MAX_WIDTH {
             return self.fail(path, "memory element width is outside packed capacity");
@@ -343,7 +343,7 @@ impl Validator<'_> {
         &self,
         value: &IrFixedValue,
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
     ) -> Result<u64, IrValidationError> {
         match value {
             IrFixedValue::Array(view) => {
@@ -396,7 +396,7 @@ impl Validator<'_> {
                 if let Some(leaves) = cell_leaves {
                     // The runtime checks that the period is the cell width.
                     let cell = leaves.default.width;
-                    self.validate_leaf_merge(leaves, cell, &format!("{path}.cell_leaves"))?;
+                    self.validate_leaf_merge(leaves, cell, format_args!("{path}.cell_leaves"))?;
                     if cell == 0 || left % u64::from(cell) != 0 {
                         return self.fail(
                             path,
@@ -573,7 +573,7 @@ impl Validator<'_> {
         container: &crate::sim::ir::IrContainer,
         dimensions: &[(i32, i32)],
         element: &IrContainerElement,
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         use crate::sim::ir::IrMemorySelectorKind as Kind;
         let keyed = matches!(

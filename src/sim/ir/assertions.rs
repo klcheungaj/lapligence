@@ -715,7 +715,7 @@ impl IrProperty {
             ));
         }
         for (index, node) in self.nodes.iter().enumerate() {
-            let path = format!("property.nodes[{index}]");
+            let path = format_args!("property.nodes[{index}]");
             for operand in node.operands().into_iter().flatten() {
                 if operand as usize >= index {
                     return Err(IrValidationError::new(

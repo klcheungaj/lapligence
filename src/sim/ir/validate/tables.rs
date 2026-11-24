@@ -7,7 +7,7 @@ impl Validator<'_> {
         // Only the code of a method has a `this`.
         self.model.receiver.set(Some(None));
         self.validate_tables()?;
-        self.validate_container_scope("model")
+        self.validate_container_scope(format_args!("model"))
     }
 
     /// The `this` of a table entry used by the code of `function`. The users
@@ -33,7 +33,7 @@ impl Validator<'_> {
 
     /// The checks so far named no class property container that their code
     /// cannot reach.
-    pub(super) fn validate_container_scope(&self, path: &str) -> ValidationResult {
+    pub(super) fn validate_container_scope(&self, path: IrPath<'_>) -> ValidationResult {
         match self.model.unreachable_container.take() {
             Some(container) => self.fail(
                 path,
@@ -51,7 +51,7 @@ impl Validator<'_> {
         }
 
         for (idx, table) in self.model.udp_tables.iter().enumerate() {
-            self.validate_udp_table(table, &format!("udp_tables[{idx}]"))?;
+            self.validate_udp_table(table, format_args!("udp_tables[{idx}]"))?;
         }
 
         self.validate_module_paths()?;
@@ -59,7 +59,7 @@ impl Validator<'_> {
         self.validate_timing_checks()?;
 
         for (idx, problem) in self.model.rand_problems.iter().enumerate() {
-            problem.validate(&format!("rand_problems[{idx}]"))?;
+            problem.validate(format_args!("rand_problems[{idx}]"))?;
         }
 
         self.validate_free_variables()?;
@@ -67,7 +67,7 @@ impl Validator<'_> {
 
         for (idx, group) in self.model.covergroups.iter().enumerate() {
             if let Err(detail) = group.validate(self.model.coverage_types.len()) {
-                return self.fail(format!("covergroups[{idx}]"), detail);
+                return self.fail(format_args!("covergroups[{idx}]"), detail);
             }
             // The Postponed flush calls the strobe sample method with only
             // its receiver.
@@ -78,7 +78,7 @@ impl Validator<'_> {
                     .is_none_or(|function| !function.formals.is_empty())
             }) {
                 return self.fail(
-                    format!("covergroups[{idx}].strobe"),
+                    format_args!("covergroups[{idx}].strobe"),
                     "strobe sample method is not a formal-free method",
                 );
             }
@@ -117,7 +117,7 @@ impl Validator<'_> {
         }
 
         for (idx, object) in self.model.vpi_objects.iter().enumerate() {
-            let path = format!("vpi_objects[{idx}]");
+            let path = format_args!("vpi_objects[{idx}]");
             if object.full_name.is_empty() || (object.name.is_empty() && !object.unnamed) {
                 return self.fail(path, "VPI object names must be non-empty");
             }
@@ -252,7 +252,7 @@ impl Validator<'_> {
                         }
                     }
                     if !object.real {
-                        self.validate_width(object.width, &format!("{path}.width"))?;
+                        self.validate_width(object.width, format_args!("{path}.width"))?;
                     }
                 }
                 IrVpiObjectKind::RegArray | IrVpiObjectKind::NetArray => {
@@ -275,11 +275,11 @@ impl Validator<'_> {
                             return self.fail(path, "real VPI array elements must use zero width");
                         }
                     } else {
-                        self.validate_width(object.width, &format!("{path}.width"))?;
+                        self.validate_width(object.width, format_args!("{path}.width"))?;
                     }
                 }
                 _ if object.fixed_cell => {
-                    self.validate_width(object.width, &format!("{path}.width"))?;
+                    self.validate_width(object.width, format_args!("{path}.width"))?;
                 }
                 _ => {
                     let Some(signal) = object.signal else {
@@ -292,7 +292,7 @@ impl Validator<'_> {
                         return self.fail(path, "VPI value object cannot reference array storage");
                     }
                     if !object.real {
-                        self.validate_width(object.width, &format!("{path}.width"))?;
+                        self.validate_width(object.width, format_args!("{path}.width"))?;
                     }
                 }
             }
@@ -302,7 +302,7 @@ impl Validator<'_> {
 
         // Typespecs refer only to earlier entries, so the table has no cycle.
         for (idx, typespec) in self.model.vpi_typespecs.iter().enumerate() {
-            let path = format!("vpi_typespecs[{idx}]");
+            let path = format_args!("vpi_typespecs[{idx}]");
             let references = [typespec.alias, typespec.element, typespec.base]
                 .into_iter()
                 .flatten()
@@ -327,7 +327,7 @@ impl Validator<'_> {
         let codes = self.model.vpi_code.len();
         let objects = self.model.vpi_objects.len();
         for (idx, code) in self.model.vpi_code.iter().enumerate() {
-            let path = format!("vpi_code[{idx}]");
+            let path = format_args!("vpi_code[{idx}]");
             let first = code.first as usize;
             if code.count > 0 && (first <= idx || first + code.count as usize > codes) {
                 return self.fail(path, "VPI code children must follow their parent in bounds");
@@ -356,14 +356,14 @@ impl Validator<'_> {
                 || object.conns.iter().any(|conn| !code_in_bounds(conn.code))
             {
                 return self.fail(
-                    format!("vpi_objects[{idx}]"),
+                    format_args!("vpi_objects[{idx}]"),
                     "VPI object references an out-of-bounds code entry",
                 );
             }
         }
 
         for (idx, call) in self.model.vpi_compile_calls.iter().enumerate() {
-            let path = format!("vpi_compile_calls[{idx}]");
+            let path = format_args!("vpi_compile_calls[{idx}]");
             if call.args.iter().any(|arg| !code_in_bounds(arg.code)) {
                 return self.fail(path, "VPI compile-call argument references no code entry");
             }
@@ -380,18 +380,18 @@ impl Validator<'_> {
                 if arg.real {
                     if arg.width != 0 {
                         return self.fail(
-                            format!("{path}.args[{arg_idx}]"),
+                            format_args!("{path}.args[{arg_idx}]"),
                             "real VPI compile-call arguments must have zero width",
                         );
                     }
                 } else {
-                    self.validate_width(arg.width, &format!("{path}.args[{arg_idx}].width"))?;
+                    self.validate_width(arg.width, format_args!("{path}.args[{arg_idx}].width"))?;
                 }
             }
         }
 
         for (idx, redrive) in self.model.redrives.iter().enumerate() {
-            let path = format!("redrives[{idx}]");
+            let path = format_args!("redrives[{idx}]");
             let signal_in_bounds = |signal: usize| signal < self.model.signals.len();
             let targets_in_bounds = redrive.targets.iter().all(|target| match target {
                 crate::sim::ir::IrRedriveTarget::Signal(signal) => signal_in_bounds(*signal),
@@ -422,7 +422,7 @@ impl Validator<'_> {
                     }
                 }
                 crate::sim::ir::IrRedriveAction::Evaluate(body) => {
-                    self.validate_stmts(body, &[], &format!("{path}.body"))?;
+                    self.validate_stmts(body, &[], format_args!("{path}.body"))?;
                 }
                 crate::sim::ir::IrRedriveAction::Constant(constant) => {
                     let width = match redrive.targets.as_slice() {
@@ -452,11 +452,14 @@ impl Validator<'_> {
         for (idx, container) in self.model.containers.iter().enumerate() {
             if !storage_names.insert(container.c_name.as_str()) {
                 return self.fail(
-                    format!("containers[{idx}]"),
+                    format_args!("containers[{idx}]"),
                     format!("duplicate container storage name `{}`", container.c_name),
                 );
             }
-            validate_container_element(&container.element, &format!("containers[{idx}].element"))?;
+            validate_container_element(
+                &container.element,
+                format_args!("containers[{idx}].element"),
+            )?;
             if !container.element.is_packed()
                 && !matches!(
                     container.kind,
@@ -466,7 +469,7 @@ impl Validator<'_> {
                 )
             {
                 return self.fail(
-                    format!("containers[{idx}].element"),
+                    format_args!("containers[{idx}].element"),
                     "non-packed elements require a descriptor-backed container",
                 );
             }
@@ -474,7 +477,7 @@ impl Validator<'_> {
                 key: IrAssocKey::Integral { width, .. },
             } = container.kind
             {
-                self.validate_width(width, &format!("containers[{idx}].key"))?;
+                self.validate_width(width, format_args!("containers[{idx}].key"))?;
             }
             if let Some((class, field)) = container.class_field {
                 if self
@@ -485,7 +488,7 @@ impl Validator<'_> {
                     .is_none()
                 {
                     return self.fail(
-                        format!("containers[{idx}].class_field"),
+                        format_args!("containers[{idx}].class_field"),
                         "class property is out of bounds",
                     );
                 }
@@ -493,7 +496,7 @@ impl Validator<'_> {
             if let Some(receiver) = &container.receiver {
                 if container.class_field.is_none() || !receiver.is_plain_receiver() {
                     return self.fail(
-                        format!("containers[{idx}].receiver"),
+                        format_args!("containers[{idx}].receiver"),
                         "a receiver qualifies only a class property container and must be a plain handle read",
                     );
                 }
@@ -506,7 +509,7 @@ impl Validator<'_> {
                         != Some(&IrObjectType::Chandle)
                     {
                         return self.fail(
-                            format!("containers[{idx}].receiver"),
+                            format_args!("containers[{idx}].receiver"),
                             "receiver object is not a handle",
                         );
                     }
@@ -515,13 +518,13 @@ impl Validator<'_> {
             if let Some(size) = container.initial_size {
                 if size == 0 {
                     return self.fail(
-                        format!("containers[{idx}].initial_size"),
+                        format_args!("containers[{idx}].initial_size"),
                         "initial container size must be non-zero",
                     );
                 }
                 if !matches!(container.kind, IrContainerKind::Dynamic) {
                     return self.fail(
-                        format!("containers[{idx}].initial_size"),
+                        format_args!("containers[{idx}].initial_size"),
                         "only dynamic containers may have an initial size",
                     );
                 }
@@ -541,50 +544,50 @@ impl Validator<'_> {
                 initial.validate(&self.model, None)?;
                 let mut result = Ok(());
                 initial.expressions(&mut |expr| {
-                    result = result
-                        .clone()
-                        .and_then(|_| self.validate_expr(expr, &[], "object.initial"));
+                    result = result.clone().and_then(|_| {
+                        self.validate_expr(expr, &[], format_args!("object.initial"))
+                    });
                 });
                 result?;
             }
         }
         for (idx, signal) in self.model.signals.iter().enumerate() {
-            let path = format!("signals[{idx}]");
-            self.validate_type(&signal.ty, &format!("{path}.ty"))?;
+            let path = format_args!("signals[{idx}]");
+            self.validate_type(&signal.ty, format_args!("{path}.ty"))?;
             if let Some(value) = &signal.fixed_default {
-                self.validate_storage_default(value, signal.ty.width(), signal.ty.signed(), &path)?;
+                self.validate_storage_default(value, signal.ty.width(), signal.ty.signed(), path)?;
             }
             if !signal.net_alias.is_empty() {
                 if !matches!(signal.ty, IrType::Packed { .. }) {
                     return self.fail(
-                        format!("{path}.net_alias"),
+                        format_args!("{path}.net_alias"),
                         "true-net alias bindings require packed signal storage",
                     );
                 }
                 if signal.alias.is_some() {
                     return self.fail(
-                        format!("{path}.net_alias"),
+                        format_args!("{path}.net_alias"),
                         "true-net alias storage cannot also be a variable alias",
                     );
                 }
                 if signal.net_driver.is_some() {
                     return self.fail(
-                        format!("{path}.net_alias"),
+                        format_args!("{path}.net_alias"),
                         "true-net alias storage cannot also be an inout driver",
                     );
                 }
                 let mut signal_bits = HashSet::new();
                 for (binding_idx, binding) in signal.net_alias.iter().enumerate() {
-                    let binding_path = format!("{path}.net_alias[{binding_idx}]");
+                    let binding_path = format_args!("{path}.net_alias[{binding_idx}]");
                     let group = self.model.net_groups.get(binding.group).ok_or_else(|| {
                         IrValidationError::new(
-                            format!("{binding_path}.group"),
+                            format_args!("{binding_path}.group"),
                             format!("net-group index {} is out of bounds", binding.group),
                         )
                     })?;
                     if binding.slot >= group.n_drivers {
                         return self.fail(
-                            format!("{binding_path}.slot"),
+                            format_args!("{binding_path}.slot"),
                             format!(
                                 "driver slot {} is out of bounds for group {}",
                                 binding.slot, binding.group
@@ -593,7 +596,7 @@ impl Validator<'_> {
                     }
                     if binding.group_bit >= group.width {
                         return self.fail(
-                            format!("{binding_path}.group_bit"),
+                            format_args!("{binding_path}.group_bit"),
                             format!(
                                 "group bit {} is out of bounds for group {}",
                                 binding.group_bit, binding.group
@@ -602,7 +605,7 @@ impl Validator<'_> {
                     }
                     if binding.signal_bit >= signal.ty.width() {
                         return self.fail(
-                            format!("{binding_path}.signal_bit"),
+                            format_args!("{binding_path}.signal_bit"),
                             format!(
                                 "signal bit {} is out of bounds for signal width {}",
                                 binding.signal_bit,
@@ -612,7 +615,7 @@ impl Validator<'_> {
                     }
                     if !signal_bits.insert(binding.signal_bit) {
                         return self.fail(
-                            format!("{binding_path}.signal_bit"),
+                            format_args!("{binding_path}.signal_bit"),
                             "signal bit has more than one canonical alias binding",
                         );
                     }
@@ -620,32 +623,35 @@ impl Validator<'_> {
             }
             if signal.alias.is_some() && signal.net_driver.is_some() {
                 return self.fail(
-                    format!("{path}.alias"),
+                    format_args!("{path}.alias"),
                     "net driver cannot also be a variable alias",
                 );
             }
             if let Some((group, slot)) = signal.net_driver {
                 let net = self.model.net_groups.get(group).ok_or_else(|| {
                     IrValidationError::new(
-                        format!("{path}.net_driver"),
+                        format_args!("{path}.net_driver"),
                         format!("net-group index {group} is out of bounds"),
                     )
                 })?;
                 if slot >= net.n_drivers {
                     return self.fail(
-                        format!("{path}.net_driver"),
+                        format_args!("{path}.net_driver"),
                         format!("driver slot {slot} is out of bounds for group {group}"),
                     );
                 }
                 if signal.ty.width() != net.width || signal.ty.signed() != net.signed {
                     return self.fail(
-                        format!("{path}.net_driver"),
+                        format_args!("{path}.net_driver"),
                         "signal type does not match its net group",
                     );
                 }
             } else if let Some(target) = signal.alias {
                 let canonical = self.model.signals.get(target).ok_or_else(|| {
-                    IrValidationError::new(format!("{path}.alias"), "alias target is out of bounds")
+                    IrValidationError::new(
+                        format_args!("{path}.alias"),
+                        "alias target is out of bounds",
+                    )
                 })?;
                 // A collapsed port sink may share a resolved net's cell.
                 if target == idx
@@ -656,33 +662,33 @@ impl Validator<'_> {
                     || (!signal.omit && canonical.omit)
                 {
                     return self.fail(
-                        format!("{path}.alias"),
+                        format_args!("{path}.alias"),
                         "alias must name matching canonical storage",
                     );
                 }
             } else if !signal.omit && !storage_names.insert(signal.c_name.as_str()) {
                 return self.fail(
-                    format!("{path}.c_name"),
+                    format_args!("{path}.c_name"),
                     format!("active storage name `{}` is not unique", signal.c_name),
                 );
             }
         }
 
         for (idx, group) in self.model.net_groups.iter().enumerate() {
-            let path = format!("net_groups[{idx}]");
-            self.validate_width(group.width, &format!("{path}.width"))?;
+            let path = format_args!("net_groups[{idx}]");
+            self.validate_width(group.width, format_args!("{path}.width"))?;
             if group.n_drivers == 0 {
-                return self.fail(format!("{path}.n_drivers"), "net group has no drivers");
+                return self.fail(format_args!("{path}.n_drivers"), "net group has no drivers");
             }
             if group.n_drivers > LLG_MAX_NET_DRIVERS {
                 return self.fail(
-                    format!("{path}.n_drivers"),
+                    format_args!("{path}.n_drivers"),
                     "net group driver count exceeds the runtime integer range",
                 );
             }
             if group.driver_strengths.len() != group.n_drivers {
                 return self.fail(
-                    format!("{path}.driver_strengths"),
+                    format_args!("{path}.driver_strengths"),
                     "net group strength count does not match its driver count",
                 );
             }
@@ -693,19 +699,19 @@ impl Validator<'_> {
                 .find(|(_, (strength0, strength1))| *strength0 > 7 || *strength1 > 7)
             {
                 return self.fail(
-                    format!("{path}.driver_strengths[{strength_idx}]"),
+                    format_args!("{path}.driver_strengths[{strength_idx}]"),
                     "net driver strength is outside the IEEE 1800 strength scale",
                 );
             }
             if group.runtime_delay && group.propagation_delay.is_none() {
                 return self.fail(
-                    format!("{path}.runtime_delay"),
+                    format_args!("{path}.runtime_delay"),
                     "a runtime-valued net delay needs a propagation delay",
                 );
             }
             if !group.propagation_segments.is_empty() && group.propagation_delay.is_none() {
                 return self.fail(
-                    format!("{path}.propagation_segments"),
+                    format_args!("{path}.propagation_segments"),
                     "only a net with a net delay has propagation segments",
                 );
             }
@@ -713,7 +719,7 @@ impl Validator<'_> {
             for (index, &start) in group.propagation_segments.iter().enumerate() {
                 if start <= previous || start >= group.width {
                     return self.fail(
-                        format!("{path}.propagation_segments[{index}]"),
+                        format_args!("{path}.propagation_segments[{index}]"),
                         "propagation segment starts must ascend strictly inside the net",
                     );
                 }
@@ -727,7 +733,7 @@ impl Validator<'_> {
                 });
                 if !valid {
                     return self.fail(
-                        format!("{path}.strength_view"),
+                        format_args!("{path}.strength_view"),
                         "net strength view must be a two-state signal of eight bits per net bit",
                     );
                 }
@@ -737,11 +743,11 @@ impl Validator<'_> {
         let mut next_endpoint = 0u32;
         let mut next_procedural = 0u32;
         for (idx, assertion) in self.model.assertions.iter().enumerate() {
-            let path = format!("assertions[{idx}]");
+            let path = format_args!("assertions[{idx}]");
             if let Some(future) = &assertion.future {
                 if future.clock >= self.model.sampled_clocks.len() {
                     return self.fail(
-                        format!("{path}.future.clock"),
+                        format_args!("{path}.future.clock"),
                         "future sampled value assertion must name a sampled global clock",
                     );
                 }
@@ -749,7 +755,7 @@ impl Validator<'_> {
                     || assertion.endpoint.is_some()
                 {
                     return self.fail(
-                        format!("{path}.future"),
+                        format_args!("{path}.future"),
                         "an expect or sequence end point cannot defer its evaluation",
                     );
                 }
@@ -761,7 +767,7 @@ impl Validator<'_> {
                 // exclude the other attempt-start policies.
                 if index != next_procedural {
                     return self.fail(
-                        format!("{path}.procedural"),
+                        format_args!("{path}.procedural"),
                         "procedural assertions must be numbered in assertion-table order",
                     );
                 }
@@ -771,7 +777,7 @@ impl Validator<'_> {
                     || matches!(assertion.kind, IrConcurrentAssertionKind::Expect)
                 {
                     return self.fail(
-                        format!("{path}.procedural"),
+                        format_args!("{path}.procedural"),
                         "a procedural assertion is a queued assert, assume or cover",
                     );
                 }
@@ -781,7 +787,7 @@ impl Validator<'_> {
                 // of every match with no actions (see IrAssertionEndpoint).
                 if endpoint.index != next_endpoint {
                     return self.fail(
-                        format!("{path}.endpoint"),
+                        format_args!("{path}.endpoint"),
                         "sequence endpoints must be numbered in assertion-table order",
                     );
                 }
@@ -792,7 +798,7 @@ impl Validator<'_> {
                     || assertion.property.is_some()
                 {
                     return self.fail(
-                        format!("{path}.endpoint"),
+                        format_args!("{path}.endpoint"),
                         "a sequence endpoint must be an action-free sequence cover",
                     );
                 }
@@ -803,7 +809,7 @@ impl Validator<'_> {
                     .is_none_or(|event| event.array_dims.is_some())
                 {
                     return self.fail(
-                        format!("{path}.endpoint.event"),
+                        format_args!("{path}.endpoint.event"),
                         "sequence endpoint event must be a scalar named event",
                     );
                 }
@@ -815,7 +821,7 @@ impl Validator<'_> {
                         .is_some_and(|signal| !signal.omit && signal.ty.width() != 0)
                     {
                         return self.fail(
-                            format!("{path}.endpoint.matched_clocks"),
+                            format_args!("{path}.endpoint.matched_clocks"),
                             "`.matched` clock must be an active packed signal",
                         );
                     }
@@ -823,13 +829,13 @@ impl Validator<'_> {
             }
             let Some(clock) = self.model.signals.get(assertion.clock_signal) else {
                 return self.fail(
-                    format!("{path}.clock_signal"),
+                    format_args!("{path}.clock_signal"),
                     "assertion clock signal index is out of bounds",
                 );
             };
             if clock.omit || clock.ty.width() == 0 {
                 return self.fail(
-                    format!("{path}.clock_signal"),
+                    format_args!("{path}.clock_signal"),
                     "assertion clock must be an active packed signal",
                 );
             }
@@ -843,7 +849,7 @@ impl Validator<'_> {
                             }
                 }) {
                     return self.fail(
-                        format!("{path}.clock_gate"),
+                        format_args!("{path}.clock_gate"),
                         "assertion clock gate must name a gated sampled clock on the assertion clock",
                     );
                 }
@@ -851,42 +857,42 @@ impl Validator<'_> {
             if let Some(disable) = assertion.disable_signal {
                 let Some(signal) = self.model.signals.get(disable) else {
                     return self.fail(
-                        format!("{path}.disable_signal"),
+                        format_args!("{path}.disable_signal"),
                         "assertion disable signal index is out of bounds",
                     );
                 };
                 if signal.omit || signal.ty.width() == 0 {
                     return self.fail(
-                        format!("{path}.disable_signal"),
+                        format_args!("{path}.disable_signal"),
                         "assertion disable must be an active packed signal",
                     );
                 }
             }
             if let Some(condition) = &assertion.abort_condition {
-                self.validate_expr(condition, &[], &format!("{path}.abort_condition"))?;
+                self.validate_expr(condition, &[], format_args!("{path}.abort_condition"))?;
                 if condition.is_real() {
                     return self.fail(
-                        format!("{path}.abort_condition"),
+                        format_args!("{path}.abort_condition"),
                         "assertion abort condition must be packed",
                     );
                 }
             } else if assertion.abort_reject || assertion.abort_sync {
-                return self.fail(&path, "assertion abort flags require an abort condition");
+                return self.fail(path, "assertion abort flags require an abort condition");
             }
             if let Some(antecedent) = &assertion.antecedent {
-                self.validate_expr(antecedent, &[], &format!("{path}.antecedent"))?;
+                self.validate_expr(antecedent, &[], format_args!("{path}.antecedent"))?;
                 if antecedent.is_real() {
                     return self.fail(
-                        format!("{path}.antecedent"),
+                        format_args!("{path}.antecedent"),
                         "assertion antecedent must be packed",
                     );
                 }
             }
             if let Some(consequent) = &assertion.consequent {
-                self.validate_expr(consequent, &[], &format!("{path}.consequent"))?;
+                self.validate_expr(consequent, &[], format_args!("{path}.consequent"))?;
                 if consequent.is_real() {
                     return self.fail(
-                        format!("{path}.consequent"),
+                        format_args!("{path}.consequent"),
                         "assertion consequent must be packed",
                     );
                 }
@@ -894,16 +900,16 @@ impl Validator<'_> {
             let has_sequence =
                 assertion.antecedent_sequence.is_some() || assertion.consequent_sequence.is_some();
             if has_sequence && assertion.consequent_sequence.is_none() {
-                return self.fail(&path, "sequence assertion must have a consequent automaton");
+                return self.fail(path, "sequence assertion must have a consequent automaton");
             }
             if has_sequence && (assertion.antecedent.is_some() || assertion.consequent.is_some()) {
                 return self.fail(
-                    &path,
+                    path,
                     "sequence assertion cannot mix direct and automaton expressions",
                 );
             }
             if !has_sequence && assertion.consequent.is_none() && assertion.property.is_none() {
-                return self.fail(&path, "direct assertion must have a consequent expression");
+                return self.fail(path, "direct assertion must have a consequent expression");
             }
             for (name, sequence) in [
                 (
@@ -916,24 +922,24 @@ impl Validator<'_> {
                 ),
             ] {
                 let Some(sequence) = sequence else { continue };
-                self.validate_assertion_sequence(assertion, &path, name, sequence)?;
+                self.validate_assertion_sequence(assertion, path, name, sequence)?;
             }
             if let Some(property) = &assertion.property {
                 if has_sequence || assertion.antecedent.is_some() || assertion.consequent.is_some()
                 {
                     return self.fail(
-                        &path,
+                        path,
                         "property assertion cannot mix a property program with direct or sequence forms",
                     );
                 }
                 property.validate_shape().map_err(|error| {
-                    IrValidationError::new(format!("{path}.{}", error.path()), error.detail())
+                    IrValidationError::new(format_args!("{path}.{}", error.path()), error.detail())
                 })?;
                 if let Some(first) = property.clocks.first() {
                     if first.signal != assertion.clock_signal || first.posedge != assertion.posedge
                     {
                         return self.fail(
-                            format!("{path}.property.clocks"),
+                            format_args!("{path}.property.clocks"),
                             "a multiclocked property lists its leading clock first",
                         );
                     }
@@ -946,14 +952,14 @@ impl Validator<'_> {
                         .is_some_and(|signal| !signal.omit && signal.ty.width() != 0);
                     if !valid {
                         return self.fail(
-                            format!("{path}.property.clocks[{index}]"),
+                            format_args!("{path}.property.clocks[{index}]"),
                             "property clock must be an active packed signal",
                         );
                     }
                 }
                 for (index, sequence) in property.sequences.iter().enumerate() {
                     let name = format!("property.sequences[{index}]");
-                    self.validate_assertion_sequence(assertion, &path, &name, sequence)?;
+                    self.validate_assertion_sequence(assertion, path, &name, sequence)?;
                     let on_clock = |clock: Option<usize>, posedge: bool| {
                         clock.is_none_or(|clock| {
                             if property.clocks.is_empty() {
@@ -973,16 +979,16 @@ impl Validator<'_> {
                         })
                     {
                         return self.fail(
-                            format!("{path}.{name}"),
+                            format_args!("{path}.{name}"),
                             "property-program sequences run on the program's clocks only",
                         );
                     }
                 }
                 for (index, atom) in property.atoms.iter().enumerate() {
-                    self.validate_expr(atom, &[], &format!("{path}.property.atoms[{index}]"))?;
+                    self.validate_expr(atom, &[], format_args!("{path}.property.atoms[{index}]"))?;
                     if atom.is_real() {
                         return self.fail(
-                            format!("{path}.property.atoms[{index}]"),
+                            format_args!("{path}.property.atoms[{index}]"),
                             "property atom must be packed",
                         );
                     }
@@ -992,40 +998,46 @@ impl Validator<'_> {
         self.future_slots.set(None);
 
         for (idx, clock) in self.model.sampled_clocks.iter().enumerate() {
-            let path = format!("sampled_clocks[{idx}]");
+            let path = format_args!("sampled_clocks[{idx}]");
             if let crate::sim::ir::IrSampledClockKind::Edge { signal, .. } = &clock.kind {
                 let Some(signal) = self.model.signals.get(*signal) else {
                     return self.fail(
-                        format!("{path}.signal"),
+                        format_args!("{path}.signal"),
                         "sampled clock signal index is out of bounds",
                     );
                 };
                 if signal.omit || signal.ty.width() == 0 {
                     return self.fail(
-                        format!("{path}.signal"),
+                        format_args!("{path}.signal"),
                         "sampled clock must be an active packed signal",
                     );
                 }
             }
             if let Some(gate) = &clock.gate {
-                self.validate_expr(gate, &[], &format!("{path}.gate"))?;
+                self.validate_expr(gate, &[], format_args!("{path}.gate"))?;
                 if gate.is_real() {
-                    return self.fail(format!("{path}.gate"), "sampled clock gate must be packed");
+                    return self.fail(
+                        format_args!("{path}.gate"),
+                        "sampled clock gate must be packed",
+                    );
                 }
             }
         }
 
         for (idx, domain) in self.model.sampled_domains.iter().enumerate() {
-            let path = format!("sampled_domains[{idx}]");
+            let path = format_args!("sampled_domains[{idx}]");
             if domain.clock >= self.model.sampled_clocks.len() {
                 return self.fail(
-                    format!("{path}.clock"),
+                    format_args!("{path}.clock"),
                     "sampled domain clock index is out of bounds",
                 );
             }
-            self.validate_expr(&domain.sample, &[], &format!("{path}.sample"))?;
+            self.validate_expr(&domain.sample, &[], format_args!("{path}.sample"))?;
             if domain.sample.is_real() {
-                return self.fail(format!("{path}.sample"), "sampled value must be packed");
+                return self.fail(
+                    format_args!("{path}.sample"),
+                    "sampled value must be packed",
+                );
             }
         }
 
@@ -1034,7 +1046,7 @@ impl Validator<'_> {
             // and signals; a lexical one is declared in its activation.
             if !array.activation && !storage_names.insert(array.c_name.as_str()) {
                 return self.fail(
-                    format!("arrays[{idx}].c_name"),
+                    format_args!("arrays[{idx}].c_name"),
                     format!("static array storage name `{}` is not unique", array.c_name),
                 );
             }
@@ -1090,7 +1102,7 @@ impl Validator<'_> {
                 }
             }
 
-            let path = format!("arrays[{idx}]");
+            let path = format_args!("arrays[{idx}]");
             for value in array
                 .element_default
                 .iter()
@@ -1100,7 +1112,7 @@ impl Validator<'_> {
                     || value.signed != array.signed
                     || value.real.is_some()
                 {
-                    return self.fail(&path, "array element default has the wrong type");
+                    return self.fail(path, "array element default has the wrong type");
                 }
                 self.validate_expr(
                     &IrExpr::new(
@@ -1110,22 +1122,22 @@ impl Validator<'_> {
                         None,
                     ),
                     &[],
-                    &path,
+                    path,
                 )?;
             }
 
             if array.real {
                 if array.elem_width != 0 {
                     return self.fail(
-                        format!("{path}.elem_width"),
+                        format_args!("{path}.elem_width"),
                         "real array elements must use zero width",
                     );
                 }
             } else {
-                self.validate_width(array.elem_width, &format!("{path}.elem_width"))?;
+                self.validate_width(array.elem_width, format_args!("{path}.elem_width"))?;
             }
             if array.dims.is_empty() {
-                return self.fail(format!("{path}.dims"), "array has no dimensions");
+                return self.fail(format_args!("{path}.dims"), "array has no dimensions");
             }
             let mut total = 1u64;
             for (dim_idx, (left, right)) in array.dims.iter().copied().enumerate() {
@@ -1134,20 +1146,20 @@ impl Validator<'_> {
                     .checked_add(1)
                     .ok_or_else(|| {
                         IrValidationError::new(
-                            format!("{path}.dims[{dim_idx}]"),
+                            format_args!("{path}.dims[{dim_idx}]"),
                             "dimension extent overflows u64",
                         )
                     })?;
                 total = total.checked_mul(extent).ok_or_else(|| {
                     IrValidationError::new(
-                        format!("{path}.dims[{dim_idx}]"),
+                        format_args!("{path}.dims[{dim_idx}]"),
                         "dimension product overflows u64",
                     )
                 })?;
             }
             if total > LLG_MAX_FIXED_ARRAY_CELLS {
                 return self.fail(
-                    format!("{path}.total"),
+                    format_args!("{path}.total"),
                     format!(
                         "fixed-array cell count {total} exceeds selected cell-wise storage limit {LLG_MAX_FIXED_ARRAY_CELLS}"
                     ),
@@ -1155,7 +1167,7 @@ impl Validator<'_> {
             }
             if total != array.total {
                 return self.fail(
-                    format!("{path}.total"),
+                    format_args!("{path}.total"),
                     format!(
                         "stored total {} does not match dimension product {total}",
                         array.total
@@ -1167,10 +1179,10 @@ impl Validator<'_> {
         self.validate_native_tables()?;
         super::patterns::validate_pattern_tables(&self.model)?;
         for (index, access) in self.model.native_accesses.iter().enumerate() {
-            let path = format!("native_accesses[{index}]");
+            let path = format_args!("native_accesses[{index}]");
             if access.name != format!("_llg_access_{index}") {
                 return self.fail(
-                    &path,
+                    path,
                     "native access identity does not match its table index",
                 );
             }
@@ -1180,7 +1192,7 @@ impl Validator<'_> {
                     IrNativeAccessKind::ValueItem { .. } | IrNativeAccessKind::ElementItem { .. }
                 )
             {
-                return self.fail(&path, "only native value items carry an item path");
+                return self.fail(path, "only native value items carry an item path");
             }
             if matches!(
                 access.receiver,
@@ -1188,7 +1200,7 @@ impl Validator<'_> {
             ) != matches!(access.kind, IrNativeAccessKind::ElementItem { .. })
             {
                 return self.fail(
-                    &path,
+                    path,
                     "container element locators address element items only",
                 );
             }
@@ -1196,7 +1208,7 @@ impl Validator<'_> {
                 .function
                 .map(|index| {
                     self.model.funcs.get(index).ok_or_else(|| {
-                        IrValidationError::new(&path, "function reference is out of bounds")
+                        IrValidationError::new(path, "function reference is out of bounds")
                     })
                 })
                 .transpose()?;
@@ -1209,7 +1221,7 @@ impl Validator<'_> {
                         .get(class)
                         .is_some_and(|class| field < class.fields.len())
                     {
-                        return self.fail(&path, "class member reference is out of bounds");
+                        return self.fail(path, "class member reference is out of bounds");
                     }
                 }
                 IrNativeAccessKind::InterfaceMember { interface, member } => {
@@ -1219,12 +1231,12 @@ impl Validator<'_> {
                         .get(interface)
                         .is_some_and(|interface| member < interface.members.len())
                     {
-                        return self.fail(&path, "interface member reference is out of bounds");
+                        return self.fail(path, "interface member reference is out of bounds");
                     }
                 }
                 IrNativeAccessKind::InterfaceEvent { interface, event } => {
                     let Some(interface) = self.model.virtual_interfaces.get(interface) else {
-                        return self.fail(&path, "interface event reference is out of bounds");
+                        return self.fail(path, "interface event reference is out of bounds");
                     };
                     if event >= interface.events.len()
                         || interface.instances.iter().any(|instance| {
@@ -1236,11 +1248,11 @@ impl Validator<'_> {
                                     .any(|index| *index >= self.model.events.len())
                         })
                     {
-                        return self.fail(&path, "interface event reference is out of bounds");
+                        return self.fail(path, "interface event reference is out of bounds");
                     }
                 }
                 IrNativeAccessKind::ElementItem { ty } => {
-                    self.validate_element_leaf(&access.receiver, &access.item_path, ty, &path)?;
+                    self.validate_element_leaf(&access.receiver, &access.item_path, ty, path)?;
                 }
                 IrNativeAccessKind::ClassContainer { class, field } => {
                     if !self
@@ -1251,7 +1263,7 @@ impl Validator<'_> {
                         .is_some_and(|field| field.container.is_some())
                     {
                         return self.fail(
-                            &path,
+                            path,
                             "class container reference is not a container property",
                         );
                     }
@@ -1265,16 +1277,16 @@ impl Validator<'_> {
                         .is_some_and(|field| field.native_value.is_some())
                     {
                         return self.fail(
-                            &path,
+                            path,
                             "class record reference is not a native record property",
                         );
                     }
                 }
                 IrNativeAccessKind::MailboxCount => {}
                 IrNativeAccessKind::ValueItem { value, ty } => {
-                    self.validate_native_leaf(value, &access.item_path, ty, &path)?;
+                    self.validate_native_leaf(value, &access.item_path, ty, path)?;
                     if access.receiver != IrChandleExpr::Null {
-                        return self.fail(&path, "native value item has no receiver");
+                        return self.fail(path, "native value item has no receiver");
                     }
                 }
             }
@@ -1290,21 +1302,21 @@ impl Validator<'_> {
             access.receiver.expressions(&mut |expr| {
                 result = result
                     .clone()
-                    .and_then(|_| self.validate_expr(expr, formals, &path));
+                    .and_then(|_| self.validate_expr(expr, formals, path));
             });
             result?;
-            self.validate_container_scope(&path)?;
+            self.validate_container_scope(path)?;
         }
         for (index, allocation) in self.model.class_allocations.iter().enumerate() {
-            let path = format!("class_allocations[{index}]");
+            let path = format_args!("class_allocations[{index}]");
             if allocation.class >= self.model.classes.len() || allocation.local.is_empty() {
-                return self.fail(&path, "invalid class allocation identity");
+                return self.fail(path, "invalid class allocation identity");
             }
             let function = allocation
                 .function
                 .map(|index| {
                     self.model.funcs.get(index).ok_or_else(|| {
-                        IrValidationError::new(&path, "function reference is out of bounds")
+                        IrValidationError::new(path, "function reference is out of bounds")
                     })
                 })
                 .transpose()?;
@@ -1314,7 +1326,7 @@ impl Validator<'_> {
             self.string_return
                 .set(function.map(|function| function.ret_string));
             self.set_table_receiver(function);
-            self.validate_stmts(&allocation.body, formals, &format!("{path}.body"))?;
+            self.validate_stmts(&allocation.body, formals, format_args!("{path}.body"))?;
         }
 
         // Every function and process defines C symbols under its name.
@@ -1324,53 +1336,53 @@ impl Validator<'_> {
             self.model.receiver.set(Some(func.receiver_class));
             self.chandle_return.set(Some(func.ret_chandle));
             self.string_return.set(Some(func.ret_string));
-            let path = format!("funcs[{idx}]");
+            let path = format_args!("funcs[{idx}]");
             if !routine_names.insert(func.c_name.as_str()) {
                 return self.fail(
-                    format!("{path}.c_name"),
+                    format_args!("{path}.c_name"),
                     format!("function name `{}` is not unique", func.c_name),
                 );
             }
             if (func.ret_chandle || func.ret_string) && func.ret.is_some()
                 || func.ret_chandle && func.ret_string
             {
-                return self.fail(&path, "function has incompatible return types");
+                return self.fail(path, "function has incompatible return types");
             }
             if let Some(value) = &func.return_default {
                 let ty = func.ret.as_ref().ok_or_else(|| {
-                    IrValidationError::new(&path, "void function has a default value")
+                    IrValidationError::new(path, "void function has a default value")
                 })?;
-                self.validate_storage_default(value, ty.width(), ty.signed(), &path)?;
+                self.validate_storage_default(value, ty.width(), ty.signed(), path)?;
             }
             if let Some(signal_index) = func.return_signal {
                 let signal = self.model.signals.get(signal_index).ok_or_else(|| {
                     IrValidationError::new(
-                        format!("{path}.return_signal"),
+                        format_args!("{path}.return_signal"),
                         "return signal is out of bounds",
                     )
                 })?;
                 let Some(return_type) = func.ret else {
                     return self.fail(
-                        format!("{path}.return_signal"),
+                        format_args!("{path}.return_signal"),
                         "function without a numeric return cannot own a return signal",
                     );
                 };
                 if func.automatic || func.ret_chandle || func.ret_string {
                     return self.fail(
-                        format!("{path}.return_signal"),
+                        format_args!("{path}.return_signal"),
                         "return signal requires a static numeric function",
                     );
                 }
                 if signal.ty != return_type || signal.net_driver.is_some() || signal.alias.is_some()
                 {
                     return self.fail(
-                        format!("{path}.return_signal"),
+                        format_args!("{path}.return_signal"),
                         "return signal must be unaliased storage with the function return type",
                     );
                 }
             }
             if let Some(ret) = &func.ret {
-                self.validate_type(ret, &format!("{path}.ret"))?;
+                self.validate_type(ret, format_args!("{path}.ret"))?;
             }
             for (formal_idx, formal) in func.formals.iter().enumerate() {
                 if let Some(array) = formal.fixed_array {
@@ -1386,7 +1398,7 @@ impl Validator<'_> {
                         || formal.fixed_shape.is_some()
                         || formal.fixed_default.is_some()
                     {
-                        return self.fail(&path, "invalid descriptor formal storage");
+                        return self.fail(path, "invalid descriptor formal storage");
                     }
                 }
                 if let Some(array) = formal.real_array {
@@ -1400,7 +1412,7 @@ impl Validator<'_> {
                         || formal.fixed_shape.is_some()
                         || formal.fixed_default.is_some()
                     {
-                        return self.fail(&path, "invalid real-array formal storage");
+                        return self.fail(path, "invalid real-array formal storage");
                     }
                 }
                 if let Some(container) = formal.container {
@@ -1421,31 +1433,31 @@ impl Validator<'_> {
                         || formal.fixed_shape.is_some()
                         || formal.fixed_default.is_some()
                     {
-                        return self.fail(&path, "invalid container formal storage");
+                        return self.fail(path, "invalid container formal storage");
                     }
                 }
                 if let Some(value) = &formal.fixed_default {
-                    self.validate_storage_default(value, formal.width, formal.signed, &path)?;
+                    self.validate_storage_default(value, formal.width, formal.signed, path)?;
                 }
                 if let Some(shape) = &formal.fixed_shape {
                     validate_container_element(
                         shape,
-                        &format!("{path}.formals[{formal_idx}].fixed_shape"),
+                        format_args!("{path}.formals[{formal_idx}].fixed_shape"),
                     )?;
                     if shape.fixed_packed_width() != Some(formal.width) {
                         return self
-                            .fail(&path, "fixed formal shape disagrees with its payload width");
+                            .fail(path, "fixed formal shape disagrees with its payload width");
                     }
                 }
                 if formal.const_ref && !formal.is_ref() {
                     return self.fail(
-                        format!("{path}.formals[{formal_idx}].const_ref"),
+                        format_args!("{path}.formals[{formal_idx}].const_ref"),
                         "const qualification requires ref mode",
                     );
                 }
                 if formal.ref_static && !formal.is_ref() {
                     return self.fail(
-                        format!("{path}.formals[{formal_idx}].ref_static"),
+                        format_args!("{path}.formals[{formal_idx}].ref_static"),
                         "ref static qualification requires ref mode",
                     );
                 }
@@ -1460,53 +1472,57 @@ impl Validator<'_> {
                 {
                     self.validate_width(
                         formal.width,
-                        &format!("{path}.formals[{formal_idx}].width"),
+                        format_args!("{path}.formals[{formal_idx}].width"),
                     )?;
                 } else if formal.real && formal.width != 0 {
                     return self.fail(
-                        format!("{path}.formals[{formal_idx}].width"),
+                        format_args!("{path}.formals[{formal_idx}].width"),
                         "real formal must use zero width",
                     );
                 }
             }
             for (local_idx, local) in func.locals.iter().enumerate() {
-                let local_path = format!("{path}.locals[{local_idx}]");
+                let local_path = format_args!("{path}.locals[{local_idx}]");
                 if let Some(value) = &local.fixed_default {
-                    self.validate_storage_default(value, local.width, local.signed, &local_path)?;
+                    self.validate_storage_default(value, local.width, local.signed, local_path)?;
                 }
                 if !local.real && !local.string {
-                    self.validate_width(local.width, &format!("{local_path}.width"))?;
+                    self.validate_width(local.width, format_args!("{local_path}.width"))?;
                 } else if local.width != 0 {
                     return self.fail(
-                        format!("{local_path}.width"),
+                        format_args!("{local_path}.width"),
                         "real local must use zero width",
                     );
                 }
                 if let Some(initial) = &local.initial {
-                    self.validate_expr(initial, &func.formals, &format!("{local_path}.initial"))?;
+                    self.validate_expr(
+                        initial,
+                        &func.formals,
+                        format_args!("{local_path}.initial"),
+                    )?;
                     if initial.is_real() != local.real
                         || initial.width != local.width
                         || initial.signed != local.signed
                     {
                         return self.fail(
-                            format!("{local_path}.initial"),
+                            format_args!("{local_path}.initial"),
                             "local initializer type disagrees with its declaration",
                         );
                     }
                 }
             }
-            self.validate_pre_fns(&func.pre_fns, &func.formals, &path)?;
-            self.validate_stmts(&func.body, &func.formals, &format!("{path}.body"))?;
+            self.validate_pre_fns(&func.pre_fns, &func.formals, path)?;
+            self.validate_stmts(&func.body, &func.formals, format_args!("{path}.body"))?;
         }
 
         self.chandle_return.set(None);
         self.string_return.set(None);
         self.function.set(None);
         for (idx, process) in self.model.processes.iter().enumerate() {
-            let path = format!("processes[{idx}]");
+            let path = format_args!("processes[{idx}]");
             if !routine_names.insert(process.c_name.as_str()) {
                 return self.fail(
-                    format!("{path}.c_name"),
+                    format_args!("{path}.c_name"),
                     format!("process name `{}` is not unique", process.c_name),
                 );
             }
@@ -1515,22 +1531,22 @@ impl Validator<'_> {
             for (write_idx, write) in process.writes.iter().enumerate() {
                 if !self.valid_dependency(write) {
                     return self.fail(
-                        format!("{path}.writes[{write_idx}]"),
+                        format_args!("{path}.writes[{write_idx}]"),
                         "process write must name active storage",
                     );
                 }
             }
             self.model.receiver.set(Some(None));
-            self.validate_pre_fns(&process.pre_fns, &[], &path)?;
-            self.validate_stmts(&process.body, &[], &format!("{path}.body"))?;
+            self.validate_pre_fns(&process.pre_fns, &[], path)?;
+            self.validate_stmts(&process.body, &[], format_args!("{path}.body"))?;
         }
 
         for (idx, step) in self.model.init_steps.iter().enumerate() {
-            self.validate_init_step(step, &format!("init_steps[{idx}]"))?;
+            self.validate_init_step(step, format_args!("init_steps[{idx}]"))?;
         }
 
-        self.validate_spawns(&self.model.spawns, "spawns")?;
-        self.validate_spawns(&self.model.final_spawns, "final_spawns")?;
+        self.validate_spawns(&self.model.spawns, format_args!("spawns"))?;
+        self.validate_spawns(&self.model.final_spawns, format_args!("final_spawns"))?;
         let normal: HashSet<&str> = self.model.spawns.iter().map(String::as_str).collect();
         if let Some(name) = self
             .model
@@ -1550,7 +1566,7 @@ impl Validator<'_> {
     fn validate_assertion_sequence(
         &self,
         assertion: &crate::sim::ir::IrAssertion,
-        path: &str,
+        path: IrPath<'_>,
         name: &str,
         sequence: &crate::sim::ir::IrSequence,
     ) -> Result<(), IrValidationError> {
@@ -1559,7 +1575,7 @@ impl Validator<'_> {
             || sequence.accept >= sequence.states
         {
             return self.fail(
-                format!("{path}.{name}"),
+                format_args!("{path}.{name}"),
                 "sequence automaton has invalid state or transition storage",
             );
         }
@@ -1575,7 +1591,7 @@ impl Validator<'_> {
                     .is_none_or(|signal| signal.omit || signal.ty.width() == 0)
                 {
                     return self.fail(
-                        format!("{path}.{name}.{label}"),
+                        format_args!("{path}.{name}.{label}"),
                         "sequence clock must be active packed storage",
                     );
                 }
@@ -1588,13 +1604,13 @@ impl Validator<'_> {
                 .any(|slot| *slot as usize >= sequence.locals.len())
         {
             return Err(IrValidationError::new(
-                format!("{path}.{name}.initializer_slots"),
+                format_args!("{path}.{name}.initializer_slots"),
                 "invalid initializer slot",
             ));
         }
         if !sequence.first_match_states.is_empty() {
             return self.fail(
-                format!("{path}.{name}.first_match_states"),
+                format_args!("{path}.{name}.first_match_states"),
                 "first_match requires scoped transitions",
             );
         }
@@ -1602,7 +1618,7 @@ impl Validator<'_> {
         for local in &sequence.locals {
             if local.declaration == 0 || !declarations.insert(local.declaration) {
                 return self.fail(
-                    format!("{path}.{name}.locals"),
+                    format_args!("{path}.{name}.locals"),
                     "invalid or duplicate local declaration identity",
                 );
             }
@@ -1612,7 +1628,7 @@ impl Validator<'_> {
         for transition in &sequence.transitions {
             if transition.enter_scope.is_some() && transition.exit_scope.is_some() {
                 return self.fail(
-                    format!("{path}.{name}.scope"),
+                    format_args!("{path}.{name}.scope"),
                     "one edge cannot both enter and exit a scope",
                 );
             }
@@ -1623,7 +1639,7 @@ impl Validator<'_> {
                 if let Some(scope) = scope {
                     if scope == 0 {
                         return self.fail(
-                            format!("{path}.{name}.scope"),
+                            format_args!("{path}.{name}.scope"),
                             "zero scope identity is reserved",
                         );
                     }
@@ -1632,7 +1648,10 @@ impl Validator<'_> {
             }
         }
         if entries != exits {
-            return self.fail(format!("{path}.{name}.scope"), "unpaired first_match scope");
+            return self.fail(
+                format_args!("{path}.{name}.scope"),
+                "unpaired first_match scope",
+            );
         }
         crate::sim::ir::assertions::validate_sequence_joins(
             sequence.states,
@@ -1642,7 +1661,7 @@ impl Validator<'_> {
         for (transition_index, transition) in sequence.transitions.iter().enumerate() {
             if transition.from >= sequence.states || transition.to >= sequence.states {
                 return self.fail(
-                    format!("{path}.{name}.transitions[{transition_index}]"),
+                    format_args!("{path}.{name}.transitions[{transition_index}]"),
                     "sequence transition state is out of bounds",
                 );
             }
@@ -1652,20 +1671,20 @@ impl Validator<'_> {
                 .is_some_and(|max| max < transition.delay.min)
             {
                 return self.fail(
-                    format!("{path}.{name}.transitions[{transition_index}].delay"),
+                    format_args!("{path}.{name}.transitions[{transition_index}].delay"),
                     "sequence transition delay range is inverted",
                 );
             }
             if let Some(clock_signal) = transition.clock_signal {
                 let Some(clock) = self.model.signals.get(clock_signal) else {
                     return self.fail(
-                        format!("{path}.{name}.transitions[{transition_index}].clock_signal"),
+                        format_args!("{path}.{name}.transitions[{transition_index}].clock_signal"),
                         "sequence transition clock signal is out of bounds",
                     );
                 };
                 if clock.omit || clock.ty.width() == 0 {
                     return self.fail(
-                        format!("{path}.{name}.transitions[{transition_index}].clock_signal"),
+                        format_args!("{path}.{name}.transitions[{transition_index}].clock_signal"),
                         "sequence transition clock must be active packed storage",
                     );
                 }
@@ -1675,7 +1694,7 @@ impl Validator<'_> {
                 .is_some_and(|atom| atom as usize >= sequence.atoms.len())
             {
                 return self.fail(
-                    format!("{path}.{name}.transitions[{transition_index}].atom"),
+                    format_args!("{path}.{name}.transitions[{transition_index}].atom"),
                     "sequence transition atom is out of bounds",
                 );
             }
@@ -1684,30 +1703,34 @@ impl Validator<'_> {
                 (Some(start), count) => {
                     let Some(end) = start.checked_add(count) else {
                         return self.fail(
-                            format!("{path}.{name}.transitions[{transition_index}].match_count"),
+                            format_args!(
+                                "{path}.{name}.transitions[{transition_index}].match_count"
+                            ),
                             "sequence match-item range overflows",
                         );
                     };
                     if end as usize > sequence.match_items.len() {
                         return self.fail(
-                            format!("{path}.{name}.transitions[{transition_index}].match_start"),
+                            format_args!(
+                                "{path}.{name}.transitions[{transition_index}].match_start"
+                            ),
                             "sequence match-item range is out of bounds",
                         );
                     }
                 }
                 (None, _) => {
                     return self.fail(
-                        format!("{path}.{name}.transitions[{transition_index}].match_count"),
+                        format_args!("{path}.{name}.transitions[{transition_index}].match_count"),
                         "non-empty sequence match-item range has no start",
                     );
                 }
             }
         }
         for (atom_index, atom) in sequence.atoms.iter().enumerate() {
-            self.validate_expr(atom, &[], &format!("{path}.{name}.atoms[{atom_index}]"))?;
+            self.validate_expr(atom, &[], format_args!("{path}.{name}.atoms[{atom_index}]"))?;
             if atom.is_real() {
                 return self.fail(
-                    format!("{path}.{name}.atoms[{atom_index}]"),
+                    format_args!("{path}.{name}.atoms[{atom_index}]"),
                     "sequence atom must be packed",
                 );
             }
@@ -1715,7 +1738,7 @@ impl Validator<'_> {
         for (local_index, local) in sequence.locals.iter().enumerate() {
             if local.width == 0 {
                 return self.fail(
-                    format!("{path}.{name}.locals[{local_index}].width"),
+                    format_args!("{path}.{name}.locals[{local_index}].width"),
                     "local assertion variable must have a packed width",
                 );
             }
@@ -1750,7 +1773,7 @@ impl Validator<'_> {
                     )
                 {
                     return self.fail(
-                        format!("{path}.{name}.transitions[{index}].delay"),
+                        format_args!("{path}.{name}.transitions[{index}].delay"),
                         "cross-clock sequence boundaries require an exact ##0 or ##1 delay",
                     );
                 }
@@ -1761,11 +1784,11 @@ impl Validator<'_> {
             self.validate_expr(
                 item,
                 &[],
-                &format!("{path}.{name}.match_items[{item_index}]"),
+                format_args!("{path}.{name}.match_items[{item_index}]"),
             )?;
             if item.is_real() {
                 return self.fail(
-                    format!("{path}.{name}.match_items[{item_index}]"),
+                    format_args!("{path}.{name}.match_items[{item_index}]"),
                     "sequence match item must be a packed expression",
                 );
             }
@@ -1774,11 +1797,11 @@ impl Validator<'_> {
             self.validate_expr(
                 initializer,
                 &[],
-                &format!("{path}.{name}.initializers[{initializer_index}]"),
+                format_args!("{path}.{name}.initializers[{initializer_index}]"),
             )?;
             if initializer.is_real() {
                 return self.fail(
-                    format!("{path}.{name}.initializers[{initializer_index}]"),
+                    format_args!("{path}.{name}.initializers[{initializer_index}]"),
                     "sequence local initializer must be packed",
                 );
             }
@@ -1817,13 +1840,19 @@ impl Validator<'_> {
         let mut seen = HashSet::new();
         for (index, node) in network.nodes.iter().enumerate() {
             let Some(group) = self.model.net_groups.get(node.group) else {
-                return self.fail(format!("{path}.nodes[{index}]"), "node names no net group");
+                return self.fail(
+                    format_args!("{path}.nodes[{index}]"),
+                    "node names no net group",
+                );
             };
             if node.bit >= group.width {
-                return self.fail(format!("{path}.nodes[{index}]"), "node bit outside its net");
+                return self.fail(
+                    format_args!("{path}.nodes[{index}]"),
+                    "node bit outside its net",
+                );
             }
             if !seen.insert(*node) {
-                return self.fail(format!("{path}.nodes[{index}]"), "node listed twice");
+                return self.fail(format_args!("{path}.nodes[{index}]"), "node listed twice");
             }
         }
         for (index, switch) in network.switches.iter().enumerate() {
@@ -1831,18 +1860,21 @@ impl Validator<'_> {
                 network.component_of(switch.a),
                 network.component_of(switch.b),
             ) else {
-                return self.fail(format!("{path}.switches[{index}]"), "switch names no node");
+                return self.fail(
+                    format_args!("{path}.switches[{index}]"),
+                    "switch names no node",
+                );
             };
             if switch.a == switch.b || a != b {
                 return self.fail(
-                    format!("{path}.switches[{index}]"),
+                    format_args!("{path}.switches[{index}]"),
                     "switch must join two nodes of one network",
                 );
             }
         }
         let mut controlled = HashSet::new();
         for (index, control) in network.controls.iter().enumerate() {
-            let at = format!("{path}.controls[{index}]");
+            let at = format_args!("{path}.controls[{index}]");
             if !network
                 .switches
                 .get(control.switch as usize)
@@ -1870,7 +1902,7 @@ impl Validator<'_> {
         for name in &self.model.clocking_history {
             if !self.valid_dependency(&IrDependency::scalar(name)) {
                 return self.fail(
-                    format!("clocking_history[{name}]"),
+                    format_args!("clocking_history[{name}]"),
                     "a clocking history source must name active packed storage",
                 );
             }
@@ -1897,13 +1929,13 @@ impl Validator<'_> {
                 })
             ) {
                 return self.fail(
-                    format!("free_variables[{idx}]"),
+                    format_args!("free_variables[{idx}]"),
                     "a free variable must be packed signal storage",
                 );
             }
         }
         for (idx, set) in self.model.free_sets.iter().enumerate() {
-            let path = format!("free_sets[{idx}]");
+            let path = format_args!("free_sets[{idx}]");
             if set.label.is_empty() || set.label.contains('\0') {
                 return self.fail(path, "free variable set label must be non-empty C text");
             }

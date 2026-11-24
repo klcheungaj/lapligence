@@ -23,6 +23,14 @@ mod tables;
 mod udp;
 mod values;
 
+/// Where a checked value is within the model, as a suffix borrowed from the
+/// path of the value that holds it: `format_args!("{path}.lhs")`.
+///
+/// A check runs on every node of a model, and a path is as long as its node is
+/// deep, so a path is rendered only into the [`IrValidationError`] that reports
+/// it and is never formatted into a string to be passed on.
+pub(in crate::sim) type IrPath<'a> = fmt::Arguments<'a>;
+
 /// A structural IR invariant violation detected between simulator phases.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IrValidationError {
@@ -31,9 +39,9 @@ pub struct IrValidationError {
 }
 
 impl IrValidationError {
-    pub(in crate::sim) fn new(path: impl Into<String>, detail: impl Into<String>) -> Self {
+    pub(in crate::sim) fn new(path: impl fmt::Display, detail: impl Into<String>) -> Self {
         Self {
-            path: path.into(),
+            path: path.to_string(),
             detail: detail.into(),
         }
     }
@@ -123,7 +131,7 @@ fn lhs_two_state(model: &IrModel, lhs: &IrLhs) -> Option<bool> {
     }
 }
 
-fn validate_container_element(element: &IrContainerElement, path: &str) -> ValidationResult {
+fn validate_container_element(element: &IrContainerElement, path: IrPath<'_>) -> ValidationResult {
     match element {
         IrContainerElement::Packed { width, .. } if *width == 0 => {
             Err(IrValidationError::new(path, "packed width must be nonzero"))
@@ -139,11 +147,14 @@ fn validate_container_element(element: &IrContainerElement, path: &str) -> Valid
             for (index, member) in members.iter().enumerate() {
                 if member.name.is_empty() {
                     return Err(IrValidationError::new(
-                        format!("{path}.members[{index}]"),
+                        format_args!("{path}.members[{index}]"),
                         "aggregate member name must not be empty",
                     ));
                 }
-                validate_container_element(&member.element, &format!("{path}.members[{index}]"))?;
+                validate_container_element(
+                    &member.element,
+                    format_args!("{path}.members[{index}]"),
+                )?;
             }
             Ok(())
         }
@@ -170,10 +181,10 @@ fn validate_container_element(element: &IrContainerElement, path: &str) -> Valid
                 })?;
             }
             let _ = count;
-            validate_container_element(element, &format!("{path}.element"))
+            validate_container_element(element, format_args!("{path}.element"))
         }
         IrContainerElement::Container { element, .. } => {
-            validate_container_element(element, &format!("{path}.element"))
+            validate_container_element(element, format_args!("{path}.element"))
         }
     }
 }
@@ -304,7 +315,11 @@ impl IrModel {
         validator
             .string_return
             .set(function.map(|function| function.ret_string));
-        validator.validate_expr(expression, function.map_or(&[], IrFunc::formals), "expr")?;
+        validator.validate_expr(
+            expression,
+            function.map_or(&[], IrFunc::formals),
+            format_args!("expr"),
+        )?;
         Ok(validator.max_width.get())
     }
 
@@ -334,7 +349,7 @@ impl IrModel {
         validator.validate_stmts(
             std::slice::from_ref(statement),
             function.map_or(&[], IrFunc::formals),
-            "stmt",
+            format_args!("stmt"),
         )?;
         Ok(validator.max_width.get())
     }
@@ -364,7 +379,7 @@ impl IrModel {
         validator.validate_pre_fns(
             std::slice::from_ref(pre_fn),
             function.map_or(&[], IrFunc::formals),
-            "pre_fn",
+            format_args!("pre_fn"),
         )?;
         Ok(validator.max_width.get())
     }

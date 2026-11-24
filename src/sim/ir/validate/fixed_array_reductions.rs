@@ -8,13 +8,16 @@ impl Validator<'_> {
         reduction: &IrFixedArrayReduction,
         expr: &IrExpr,
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
-        self.validate_width(reduction.element_width, &format!("{path}.element_width"))?;
+        self.validate_width(
+            reduction.element_width,
+            format_args!("{path}.element_width"),
+        )?;
         self.validate_width(expr.width, path)?;
         // The emitter materializes the signed index even when the map does not
         // read it. Include that intermediate in capacity accounting.
-        self.validate_width(32, &format!("{path}.index_width"))?;
+        self.validate_width(32, format_args!("{path}.index_width"))?;
         // A fill literal may be the map, but it is materialized at the map's
         // self-determined width. The reduction result itself is never a fill.
         if expr.fill.is_some()
@@ -37,7 +40,10 @@ impl Validator<'_> {
         match &reduction.source {
             IrFixedArrayReductionSource::Array(index) => {
                 let array = self.model.arrays.get(*index).ok_or_else(|| {
-                    IrValidationError::new(format!("{path}.array"), "array index is out of bounds")
+                    IrValidationError::new(
+                        format_args!("{path}.array"),
+                        "array index is out of bounds",
+                    )
                 })?;
                 if array.total > crate::sim::ir::LLG_MAX_FIXED_ARRAY_CELLS {
                     return self.fail(
@@ -61,7 +67,7 @@ impl Validator<'_> {
                 let shape = self.validate_fixed_array_cells(
                     cells,
                     formals,
-                    &format!("{path}.cells"),
+                    format_args!("{path}.cells"),
                     false,
                 )?;
                 let array = &self.model.arrays[cells.array];
@@ -73,7 +79,7 @@ impl Validator<'_> {
                 }
             }
             IrFixedArrayReductionSource::Value(source) => {
-                self.validate_expr(source, formals, &format!("{path}.source"))?;
+                self.validate_expr(source, formals, format_args!("{path}.source"))?;
                 if source.is_real()
                     || source.fill.is_some()
                     || reduction
@@ -97,7 +103,7 @@ impl Validator<'_> {
             ),
             (reduction.index_name.clone(), 32, true),
         ]);
-        let result = self.validate_expr(&reduction.value, formals, &format!("{path}.value"));
+        let result = self.validate_expr(&reduction.value, formals, format_args!("{path}.value"));
         self.reduction_bindings.borrow_mut().truncate(saved_depth);
         result
     }

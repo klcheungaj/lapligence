@@ -7,7 +7,7 @@ impl Validator<'_> {
         &self,
         sel: &IrElemSel,
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         match sel {
             IrElemSel::PackedChain(steps) => {
@@ -15,13 +15,15 @@ impl Validator<'_> {
                     return self.fail(path, "packed selection chain must not be empty");
                 }
                 for (index, step) in steps.iter().enumerate() {
-                    let path = format!("{path}.steps[{index}]");
-                    self.validate_width(step.width, &format!("{path}.width"))?;
+                    let path = format_args!("{path}.steps[{index}]");
+                    self.validate_width(step.width, format_args!("{path}.width"))?;
                     if step.base.is_real() {
-                        return self
-                            .fail(format!("{path}.base"), "packed selector must be integral");
+                        return self.fail(
+                            format_args!("{path}.base"),
+                            "packed selector must be integral",
+                        );
                     }
-                    self.validate_expr(&step.base, formals, &format!("{path}.base"))?;
+                    self.validate_expr(&step.base, formals, format_args!("{path}.base"))?;
                 }
                 Ok(())
             }
@@ -29,8 +31,8 @@ impl Validator<'_> {
             IrElemSel::Part(left, right) => self.validate_select_width(*left, *right, path),
             IrElemSel::Bit(expr) => self.validate_expr(expr, formals, path),
             IrElemSel::Indexed { base, width, .. } => {
-                self.validate_expr(base, formals, &format!("{path}.base"))?;
-                self.validate_width(*width, &format!("{path}.width"))
+                self.validate_expr(base, formals, format_args!("{path}.base"))?;
+                self.validate_width(*width, format_args!("{path}.width"))
             }
         }
     }
@@ -39,7 +41,7 @@ impl Validator<'_> {
         &self,
         left: i64,
         right: i64,
-        _path: &str,
+        _path: IrPath<'_>,
     ) -> ValidationResult {
         let width = (i128::from(left) - i128::from(right)).unsigned_abs() + 1;
         self.max_width.set(self.max_width.get().max(width));
@@ -72,7 +74,7 @@ impl Validator<'_> {
         &self,
         lhs: &IrLhs,
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         self.validate_lhs(lhs, formals, path)?;
         match lhs {
@@ -100,11 +102,11 @@ impl Validator<'_> {
         &self,
         lhs: &IrLhs,
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         match lhs {
             IrLhs::PackedSelect { target, steps, .. } => {
-                self.validate_lhs(target, formals, &format!("{path}.target"))?;
+                self.validate_lhs(target, formals, format_args!("{path}.target"))?;
                 if self.lhs_packed_width(target).is_none()
                     || !matches!(
                         target.as_ref(),
@@ -126,7 +128,7 @@ impl Validator<'_> {
                 self.validate_elem_sel(&IrElemSel::PackedChain(steps.clone()), formals, path)?;
             }
             IrLhs::TaggedSelect { target, steps, .. } => {
-                self.validate_lhs(target, formals, &format!("{path}.target"))?;
+                self.validate_lhs(target, formals, format_args!("{path}.target"))?;
                 if self.lhs_packed_width(target).is_none()
                     || !matches!(
                         target.as_ref(),
@@ -150,26 +152,26 @@ impl Validator<'_> {
                 }
                 let mut parent_width = self.lhs_packed_width(target).expect("checked root");
                 for (index, step) in steps.iter().enumerate() {
-                    let step_path = format!("{path}.steps[{index}]");
+                    let step_path = format_args!("{path}.steps[{index}]");
                     self.validate_expr(
                         &step.selection.base,
                         formals,
-                        &format!("{step_path}.base"),
+                        format_args!("{step_path}.base"),
                     )?;
-                    self.validate_width(step.selection.width, &format!("{step_path}.width"))?;
+                    self.validate_width(step.selection.width, format_args!("{step_path}.width"))?;
                     if step.selection.base.is_real() || step.selection.width > parent_width {
-                        return self.fail(&step_path, "invalid packed tagged-member projection");
+                        return self.fail(step_path, "invalid packed tagged-member projection");
                     }
                     if let Some(guard) = &step.guard {
                         if guard.tag_width == 0 || guard.tag_width > parent_width {
                             return self
-                                .fail(&step_path, "tagged-union guard width exceeds its receiver");
+                                .fail(step_path, "tagged-union guard width exceeds its receiver");
                         }
                         if guard.member_name.is_empty()
                             || (guard.tag_width < 32
                                 && guard.member_index >= (1u32 << guard.tag_width))
                         {
-                            return self.fail(&step_path, "invalid tagged-union guard metadata");
+                            return self.fail(step_path, "invalid tagged-union guard metadata");
                         }
                     }
                     parent_width = step.selection.width;
@@ -213,22 +215,22 @@ impl Validator<'_> {
                     if *width != 1 || *signed {
                         return self.fail(path, "reference bit select must be one unsigned bit");
                     }
-                    self.validate_expr(index, formals, &format!("{path}.index"))?;
+                    self.validate_expr(index, formals, format_args!("{path}.index"))?;
                 }
             }
             IrLhs::Bit(signal, index, _) => {
                 if *signal >= self.model.signals.len() {
                     return self.fail(path, format!("signal index {signal} is out of bounds"));
                 }
-                self.validate_expr(index, formals, &format!("{path}.index"))?;
+                self.validate_expr(index, formals, format_args!("{path}.index"))?;
             }
             IrLhs::IdxPart(signal, base, width_expr, width, _, _) => {
                 if *signal >= self.model.signals.len() {
                     return self.fail(path, format!("signal index {signal} is out of bounds"));
                 }
-                self.validate_expr(base, formals, &format!("{path}.base"))?;
-                self.validate_expr(width_expr, formals, &format!("{path}.width_expr"))?;
-                self.validate_width(*width, &format!("{path}.selected_width"))?;
+                self.validate_expr(base, formals, format_args!("{path}.base"))?;
+                self.validate_expr(width_expr, formals, format_args!("{path}.width_expr"))?;
+                self.validate_width(*width, format_args!("{path}.selected_width"))?;
             }
             IrLhs::ArrayElem {
                 arr,
@@ -243,9 +245,9 @@ impl Validator<'_> {
                     return self.fail(path, "array LHS index count does not match its dimensions");
                 }
                 for (idx, index) in indices.iter().enumerate() {
-                    self.validate_expr(index, formals, &format!("{path}.indices[{idx}]"))?;
+                    self.validate_expr(index, formals, format_args!("{path}.indices[{idx}]"))?;
                 }
-                self.validate_elem_sel(elem_sel, formals, &format!("{path}.elem_sel"))?;
+                self.validate_elem_sel(elem_sel, formals, format_args!("{path}.elem_sel"))?;
                 if array.real && matches!(elem_sel, IrElemSel::PackedChain(_)) {
                     return self.fail(
                         path,
@@ -259,7 +261,7 @@ impl Validator<'_> {
                 slice,
                 ..
             } => {
-                self.validate_width(*width, &format!("{path}.width"))?;
+                self.validate_width(*width, format_args!("{path}.width"))?;
                 if *slice == 0 || *slice > *width {
                     return self.fail(path, "streaming LHS slice must be in 1..=its packed width");
                 }
@@ -268,11 +270,11 @@ impl Validator<'_> {
                 }
                 let mut total = 0u32;
                 for (index, (part, part_width)) in parts.iter().enumerate() {
-                    self.validate_width(*part_width, &format!("{path}.parts[{index}].width"))?;
-                    self.validate_lhs(part, formals, &format!("{path}.parts[{index}]"))?;
+                    self.validate_width(*part_width, format_args!("{path}.parts[{index}].width"))?;
+                    self.validate_lhs(part, formals, format_args!("{path}.parts[{index}]"))?;
                     if self.lhs_packed_width(part) != Some(*part_width) {
                         return self.fail(
-                            format!("{path}.parts[{index}].width"),
+                            format_args!("{path}.parts[{index}].width"),
                             "streaming LHS part width disagrees with its target",
                         );
                     }

@@ -82,7 +82,7 @@ impl Validator<'_> {
         &self,
         stmt: &IrStmt,
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         // A native-access dependency is resolved each time its wait arms.
         if let IrStmt::WaitAny { sens, .. } | IrStmt::WaitCond { sens, .. } = stmt {
@@ -93,7 +93,7 @@ impl Validator<'_> {
                 ) && !self.valid_dependency(dependency)
                 {
                     return self.fail(
-                        format!("{path}.sens[{index}]"),
+                        format_args!("{path}.sens[{index}]"),
                         "native-access dependency must name a class property or interface member",
                     );
                 }
@@ -101,7 +101,7 @@ impl Validator<'_> {
                     && !self.valid_dependency(dependency)
                 {
                     return self.fail(
-                        format!("{path}.sens[{index}]"),
+                        format_args!("{path}.sens[{index}]"),
                         "native-value dependency must name a model-lifetime value with a marker",
                     );
                 }
@@ -144,7 +144,7 @@ impl Validator<'_> {
                 if *unit_ticks == 0 || *precision_ticks == 0 || unit_ticks % precision_ticks != 0 {
                     return self.fail(path, "runtime delay requires valid integral time scaling");
                 }
-                self.validate_expr(value, formals, &format!("{path}.delay"))?;
+                self.validate_expr(value, formals, format_args!("{path}.delay"))?;
             }
         }
         match stmt {
@@ -210,7 +210,7 @@ impl Validator<'_> {
                     return self.fail(path, "VPI system-task exceeds the argument limit");
                 }
                 for (index, arg) in args.iter().enumerate() {
-                    self.validate_expr(arg, formals, &format!("{path}.args[{index}]"))?;
+                    self.validate_expr(arg, formals, format_args!("{path}.args[{index}]"))?;
                 }
             }
             IrStmt::Randomize(operation) => {
@@ -220,7 +220,7 @@ impl Validator<'_> {
                 self.validate_coverage_stmt(operation, formals, path)?;
             }
             IrStmt::RandomSeed { seed } => {
-                self.validate_expr(seed, formals, &format!("{path}.seed"))?;
+                self.validate_expr(seed, formals, format_args!("{path}.seed"))?;
                 if seed.is_real() || (seed.width, seed.signed) != (32, false) {
                     return self.fail(path, "random seed must be a 32-bit unsigned value");
                 }
@@ -245,7 +245,7 @@ impl Validator<'_> {
                 ..
             } => {
                 if *write && text.is_some() {
-                    return self.fail(path.to_owned(), "a memory dump has no source text");
+                    return self.fail(path, "a memory dump has no source text");
                 }
                 for string in std::iter::once(file).chain(text.as_ref()) {
                     string.validate(&self.model, self.string_return.get())?;
@@ -260,10 +260,10 @@ impl Validator<'_> {
                 self.validate_memory_view(view, formals, path)?;
                 for (name, bound) in [("start", start), ("finish", finish)] {
                     if let Some(bound) = bound {
-                        self.validate_expr(bound, formals, &format!("{path}.{name}"))?;
+                        self.validate_expr(bound, formals, format_args!("{path}.{name}"))?;
                         if bound.is_real() {
                             return self.fail(
-                                format!("{path}.{name}"),
+                                format_args!("{path}.{name}"),
                                 "memory task bound must be a packed integer",
                             );
                         }
@@ -272,7 +272,7 @@ impl Validator<'_> {
             }
             IrStmt::MemoryAccess(task) => {
                 if task.write && task.text.is_some() {
-                    return self.fail(path.to_owned(), "a memory dump has no source text");
+                    return self.fail(path, "a memory dump has no source text");
                 }
                 self.validate_memory_image_root(task, formals, path)?;
                 for string in std::iter::once(&task.path).chain(task.text.as_ref()) {
@@ -306,10 +306,10 @@ impl Validator<'_> {
                         .first()
                         .filter(|_| task.view_selectors().len() < task.selectors.len())
                     {
-                        self.validate_expr(&row.value, formals, &format!("{path}.row"))?;
+                        self.validate_expr(&row.value, formals, format_args!("{path}.row"))?;
                         if row.value.is_real() || row.value.width == 0 {
                             return self.fail(
-                                format!("{path}.row"),
+                                format_args!("{path}.row"),
                                 "memory container row must be a packed integer",
                             );
                         }
@@ -320,16 +320,16 @@ impl Validator<'_> {
                         self.validate_expr(
                             &selector.value,
                             formals,
-                            &format!("{path}.selector[{index}]"),
+                            format_args!("{path}.selector[{index}]"),
                         )?;
                     }
                 }
                 for (name, bound) in [("start", &task.start), ("finish", &task.finish)] {
                     if let Some(bound) = bound {
-                        self.validate_expr(bound, formals, &format!("{path}.{name}"))?;
+                        self.validate_expr(bound, formals, format_args!("{path}.{name}"))?;
                         if bound.is_real() {
                             return self.fail(
-                                format!("{path}.{name}"),
+                                format_args!("{path}.{name}"),
                                 "memory task bound must be a packed integer",
                             );
                         }
@@ -526,22 +526,22 @@ impl Validator<'_> {
                 if targets.is_empty() {
                     return self.fail(path, "streaming assignment requires a target");
                 }
-                self.validate_expr(source, formals, &format!("{path}.source"))?;
-                let validate_selector = |selector: &IrStreamSelector, target: &str| {
+                self.validate_expr(source, formals, format_args!("{path}.source"))?;
+                let validate_selector = |selector: &IrStreamSelector, target: IrPath<'_>| {
                     validate_stream_selector(selector).map_err(|error| {
-                        IrValidationError::new(format!("{target}.selector"), error.detail())
+                        IrValidationError::new(format_args!("{target}.selector"), error.detail())
                     })?;
                     match selector {
                         IrStreamSelector::Index(bound) => {
-                            self.validate_expr(bound, formals, &format!("{target}.selector.index"))
+                            self.validate_expr(bound, formals, format_args!("{target}.selector.index"))
                         }
                         IrStreamSelector::Range { left, right } => {
-                            self.validate_expr(left, formals, &format!("{target}.selector.left"))?;
-                            self.validate_expr(right, formals, &format!("{target}.selector.right"))
+                            self.validate_expr(left, formals, format_args!("{target}.selector.left"))?;
+                            self.validate_expr(right, formals, format_args!("{target}.selector.right"))
                         }
                         IrStreamSelector::Indexed { base, width, .. } => {
-                            self.validate_expr(base, formals, &format!("{target}.selector.base"))?;
-                            self.validate_expr(width, formals, &format!("{target}.selector.width"))
+                            self.validate_expr(base, formals, format_args!("{target}.selector.base"))?;
+                            self.validate_expr(width, formals, format_args!("{target}.selector.width"))
                         }
                     }
                 };
@@ -550,7 +550,7 @@ impl Validator<'_> {
                 // runtime-sized selection may follow it.
                 let mut greedy = false;
                 for (index, target) in targets.iter().enumerate() {
-                    let target_path = format!("{path}.targets[{index}]");
+                    let target_path = format_args!("{path}.targets[{index}]");
                     let selected = matches!(
                         target,
                         IrStreamTarget::Container {
@@ -567,11 +567,11 @@ impl Validator<'_> {
                     }
                     match target {
                         IrStreamTarget::Packed { lhs, width } => {
-                            self.validate_width(*width, &format!("{target_path}.width"))?;
-                            self.validate_lhs(lhs, formals, &format!("{target_path}.lhs"))?;
+                            self.validate_width(*width, format_args!("{target_path}.width"))?;
+                            self.validate_lhs(lhs, formals, format_args!("{target_path}.lhs"))?;
                             if self.lhs_packed_width(lhs) != Some(*width) {
                                 return self.fail(
-                                    format!("{target_path}.width"),
+                                    format_args!("{target_path}.width"),
                                     "streaming target width disagrees with its lvalue",
                                 );
                             }
@@ -605,7 +605,7 @@ impl Validator<'_> {
                                 );
                             }
                             if let Some(selector) = selector {
-                                validate_selector(selector, &target_path)?;
+                                validate_selector(selector, target_path)?;
                             }
                         }
                         IrStreamTarget::FixedSelector { array, selector } => {
@@ -627,7 +627,7 @@ impl Validator<'_> {
                                     "nonblocking assignment requires persistent target storage",
                                 );
                             }
-                            validate_selector(selector, &target_path)?;
+                            validate_selector(selector, target_path)?;
                         }
                         IrStreamTarget::FixedImageSelector {
                             target,
@@ -637,7 +637,7 @@ impl Validator<'_> {
                             two_state_runs,
                             ..
                         } => {
-                            self.validate_lhs(target, formals, &format!("{target_path}.target"))?;
+                            self.validate_lhs(target, formals, format_args!("{target_path}.target"))?;
                             let count = u64::from(left.abs_diff(*right)) + 1;
                             // Runs are disjoint, ascending and inside one element.
                             let mut next_lsb = 0u64;
@@ -662,7 +662,7 @@ impl Validator<'_> {
                                     "nonblocking assignment requires persistent target storage",
                                 );
                             }
-                            validate_selector(selector, &target_path)?;
+                            validate_selector(selector, target_path)?;
                         }
                     }
                 }
@@ -704,7 +704,7 @@ impl Validator<'_> {
                 result?;
             }
             IrStmt::PlusArg(expression) => {
-                self.validate_expr(expression, formals, &format!("{path}.expression"))?;
+                self.validate_expr(expression, formals, format_args!("{path}.expression"))?;
             }
             IrStmt::Stochastic(operation) => match operation.as_ref() {
                 IrStochasticStmt::Initialize {
@@ -713,10 +713,10 @@ impl Validator<'_> {
                     max_length,
                     status,
                 } => {
-                    self.validate_expr(q_id, formals, &format!("{path}.q_id"))?;
-                    self.validate_expr(q_type, formals, &format!("{path}.q_type"))?;
-                    self.validate_expr(max_length, formals, &format!("{path}.max_length"))?;
-                    self.validate_stochastic_output(status, formals, &format!("{path}.status"))?;
+                    self.validate_expr(q_id, formals, format_args!("{path}.q_id"))?;
+                    self.validate_expr(q_type, formals, format_args!("{path}.q_type"))?;
+                    self.validate_expr(max_length, formals, format_args!("{path}.max_length"))?;
+                    self.validate_stochastic_output(status, formals, format_args!("{path}.status"))?;
                     if q_id.is_real() || q_type.is_real() || max_length.is_real() {
                         return self.fail(path, "stochastic queue inputs must be packed integers");
                     }
@@ -727,10 +727,10 @@ impl Validator<'_> {
                     inform_id,
                     status,
                 } => {
-                    self.validate_expr(q_id, formals, &format!("{path}.q_id"))?;
-                    self.validate_expr(job_id, formals, &format!("{path}.job_id"))?;
-                    self.validate_expr(inform_id, formals, &format!("{path}.inform_id"))?;
-                    self.validate_stochastic_output(status, formals, &format!("{path}.status"))?;
+                    self.validate_expr(q_id, formals, format_args!("{path}.q_id"))?;
+                    self.validate_expr(job_id, formals, format_args!("{path}.job_id"))?;
+                    self.validate_expr(inform_id, formals, format_args!("{path}.inform_id"))?;
+                    self.validate_stochastic_output(status, formals, format_args!("{path}.status"))?;
                     if q_id.is_real() || job_id.is_real() || inform_id.is_real() {
                         return self.fail(path, "stochastic queue inputs must be packed integers");
                     }
@@ -741,14 +741,14 @@ impl Validator<'_> {
                     inform_id,
                     status,
                 } => {
-                    self.validate_expr(q_id, formals, &format!("{path}.q_id"))?;
-                    self.validate_stochastic_output(job_id, formals, &format!("{path}.job_id"))?;
+                    self.validate_expr(q_id, formals, format_args!("{path}.q_id"))?;
+                    self.validate_stochastic_output(job_id, formals, format_args!("{path}.job_id"))?;
                     self.validate_stochastic_output(
                         inform_id,
                         formals,
-                        &format!("{path}.inform_id"),
+                        format_args!("{path}.inform_id"),
                     )?;
-                    self.validate_stochastic_output(status, formals, &format!("{path}.status"))?;
+                    self.validate_stochastic_output(status, formals, format_args!("{path}.status"))?;
                     if q_id.is_real() {
                         return self.fail(path, "stochastic queue inputs must be packed integers");
                     }
@@ -759,27 +759,27 @@ impl Validator<'_> {
                     stat_value,
                     status,
                 } => {
-                    self.validate_expr(q_id, formals, &format!("{path}.q_id"))?;
-                    self.validate_expr(stat_code, formals, &format!("{path}.stat_code"))?;
+                    self.validate_expr(q_id, formals, format_args!("{path}.q_id"))?;
+                    self.validate_expr(stat_code, formals, format_args!("{path}.stat_code"))?;
                     self.validate_stochastic_output(
                         stat_value,
                         formals,
-                        &format!("{path}.stat_value"),
+                        format_args!("{path}.stat_value"),
                     )?;
-                    self.validate_stochastic_output(status, formals, &format!("{path}.status"))?;
+                    self.validate_stochastic_output(status, formals, format_args!("{path}.status"))?;
                     if q_id.is_real() || stat_code.is_real() {
                         return self.fail(path, "stochastic queue inputs must be packed integers");
                     }
                 }
             },
             IrStmt::Block(body) | IrStmt::Forever { body } => {
-                self.validate_stmts(body, formals, &format!("{path}.body"))?;
+                self.validate_stmts(body, formals, format_args!("{path}.body"))?;
             }
             IrStmt::ActivationScope { body, exit, .. } => {
                 if exit.is_empty() || exit.starts_with("_llg_exec_") {
                     return self.fail(path, "activation scope has an invalid exit label");
                 }
-                self.validate_stmts(body, formals, &format!("{path}.body"))?;
+                self.validate_stmts(body, formals, format_args!("{path}.body"))?;
             }
             IrStmt::DeclLocal {
                 width,
@@ -804,10 +804,10 @@ impl Validator<'_> {
                         return self.fail(path, "real local capture requires a real initializer");
                     }
                 } else {
-                    self.validate_width(*width, &format!("{path}.width"))?;
+                    self.validate_width(*width, format_args!("{path}.width"))?;
                 }
                 if let Some(init) = init {
-                    self.validate_expr(init, formals, &format!("{path}.init"))?;
+                    self.validate_expr(init, formals, format_args!("{path}.init"))?;
                 }
             }
             IrStmt::DeclString { name, init } | IrStmt::SharedString { name, init, .. } => {
@@ -895,7 +895,7 @@ impl Validator<'_> {
                     if cycles.is_real() {
                         return self.fail(path, "clocking drive cycle count must be integral");
                     }
-                    self.validate_expr(cycles, formals, &format!("{path}.cycles"))?;
+                    self.validate_expr(cycles, formals, format_args!("{path}.cycles"))?;
                 }
                 if specs.is_empty() {
                     return self.fail(path, "clocking drive requires an associated event");
@@ -905,13 +905,13 @@ impl Validator<'_> {
                         IrWaitSrc::Sig(name) => {
                             if !self.valid_dependency(&IrDependency::scalar(name)) {
                                 return self.fail(
-                                    format!("{path}.specs[{index}]"),
+                                    format_args!("{path}.specs[{index}]"),
                                     "clocking drive event must name active packed storage",
                                 );
                             }
                             if !self.model.clocking_history.contains(name) {
                                 return self.fail(
-                                    format!("{path}.specs[{index}]"),
+                                    format_args!("{path}.specs[{index}]"),
                                     "clocking drive event requires the model's clocking history of its signal",
                                 );
                             }
@@ -919,11 +919,11 @@ impl Validator<'_> {
                         IrWaitSrc::Event(event) => self.validate_event_ref(
                             event,
                             formals,
-                            &format!("{path}.specs[{index}].event"),
+                            format_args!("{path}.specs[{index}].event"),
                         )?,
                         _ => {
                             return self.fail(
-                                format!("{path}.specs[{index}]"),
+                                format_args!("{path}.specs[{index}]"),
                                 "clocking drive event must be a signal or named event",
                             )
                         }
@@ -942,8 +942,8 @@ impl Validator<'_> {
                 if !persistent(lhs) {
                     return self.fail(path, "clocking drive requires persistent target storage");
                 }
-                self.validate_lhs(lhs, formals, &format!("{path}.lhs"))?;
-                self.validate_expr(rhs, formals, &format!("{path}.rhs"))?;
+                self.validate_lhs(lhs, formals, format_args!("{path}.lhs"))?;
+                self.validate_expr(rhs, formals, format_args!("{path}.rhs"))?;
             }
             IrStmt::Assign { lhs, rhs, .. }
             | IrStmt::DelayedAssign { lhs, rhs, .. }
@@ -1002,8 +1002,8 @@ impl Validator<'_> {
                 if matches!(stmt, IrStmt::DelayedAssign { .. }) && self.has_transient_target(lhs) {
                     return self.fail(path, "delayed NBA requires persistent target storage");
                 }
-                self.validate_lhs(lhs, formals, &format!("{path}.lhs"))?;
-                self.validate_expr(rhs, formals, &format!("{path}.rhs"))?;
+                self.validate_lhs(lhs, formals, format_args!("{path}.lhs"))?;
+                self.validate_expr(rhs, formals, format_args!("{path}.rhs"))?;
             }
             IrStmt::InertialEnable(enable) => {
                 let crate::sim::ir::IrInertialEnable {
@@ -1040,22 +1040,22 @@ impl Validator<'_> {
                 if zero.0 != one.0 || zero.1 == one.1 || zero_rhs.is_real() || one_rhs.is_real() {
                     return self.fail(path, "enable driver requires two slots of one net");
                 }
-                self.validate_lhs(zero_lhs, formals, &format!("{path}.zero_lhs"))?;
-                self.validate_expr(zero_rhs, formals, &format!("{path}.zero_rhs"))?;
-                self.validate_lhs(one_lhs, formals, &format!("{path}.one_lhs"))?;
-                self.validate_expr(one_rhs, formals, &format!("{path}.one_rhs"))?;
+                self.validate_lhs(zero_lhs, formals, format_args!("{path}.zero_lhs"))?;
+                self.validate_expr(zero_rhs, formals, format_args!("{path}.zero_rhs"))?;
+                self.validate_lhs(one_lhs, formals, format_args!("{path}.one_lhs"))?;
+                self.validate_expr(one_rhs, formals, format_args!("{path}.one_rhs"))?;
             }
             IrStmt::EventAssign { target, source } => {
-                self.validate_event_ref(target, formals, &format!("{path}.target"))?;
+                self.validate_event_ref(target, formals, format_args!("{path}.target"))?;
                 if let Some(source) = source {
-                    self.validate_event_ref(source, formals, &format!("{path}.source"))?;
+                    self.validate_event_ref(source, formals, format_args!("{path}.source"))?;
                 }
             }
             IrStmt::EventCapture { name, source } => {
                 if name.is_empty() {
                     return self.fail(path, "captured event handle name must not be empty");
                 }
-                self.validate_event_ref(source, formals, &format!("{path}.source"))?;
+                self.validate_event_ref(source, formals, format_args!("{path}.source"))?;
             }
             IrStmt::EventDeclare { name } => {
                 if name.is_empty() {
@@ -1065,21 +1065,21 @@ impl Validator<'_> {
             IrStmt::If {
                 cond, then_, els, ..
             } => {
-                self.validate_expr(cond, formals, &format!("{path}.cond"))?;
-                self.validate_stmts(then_, formals, &format!("{path}.then"))?;
+                self.validate_expr(cond, formals, format_args!("{path}.cond"))?;
+                self.validate_stmts(then_, formals, format_args!("{path}.then"))?;
                 if let Some(els) = els {
-                    self.validate_stmts(els, formals, &format!("{path}.else"))?;
+                    self.validate_stmts(els, formals, format_args!("{path}.else"))?;
                 }
             }
             IrStmt::While { cond, body }
             | IrStmt::Repeat { count: cond, body }
             | IrStmt::WaitCond { cond, body, .. } => {
-                self.validate_expr(cond, formals, &format!("{path}.cond"))?;
-                self.validate_stmts(body, formals, &format!("{path}.body"))?;
+                self.validate_expr(cond, formals, format_args!("{path}.cond"))?;
+                self.validate_stmts(body, formals, format_args!("{path}.body"))?;
             }
             IrStmt::WaitEventTriggered { event, body } => {
-                self.validate_event_ref(event, formals, &format!("{path}.event"))?;
-                self.validate_stmts(body, formals, &format!("{path}.body"))?;
+                self.validate_event_ref(event, formals, format_args!("{path}.event"))?;
+                self.validate_stmts(body, formals, format_args!("{path}.body"))?;
             }
             IrStmt::WaitOrder {
                 events,
@@ -1090,10 +1090,10 @@ impl Validator<'_> {
                     return self.fail(path, "wait_order requires at least one event");
                 }
                 for (index, event) in events.iter().enumerate() {
-                    self.validate_event_ref(event, formals, &format!("{path}.events[{index}]"))?;
+                    self.validate_event_ref(event, formals, format_args!("{path}.events[{index}]"))?;
                 }
-                self.validate_stmts(success, formals, &format!("{path}.success"))?;
-                self.validate_stmts(failure, formals, &format!("{path}.failure"))?;
+                self.validate_stmts(success, formals, format_args!("{path}.success"))?;
+                self.validate_stmts(failure, formals, format_args!("{path}.failure"))?;
             }
             IrStmt::For {
                 init,
@@ -1101,25 +1101,25 @@ impl Validator<'_> {
                 incr,
                 body,
             } => {
-                self.validate_stmts(init, formals, &format!("{path}.init"))?;
-                self.validate_expr(cond, formals, &format!("{path}.cond"))?;
-                self.validate_stmts(incr, formals, &format!("{path}.incr"))?;
-                self.validate_stmts(body, formals, &format!("{path}.body"))?;
+                self.validate_stmts(init, formals, format_args!("{path}.init"))?;
+                self.validate_expr(cond, formals, format_args!("{path}.cond"))?;
+                self.validate_stmts(incr, formals, format_args!("{path}.incr"))?;
+                self.validate_stmts(body, formals, format_args!("{path}.body"))?;
             }
             IrStmt::Case { sel, items, .. } => {
-                self.validate_expr(sel, formals, &format!("{path}.sel"))?;
+                self.validate_expr(sel, formals, format_args!("{path}.sel"))?;
                 for (item_idx, item) in items.iter().enumerate() {
                     for (expr_idx, expr) in item.exprs.iter().enumerate() {
                         self.validate_expr(
                             expr,
                             formals,
-                            &format!("{path}.items[{item_idx}].exprs[{expr_idx}]"),
+                            format_args!("{path}.items[{item_idx}].exprs[{expr_idx}]"),
                         )?;
                     }
                     self.validate_stmts(
                         &item.body,
                         formals,
-                        &format!("{path}.items[{item_idx}].body"),
+                        format_args!("{path}.items[{item_idx}].body"),
                     )?;
                 }
             }
@@ -1130,7 +1130,7 @@ impl Validator<'_> {
                         self.validate_event_ref(
                             event,
                             formals,
-                            &format!("{path}.specs[{idx}].event"),
+                            format_args!("{path}.specs[{idx}].event"),
                         )?;
                     }
                     let helpers: Vec<(&str, bool)> = match source {
@@ -1151,7 +1151,7 @@ impl Validator<'_> {
                     };
                     if matches!(source, IrWaitSrc::Real(_)) && *edge != IrEdge::Any {
                         return self.fail(
-                            format!("{path}.specs[{idx}]"),
+                            format_args!("{path}.specs[{idx}]"),
                             "real event sources only support any-change controls",
                         );
                     }
@@ -1165,7 +1165,7 @@ impl Validator<'_> {
                             });
                         if !valid {
                             return self.fail(
-                                format!("{path}.specs[{idx}]"),
+                                format_args!("{path}.specs[{idx}]"),
                                 "event evaluator helper has an invalid value type",
                             );
                         }
@@ -1173,7 +1173,7 @@ impl Validator<'_> {
                     if let IrWaitSrc::Real(name) = source {
                         if !self.valid_dependency(&IrDependency::real(name)) {
                             return self.fail(
-                                format!("{path}.specs[{idx}]"),
+                                format_args!("{path}.specs[{idx}]"),
                                 "real event source must name active real storage",
                             );
                         }
@@ -1186,7 +1186,7 @@ impl Validator<'_> {
                                 || matches!(read, IrDependency::NativeAccess(_))
                             {
                                 return self.fail(
-                                    format!("{path}.specs[{idx}]"),
+                                    format_args!("{path}.specs[{idx}]"),
                                     "event dependency must name active storage",
                                 );
                             }
@@ -1198,7 +1198,7 @@ impl Validator<'_> {
                 if specs.is_empty() {
                     return self.fail(path, "clocking cycle wait requires at least one event");
                 }
-                self.validate_expr(count, formals, &format!("{path}.count"))?;
+                self.validate_expr(count, formals, format_args!("{path}.count"))?;
                 if count.is_real() {
                     return self.fail(path, "clocking cycle wait count must be packed");
                 }
@@ -1207,13 +1207,13 @@ impl Validator<'_> {
                         IrWaitSrc::Sig(name) => {
                             if !self.valid_dependency(&IrDependency::scalar(name)) {
                                 return self.fail(
-                                    format!("{path}.specs[{index}]"),
+                                    format_args!("{path}.specs[{index}]"),
                                     "clocking cycle signal must name active packed storage",
                                 );
                             }
                             if !self.model.clocking_history.contains(name) {
                                 return self.fail(
-                                    format!("{path}.specs[{index}]"),
+                                    format_args!("{path}.specs[{index}]"),
                                     "clocking cycle signal requires the model's clocking history of its signal",
                                 );
                             }
@@ -1221,11 +1221,11 @@ impl Validator<'_> {
                         IrWaitSrc::Event(event) => self.validate_event_ref(
                             event,
                             formals,
-                            &format!("{path}.specs[{index}].event"),
+                            format_args!("{path}.specs[{index}].event"),
                         )?,
                         _ => {
                             return self.fail(
-                                format!("{path}.specs[{index}]"),
+                                format_args!("{path}.specs[{index}]"),
                                 "clocking cycle wait source must be a signal or named event",
                             )
                         }
@@ -1275,13 +1275,13 @@ impl Validator<'_> {
             IrStmt::NonblockingEventTrigger { ev, ticks } => {
                 self.validate_event_ref(ev, formals, path)?;
                 if let Some(IrDelay::Runtime { value, .. }) = ticks {
-                    self.validate_expr(value, formals, &format!("{path}.ticks"))?;
+                    self.validate_expr(value, formals, format_args!("{path}.ticks"))?;
                 }
             }
             IrStmt::NonblockingEventTriggerWhen { ev, specs, repeat } => {
                 self.validate_event_ref(ev, formals, path)?;
                 if let Some(repeat) = repeat {
-                    self.validate_expr(repeat, formals, &format!("{path}.repeat"))?;
+                    self.validate_expr(repeat, formals, format_args!("{path}.repeat"))?;
                     if repeat.is_real() {
                         return self.fail(path, "repeat count must be packed");
                     }
@@ -1292,7 +1292,7 @@ impl Validator<'_> {
                         self.validate_event_ref(
                             event,
                             formals,
-                            &format!("{path}.specs[{idx}].event"),
+                            format_args!("{path}.specs[{idx}].event"),
                         )?;
                     }
                     let helpers: Vec<(&str, bool)> = match source {
@@ -1313,7 +1313,7 @@ impl Validator<'_> {
                     };
                     if matches!(source, IrWaitSrc::Real(_)) && *edge != IrEdge::Any {
                         return self.fail(
-                            format!("{path}.specs[{idx}]"),
+                            format_args!("{path}.specs[{idx}]"),
                             "real event sources only support any-change controls",
                         );
                     }
@@ -1327,7 +1327,7 @@ impl Validator<'_> {
                             });
                         if !valid {
                             return self.fail(
-                                format!("{path}.specs[{idx}]"),
+                                format_args!("{path}.specs[{idx}]"),
                                 "event evaluator helper has an invalid value type",
                             );
                         }
@@ -1335,7 +1335,7 @@ impl Validator<'_> {
                     if let IrWaitSrc::Real(name) = source {
                         if !self.valid_dependency(&IrDependency::real(name)) {
                             return self.fail(
-                                format!("{path}.specs[{idx}]"),
+                                format_args!("{path}.specs[{idx}]"),
                                 "real event source must name active real storage",
                             );
                         }
@@ -1348,7 +1348,7 @@ impl Validator<'_> {
                                 || matches!(read, IrDependency::NativeAccess(_))
                             {
                                 return self.fail(
-                                    format!("{path}.specs[{idx}]"),
+                                    format_args!("{path}.specs[{idx}]"),
                                     "event dependency must name active storage",
                                 );
                             }
@@ -1365,15 +1365,15 @@ impl Validator<'_> {
                 frame,
                 captures,
             } => {
-                self.validate_lhs(lhs, formals, &format!("{path}.lhs"))?;
-                self.validate_expr(rhs, formals, &format!("{path}.rhs"))?;
+                self.validate_lhs(lhs, formals, format_args!("{path}.lhs"))?;
+                self.validate_expr(rhs, formals, format_args!("{path}.rhs"))?;
                 if let Some(repeat) = repeat {
-                    self.validate_expr(repeat, formals, &format!("{path}.repeat"))?;
+                    self.validate_expr(repeat, formals, format_args!("{path}.repeat"))?;
                     if repeat.is_real() {
                         return self.fail(path, "repeat count must be packed");
                     }
                 }
-                self.validate_event_assignment_specs(specs, formals, &format!("{path}.specs"))?;
+                self.validate_event_assignment_specs(specs, formals, format_args!("{path}.specs"))?;
                 let valid_action = self
                     .model
                     .processes
@@ -1404,7 +1404,7 @@ impl Validator<'_> {
                         || !slots.insert(capture.storage().slot())
                     {
                         return self.fail(
-                            format!("{path}.captures[{capture_idx}]"),
+                            format_args!("{path}.captures[{capture_idx}]"),
                             "event assignment captures must use unique slots in their frame",
                         );
                     }
@@ -1412,7 +1412,7 @@ impl Validator<'_> {
                         capture.storage(),
                         capture.initial(),
                         formals,
-                        &format!("{path}.captures[{capture_idx}].initial"),
+                        format_args!("{path}.captures[{capture_idx}].initial"),
                     )?;
                 }
             }
@@ -1431,10 +1431,10 @@ impl Validator<'_> {
                     let mut slots = HashSet::new();
                     for (capture_idx, capture) in branch.captures().iter().enumerate() {
                         let capture_path =
-                            format!("{path}.branches[{branch_idx}].captures[{capture_idx}]");
+                            format_args!("{path}.branches[{branch_idx}].captures[{capture_idx}]");
                         if capture.storage().frame() != branch.frame() {
                             return self.fail(
-                                format!("{capture_path}.storage"),
+                                format_args!("{capture_path}.storage"),
                                 "capture storage belongs to a different frame",
                             );
                         }
@@ -1442,7 +1442,7 @@ impl Validator<'_> {
                             || !slots.insert(capture.storage().slot())
                         {
                             return self.fail(
-                                format!("{capture_path}.storage.slot"),
+                                format_args!("{capture_path}.storage.slot"),
                                 "capture storage slot is invalid or duplicated",
                             );
                         }
@@ -1450,16 +1450,16 @@ impl Validator<'_> {
                             capture.storage(),
                             capture.initial(),
                             formals,
-                            &format!("{capture_path}.initial"),
+                            format_args!("{capture_path}.initial"),
                         )?;
                     }
                     // A shared record is captured where the fork can name it.
                     for value in self
-                        .captured_native_values(branch.captures(), &format!("{path}.branches[{branch_idx}]"))?
+                        .captured_native_values(branch.captures(), format_args!("{path}.branches[{branch_idx}]"))?
                     {
                         self.validate_native_value_use(
                             value,
-                            &format!("{path}.branches[{branch_idx}]"),
+                            format_args!("{path}.branches[{branch_idx}]"),
                         )?;
                     }
                 }
@@ -1477,7 +1477,7 @@ impl Validator<'_> {
                         | IrDependency::ArrayContents(array) => *array,
                         _ => {
                             return self.fail(
-                                format!("{path}.dependencies[{index}]"),
+                                format_args!("{path}.dependencies[{index}]"),
                                 "force dependency must name fixed-array storage",
                             )
                         }
@@ -1490,13 +1490,13 @@ impl Validator<'_> {
                             .is_some_and(|array| array.activation)
                     {
                         return self.fail(
-                            format!("{path}.dependencies[{index}]"),
+                            format_args!("{path}.dependencies[{index}]"),
                             "force dependency has no persistent change marker",
                         );
                     }
                 }
-                self.validate_lhs(lhs, formals, &format!("{path}.lhs"))?;
-                self.validate_expr(value, formals, &format!("{path}.value"))?;
+                self.validate_lhs(lhs, formals, format_args!("{path}.lhs"))?;
+                self.validate_expr(value, formals, format_args!("{path}.value"))?;
                 let target_width = self.lhs_packed_width(lhs);
                 let target_real = match lhs {
                     IrLhs::Whole(index) => self
@@ -1515,14 +1515,14 @@ impl Validator<'_> {
                     || (!value.is_real() && target_width != Some(value.width))
                 {
                     return self.fail(
-                        format!("{path}.value"),
+                        format_args!("{path}.value"),
                         "force value shape does not match its target",
                     );
                 }
                 for (index, read) in reads.iter().enumerate() {
                     let Some(signal) = self.model.signals.get(*read) else {
                         return self.fail(
-                            format!("{path}.reads[{index}]"),
+                            format_args!("{path}.reads[{index}]"),
                             "force dependency signal index is out of bounds",
                         );
                     };
@@ -1530,18 +1530,18 @@ impl Validator<'_> {
                         || (signal.ty.width() == 0 && !matches!(signal.ty, IrType::Real { .. }))
                     {
                         return self.fail(
-                            format!("{path}.reads[{index}]"),
+                            format_args!("{path}.reads[{index}]"),
                             "force dependency does not name active scalar storage",
                         );
                     }
                 }
             }
             IrStmt::Release { lhs } => {
-                self.validate_lhs(lhs, formals, &format!("{path}.lhs"))?;
+                self.validate_lhs(lhs, formals, format_args!("{path}.lhs"))?;
             }
             IrStmt::Display { args, .. } => {
                 for (idx, (expr, _)) in args.iter().enumerate() {
-                    self.validate_expr(expr, formals, &format!("{path}.args[{idx}]"))?;
+                    self.validate_expr(expr, formals, format_args!("{path}.args[{idx}]"))?;
                 }
             }
             IrStmt::DisplayTyped {
@@ -1554,7 +1554,7 @@ impl Validator<'_> {
                     return self.fail(path, "typed display scope must not be empty");
                 }
                 if let Some(descriptor) = descriptor {
-                    self.validate_expr(descriptor, formals, &format!("{path}.descriptor"))?;
+                    self.validate_expr(descriptor, formals, format_args!("{path}.descriptor"))?;
                     if descriptor.is_real() {
                         return self.fail(path, "file display descriptor cannot be real");
                     }
@@ -1563,7 +1563,7 @@ impl Validator<'_> {
                     arg.validate(
                         &self.model,
                         self.string_return.get(),
-                        &format!("{path}.args[{idx}]"),
+                        format_args!("{path}.args[{idx}]"),
                     )?;
                     let mut result = Ok(());
                     arg.expressions(&mut |expression| {
@@ -1625,7 +1625,7 @@ impl Validator<'_> {
                     arg.validate(
                         &self.model,
                         self.string_return.get(),
-                        &format!("{path}.args[{idx}]"),
+                        format_args!("{path}.args[{idx}]"),
                     )?;
                     let mut result = Ok(());
                     arg.expressions(&mut |expression| {
@@ -1652,16 +1652,16 @@ impl Validator<'_> {
                     );
                 }
                 for (idx, arg) in args.iter().enumerate() {
-                    self.validate_expr(arg, formals, &format!("{path}.args[{idx}]"))?;
+                    self.validate_expr(arg, formals, format_args!("{path}.args[{idx}]"))?;
                     if arg.is_real() || arg.width == 0 {
                         return self.fail(
-                            format!("{path}.args[{idx}]"),
+                            format_args!("{path}.args[{idx}]"),
                             "assertion control arguments must be integral",
                         );
                     }
                     if arg.width > 64 {
                         return self.fail(
-                            format!("{path}.args[{idx}]"),
+                            format_args!("{path}.args[{idx}]"),
                             "assertion control arguments are limited to 64 bits",
                         );
                     }
@@ -1672,7 +1672,7 @@ impl Validator<'_> {
             }
             IrStmt::MonitorSet { descriptor, .. } => {
                 if let Some(descriptor) = descriptor {
-                    self.validate_expr(descriptor, formals, &format!("{path}.descriptor"))?;
+                    self.validate_expr(descriptor, formals, format_args!("{path}.descriptor"))?;
                     if descriptor.is_real() {
                         return self.fail(path, "file monitor descriptor cannot be real");
                     }
@@ -1683,7 +1683,7 @@ impl Validator<'_> {
                     return self.fail(path, "only file flush accepts an omitted descriptor");
                 }
                 if let Some(descriptor) = descriptor {
-                    self.validate_expr(descriptor, formals, &format!("{path}.descriptor"))?;
+                    self.validate_expr(descriptor, formals, format_args!("{path}.descriptor"))?;
                     if descriptor.is_real() {
                         return self.fail(path, "file control descriptor cannot be real");
                     }
@@ -1699,12 +1699,12 @@ impl Validator<'_> {
                 if location.is_empty() {
                     return self.fail(path, "assertion source location must not be empty");
                 }
-                self.validate_expr(condition, formals, &format!("{path}.condition"))?;
+                self.validate_expr(condition, formals, format_args!("{path}.condition"))?;
                 if let Some(if_true) = if_true {
-                    self.validate_stmts(if_true, formals, &format!("{path}.if_true"))?;
+                    self.validate_stmts(if_true, formals, format_args!("{path}.if_true"))?;
                 }
                 if let Some(if_false) = if_false {
-                    self.validate_stmts(if_false, formals, &format!("{path}.if_false"))?;
+                    self.validate_stmts(if_false, formals, format_args!("{path}.if_false"))?;
                 }
             }
             IrStmt::DeferredImmediateAssertion {
@@ -1717,12 +1717,12 @@ impl Validator<'_> {
                 if location.is_empty() {
                     return self.fail(path, "assertion source location must not be empty");
                 }
-                self.validate_expr(condition, formals, &format!("{path}.condition"))?;
+                self.validate_expr(condition, formals, format_args!("{path}.condition"))?;
                 for (arm, arm_name) in [(if_true, "if_true"), (if_false, "if_false")] {
                     let Some(arm) = arm else { continue };
                     if arm.c_name().is_empty() {
                         return self.fail(
-                            format!("{path}.{arm_name}"),
+                            format_args!("{path}.{arm_name}"),
                             "deferred assertion callback name must not be empty",
                         );
                     }
@@ -1750,14 +1750,14 @@ impl Validator<'_> {
                         });
                     if callback.is_none() {
                         return self.fail(
-                            format!("{path}.{arm_name}"),
+                            format_args!("{path}.{arm_name}"),
                             "deferred assertion callback is not declared",
                         );
                     }
                 }
             }
             IrStmt::WaveLimit(expr) => {
-                self.validate_expr(expr, formals, &format!("{path}.limit"))?;
+                self.validate_expr(expr, formals, format_args!("{path}.limit"))?;
             }
             IrStmt::WaveFileValue(file) => {
                 file.validate(&self.model, self.string_return.get())?;
@@ -1787,10 +1787,10 @@ impl Validator<'_> {
                     ("precision", precision),
                     ("minimum field width", minimum_field_width),
                 ] {
-                    self.validate_expr(value, formals, &format!("{path}.{label}"))?;
+                    self.validate_expr(value, formals, format_args!("{path}.{label}"))?;
                     if value.is_real() {
                         return self.fail(
-                            format!("{path}.{label}"),
+                            format_args!("{path}.{label}"),
                             "timeformat argument must be packed",
                         );
                     }
@@ -1817,21 +1817,21 @@ impl Validator<'_> {
                 for (idx, (_, formal, init)) in call.temps.iter().enumerate() {
                     let formal_ty = callee.formals.get(*formal).ok_or_else(|| {
                         IrValidationError::new(
-                            format!("{path}.temps[{idx}]"),
+                            format_args!("{path}.temps[{idx}]"),
                             format!("formal index {formal} is out of bounds"),
                         )
                     })?;
                     if !formal_ty.is_out {
                         return self.fail(
-                            format!("{path}.temps[{idx}]"),
+                            format_args!("{path}.temps[{idx}]"),
                             "call temp refers to an input formal",
                         );
                     }
                     if let Some(init) = init {
-                        self.validate_expr(init, formals, &format!("{path}.temps[{idx}].init"))?;
+                        self.validate_expr(init, formals, format_args!("{path}.temps[{idx}].init"))?;
                         if init.width != formal_ty.width || init.signed != formal_ty.signed {
                             return self.fail(
-                                format!("{path}.temps[{idx}].init"),
+                                format_args!("{path}.temps[{idx}].init"),
                                 "call temp initializer type disagrees with its formal",
                             );
                         }
@@ -1855,14 +1855,14 @@ impl Validator<'_> {
                         };
                         if !is_real_target {
                             return self.fail(
-                                format!("{path}.copyouts[{idx}].width"),
+                                format_args!("{path}.copyouts[{idx}].width"),
                                 "zero-width call copyout requires a real target",
                             );
                         }
                     } else {
-                        self.validate_width(*width, &format!("{path}.copyouts[{idx}].width"))?;
+                        self.validate_width(*width, format_args!("{path}.copyouts[{idx}].width"))?;
                     }
-                    self.validate_lhs(lhs, formals, &format!("{path}.copyouts[{idx}].lhs"))?;
+                    self.validate_lhs(lhs, formals, format_args!("{path}.copyouts[{idx}].lhs"))?;
                 }
             }
             IrStmt::Return { value } => {
@@ -1875,7 +1875,7 @@ impl Validator<'_> {
                             "non-integral return requires its typed return storage",
                         );
                     }
-                    self.validate_expr(value, formals, &format!("{path}.value"))?;
+                    self.validate_expr(value, formals, format_args!("{path}.value"))?;
                 }
             }
             IrStmt::QueueProceduralAssertion { index, captures } => {
@@ -1887,7 +1887,7 @@ impl Validator<'_> {
                     .any(|assertion| assertion.procedural == Some(*index))
                 {
                     return self.fail(
-                        format!("{path}.index"),
+                        format_args!("{path}.index"),
                         "queued procedural assertion index names no procedural assertion",
                     );
                 }
@@ -1926,14 +1926,14 @@ impl Validator<'_> {
         &self,
         captures: &[IrExpr],
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         for (slot, capture) in captures.iter().enumerate() {
-            let path = format!("{path}.captures[{slot}]");
+            let path = format_args!("{path}.captures[{slot}]");
             if capture.width == 0 || capture.is_real() {
                 return self.fail(path, "a queued assertion value must be packed");
             }
-            self.validate_expr(capture, formals, &path)?;
+            self.validate_expr(capture, formals, path)?;
         }
         Ok(())
     }
@@ -1942,7 +1942,7 @@ impl Validator<'_> {
         &self,
         operation: &crate::sim::ir::IrCoverageStmt,
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         use crate::sim::ir::IrCoverageStmt;
         let group_exists = |group: &usize| *group < self.model.covergroups.len();
@@ -2034,7 +2034,7 @@ impl Validator<'_> {
             return self.fail(path, "invalid coverage statement");
         }
         for (index, expression) in operation.expressions().into_iter().enumerate() {
-            self.validate_expr(expression, formals, &format!("{path}.values[{index}]"))?;
+            self.validate_expr(expression, formals, format_args!("{path}.values[{index}]"))?;
         }
         for (index, value) in operation.strings().into_iter().enumerate() {
             value.validate(&self.model, self.string_return.get())?;
@@ -2042,7 +2042,7 @@ impl Validator<'_> {
             value.expressions(&mut |child| {
                 if result.is_ok() {
                     result =
-                        self.validate_expr(child, formals, &format!("{path}.strings[{index}]"));
+                        self.validate_expr(child, formals, format_args!("{path}.strings[{index}]"));
                 }
             });
             result?;
@@ -2052,7 +2052,7 @@ impl Validator<'_> {
             handle.expressions(&mut |child| {
                 if result.is_ok() {
                     result =
-                        self.validate_expr(child, formals, &format!("{path}.handles[{index}]"));
+                        self.validate_expr(child, formals, format_args!("{path}.handles[{index}]"));
                 }
             });
             result?;
@@ -2064,7 +2064,7 @@ impl Validator<'_> {
         &self,
         operation: &crate::sim::ir::IrRandStmt,
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         use crate::sim::ir::IrRandStmt;
         let Some(problem) = self.model.rand_problems.get(operation.problem()) else {
@@ -2129,7 +2129,7 @@ impl Validator<'_> {
             handle.expressions(&mut |child| {
                 if result.is_ok() {
                     result =
-                        self.validate_expr(child, formals, &format!("{path}.handles[{index}]"));
+                        self.validate_expr(child, formals, format_args!("{path}.handles[{index}]"));
                 }
             });
             result?;
@@ -2138,7 +2138,11 @@ impl Validator<'_> {
             return self.fail(path, "randomize statement index is out of range");
         }
         for (index, expression) in operation.expressions().into_iter().enumerate() {
-            self.validate_expr(expression, formals, &format!("{path}.operands[{index}]"))?;
+            self.validate_expr(
+                expression,
+                formals,
+                format_args!("{path}.operands[{index}]"),
+            )?;
             if expression.is_real() || expression.width == 0 {
                 return self.fail(path, "randomize operands must be packed");
             }

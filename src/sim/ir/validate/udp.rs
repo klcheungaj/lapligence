@@ -2,7 +2,11 @@
 use super::*;
 
 impl Validator<'_> {
-    pub(super) fn validate_udp_table(&self, table: &IrUdpTable, path: &str) -> ValidationResult {
+    pub(super) fn validate_udp_table(
+        &self,
+        table: &IrUdpTable,
+        path: IrPath<'_>,
+    ) -> ValidationResult {
         if table.input_count == 0
             || table
                 .input_count
@@ -18,7 +22,7 @@ impl Validator<'_> {
         for (index, row) in table.rows.iter().enumerate() {
             if row.inputs.len() != table.input_count {
                 return self.fail(
-                    format!("{path}.rows[{index}]"),
+                    format_args!("{path}.rows[{index}]"),
                     "UDP row input count differs from its definition",
                 );
             }
@@ -32,7 +36,7 @@ impl Validator<'_> {
                     || row.edge.is_some_and(|edge| edge.input >= table.input_count)
                 {
                     return self.fail(
-                        format!("{path}.sequential.rows[{index}]"),
+                        format_args!("{path}.sequential.rows[{index}]"),
                         "sequential UDP row inputs or transition differ from its definition",
                     );
                 }
@@ -45,7 +49,7 @@ impl Validator<'_> {
     fn sequential_udp_state(
         &self,
         state: usize,
-        path: &str,
+        path: IrPath<'_>,
     ) -> Result<&IrUdpTable, IrValidationError> {
         let table = self
             .model
@@ -64,15 +68,15 @@ impl Validator<'_> {
         state: usize,
         inputs: &[IrExpr],
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         let table = self.sequential_udp_state(state, path)?;
         if inputs.len() != table.input_count {
             return self.fail(path, "UDP step input count differs from its definition");
         }
         for (index, input) in inputs.iter().enumerate() {
-            let path = format!("{path}.inputs[{index}]");
-            self.validate_expr(input, formals, &path)?;
+            let path = format_args!("{path}.inputs[{index}]");
+            self.validate_expr(input, formals, path)?;
             if input.width != 1 {
                 return self.fail(path, "UDP input must be scalar");
             }
@@ -84,7 +88,7 @@ impl Validator<'_> {
         &self,
         expr: &IrExpr,
         state: usize,
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         self.sequential_udp_state(state, path)?;
         if expr.width != 1 || expr.signed || expr.fill.is_some() {
@@ -99,7 +103,7 @@ impl Validator<'_> {
         table: usize,
         inputs: &[IrExpr],
         formals: &[IrFormal],
-        path: &str,
+        path: IrPath<'_>,
     ) -> ValidationResult {
         let Some(table) = self.model.udp_tables.get(table) else {
             return self.fail(path, "UDP evaluation references a missing table");
@@ -122,8 +126,8 @@ impl Validator<'_> {
             );
         }
         for (index, input) in inputs.iter().enumerate() {
-            let path = format!("{path}.inputs[{index}]");
-            self.validate_expr(input, formals, &path)?;
+            let path = format_args!("{path}.inputs[{index}]");
+            self.validate_expr(input, formals, path)?;
             if input.width != 1 {
                 return self.fail(path, "UDP input must be scalar");
             }
@@ -139,7 +143,7 @@ impl Validator<'_> {
     pub(super) fn validate_module_paths(&self) -> ValidationResult {
         let mut destinations = HashSet::new();
         for (index, set) in self.model.module_paths.iter().enumerate() {
-            let path = format!("module_paths[{index}]");
+            let path = format_args!("module_paths[{index}]");
             if set.destinations.is_empty() {
                 return self.fail(path, "module path set has no destination");
             }
@@ -149,14 +153,14 @@ impl Validator<'_> {
                     Some(IrType::Packed { width, .. }) => source_widths.push(*width),
                     _ => {
                         return self.fail(
-                            format!("{path}.sources[{source_index}]"),
+                            format_args!("{path}.sources[{source_index}]"),
                             "module path source must be a packed signal",
                         )
                     }
                 }
             }
             for (destination_index, destination) in set.destinations.iter().enumerate() {
-                let path = format!("{path}.destinations[{destination_index}]");
+                let path = format_args!("{path}.destinations[{destination_index}]");
                 let Some(group) = self.model.net_groups.get(destination.group) else {
                     return self.fail(path, "module path destination names no net group");
                 };
@@ -167,7 +171,7 @@ impl Validator<'_> {
                     return self.fail(path, "module path destination has no path");
                 }
                 for (path_index, module_path) in destination.paths.iter().enumerate() {
-                    let path = format!("{path}.paths[{path_index}]");
+                    let path = format_args!("{path}.paths[{path_index}]");
                     let fits = |lsb: u32, width: u32, limit: u32| {
                         width != 0 && lsb.checked_add(width).is_some_and(|end| end <= limit)
                     };
@@ -213,7 +217,7 @@ impl Validator<'_> {
                 self.validate_expr(
                     condition,
                     &[],
-                    &format!("{path}.conditions[{condition_index}]"),
+                    format_args!("{path}.conditions[{condition_index}]"),
                 )?;
             }
         }
@@ -256,7 +260,7 @@ impl Validator<'_> {
             }
         }
         for (index, set) in self.model.timing_checks.iter().enumerate() {
-            let path = format!("timing_checks[{index}]");
+            let path = format_args!("timing_checks[{index}]");
             if set.checks.is_empty() && set.lines.is_empty() {
                 return self.fail(path, "timing check set has no check and no delayed signal");
             }
@@ -267,13 +271,13 @@ impl Validator<'_> {
                 );
                 if !one_bit {
                     return self.fail(
-                        format!("{path}.notifiers[{notifier_index}]"),
+                        format_args!("{path}.notifiers[{notifier_index}]"),
                         "a timing check notifier must be a 1-bit signal",
                     );
                 }
             }
             for (line_index, line) in set.lines.iter().enumerate() {
-                let path = format!("{path}.lines[{line_index}]");
+                let path = format_args!("{path}.lines[{line_index}]");
                 let (Some(source), Some(target)) = (
                     set.terminals.get(line.source as usize),
                     set.terminals.get(line.target as usize),
@@ -310,13 +314,13 @@ impl Validator<'_> {
                 };
                 if !fits {
                     return self.fail(
-                        format!("{path}.terminals[{terminal_index}]"),
+                        format_args!("{path}.terminals[{terminal_index}]"),
                         "timing check terminal must be a range of a packed signal",
                     );
                 }
             }
             for (check_index, check) in set.checks.iter().enumerate() {
-                let path = format!("{path}.checks[{check_index}]");
+                let path = format_args!("{path}.checks[{check_index}]");
                 for event in [&check.reference, &check.data] {
                     if event.terminal as usize >= set.terminals.len() {
                         return self.fail(path, "timing check event names no terminal of its set");
@@ -360,14 +364,14 @@ impl Validator<'_> {
             for (condition_index, condition) in set.conditions.iter().enumerate() {
                 if condition.is_real() {
                     return self.fail(
-                        format!("{path}.conditions[{condition_index}]"),
+                        format_args!("{path}.conditions[{condition_index}]"),
                         "timing check condition must be a packed value",
                     );
                 }
                 self.validate_expr(
                     condition,
                     &[],
-                    &format!("{path}.conditions[{condition_index}]"),
+                    format_args!("{path}.conditions[{condition_index}]"),
                 )?;
             }
         }

@@ -969,7 +969,7 @@ impl Codegen<'_> {
             type_id: descriptor.id.0,
             members,
         };
-        crate::sim::ir::validate_native_type(&element, path)
+        crate::sim::ir::validate_native_type(&element, format_args!("{path}"))
             .map_err(|error| format!("record native leaves in `{path}`: {error:?}"))?;
         let ty = match self
             .model

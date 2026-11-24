@@ -160,7 +160,7 @@ pub(in crate::sim) fn native_leaf_type<'a>(
 /// representable nominal identities and bounded nesting and item counts.
 pub(in crate::sim) fn validate_native_type(
     element: &IrContainerElement,
-    path: &str,
+    path: IrPath<'_>,
 ) -> Result<(), IrValidationError> {
     // A whole queue or dynamic array is a native value only as a mailbox
     // message (SIM-017): a null slot plus one companion container.
@@ -180,7 +180,7 @@ pub(in crate::sim) fn validate_native_type(
 
 fn validate_native_level(
     element: &IrContainerElement,
-    path: &str,
+    path: IrPath<'_>,
     depth: usize,
 ) -> Result<(), IrValidationError> {
     if depth >= LLG_MAX_NATIVE_TYPE_DEPTH {
@@ -228,7 +228,7 @@ fn validate_native_level(
             for (index, member) in members.iter().enumerate() {
                 validate_native_level(
                     &member.element,
-                    &format!("{path}.members[{index}]"),
+                    format_args!("{path}.members[{index}]"),
                     depth + 1,
                 )?;
             }
@@ -255,7 +255,7 @@ fn validate_native_level(
                     ),
                 ));
             }
-            validate_native_level(item, &format!("{path}.element"), depth + 1)
+            validate_native_level(item, format_args!("{path}.element"), depth + 1)
         }
         // A queue, dynamic or associative member is a null slot; its
         // storage is a companion container of each value (SIM-007).
