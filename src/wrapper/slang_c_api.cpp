@@ -9199,9 +9199,7 @@ public:
                const std::unordered_map<std::string, uint64_t>& sourcePaths)
       : capture(capture), sources(sources), sourcePaths(sourcePaths),
         options(parseOptions.getOrDefault<parsing::PreprocessorOptions>()),
-        legacyProtect(parseOptions.getOrDefault<parsing::LexerOptions>().enableLegacyProtect),
-        builtIn(sources, allocator, diagnostics, probeOptions(options, false)),
-        predefined(sources, allocator, diagnostics, probeOptions(options, true)) {}
+        legacyProtect(parseOptions.getOrDefault<parsing::LexerOptions>().enableLegacyProtect) {}
 
   void define(const syntax::DefineDirectiveSyntax& syntax) {
     const std::string_view name = syntax.name.valueText();
@@ -9210,7 +9208,7 @@ public:
             syntax::SyntaxKind::MacroUsage)
       return;
     // A built-in or request define takes precedence until it is undefined.
-    if (!current.contains(name) && predefined.isDefined(name))
+    if (!current.contains(name) && isPredefined(name))
       return;
     current[name] = definition(syntax);
     version++;
@@ -9218,7 +9216,7 @@ public:
 
   void undef(parsing::Token name) {
     reference(name, name.valueText(), LLG_SLANG_MACRO_UNDEF);
-    if (name.isMissing() || builtIn.isDefined(name.valueText()))
+    if (name.isMissing() || isBuiltIn(name.valueText()))
       return;
     current[name.valueText()] = kUndefined;
     version++;
@@ -9328,7 +9326,21 @@ private:
     uint64_t expanded = 0;
   };
 
-  static Bag probeOptions(const parsing::PreprocessorOptions& options, bool predefines) {
+  // What the preprocessor starts a tree with, asked from a preprocessor. The
+  // first question makes it, so a capture without macros has none.
+  bool isBuiltIn(std::string_view name) {
+    if (!builtIn)
+      builtIn.emplace(sources, allocator, diagnostics, probeOptions(false));
+    return builtIn->isDefined(name);
+  }
+
+  bool isPredefined(std::string_view name) {
+    if (!predefined)
+      predefined.emplace(sources, allocator, diagnostics, probeOptions(true));
+    return predefined->isDefined(name);
+  }
+
+  Bag probeOptions(bool predefines) const {
     parsing::PreprocessorOptions probe;
     probe.languageVersion = options.languageVersion;
     if (predefines) {
@@ -9363,7 +9375,7 @@ private:
   uint64_t resolve(std::string_view name) {
     if (const auto it = current.find(name); it != current.end())
       return it->second;
-    return predefined.isDefined(name) ? kPredefined : kUndefined;
+    return isPredefined(name) ? kPredefined : kUndefined;
   }
 
   // The source range that spells the token; none for text a macro built.
@@ -9493,9 +9505,8 @@ private:
   const bool legacyProtect;
   BumpAllocator allocator;
   Diagnostics diagnostics;
-  // What the preprocessor starts a tree with, asked from the preprocessor.
-  parsing::Preprocessor builtIn;
-  parsing::Preprocessor predefined;
+  std::optional<parsing::Preprocessor> builtIn;
+  std::optional<parsing::Preprocessor> predefined;
   // Names whose state a directive of the current tree changed.
   std::unordered_map<std::string_view, uint64_t> current;
   // Counts changes of `current`.
@@ -9929,15 +9940,10 @@ public:
     if (directiveDepth == 0 && !token.isMissing() &&
         token.kind != parsing::TokenKind::EndOfFile)
       missingEndScope.reset();
-    if (macros) {
-      // A use written in the actual arguments of another use.
-      if (macroArgumentDepth != 0 && MacroCapture::isUse(token))
-        macros->use(token);
+    if (macros)
       addEditorToken(token, 0);
-    }
-    else {
+    else
       addToken(token, 0);
-    }
   }
 
   // The directives and skipped tokens before a token. The preprocessor acted
@@ -10783,6 +10789,9 @@ private:
     addToken(token, extraFlags);
     LlgSlangLexicalToken* record = index < tokens.size() ? &tokens[index] : nullptr;
     if (MacroCapture::isUse(token)) {
+      // A use written in the actual arguments of another use.
+      if (macroArgumentDepth != 0)
+        macros->use(token);
       // An undefined macro stays in the expansion of the use whose argument it
       // is written in, and replaces the record of the argument.
       if (!record)
