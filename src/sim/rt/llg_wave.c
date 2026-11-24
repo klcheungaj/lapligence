@@ -237,6 +237,10 @@ static char* wave_strdup(const char* s) {
 static void wave_format(char* line, size_t size, const char* fmt, va_list ap) {
     int32_t written = vsnprintf(line, size, fmt, ap);
     if (written < 0) line[0] = 0;
+    // A registered name carries the internal hierarchy separator; a message
+    // shows the path as the design writes it.
+    for (char* at = line; *at; at++)
+        if (*at == LLG_WAVE_HIER_SEP) *at = '.';
 }
 
 // Only the simulation thread prints; the writer thread leaves its report for
