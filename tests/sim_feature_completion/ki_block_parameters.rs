@@ -4,32 +4,82 @@ use super::{sim_041, sim_cli, sim_harness};
 
 const SUITE: &str = "feature_completion/ki_block_parameters";
 
-macro_rules! case {
-    ($test:ident, $name:literal) => {
-        #[test]
-        fn $test() {
-            sim_cli::run_case_backend_parity(
-                SUITE,
-                $name,
-                include_str!(concat!(
-                    "../fixtures/sim/feature_completion/ki_block_parameters/",
-                    $name,
-                    ".out"
-                )),
-                &[],
-                &[],
-            );
-        }
-    };
+#[test]
+fn value_kinds_of_block_parameters() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "kinds",
+        include_str!("../fixtures/sim/feature_completion/ki_block_parameters/kinds.out"),
+        &[],
+        &[],
+    );
 }
 
-case!(value_kinds_of_block_parameters, "kinds");
-case!(types_of_block_parameters, "types");
-case!(scopes_of_block_parameters, "scopes");
-case!(contexts_that_read_block_parameters, "contexts");
-case!(block_parameters_of_subroutines, "subroutines");
-case!(block_parameters_per_instance, "instances");
-case!(hierarchical_names_of_block_parameters, "hierarchy");
+#[test]
+fn types_of_block_parameters() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "types",
+        include_str!("../fixtures/sim/feature_completion/ki_block_parameters/types.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn scopes_of_block_parameters() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "scopes",
+        include_str!("../fixtures/sim/feature_completion/ki_block_parameters/scopes.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn contexts_that_read_block_parameters() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "contexts",
+        include_str!("../fixtures/sim/feature_completion/ki_block_parameters/contexts.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn block_parameters_of_subroutines() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "subroutines",
+        include_str!("../fixtures/sim/feature_completion/ki_block_parameters/subroutines.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn block_parameters_per_instance() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "instances",
+        include_str!("../fixtures/sim/feature_completion/ki_block_parameters/instances.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn hierarchical_names_of_block_parameters() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "hierarchy",
+        include_str!("../fixtures/sim/feature_completion/ki_block_parameters/hierarchy.out"),
+        &[],
+        &[],
+    );
+}
 
 #[test]
 fn block_parameters_of_the_2001_edition() {

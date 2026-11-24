@@ -17,21 +17,41 @@ fn sizes_of_string_expressions() {
 
 #[test]
 fn functions_of_dynamically_sized_types_are_rejected() {
-    for (case, location, name) in [
-        ("neg_sformatf", "8:33", "$sformatf"),
-        ("neg_method", "8:33", "toupper"),
-        ("neg_function", "8:33", "f"),
-        ("neg_nested", "8:37", "f"),
-        ("neg_queue", "8:33", "q"),
-    ] {
-        sim_cli::reject_case_with_id(
-            SUITE,
-            case,
-            "CODEGEN-002",
-            Some(location),
-            &format!("$bits cannot enclose `{name}`, which returns a dynamically sized type"),
-        );
-    }
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_sformatf",
+        "CODEGEN-002",
+        Some("8:33"),
+        "$bits cannot enclose `$sformatf`, which returns a dynamically sized type",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_method",
+        "CODEGEN-002",
+        Some("8:33"),
+        "$bits cannot enclose `toupper`, which returns a dynamically sized type",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_function",
+        "CODEGEN-002",
+        Some("8:33"),
+        "$bits cannot enclose `f`, which returns a dynamically sized type",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_nested",
+        "CODEGEN-002",
+        Some("8:37"),
+        "$bits cannot enclose `f`, which returns a dynamically sized type",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_queue",
+        "CODEGEN-002",
+        Some("8:33"),
+        "$bits cannot enclose `q`, which returns a dynamically sized type",
+    );
 }
 
 #[test]
