@@ -1,0 +1,9 @@
+[5] taken=1 got=0 put_done=0 depth=1 box=1
+[5] status holder=WAITING waiter=WAITING getter=WAITING putter=WAITING
+[6] status holder=KILLED waiter=KILLED getter=KILLED putter=KILLED sleeper=KILLED nested=KILLED
+[6] try_get key=0
+[6] box held 1, now 0
+[7] taken=1 got=0 put_done=0 woke=0 inbox=1
+[7] after put try_get key=1
+[7] finishing in a nested call
+final: taken=1 got=0 woke=0 inbox=1

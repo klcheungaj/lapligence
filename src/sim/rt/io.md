@@ -422,8 +422,8 @@ callbacks see the change (A19-D88).
 A model ends a frame
 before releasing the value scopes that hold its body locals, so
 cbEndOfFrame still reads them (A19-D78).
-Module paths and timing checks (VPI-T1) are unnamed `vpiModPath`/`vpiTchk`
-rows whose conns carry a role (`LLG_VPI_ROLE_*`: path input, output, data,
+Module paths (a row per input and output pair) and timing checks (VPI-T1) are
+unnamed `vpiModPath`/`vpiTchk` rows whose conns carry a role (`LLG_VPI_ROLE_*`: path input, output, data,
 condition, check reference/data term, argument, notifier, term condition),
 an edge and a condition index; terms are `SLOT_TERM` handles on the conn.
 Their `llg_vpi_timing_t` holds the declared delays or limits in ticks and

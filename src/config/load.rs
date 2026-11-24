@@ -120,15 +120,15 @@ fn read_config_text(path: &Path) -> io::Result<String> {
     })
 }
 
-/// One warning per configured source/include directory that does not exist on
-/// disk. Non-fatal: discovery simply finds nothing there until the directory
-/// appears.
+/// One warning per configured source directory that cannot be scanned and per
+/// include directory that does not exist on disk. Non-fatal: discovery simply
+/// finds nothing there until the directory appears.
 fn missing_directory_warnings(config: &LlgConfig) -> Vec<ConfigError> {
     let mut warnings = Vec::new();
     for dir in &config.sources.directories {
-        if !dir.exists() {
+        if let Some(obstacle) = paths::scan_obstacle(dir) {
             warnings.push(ConfigError::new(format!(
-                "configured source directory does not exist: {}",
+                "configured source directory {obstacle}: {}",
                 dir.display()
             )));
         }

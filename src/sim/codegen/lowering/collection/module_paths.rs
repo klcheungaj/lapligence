@@ -171,7 +171,7 @@ impl Codegen<'_> {
         let mut destination_index: HashMap<usize, usize> = HashMap::new();
         // Per destination, the declaration and terminal pair of each path,
         // for the SDF annotation targets.
-        let mut provenance: Vec<Vec<(NodeId, u32, u32)>> = Vec::new();
+        let mut provenance: Vec<Vec<PathPair>> = Vec::new();
         let mut conditions = Vec::new();
         for path in paths {
             let location = self.specify_location(path.node);
@@ -293,8 +293,11 @@ impl Codegen<'_> {
         for (destination, provenance) in destinations.iter_mut().zip(&mut provenance) {
             let kept = group_ifnone_paths(&mut destination.paths);
             let mut index = 0;
-            provenance.retain(|_| {
+            provenance.retain(|pair| {
                 index += 1;
+                if !kept[index - 1] {
+                    self.dropped_path_pairs.insert(*pair);
+                }
                 kept[index - 1]
             });
         }

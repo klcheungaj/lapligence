@@ -2191,15 +2191,18 @@ impl<'a> Codegen<'a> {
                 ..
             }) => {
                 let mut c = if let Some(fill) = self.source_fill_literal(node) {
-                    IrConst {
-                        bits: vec![(fill == 1) as u64],
-                        x: vec![(fill == 2) as u64],
-                        z: vec![(fill == 3) as u64],
-                        width: 1,
-                        signed: false,
-                        real: None,
-                        fill: Some(fill),
-                    }
+                    // The frontend has already given the literal the size
+                    // of its context (IEEE 1800-2009 5.7.1, 11.6.1) and
+                    // extended the value to it: an operator that takes its
+                    // size from its operands (a unary operator, a
+                    // conditional, the left operand of a shift or a power)
+                    // must see that size also where no enclosing assignment
+                    // refills the marker, as inside a size cast. The marker
+                    // stays for the contexts that refill a wider target.
+                    let mut constant = read_const_from(value, *size)?;
+                    constant.signed = false;
+                    constant.fill = Some(fill);
+                    constant
                 } else {
                     read_const_from(value, *size)?
                 };

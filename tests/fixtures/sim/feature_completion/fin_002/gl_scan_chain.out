@@ -6,10 +6,20 @@ vpi tb.dut.ff[2]: cell SDFFX1 ports=5 primitives=3 paths=1 checks=3
   primitive m: udp_mux2 inputs=3 terminals out=1 1 1 0
   primitive f: udp_dff inputs=3 terminals out=0 1 1 x
   primitive b: gate inputs=1 terminals out=0 0
-  path: 0.50 0.55
+  path tb.dut.ff[2].CK$Q: 0.50 0.55
   check limit: 0.40
   check limit: 0.70
   check limit: 0.10
+vpi tb.dut.v[0].m: cell MAJ3X1 ports=4 primitives=1 paths=3 checks=0
+  primitive u: udp_maj3 inputs=3 terminals out=1 1 1 0
+  path tb.dut.v[0].m.A$Y: 0.12 0.14
+  path tb.dut.v[0].m.B$Y: 0.12 0.14
+  path tb.dut.v[0].m.C$Y: 0.12 0.14
+vpi tb.dut.v[1].m: cell MAJ3X1 ports=4 primitives=1 paths=3 checks=0
+  primitive u: udp_maj3 inputs=3 terminals out=1 1 0 1
+  path tb.dut.v[1].m.A$Y: 0.20 0.25
+  path tb.dut.v[1].m.B$Y: 0.21 0.26
+  path tb.dut.v[1].m.C$Y: 0.22 0.27
 [45.000] q=1011 vote=1 model=1011 same=1
 [55.000] q=0110 vote=1 model=0110 same=1
 [60.000] notifiers xxx0

@@ -831,7 +831,7 @@ transcripts compared per time step; two of them are also dumped as VCD and
 FST. The gate-level features llg does not simulate reject with their
 diagnostics. Oracles and clauses are in the
 [fixture readme](fixtures/sim/feature_completion/fin_002/readme.md); its
-decisions are CS-D1 to CS-D5 in `sim_lrm_decisions`. Sanitizer and Clang
+decisions are CS-D1 to CS-D6 in `sim_lrm_decisions`. Sanitizer and Clang
 lanes use the settings of the sections below with the same filter.
 
 ### LRM decision cases
@@ -1557,6 +1557,35 @@ cargo nextest run --locked --bin llg_ls oversized
 cargo nextest run --locked --bin llg_ls response_budget
 ```
 
+### Adversarial corpora
+
+FIN-002 step 3 keeps bounded deterministic corpora in the default suite.
+Every corpus draws its inputs from `support/fuzz.rs` (one fixed seed, a
+stream per corpus name and case number), runs a fixed number of cases and
+names a failing input by `(corpus, case)`; a difference is minimized into a
+checked-in fixture or unit test, and the count in the tree stays as it is.
+
+| Corpus | Test | Checks |
+| --- | --- | --- |
+| IR tables | `--lib -E 'test(component_mutated_models)'` | A damaged model is rejected by `IrModel::validate` or lowered, optimized and emitted without a panic; a sample of the accepted models compiles. |
+| Capture stream | `--lib -E 'test(mutated_streams_are_snapshots)'` | Mutated headers and records through the sink trampolines give a snapshot or `InvalidNativeData`. |
+| Sources, `llg.toml`, SDF, command lines, JSON-RPC | `--test adversarial_inputs` | Library entries return a value or an error; `llg` exits 0, 1 or 2 and `llg_ls` 0 or 1; no panic, signal or hang. |
+| Run-time readers | `-E 'binary(sim_feature_completion) & test(fin_002b::runtime_readers)'` | One built model per optimizer mode runs every generated memory image and plusarg list to its last line with status 0. |
+| Expressions | `-E 'binary(sim_feature_completion) & test(fin_002b::expressions::)'` | Random integral expressions in five contexts equal an independent evaluator of the clause text, in both optimizer modes on the three value backends. |
+
+The failure matrix of FIN-002 step 4 is the table above the `failure_*` tests of
+`sim_feature_completion/fin_002b.rs` (`-E 'binary(sim_feature_completion) &
+test(fin_002b::failure)'`): one row and one test per failure and interface, with
+the fixture that shows its defined result on the three value backends in both
+optimizer modes; run it with the generated-runtime sanitizers as well.
+
+`LLG_FUZZ_CASES=<count>` or `<first>..<end>` runs a longer local campaign of
+the selected tests (the tests that require both outcomes of a corpus check
+that only for the checked-in range). The run-time readers are C: run their
+suite with the [generated-runtime sanitizers](#generated-runtime-sanitizers-gcc)
+for memory-safety evidence. Miri is not part of the toolchain, so the
+capture-stream receivers are covered by the Rust tests above only.
+
 ### One readable fixture
 
 ```sh
@@ -1648,7 +1677,10 @@ checks without GCC.
   `core.autocrlf=true`.
 - `runtime_strict_sources::runtime_units_have_no_maybe_uninitialized_use_under_heavy_inlining`:
   GCC `-Wmaybe-uninitialized` with heavy inlining over the compact units (GCC 14
-  or newer; about 15 s).
+  or newer; about 20 s). `LLG_TEST_HEAVY_INLINING_GCC` names the GCC of this pass
+  alone (empty is unset; default: the host GCC) and turns its skip into a failure
+  when that compiler cannot run the pass; one CI job sets it
+  ([CI compilers](ci.md#triggers-and-pipelines)).
 
 ```sh
 scripts/run-tests.sh --test-work-dir /build -E 'test(/^runtime_strict_sources::/) | test(/vendor_patches::/)'

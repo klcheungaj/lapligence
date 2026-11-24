@@ -4,6 +4,138 @@ Open design limitations that are understood but deliberately deferred. Each
 entry states the symptom, the cause, the intended direction and how to
 reproduce it. Remove an entry when the fix lands.
 
+## Deeply nested source overflows the stack
+
+**Status:** found by FIN-002 step 3 (malformed and extreme sources); not
+fixed. A legal design with a long operator chain or deep generate nesting
+ends `llg` with a stack overflow abort instead of a result or a diagnostic.
+
+### Symptom
+
+`llg` (and, for the frontend part, any tool that analyses the file) ends
+with `thread 'main' has overflowed its stack` and `SIGABRT`. Measured with
+the unoptimized `quick` profile on Linux (8 MiB main stack); an optimized
+build has smaller frames and fails later, at depths that were not measured:
+
+| Input | `--lint-only` | generation |
+| --- | --- | --- |
+| `a + a + ... + a`, 300 to 10,000 terms | passes | aborts from 300 terms |
+| the same with 30,000 terms | aborts in the frontend | aborts |
+| `if (1) begin ... end` generate blocks nested 200 deep | passes | passes |
+| the same nested 500 to 5,000 deep | passes | aborts |
+
+Constructs the frontend's parser nests recursively (parentheses, `begin`
+blocks, concatenations, conditional operators) are refused with
+`ParseTreeTooDeep` and are not affected.
+
+### Cause
+
+The frontend parses a left-associative operator chain in a loop, so its
+depth limit does not count the chain, but the tree it builds is as deep as
+the chain is long, and every later traversal recurses over it:
+`BinaryExpression::fromSyntax` in the frontend, and in llg
+`Codegen::lower_expr` (the first to overflow), validation, the optimizer
+passes and emission. Nested generate blocks recurse through scope lowering
+in the same way. Nothing bounds the depth and nothing sizes the stack for
+it.
+
+### Intended direction
+
+Two parts, neither of which is enough alone. A depth limit with a located
+error at the first layer that can see it: the wrapper, by an iterative walk
+of each syntax tree before elaboration (or a counter in the frontend's
+operator loop, as a tracked patch), with the limit a named constant well
+above generated code in practice. And a stack sized for that limit in every
+build profile: `llg` and the language server's analysis threads run the
+pipeline on a thread with a fixed large reservation (a named constant; the
+memory guard must not count the reservation). A test at the limit in the
+unoptimized profile then proves the pair.
+
+### Reproduce
+
+```sh
+python3 -c "print('module tb; logic a; initial \$display(a' + ' + a' * 2000 + '); endmodule')" > chain.sv
+llg --top tb --gen-only chain.sv
+```
+
+## Out-of-range select of a two-state vector reads x until it is converted
+
+**Status:** found by FIN-002 step 3 (expression corpus); a decision is
+needed, nothing was changed.
+
+### Symptom
+
+`bit [32:0] v; int i = 40;` then `v[i]`, `v[i +: 4]` or a select with an
+unknown index reads x, as 11.5.1 says for a vector ("If the bit-select is
+out of the address bounds or the bit-select is x or z, then the value
+returned by the reference shall be x"). The select has a two-state type, so
+the first implicit conversion to a two-state type turns the x into 0:
+`$display("%b", v[i])` prints `x`, `$display("%b", 4'b0001 + v[i])` prints
+`0001`, and `r = 4'b0001 + v[i]` with a four-state `r` gives `xxxx`. The
+industry-standard behaviour is 0 in every context, which is what 7.4.6
+gives for an array of two-state elements ("the default uninitialized value
+for the array element type") and what decision S07-D7 states for `bit`.
+
+### Cause
+
+The run-time select functions return x for every vector; the state domain
+of the source is applied only by the conversions the frontend inserts.
+
+### Intended direction
+
+Decide between the two clauses (the trusted simulator reads 0). For 0, the
+lowering marks a select of a two-state vector with a variable index as
+two-state, so no hot run-time function changes; decision S07-D7 and its
+portable case gain a two-state vector. The expression corpus
+(`fin_002b::expressions`) reads two-state vectors only at valid positions
+until then.
+
+### Reproduce
+
+```systemverilog
+module tb;
+  bit [32:0] v; int i; logic [3:0] r;
+  initial begin
+    v = '1; i = 40; #1;
+    $display("%b %b", v[i], 4'b0001 + v[i]);
+    r = 4'b0001 + v[i]; $display("%b", r);
+    $finish;
+  end
+endmodule
+```
+
+## IR validation leaves one container invariant to the emitter
+
+**Status:** found by FIN-002 step 3 (mutated IR models); low severity, not
+fixed. Lowering never produces such a model.
+
+### Symptom
+
+An `IrModel` whose container table is damaged so that a class property
+container (`class_field` without a receiver) is used by a process or a
+function that is not a method of that class passes `IrModel::validate`. The
+emitter then refuses it with `class container property used outside its
+class methods`: a clean error, no panic and no C text.
+
+### Cause
+
+Container references are checked at each statement and expression kind that
+holds one; none of those checks knows whether the enclosing function has an
+implicit receiver.
+
+### Intended direction
+
+One container-reference check in the validation context, which knows the
+enclosing function, used by every kind that names a container.
+`ir_mutation_tests` lists this refusal as the only known one; any other
+emitter refusal of a validated model fails it.
+
+### Reproduce
+
+```sh
+cargo nextest run --lib -E 'test(component_mutated_models)'   # cases 728, 1924, 2139, 2205 with LLG_FUZZ_CASES=0..3000
+```
+
 ## Declared net views retain per-bit lowering bindings
 
 **Status:** electrical groups, continuous writes and generated declared-view
@@ -3422,14 +3554,6 @@ with no error status, as for a name that denotes nothing (S42-D11):
   inout port between two nets is always one simulated net. The delays of delayed timing
   check signals stay fixed, as for SDF. There are no delay device or delay
   term objects (37.41);
-- a module path declaration with several inputs or outputs
-  (`(A, B, C *> Y)`) is one `vpiModPath` object (decision A19-D9), named
-  after its first input and output: `vpi_get_delays` reads the delays of
-  that first pair, so delays an SDF file annotated to the other inputs
-  (`IOPATH B Y`) are simulated but not readable through VPI. Some
-  simulators give one path object per input and output pair. Declare the
-  pairs as separate paths to read each
-  ([fin_002](../tests/fixtures/sim/feature_completion/fin_002/readme.md));
 - `vpiTchkTerm` and `vpiPathTerm` handles have no own source location;
 - `vpi_handle_multi` with a type other than `vpiInterModPath` (no
   `vpiPortInst` objects) and the routines `vpi_get_data`/`vpi_put_data` (no

@@ -127,6 +127,66 @@ fn lsp_stdio_reports_a_config_that_selects_no_files() {
     client.shutdown();
 }
 
+/// A configured source directory that does not exist is reported once on the
+/// config file and hides nothing of the directories that do; its files join
+/// once it exists.
+#[test]
+fn lsp_stdio_discovers_beside_a_missing_source_directory() {
+    let fixture = FixtureTree::new();
+    let root = fixture.root("missing-directory");
+    let src = root.join("src");
+    fs::create_dir_all(&src).unwrap();
+    let top = src.join("top.sv");
+    let text = "module top; first u1(); second u2(); endmodule\n";
+    fs::write(&top, text).unwrap();
+    fs::write(src.join("parts.sv"), "module first; endmodule\n").unwrap();
+    let config = root.join(CONFIG_FILE);
+    fs::write(
+        &config,
+        "schema_version = 1\n[sources]\ndirectories = [\"gone\", \"src\"]\n",
+    )
+    .unwrap();
+    let unknown = |params: &Value, name: &str| {
+        let quoted = format!("unknown module '{name}'");
+        params["diagnostics"].as_array().is_some_and(|diagnostics| {
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains(&quoted))
+            })
+        })
+    };
+
+    let mut client = LspProcess::spawn(&fixture.root);
+    client
+        .initialize(&[("missing-directory", &root)], default_init_options())
+        .unwrap();
+    let reported = wait_for_diagnostics(&mut client, &file_uri(&config), |_| true);
+    let diagnostics = reported["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 1, "{reported}");
+    assert_eq!(diagnostics[0]["severity"], 2);
+    let message = diagnostics[0]["message"].as_str().unwrap();
+    assert!(
+        message.contains("configured source directory does not exist") && message.contains("gone"),
+        "{message}"
+    );
+
+    client.open(&top, text).unwrap();
+    let opened = wait_for_diagnostics(&mut client, &file_uri(&top), |params| {
+        unknown(params, "second")
+    });
+    assert!(!unknown(&opened, "first"), "{opened}");
+
+    let late = root.join("gone").join("late.sv");
+    fs::create_dir_all(root.join("gone")).unwrap();
+    fs::write(&late, "module second; endmodule\n").unwrap();
+    client.send_watch_event(&late, 1).unwrap();
+    wait_for_diagnostics(&mut client, &file_uri(&top), |params| {
+        !unknown(params, "second")
+    });
+    client.shutdown();
+}
+
 #[test]
 fn lsp_stdio_lints_standalone_files_without_a_workspace_folder() {
     let cwd_fixture = FixtureTree::new();

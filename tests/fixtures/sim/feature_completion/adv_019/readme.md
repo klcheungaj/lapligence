@@ -449,8 +449,8 @@ check, `vpiModule` is the instance).
   `vpiModPathIn`, `vpiModPathOut` and `vpiModDataPathIn` with
   `vpiDirection`, `vpiEdge` and `vpiExpr`, the path's `vpiCondition`,
   `vpiPathType`, `vpiPolarity`, `vpiDataPolarity` and
-  `vpiModPathHasIfNone`. A path is named after its instance, first input
-  and first output (`tb.u.a$y`) and is not found by that name (decision
+  `vpiModPathHasIfNone`. A path is named after its instance, input
+  and output (`tb.u.a$y`) and is not found by that name (decision
   A19-D9). `(a +=> y)` is a parallel path (`type=2`) with
   polarity `vpiPositive`, which is also its data polarity (no data source);
   `(posedge clk => (q +: d))` has edge `vpiPosedge` (`0x0d`) on its input,

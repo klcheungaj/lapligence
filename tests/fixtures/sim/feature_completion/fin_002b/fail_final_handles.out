@@ -1,0 +1,7 @@
+before: inbox=1 bounded=1 plain=1 items=1 taken=7
+final: inbox=1 bounded=1 plain=1 items=1
+final: inbox=2 taken=7 served=0
+final: bounded gave 1, put again 1, full 0
+final: keys 1 0
+final: item 4 left 0
+final: late 11 num 1

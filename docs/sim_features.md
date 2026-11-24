@@ -3114,8 +3114,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   ends a named block, named fork or task, or a block enclosing a registered
   system task call; `cbAssign`/`cbDeassign` are refused (no procedural
   `assign`/`deassign`);
-  `vpiModPath` and `vpiTchk` objects iterate from instances with their
-  terms, edges, conditions, path type, polarities, `vpiModPathHasIfNone`,
+  `vpiModPath` objects (one per input and output pair of a path
+  declaration) and `vpiTchk` objects iterate from instances with their terms, edges, conditions, path type, polarities, `vpiModPathHasIfNone`,
   `vpiTchkType` and notifier (37.35, 37.36; decisions A19-D9, A19-D10);
   `vpi_get_delays`/`vpi_put_delays` (38.10, 38.32) read and write path,
   timing check and primitive delays with every `mtm_flag`, `append_flag`

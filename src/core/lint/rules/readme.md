@@ -36,8 +36,11 @@ See [shared lint](../readme.md).
   selects included) and a structure member or class property read as the width
   of their own packed type; rows, records, reals, strings and handles have none.
   The target must be a signal or a packed select of one, so `m[1] = w` is not
-  compared. `comparison-width-mismatch` and `wide-index` skip element and member
-  operands (`ElementWidths`).
+  compared: by decision, since every `mem[i] = 0` would warn.
+  `comparison-width-mismatch` and `wide-index` skip element and member operands
+  (`ElementWidths`). For comparisons this is a decision too: measured over the
+  fixtures, comparing elements added 334 warnings, almost all of an element
+  against a 32-bit literal (`m[i] == 5`).
 - `multi-driver` (`multidriver.rs`): writes resolve through unpacked element
   selects (`collect_element_writes`); a bit range inside an element still counts
   as disjoint. Each assignment of a checker procedure drives only its constant

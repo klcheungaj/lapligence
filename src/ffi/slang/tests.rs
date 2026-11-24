@@ -2311,3 +2311,134 @@ fn time_scale_parses_the_timescale_directive_syntax() {
         [3, 10, 4, 1]
     );
 }
+
+/// FIN-002 step 3b: a capture stream whose header or records disagree with
+/// the ABI ends in a snapshot or in `InvalidNativeData`, through the real
+/// sink trampolines: stale versions, reserved flag bits, counts that differ
+/// from the delivered tables, tags, identifiers and windows out of range,
+/// a null string with a length and a name that is not UTF-8. Pointer and
+/// length pairs stay within their storage: a length beyond the storage is
+/// outside the contract of the C side and cannot be detected here.
+#[test]
+fn mutated_streams_are_snapshots_or_invalid_native_data() {
+    use crate::fuzz::{self, Fuzz};
+
+    let names = b"top.sv";
+    let not_text = [0xffu8, 0xfe];
+    let value = |fuzz: &mut Fuzz| match fuzz.below(7) {
+        0 => 0,
+        1 => 1,
+        2 => u64::MAX,
+        3 => INVALID_ID,
+        4 => u64::from(u32::MAX),
+        5 => fuzz.below(512),
+        _ => fuzz.word(),
+    };
+    let (mut accepted, mut rejected) = (0u32, 0u32);
+    for case in fuzz::cases(6000) {
+        let mut fuzz = Fuzz::new("ffi/stream", case);
+        let file = RawFile {
+            id: 0,
+            name: RawString {
+                data: names.as_ptr(),
+                len: names.len() as u64,
+            },
+            byte_len: 1,
+        };
+        let mut node = raw_semantic_node(0);
+        for _ in 0..fuzz.below(4) {
+            let raw = value(&mut fuzz);
+            match fuzz.below(23) {
+                0 => node.id = raw,
+                1 => node.parent_id = raw,
+                2 => node.kind = raw as u32,
+                3 => node.subkind = raw as u32,
+                4 => node.operation = raw as u32,
+                5 => node.flags = raw as u32,
+                6 => node.type_id = raw,
+                7 => node.constant_id = raw,
+                8 => node.target_id = raw,
+                9 => node.edge_start = raw,
+                10 => node.edge_count = raw,
+                11 => node.time_unit = raw as u32,
+                12 => node.time_unit_magnitude = raw as u32,
+                13 => node.time_precision_unit = raw as u32,
+                14 => node.time_precision_magnitude = raw as u32,
+                15 => node.strength0 = raw as u32,
+                16 => node.strength1 = raw as u32,
+                17 => node.auxiliary = raw,
+                18 => node.assertion_range_min = raw as u32,
+                19 => node.assertion_range_max = raw as u32,
+                20 => node.assertion_repetition_kind = raw as u32,
+                21 => {
+                    node.name = RawString {
+                        data: std::ptr::null(),
+                        len: raw,
+                    }
+                }
+                _ => {
+                    node.detail = RawString {
+                        data: not_text.as_ptr(),
+                        len: not_text.len() as u64,
+                    }
+                }
+            }
+        }
+        let mut tables = Tables {
+            files: vec![file],
+            semantic_nodes: vec![node],
+            ..Tables::default()
+        };
+        if fuzz.chance(1, 8) {
+            tables.semantic_nodes.clear();
+        }
+        let mut header = tables.header();
+        for _ in 0..fuzz.below(3) {
+            let raw = value(&mut fuzz);
+            match fuzz.below(12) {
+                0 => header.abi_version = raw as u32,
+                1 => header.flags = raw as u32,
+                2 => header.file_count = raw,
+                3 => header.semantic_node_count = raw,
+                4 => header.semantic_edge_count = raw,
+                5 => header.constant_count = raw,
+                6 => header.value_word_count = raw,
+                7 => header.type_count = raw,
+                8 => header.diagnostic_count = raw,
+                9 => header.lexical_token_count = raw,
+                10 => header.udp_row_count = raw,
+                _ => header.attribute_count = raw,
+            }
+        }
+        let mut builder = StreamBuilder::new(Limits::default());
+        let sink = sink_for(&mut builder);
+        let status = drive(&sink, &header, &tables, 1 + fuzz.index(4));
+        let result = match builder.take_error() {
+            Some(error) => {
+                assert_eq!(status, SINK_ABORT, "case {case}");
+                Err(error)
+            }
+            None => {
+                assert_eq!(status, SINK_CONTINUE, "case {case}");
+                builder.finish().map(|_| ())
+            }
+        };
+        match result {
+            Ok(()) => accepted += 1,
+            Err(error) => {
+                assert_eq!(
+                    error.kind(),
+                    SlangErrorKind::InvalidNativeData,
+                    "case {case}: {error}"
+                );
+                rejected += 1;
+            }
+        }
+    }
+    if fuzz::cases(6000) == (0..6000) {
+        assert!(
+            accepted > 100 && rejected > 1000,
+            "{accepted} accepted, {rejected} rejected"
+        );
+    }
+}

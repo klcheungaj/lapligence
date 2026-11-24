@@ -193,7 +193,8 @@ also allows one driver site. Variable destinations fail with their location. A c
 instance scope (`IrModulePathSet::conditions`); edges map to `IrPathEdge`;
 paths with exactly an `ifnone` path's terminals share a group, an
 unconditional duplicate of an `ifnone` path and all but the last duplicate
-`ifnone` are dropped (A8-D3). `PATHPULSE$` limits (first input and output
+`ifnone` are dropped (A8-D3; `dropped_path_pairs`, which get no VPI path
+object, A19-D9). `PATHPULSE$` limits (first input and output
 terminal, else module-wide; error below reject lowers reject; ticks through
 `path_limit_ticks`) attach per declaration, and pulse-style declarations set
 per-bit destination flags, first declaration of each kind winning.

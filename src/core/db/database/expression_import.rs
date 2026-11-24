@@ -530,10 +530,20 @@ impl<'a> SourceLines<'a> {
     }
 
     pub(super) fn position(&mut self, offset: usize) -> Result<(u32, u32), DbError> {
-        if offset > self.text.len() || !self.text.is_char_boundary(offset) {
+        if offset > self.text.len() {
             return Err(DbError::InvalidSnapshot(
-                "semantic range is not on a source character boundary".into(),
+                "semantic range is beyond its source text".into(),
             ));
+        }
+        // The frontend lexes a character it does not accept byte by byte, so
+        // the range of a rejected construct can end inside such a character
+        // (`ck\u{fffd} = 1'b0;`). That is the user's text, not a malformed
+        // snapshot: the position is the character's own, which keeps every
+        // consumer on character boundaries and the rest of the design
+        // analysable.
+        let mut offset = offset;
+        while !self.text.is_char_boundary(offset) {
+            offset -= 1;
         }
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -771,7 +781,8 @@ mod source_position_tests {
             assert_eq!(lines.position(offset).unwrap(), expected);
             assert_eq!(lines.position(offset).unwrap(), expected);
         }
-        assert!(lines.position(4).is_err());
+        // An offset inside a character has the character's position.
+        assert_eq!(lines.position(4).unwrap(), (2, 1));
         assert!(lines.position(11).is_err());
         assert_eq!(SourceLines::new("").position(0).unwrap(), (1, 1));
         let text = format!(
@@ -779,7 +790,11 @@ mod source_position_tests {
             "x".repeat(SOURCE_POSITION_CHECKPOINT_BYTES - 1)
         );
         let mut lines = SourceLines::new(&text);
-        assert!(lines.position(SOURCE_POSITION_CHECKPOINT_BYTES).is_err());
+        // The checkpoint offset is inside `é`, whose position it has.
+        assert_eq!(
+            lines.position(SOURCE_POSITION_CHECKPOINT_BYTES).unwrap(),
+            (1, SOURCE_POSITION_CHECKPOINT_BYTES as u32)
+        );
         assert_eq!(
             lines
                 .position(SOURCE_POSITION_CHECKPOINT_BYTES + 1)

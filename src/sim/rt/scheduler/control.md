@@ -25,6 +25,15 @@ finishing, and the run ends through `llg_rt_run_finals` and the exit status
 as from a process (S22-D9). A failure an initializer marks without finishing
 the run (a coverage option error) leaves start and the run going.
 
+End of a run with final procedures (CS-D6): `llg_rt_run` releases the
+scheduler state before `llg_rt_run_finals`, as without them, but the objects a
+final procedure can still name through model storage stay: mailboxes (their
+waiter lists emptied, their messages kept), semaphores and dynamically
+created events keep their registries across that cleanup and are released by
+the `llg_rt_cleanup` that follows the final procedures (model close). No
+process exists while final procedures run, so nothing they put or trigger is
+delivered.
+
 Semaphore service order (AB-N4) and suspended waiters (AB-N1):
 `scheduler/wait_queues.c` and `process_control.c` comments.
 Mailboxes retain bounded/unbounded FIFO/peek rules and nominal typed identity

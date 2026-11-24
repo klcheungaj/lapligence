@@ -7,14 +7,93 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::{Mutex, OnceLock};
 
+/// The environment variable `name`; an empty value is unset.
+fn environment(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|value| !value.is_empty())
+}
+
 /// Compiler for tests that compile runtime C directly: `$LLG_CC`, then `$CC`
 /// (empty values are unset), then the generated-model default (MSVC `cl` on
 /// Windows, `cc` elsewhere), so direct probes use the same compiler as models.
 pub(crate) fn host_c_compiler() -> String {
     ["LLG_CC", "CC"]
         .into_iter()
-        .find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()))
+        .find_map(environment)
         .unwrap_or_else(|| llg::sim::build::DEFAULT_C_COMPILER.to_owned())
+}
+
+/// A GNU GCC driver: the host compiler when it is GCC, else `gcc` on PATH
+/// when that is GCC (macOS `gcc` is Apple Clang). None on Windows.
+pub(crate) fn gcc_driver() -> Option<String> {
+    if cfg!(windows) {
+        return None;
+    }
+    let host = host_c_compiler();
+    if is_gnu_gcc(&host) {
+        return Some(host);
+    }
+    (c_compiler_available("gcc") && is_gnu_gcc("gcc")).then(|| "gcc".to_owned())
+}
+
+/// The environment variable naming the GCC of the heavier-inlining
+/// maybe-uninitialized pass, which needs a newer GCC than many hosts' default.
+/// No other test and no model build reads it.
+pub(crate) const HEAVY_INLINING_GCC_VARIABLE: &str = "LLG_TEST_HEAVY_INLINING_GCC";
+
+/// The oldest GCC the heavier-inlining pass runs under: GCC 13 reports false
+/// positives for flags like these (`docs/cross_platform.md`, Compiler
+/// versions).
+const HEAVY_INLINING_MIN_GCC: u32 = 14;
+
+/// The GCC of the heavier-inlining pass: `$LLG_TEST_HEAVY_INLINING_GCC` (empty
+/// is unset), else [`gcc_driver`]. `Ok(None)` after printing why the host has
+/// no usable one; `Err` when the variable names an unusable one, since the
+/// caller asked for the pass.
+pub(crate) fn heavy_inlining_gcc() -> Result<Option<String>, String> {
+    let requested = environment(HEAVY_INLINING_GCC_VARIABLE);
+    let selected = select_heavy_inlining_gcc(requested, gcc_driver, gnu_gcc_major);
+    match selected {
+        Ok(gcc) => Ok(Some(gcc)),
+        Err(Unusable::Requested(reason)) => Err(reason),
+        Err(Unusable::Host(reason)) => {
+            eprintln!("SKIP: {reason}");
+            Ok(None)
+        }
+    }
+}
+
+/// Why [`select_heavy_inlining_gcc`] found no GCC.
+#[derive(Debug, PartialEq)]
+pub(crate) enum Unusable {
+    Requested(String),
+    Host(String),
+}
+
+/// The selection of [`heavy_inlining_gcc`], with `major` the GNU GCC major
+/// version of a compiler.
+pub(crate) fn select_heavy_inlining_gcc(
+    requested: Option<String>,
+    host: impl FnOnce() -> Option<String>,
+    major: impl Fn(&str) -> Option<u32>,
+) -> Result<String, Unusable> {
+    let explicit = requested.is_some();
+    let gcc = requested.or_else(host);
+    let found = gcc.as_deref().and_then(major);
+    if let (Some(gcc), Some(HEAVY_INLINING_MIN_GCC..)) = (&gcc, found) {
+        return Ok(gcc.clone());
+    }
+    let found = found.map_or_else(|| "no GNU GCC".to_owned(), |major| format!("GCC {major}"));
+    let needs = format!(
+        "the heavier-inlining maybe-uninitialized pass needs GCC {HEAVY_INLINING_MIN_GCC} or newer"
+    );
+    Err(match gcc {
+        Some(gcc) if explicit => Unusable::Requested(format!(
+            "{needs}, but ${HEAVY_INLINING_GCC_VARIABLE} names `{gcc}` (found {found})"
+        )),
+        _ => Unusable::Host(format!(
+            "{needs} (found {found}); ${HEAVY_INLINING_GCC_VARIABLE} can name one"
+        )),
+    })
 }
 
 /// True when `compiler` takes MSVC-style options (`cl`, `clang-cl`), judged
