@@ -13,14 +13,14 @@ typedef struct {
     int values[16];
 } model_t;
 
-void* c_model_new(int depth)
+DPI_DLLESPEC void* c_model_new(int depth)
 {
     model_t* model = calloc(1, sizeof(model_t));
     if (model) model->depth = depth > 16 ? 16 : depth;
     return model;
 }
 
-int c_model_push(void* handle, int value)
+DPI_DLLESPEC int c_model_push(void* handle, int value)
 {
     model_t* model = handle;
     if (model->latched == model->depth) {
@@ -32,7 +32,7 @@ int c_model_push(void* handle, int value)
     return 1;
 }
 
-int c_model_pop(void* handle, int* value)
+DPI_DLLESPEC int c_model_pop(void* handle, int* value)
 {
     model_t* model = handle;
     if (model->latched == 0) {
@@ -47,14 +47,14 @@ int c_model_pop(void* handle, int* value)
 }
 
 /* The fill level both requests of one clock edge are decided from. */
-int c_model_latch(void* handle)
+DPI_DLLESPEC int c_model_latch(void* handle)
 {
     model_t* model = handle;
     model->latched = model->count;
     return model->count;
 }
 
-void c_model_free(void* handle)
+DPI_DLLESPEC void c_model_free(void* handle)
 {
     free(handle);
 }

@@ -9,13 +9,13 @@ extern int sv_delay(int ticks);
 
 static int acknowledged;
 
-int c_request(int action, int id)
+DPI_DLLESPEC int c_request(int action, int id)
 {
     svSetScope(svGetScopeFromName("tb"));
     return action == 0 ? sv_cancel(id) : sv_kill(id);
 }
 
-int c_sleep(int ticks, int* slept)
+DPI_DLLESPEC int c_sleep(int ticks, int* slept)
 {
     svSetScope(svGetScopeFromName("tb"));
     if (sv_delay(ticks)) {
@@ -28,7 +28,7 @@ int c_sleep(int ticks, int* slept)
     return 0;
 }
 
-int c_acknowledged(void)
+DPI_DLLESPEC int c_acknowledged(void)
 {
     return acknowledged;
 }
