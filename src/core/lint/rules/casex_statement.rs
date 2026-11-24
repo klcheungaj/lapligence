@@ -1,7 +1,5 @@
 //! `casex-statement` — every `casex` in executable procedural bodies.
 
-use std::collections::HashSet;
-
 use crate::core::db::{CaseKind, Db, NodeId, NodeKind, StmtKind};
 use crate::core::lint::rules::analysis::all_design_nodes;
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
@@ -22,7 +20,6 @@ impl LintRule for CasexStatementRule {
     fn check(&self, ctx: &LintCtx<'_>) -> Vec<LintDiag> {
         let db = ctx.db;
         let mut out = Vec::new();
-        let mut diagnostics_seen = HashSet::new();
 
         for case in all_design_nodes(db) {
             let NodeKind::Stmt(StmtKind::Case { case_type, .. }) = db.node_kind(case) else {
@@ -36,14 +33,6 @@ impl LintRule for CasexStatementRule {
             let col = node.col.max(1);
             let message =
                 "casex treats X and Z bits as wildcards; prefer case or casez".to_string();
-            if !diagnostics_seen.insert((
-                node.file().map(str::to_owned),
-                line,
-                col,
-                message.clone(),
-            )) {
-                continue;
-            }
             out.push(LintDiag {
                 rule: self.id().to_string(),
                 logical: None,

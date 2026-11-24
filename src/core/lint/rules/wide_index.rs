@@ -27,8 +27,6 @@
 //! Their formal is an `int`, but a wider actual is not converted: the call is
 //! invalid (it changes nothing or returns the default), like the select form.
 
-use std::collections::HashSet;
-
 use crate::core::db::{ArrayKind, Db, ExprKind, NodeId, NodeKind, TypeShape};
 use crate::core::lint::rules::analysis::{all_nodes, expr_width, ElementWidths};
 use crate::core::lint::rules::select_range::eval_integer;
@@ -84,21 +82,18 @@ impl LintRule for WideIndexRule {
     fn check(&self, ctx: &LintCtx<'_>) -> Vec<LintDiag> {
         let db = ctx.db;
         let mut out = Vec::new();
-        let mut seen: HashSet<(Option<String>, u32, u32, String)> = HashSet::new();
         let mut report = |node: NodeId, message: String| {
             let n = db.node(node);
             let (line, col) = (n.line.max(1), n.col.max(1));
-            if seen.insert((n.file().map(str::to_owned), line, col, message.clone())) {
-                out.push(LintDiag {
-                    rule: "wide-index".to_string(),
-                    logical: None,
-                    severity: LintSeverity::Warning,
-                    file: n.file().map(str::to_owned),
-                    line,
-                    col,
-                    message,
-                });
-            }
+            out.push(LintDiag {
+                rule: "wide-index".to_string(),
+                logical: None,
+                severity: LintSeverity::Warning,
+                file: n.file().map(str::to_owned),
+                line,
+                col,
+                message,
+            });
         };
         for id in all_nodes(db) {
             match db.node_kind(id) {

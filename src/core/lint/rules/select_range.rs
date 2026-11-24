@@ -33,7 +33,6 @@ impl LintRule for OutOfRangeSelectRule {
         let ids = all_nodes(db);
         let nested_array_selects = nested_array_element_selects(db, &ids);
         let mut visited = HashSet::new();
-        let mut diagnostics_seen = HashSet::new();
         let mut out = Vec::new();
 
         for id in ids {
@@ -63,18 +62,9 @@ impl LintRule for OutOfRangeSelectRule {
                 let line = node.line.max(1);
                 let col = node.col.max(1);
                 let message = violation.message();
-                // Include the rendered violation evidence in the key.  Two
-                // parameterized instances can share a source location while
-                // having different elaborated bounds; those findings must
-                // remain visible to the caller.
-                if !diagnostics_seen.insert((
-                    node.file().map(str::to_owned),
-                    line,
-                    col,
-                    message.clone(),
-                )) {
-                    continue;
-                }
+                // The message carries the elaborated bounds: two parameterized
+                // instances can share a source location while having different
+                // ones, and both findings must remain visible to the caller.
                 out.push(LintDiag {
                     rule: "out-of-range-select".to_string(),
                     logical: None,
@@ -509,10 +499,13 @@ mod tests {
 
     fn rule_diags(sv: &str, top: &str) -> Vec<LintDiag> {
         let (db, model) = build_design(sv, top);
-        OutOfRangeSelectRule.check(&LintCtx {
-            db: &db,
-            model: &model,
-        })
+        crate::core::lint::distinct_findings(
+            &OutOfRangeSelectRule,
+            &LintCtx {
+                db: &db,
+                model: &model,
+            },
+        )
     }
 
     #[test]

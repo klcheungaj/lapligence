@@ -7,8 +7,6 @@
 //! relational operations form a boundary because the assignment result is
 //! then compared intentionally rather than consumed directly as truth.
 
-use std::collections::HashSet;
-
 use crate::core::db::{Db, ExprKind, NodeId, NodeKind, Operation, StmtKind};
 use crate::core::lint::rules::analysis::all_design_nodes;
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
@@ -57,7 +55,6 @@ impl LintRule for AssignmentInConditionRule {
         }
 
         let mut out = Vec::new();
-        let mut diagnostics_seen = HashSet::new();
         for assignment in assignments {
             let node = db.node(assignment);
             let line = node.line.max(1);
@@ -65,14 +62,6 @@ impl LintRule for AssignmentInConditionRule {
             let message =
                 "assignment expression is used as a truth predicate; use an explicit comparison if intended"
                     .to_string();
-            if !diagnostics_seen.insert((
-                node.file().map(str::to_owned),
-                line,
-                col,
-                message.clone(),
-            )) {
-                continue;
-            }
             out.push(LintDiag {
                 rule: self.id().to_string(),
                 logical: None,

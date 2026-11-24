@@ -6,8 +6,6 @@
 //! signal change.  Special `always_comb`, explicit event lists, and bodies
 //! containing an unresolved or opaque construct are deliberately excluded.
 
-use std::collections::HashSet;
-
 use crate::core::db::{AlwaysKind, Db, ExprKind, NodeId, NodeKind, ProcessKind, StmtKind};
 use crate::core::lint::rules::analysis::{all_nodes, collect_reads, collect_writes, is_signal};
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
@@ -28,7 +26,6 @@ impl LintRule for EmptyImplicitSensitivityRule {
     fn check(&self, ctx: &LintCtx<'_>) -> Vec<LintDiag> {
         let db = ctx.db;
         let mut out = Vec::new();
-        let mut diagnostics_seen = HashSet::new();
 
         for process in all_nodes(db) {
             let NodeKind::Process {
@@ -55,14 +52,6 @@ impl LintRule for EmptyImplicitSensitivityRule {
             let line = node.line.max(1);
             let col = node.col.max(1);
             let message = "always @* writes signals but has no resolved signal reads".to_string();
-            if !diagnostics_seen.insert((
-                node.file().map(str::to_owned),
-                line,
-                col,
-                message.clone(),
-            )) {
-                continue;
-            }
             out.push(LintDiag {
                 rule: self.id().to_string(),
                 logical: None,

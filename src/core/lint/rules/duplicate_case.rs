@@ -23,7 +23,6 @@ impl LintRule for DuplicateCaseItemRule {
     fn check(&self, ctx: &LintCtx<'_>) -> Vec<LintDiag> {
         let db = ctx.db;
         let mut out = Vec::new();
-        let mut diagnostics_seen = std::collections::HashSet::new();
 
         for case in all_nodes(db) {
             let NodeKind::Stmt(StmtKind::Case {
@@ -60,14 +59,6 @@ impl LintRule for DuplicateCaseItemRule {
                             earlier.line,
                             earlier.col
                         );
-                        if !diagnostics_seen.insert((
-                            later.file().map(str::to_owned),
-                            line,
-                            col,
-                            message.clone(),
-                        )) {
-                            continue;
-                        }
                         out.push(LintDiag {
                             rule: "duplicate-case-item".to_string(),
                             logical: None,
@@ -159,10 +150,13 @@ mod tests {
 
     fn check(sv: &str) -> Vec<LintDiag> {
         let (db, model) = build_design(sv, "t");
-        DuplicateCaseItemRule.check(&LintCtx {
-            db: &db,
-            model: &model,
-        })
+        crate::core::lint::distinct_findings(
+            &DuplicateCaseItemRule,
+            &LintCtx {
+                db: &db,
+                model: &model,
+            },
+        )
     }
 
     #[test]
