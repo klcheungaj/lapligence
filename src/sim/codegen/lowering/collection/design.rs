@@ -64,6 +64,7 @@ impl<'a> Codegen<'a> {
             );
         }
         self.next_virtual_slot = next_virtual_slot;
+        self.index_virtual_methods();
         // Package and `$unit` constants precede every importing module (SV
         // §26.3), whose declaration initializers read them while collecting.
         for scope in self

@@ -80,8 +80,11 @@ impl Frame<'_, '_> {
             return *known;
         }
         let model = self.ctx.model;
-        let result = crate::sim::execution::effects_for_function(model, function)
-            .contains(&crate::sim::execution::ExecutionEffect::Disable);
+        let result = crate::sim::execution::function_has_effect(
+            model,
+            function,
+            crate::sim::execution::ExecutionEffect::Disable,
+        );
         self.may_disable.insert(function, result);
         result
     }

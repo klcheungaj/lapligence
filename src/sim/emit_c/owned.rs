@@ -13,6 +13,9 @@ use crate::sim::ir::*;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
+/// The coroutine functions a frame outside a coroutine calls as such: none.
+static NO_COROUTINES: BTreeSet<usize> = BTreeSet::new();
+
 mod activations;
 mod assertion_tasks;
 pub(super) mod assertions;
@@ -245,7 +248,7 @@ pub(super) struct Frame<'a, 'm> {
     pending_sites: VecDeque<PendingSite>,
     resume_numbers: Vec<u32>,
     frame_upper_bounds: BTreeMap<usize, usize>,
-    coroutine_functions: BTreeSet<usize>,
+    coroutine_functions: &'a BTreeSet<usize>,
     cached_fields: cached_fields::CachedFields,
     net_batches: net_batches::ProcessTables,
     /// Process C name that owns this frame's file-scope batch tables.
@@ -343,15 +346,13 @@ impl<'a, 'm> Frame<'a, 'm> {
 
     pub(super) fn new_coframe(
         ctx: &'a RCtx<'m>,
-        analysis: &ExecutionAnalysis,
+        analysis: &'a ExecutionAnalysis,
         owner: CoroutineId,
         frame_upper_bounds: &BTreeMap<usize, usize>,
     ) -> Result<Self, String> {
         let mut frame = Self::with_storage(ctx, FrameStorage::CoFrame);
         frame.frame_upper_bounds = frame_upper_bounds.clone();
-        frame.coroutine_functions = (0..ctx.model.funcs.len())
-            .filter(|function| analysis.is_coroutine_function(*function))
-            .collect();
+        frame.coroutine_functions = analysis.coroutine_functions();
         frame.suspendable_slots = analysis.suspendable_dispatch_slots().clone();
         frame.suspendable_interface_methods = analysis.suspendable_interface_methods().clone();
         let mut sites = analysis
@@ -377,13 +378,11 @@ impl<'a, 'm> Frame<'a, 'm> {
     /// points are exactly its arena calls, numbered as they are emitted.
     pub(super) fn new_recursive(
         ctx: &'a RCtx<'m>,
-        analysis: &ExecutionAnalysis,
+        analysis: &'a ExecutionAnalysis,
         function: usize,
     ) -> Result<Self, String> {
         let mut frame = Self::with_storage(ctx, FrameStorage::CoFrame);
-        frame.coroutine_functions = (0..ctx.model.funcs.len())
-            .filter(|function| analysis.is_coroutine_function(*function))
-            .collect();
+        frame.coroutine_functions = analysis.coroutine_functions();
         frame.suspendable_slots = analysis.suspendable_dispatch_slots().clone();
         frame.suspendable_interface_methods = analysis.suspendable_interface_methods().clone();
         frame.recursive_targets =
@@ -465,8 +464,11 @@ impl<'a, 'm> Frame<'a, 'm> {
         }
         let may_terminate = dynamic
             || *self.may_terminate.entry(function).or_insert_with(|| {
-                crate::sim::execution::effects_for_function(self.ctx.model, function)
-                    .contains(&crate::sim::execution::ExecutionEffect::Terminate)
+                crate::sim::execution::function_has_effect(
+                    self.ctx.model,
+                    function,
+                    crate::sim::execution::ExecutionEffect::Terminate,
+                )
             });
         if !may_terminate {
             return;
@@ -547,7 +549,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             pending_sites: VecDeque::new(),
             resume_numbers: Vec::new(),
             frame_upper_bounds: BTreeMap::new(),
-            coroutine_functions: BTreeSet::new(),
+            coroutine_functions: &NO_COROUTINES,
             cached_fields: cached_fields::CachedFields::default(),
             net_batches: net_batches::ProcessTables::default(),
             batch_owner: None,

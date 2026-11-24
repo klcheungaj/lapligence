@@ -8,19 +8,8 @@ impl Codegen<'_> {
     }
 
     pub(in super::super) fn is_semaphore_constructor_call(&self, node: NodeId) -> bool {
-        if !matches!(self.kind(node), NodeKind::FuncCall { name, .. } if name == "new") {
-            return false;
-        }
-        self.db.node_ids().any(|owner| {
-            matches!(
-                self.kind(owner),
-                NodeKind::Expr(ExprKind::NewClass {
-                    class_name: Some(name),
-                    constructor: Some(constructor),
-                    ..
-                }) if name == "semaphore" && *constructor == node
-            )
-        })
+        matches!(self.kind(node), NodeKind::FuncCall { name, .. } if name == "new")
+            && crate::sim::semantic::semaphore_constructor(self.db, node)
     }
 
     pub(super) fn is_process_rng_receiver(&self, node: NodeId) -> bool {

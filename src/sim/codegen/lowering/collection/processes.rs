@@ -72,6 +72,11 @@ impl<'a> Codegen<'a> {
     /// semantic references embedded in statements and expressions; the
     /// visited set keeps function and declaration references from looping.
     pub(in super::super) fn conditional_pattern_targets(&self, root: NodeId) -> Vec<NodeId> {
+        // The walk follows references out of `root`, through the bodies of
+        // its callees, so a design without such variables must not start it.
+        if !self.db.has_conditional_pattern_bindings() {
+            return Vec::new();
+        }
         let mut pending = vec![root];
         let mut visited = HashSet::new();
         let mut targets = Vec::new();

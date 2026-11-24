@@ -1842,6 +1842,14 @@ struct Codegen<'a> {
     class_nodes: HashMap<NodeId, usize>,
     /// Class method declaration → virtual dispatch slot.
     method_virtual_slots: HashMap<NodeId, usize>,
+    /// The methods of each virtual slot with their classes, in class order
+    /// ([`Codegen::virtual_family`]).
+    virtual_slot_methods: HashMap<usize, Vec<(NodeId, NodeId)>>,
+    /// The class methods with their classes, by name and then in class order,
+    /// built on first use ([`Codegen::methods_named`]).
+    methods_by_name: std::cell::OnceCell<Vec<(NodeId, NodeId)>>,
+    /// The declarations that a `disable` statement names, built on first use.
+    disable_targets: std::cell::OnceCell<HashSet<NodeId>>,
     /// Class property declaration → `(layout index, field index)` for
     /// non-static properties.
     class_fields: HashMap<NodeId, (usize, usize)>,
@@ -2658,6 +2666,9 @@ impl<'a> Codegen<'a> {
             scope_object_names: HashMap::new(),
             class_nodes: HashMap::new(),
             method_virtual_slots: HashMap::new(),
+            virtual_slot_methods: HashMap::new(),
+            methods_by_name: std::cell::OnceCell::new(),
+            disable_targets: std::cell::OnceCell::new(),
             class_fields: HashMap::new(),
             dynamic_reads: HashMap::new(),
             dynamic_read_walk: false,

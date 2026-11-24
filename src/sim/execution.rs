@@ -20,7 +20,7 @@ use crate::sim::ir::{
     IrDisplayArg, IrExpr, IrExprKind, IrInsideItem, IrLhs, IrMailboxExpr, IrMailboxValue,
     IrMemoryImage, IrMemoryStorage, IrModel, IrObjectQuery, IrObjectStmt, IrShape, IrStmt,
     IrStochasticStmt, IrStreamSelector, IrStreamTarget, IrStringExpr, IrStringInsideItem,
-    IrSysFunc, IrValidationError,
+    IrSysFunc, IrValidationError, VirtualDispatch,
 };
 use crate::sim::semantic::{ExtensionRef, Origin};
 
@@ -137,6 +137,38 @@ pub enum ExecutionTerminator {
         resume: usize,
         region: ScheduleRegion,
     },
+}
+
+/// The distinct effects of a walk, which meets each of them many times.
+#[derive(Default)]
+struct EffectSet {
+    effects: BTreeSet<ExecutionEffect>,
+    /// The only effect the walk asks for, which ends it.
+    sought: Option<ExecutionEffect>,
+}
+
+impl EffectSet {
+    fn seeking(effect: ExecutionEffect) -> Self {
+        Self {
+            effects: BTreeSet::new(),
+            sought: Some(effect),
+        }
+    }
+
+    fn push(&mut self, effect: ExecutionEffect) {
+        self.effects.insert(effect);
+    }
+
+    /// Whether the walk has its answer.
+    fn found(&self) -> bool {
+        self.sought
+            .is_some_and(|effect| self.effects.contains(&effect))
+    }
+
+    /// The effects in ascending order.
+    fn into_vec(self) -> Vec<ExecutionEffect> {
+        self.effects.into_iter().collect()
+    }
 }
 
 /// Executable basic block. Operations are owned rather than borrowed from a
@@ -383,8 +415,11 @@ impl ExecutionModel {
                     ..
                 } = &block.terminator
                 {
-                    let operation_effects = effects_for_statements(&self.ir, &block.operations);
-                    if !operation_effects.contains(&ExecutionEffect::Suspend) {
+                    if !statements_have_effect(
+                        &self.ir,
+                        &block.operations,
+                        ExecutionEffect::Suspend,
+                    ) {
                         return Err(IrValidationError::new(
                             format!(
                                 "execution.processes[{index}].blocks[{block_index}].terminator"
@@ -633,7 +668,7 @@ fn build_processes(ir: &mut IrModel) -> Vec<ExecutionProcess> {
 }
 
 fn effects_for_blocks(ir: &IrModel, blocks: &[ExecutionBlock]) -> Vec<ExecutionEffect> {
-    let mut effects = Vec::new();
+    let mut effects = EffectSet::default();
     let mut visited_calls = CallVisits::default();
     for (block_index, block) in blocks.iter().enumerate() {
         collect_effects(ir, &block.operations, &mut effects, &mut visited_calls);
@@ -649,17 +684,25 @@ fn effects_for_blocks(ir: &IrModel, blocks: &[ExecutionBlock]) -> Vec<ExecutionE
             effects.push(ExecutionEffect::Terminate);
         }
     }
-    effects.sort();
-    effects.dedup();
-    effects
+    effects.into_vec()
 }
 
-pub(crate) fn effects_for_statements(ir: &IrModel, statements: &[IrStmt]) -> Vec<ExecutionEffect> {
-    let mut effects = Vec::new();
+#[cfg(test)]
+fn effects_for_statements(ir: &IrModel, statements: &[IrStmt]) -> Vec<ExecutionEffect> {
+    let mut effects = EffectSet::default();
     collect_effects(ir, statements, &mut effects, &mut CallVisits::default());
-    effects.sort();
-    effects.dedup();
-    effects
+    effects.into_vec()
+}
+
+/// Whether `effect` is one of [`effects_for_statements`].
+pub(in crate::sim) fn statements_have_effect(
+    ir: &IrModel,
+    statements: &[IrStmt],
+    effect: ExecutionEffect,
+) -> bool {
+    let mut effects = EffectSet::seeking(effect);
+    collect_effects(ir, statements, &mut effects, &mut CallVisits::default());
+    effects.found()
 }
 
 /// Effects of a static declaration initializer. A virtual dispatch there
@@ -668,16 +711,21 @@ pub(crate) fn effects_for_statements(ir: &IrModel, statements: &[IrStmt]) -> Vec
 /// callee: an initializer calls functions, and their overrides are functions.
 /// A `$stop` in those functions is a stop request, which the runtime holds
 /// until the scheduler starts (`llg_rt_request_stop`).
-pub(crate) fn effects_for_initializer(ir: &IrModel, statements: &[IrStmt]) -> Vec<ExecutionEffect> {
-    let mut effects = Vec::new();
+pub(in crate::sim) fn effects_for_initializer(
+    ir: &IrModel,
+    dispatch: &VirtualDispatch,
+    statements: &[IrStmt],
+) -> Vec<ExecutionEffect> {
+    let mut effects = EffectSet::default();
     let mut visits = CallVisits {
-        initializer_slots: Some(HashSet::new()),
+        initializer: Some(InitializerVisits {
+            dispatch,
+            slots: HashSet::new(),
+        }),
         ..CallVisits::default()
     };
     collect_effects(ir, statements, &mut effects, &mut visits);
-    effects.sort();
-    effects.dedup();
-    effects
+    effects.into_vec()
 }
 
 /// Effects of running subprogram `function`: its body's, plus for a context
@@ -686,16 +734,29 @@ pub(crate) fn effects_for_initializer(ir: &IrModel, statements: &[IrStmt]) -> Ve
 /// pure imports keep their own effects; a call from them into an export is
 /// a run-time error, never a hidden effect.
 pub(crate) fn effects_for_function(ir: &IrModel, function: usize) -> Vec<ExecutionEffect> {
-    let mut effects = Vec::new();
+    let mut effects = EffectSet::default();
+    collect_function_effects(ir, function, &mut effects);
+    effects.into_vec()
+}
+
+/// Whether `effect` is one of [`effects_for_function`].
+pub(in crate::sim) fn function_has_effect(
+    ir: &IrModel,
+    function: usize,
+    effect: ExecutionEffect,
+) -> bool {
+    let mut effects = EffectSet::seeking(effect);
+    collect_function_effects(ir, function, &mut effects);
+    effects.found()
+}
+
+fn collect_function_effects(ir: &IrModel, function: usize, effects: &mut EffectSet) {
     let mut visits = CallVisits::default();
     if let Some(body) = ir.funcs.get(function).map(|function| &function.body) {
         visits.insert(function);
-        collect_effects(ir, body, &mut effects, &mut visits);
+        collect_effects(ir, body, effects, &mut visits);
     }
-    collect_export_effects(ir, function, &mut effects, &mut visits);
-    effects.sort();
-    effects.dedup();
-    effects
+    collect_export_effects(ir, function, effects, &mut visits);
 }
 
 /// When `function` is a context import, add the effects of every exported
@@ -703,7 +764,7 @@ pub(crate) fn effects_for_function(ir: &IrModel, function: usize) -> Vec<Executi
 fn collect_export_effects(
     ir: &IrModel,
     function: usize,
-    effects: &mut Vec<ExecutionEffect>,
+    effects: &mut EffectSet,
     visited_calls: &mut CallVisits,
 ) {
     let context = ir
@@ -753,17 +814,11 @@ impl CallTarget {
     }
 
     /// Every subprogram this target may enter, in ascending index order.
-    pub fn functions(&self, ir: &IrModel) -> Vec<usize> {
+    pub(in crate::sim) fn functions(&self, ir: &IrModel, dispatch: &VirtualDispatch) -> Vec<usize> {
         let mut functions = match *self {
             Self::Static(function) => vec![function],
             Self::Virtual(function) => match ir.funcs.get(function).and_then(|f| f.virtual_slot) {
-                Some(slot) => ir
-                    .funcs
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, candidate)| candidate.virtual_slot == Some(slot))
-                    .map(|(index, _)| index)
-                    .collect(),
+                Some(slot) => dispatch.functions(slot).to_vec(),
                 None => vec![function],
             },
             Self::Interface(interface, method) => ir
@@ -788,7 +843,7 @@ pub(crate) fn direct_call_targets(ir: &IrModel, statements: &[IrStmt]) -> Vec<Ca
         direct: Some(BTreeSet::new()),
         ..CallVisits::default()
     };
-    collect_effects(ir, statements, &mut Vec::new(), &mut visits);
+    collect_effects(ir, statements, &mut EffectSet::default(), &mut visits);
     visits.direct.unwrap_or_default().into_iter().collect()
 }
 
@@ -799,18 +854,24 @@ pub(crate) fn direct_call_targets(ir: &IrModel, statements: &[IrStmt]) -> Vec<Ca
 /// constructor recipes and native accesses, which are expanded inline, are
 /// still walked under the same `visited` keys.
 #[derive(Default)]
-struct CallVisits {
+struct CallVisits<'a> {
     visited: HashSet<usize>,
     direct: Option<BTreeSet<CallTarget>>,
     /// `Some` in the walk of a static declaration initializer, which calls
     /// only functions: a virtual dispatch follows every implementation of
-    /// its slot (the slots walked so far) instead of being summarized as an
-    /// unknown callee, and `$stop` is the stop request a function body
-    /// issues, which does not suspend.
-    initializer_slots: Option<HashSet<usize>>,
+    /// its slot instead of being summarized as an unknown callee, and
+    /// `$stop` is the stop request a function body issues, which does not
+    /// suspend.
+    initializer: Option<InitializerVisits<'a>>,
 }
 
-impl CallVisits {
+struct InitializerVisits<'a> {
+    dispatch: &'a VirtualDispatch,
+    /// The slots walked so far.
+    slots: HashSet<usize>,
+}
+
+impl CallVisits<'_> {
     fn insert(&mut self, key: usize) -> bool {
         self.visited.insert(key)
     }
@@ -829,10 +890,13 @@ impl CallVisits {
 fn collect_effects(
     ir: &IrModel,
     statements: &[IrStmt],
-    effects: &mut Vec<ExecutionEffect>,
+    effects: &mut EffectSet,
     visited_calls: &mut CallVisits,
 ) {
     for statement in statements {
+        if effects.found() {
+            return;
+        }
         let statement = statement.unlocated();
         match statement {
             IrStmt::InertialAssign { .. } | IrStmt::InertialEnable(_) => {
@@ -1069,7 +1133,7 @@ fn collect_effects(
             }
             IrStmt::StopControl { .. } => {
                 effects.push(ExecutionEffect::RuntimeService);
-                if visited_calls.initializer_slots.is_none() {
+                if visited_calls.initializer.is_none() {
                     effects.push(ExecutionEffect::Suspend);
                 }
             }
@@ -1160,14 +1224,14 @@ fn collect_effects(
     }
 }
 
-/// With `CallVisits::initializer_slots`, collect the effects of every
+/// With `CallVisits::initializer`, collect the effects of every
 /// implementation of the slot `function` dispatches through. False when the
 /// walker summarizes virtual calls, or the slot has an inline-expanded
 /// implementation, whose specializations dispatch through other slots.
 fn collect_virtual_effects(
     ir: &IrModel,
     function: usize,
-    effects: &mut Vec<ExecutionEffect>,
+    effects: &mut EffectSet,
     visited_calls: &mut CallVisits,
 ) -> bool {
     if visited_calls.direct.is_some() {
@@ -1180,25 +1244,21 @@ fn collect_virtual_effects(
     else {
         return false;
     };
-    let Some(slots) = visited_calls.initializer_slots.as_mut() else {
+    let Some(initializer) = visited_calls.initializer.as_mut() else {
         return false;
     };
-    let implementations = ir
-        .funcs
-        .iter()
-        .enumerate()
-        .filter(|(_, candidate)| candidate.virtual_slot == Some(slot))
-        .collect::<Vec<_>>();
+    let dispatch = initializer.dispatch;
+    let implementations = dispatch.functions(slot);
     if implementations
         .iter()
-        .any(|(_, candidate)| candidate.inline_expanded)
+        .any(|index| ir.funcs[*index].inline_expanded)
     {
         return false;
     }
-    if !slots.insert(slot) {
+    if !initializer.slots.insert(slot) {
         return true;
     }
-    for (index, _) in implementations {
+    for &index in implementations {
         collect_callee_effects(ir, index, false, effects, visited_calls);
     }
     true
@@ -1208,7 +1268,7 @@ fn collect_callee_effects(
     ir: &IrModel,
     function: usize,
     conservative: bool,
-    effects: &mut Vec<ExecutionEffect>,
+    effects: &mut EffectSet,
     visited_calls: &mut CallVisits,
 ) {
     if conservative && !collect_virtual_effects(ir, function, effects, visited_calls) {
@@ -1216,7 +1276,7 @@ fn collect_callee_effects(
         effects.push(ExecutionEffect::Terminate);
         effects.push(ExecutionEffect::Disable);
     }
-    if visited_calls.direct.is_some() || !visited_calls.insert(function) {
+    if effects.found() || visited_calls.direct.is_some() || !visited_calls.insert(function) {
         return;
     }
     let index = function;
@@ -1238,7 +1298,7 @@ fn collect_callee_effects(
 fn collect_statement_expression_effects(
     ir: &IrModel,
     statement: &IrStmt,
-    effects: &mut Vec<ExecutionEffect>,
+    effects: &mut EffectSet,
     visited_calls: &mut CallVisits,
 ) {
     let statement = statement.unlocated();
@@ -1634,7 +1694,7 @@ fn collect_statement_expression_effects(
 fn collect_stream_selector_effects(
     ir: &IrModel,
     selector: &IrStreamSelector,
-    effects: &mut Vec<ExecutionEffect>,
+    effects: &mut EffectSet,
     visited_calls: &mut CallVisits,
 ) {
     match selector {
@@ -1655,7 +1715,7 @@ fn collect_stream_selector_effects(
 fn collect_native_access_effects(
     ir: &IrModel,
     name: &str,
-    effects: &mut Vec<ExecutionEffect>,
+    effects: &mut EffectSet,
     visited_calls: &mut CallVisits,
 ) {
     let name = name.strip_prefix('&').unwrap_or(name);
@@ -1690,7 +1750,7 @@ fn collect_native_access_effects(
 fn collect_argument_effects(
     ir: &IrModel,
     argument: &IrCallArg,
-    effects: &mut Vec<ExecutionEffect>,
+    effects: &mut EffectSet,
     visited_calls: &mut CallVisits,
 ) {
     match argument {
@@ -1828,7 +1888,7 @@ fn collect_argument_effects(
 fn collect_expression_effects(
     ir: &IrModel,
     expression: &IrExpr,
-    effects: &mut Vec<ExecutionEffect>,
+    effects: &mut EffectSet,
     visited_calls: &mut CallVisits,
 ) {
     match expression.kind() {
@@ -2368,7 +2428,7 @@ fn collect_expression_effects(
 fn collect_object_statement_effects(
     ir: &IrModel,
     statement: &IrObjectStmt,
-    effects: &mut Vec<ExecutionEffect>,
+    effects: &mut EffectSet,
     visited_calls: &mut CallVisits,
 ) {
     match statement {
@@ -2465,7 +2525,7 @@ fn collect_object_statement_effects(
 fn collect_object_query_effects(
     ir: &IrModel,
     query: &IrObjectQuery,
-    effects: &mut Vec<ExecutionEffect>,
+    effects: &mut EffectSet,
     visited_calls: &mut CallVisits,
 ) {
     match query {
@@ -2559,7 +2619,7 @@ fn collect_object_query_effects(
 fn collect_mailbox_value_effects(
     ir: &IrModel,
     value: &IrMailboxValue,
-    effects: &mut Vec<ExecutionEffect>,
+    effects: &mut EffectSet,
     visited_calls: &mut CallVisits,
 ) {
     match value {
@@ -2581,7 +2641,7 @@ fn collect_mailbox_value_effects(
 fn collect_mailbox_expr_effects(
     ir: &IrModel,
     value: &IrMailboxExpr,
-    effects: &mut Vec<ExecutionEffect>,
+    effects: &mut EffectSet,
     visited_calls: &mut CallVisits,
 ) {
     match value {
@@ -2598,7 +2658,7 @@ fn collect_mailbox_expr_effects(
 fn collect_bit_stream_effects(
     ir: &IrModel,
     stream: &crate::sim::ir::IrBitStream,
-    effects: &mut Vec<ExecutionEffect>,
+    effects: &mut EffectSet,
     visited_calls: &mut CallVisits,
 ) {
     for segment in &stream.segments {
@@ -2623,7 +2683,7 @@ fn collect_bit_stream_effects(
 fn collect_scan_text_effects(
     ir: &IrModel,
     text: &crate::sim::ir::IrPlusArgText,
-    effects: &mut Vec<ExecutionEffect>,
+    effects: &mut EffectSet,
     visited_calls: &mut CallVisits,
 ) {
     match text {
@@ -2640,7 +2700,7 @@ fn collect_scan_text_effects(
 fn collect_string_effects(
     ir: &IrModel,
     value: &IrStringExpr,
-    effects: &mut Vec<ExecutionEffect>,
+    effects: &mut EffectSet,
     visited_calls: &mut CallVisits,
 ) {
     match value {
@@ -2775,7 +2835,7 @@ fn collect_string_effects(
 fn collect_chandle_effects(
     ir: &IrModel,
     value: &IrChandleExpr,
-    effects: &mut Vec<ExecutionEffect>,
+    effects: &mut EffectSet,
     visited_calls: &mut CallVisits,
 ) {
     match value {
@@ -2889,7 +2949,7 @@ fn collect_chandle_effects(
 fn collect_lhs_expression_effects(
     ir: &IrModel,
     lhs: &IrLhs,
-    effects: &mut Vec<ExecutionEffect>,
+    effects: &mut EffectSet,
     visited_calls: &mut CallVisits,
 ) {
     match lhs {
@@ -2941,7 +3001,7 @@ fn collect_lhs_expression_effects(
 fn collect_fixed_value_effects(
     ir: &IrModel,
     value: &crate::sim::ir::IrFixedValue,
-    effects: &mut Vec<ExecutionEffect>,
+    effects: &mut EffectSet,
     visited_calls: &mut CallVisits,
 ) {
     use crate::sim::ir::IrFixedValue;
@@ -3072,14 +3132,14 @@ mod tests {
                 None,
             );
             model.validate_expr(&expression, None).unwrap();
-            let mut effects = Vec::new();
+            let mut effects = EffectSet::default();
             collect_expression_effects(
                 &model,
                 &expression,
                 &mut effects,
                 &mut CallVisits::default(),
             );
-            assert!(effects.contains(&ExecutionEffect::RuntimeService));
+            assert!(effects.into_vec().contains(&ExecutionEffect::RuntimeService));
         }
     }
 
@@ -3373,13 +3433,14 @@ mod tests {
             false,
             None,
         );
-        let mut expression_effects = Vec::new();
+        let mut expression_effects = EffectSet::default();
         collect_expression_effects(
             &ir,
             &expression,
             &mut expression_effects,
             &mut CallVisits::default(),
         );
+        let expression_effects = expression_effects.into_vec();
         assert!(expression_effects.contains(&ExecutionEffect::Suspend));
         assert!(expression_effects.contains(&ExecutionEffect::Terminate));
 

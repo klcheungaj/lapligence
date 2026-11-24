@@ -1247,12 +1247,11 @@ impl Frame<'_, '_> {
             }
             IrStmt::ProgramExit => self.line("llg_program_exit(self);"),
         }
-        if crate::sim::execution::effects_for_statements(
+        if crate::sim::execution::statements_have_effect(
             self.ctx.model,
             std::slice::from_ref(statement),
-        )
-        .contains(&crate::sim::execution::ExecutionEffect::Terminate)
-        {
+            crate::sim::execution::ExecutionEffect::Terminate,
+        ) {
             if self.plain_exits() {
                 self.line("if (LLG_CO_UNLIKELY(llg_rt_exiting())) goto _llg_return;");
             } else {

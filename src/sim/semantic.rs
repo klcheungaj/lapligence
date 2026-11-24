@@ -855,8 +855,9 @@ fn element_reference_target(db: &Db, id: NodeId) -> Option<NodeId> {
     }
 }
 
-fn semaphore_constructor(db: &Db, id: NodeId) -> bool {
-    db.node_ids().any(|owner| {
+/// Whether `id` is the constructor call of a `semaphore` object.
+pub(in crate::sim) fn semaphore_constructor(db: &Db, id: NodeId) -> bool {
+    db.node(id).parent().is_some_and(|owner| {
         matches!(
             db.node_kind(owner),
             NodeKind::Expr(ExprKind::NewClass {

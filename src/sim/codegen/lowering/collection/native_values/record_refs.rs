@@ -903,24 +903,21 @@ impl Codegen<'_> {
         let family_slot = self.next_virtual_slot;
         self.next_virtual_slot += 1;
         let mut family = HashMap::new();
-        for class in self.db.classes().to_vec() {
-            for method in self.class_method_nodes(class) {
-                if self.method_virtual_slots.get(&method) != Some(&slot)
-                    || !self.func_meta.contains_key(&method)
-                {
-                    continue;
-                }
-                let bindings = self.record_ref_rebind(method, &positions)?;
-                let index = self.task_specialization_watching(
-                    method,
-                    class,
-                    Vec::new(),
-                    bindings,
-                    watched.clone(),
-                )?;
-                self.model.funcs[index].virtual_slot = Some(family_slot);
-                family.insert(method, index);
+        for member in 0..self.virtual_family(function).len() {
+            let (method, class) = self.virtual_family(function)[member];
+            if !self.func_meta.contains_key(&method) {
+                continue;
             }
+            let bindings = self.record_ref_rebind(method, &positions)?;
+            let index = self.task_specialization_watching(
+                method,
+                class,
+                Vec::new(),
+                bindings,
+                watched.clone(),
+            )?;
+            self.model.funcs[index].virtual_slot = Some(family_slot);
+            family.insert(method, index);
         }
         let index = family.get(&function).copied().ok_or_else(|| {
             format!(

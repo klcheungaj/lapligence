@@ -276,16 +276,31 @@ impl Codegen<'_> {
             .class_metadata(owner)
             .is_some_and(|metadata| metadata.is_interface);
         let name = self.node(callee).name.as_str();
-        for class in self.db.classes() {
-            if !interface && !self.class_chain(*class).contains(&owner) {
-                continue;
+        for &(method, class) in self.methods_named(name) {
+            if method != callee && (interface || self.class_chain(class).contains(&owner)) {
+                callees.push(method);
             }
-            callees.extend(
-                self.class_method_nodes(*class)
-                    .into_iter()
-                    .filter(|method| self.node(*method).name == name && *method != callee),
-            );
         }
+    }
+
+    /// Every class method called `name` with its class, in class order.
+    fn methods_named(&self, name: &str) -> &[(NodeId, NodeId)] {
+        let name_of = |(method, _): &(NodeId, NodeId)| self.node(*method).name.as_str();
+        let methods = self.methods_by_name.get_or_init(|| {
+            let mut methods = Vec::new();
+            for class in self.db.classes() {
+                methods.extend(
+                    self.class_method_nodes(*class)
+                        .into_iter()
+                        .map(|method| (method, *class)),
+                );
+            }
+            methods.sort_by(|left, right| name_of(left).cmp(name_of(right)));
+            methods
+        });
+        let first = methods.partition_point(|method| name_of(method) < name);
+        let count = methods[first..].partition_point(|method| name_of(method) == name);
+        &methods[first..first + count]
     }
 
     /// The class of a virtual method, seen through its prototype.

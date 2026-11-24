@@ -24,6 +24,7 @@ pub(super) fn render_arena_dispatch(
     // Slots whose dispatch may suspend (SIM-011) share the helper: their
     // suspending implementations are ordinary coroutine functions.
     let analysis = execution.analysis();
+    let dispatch = analysis.virtual_dispatch();
     let artifacts = |function: usize| {
         recursive
             .get(&function)
@@ -35,11 +36,7 @@ pub(super) fn render_arena_dispatch(
         .copied()
         .collect::<BTreeSet<_>>();
     for slot in slots {
-        let Some(method) = model
-            .funcs
-            .iter()
-            .position(|function| function.virtual_slot == Some(slot))
-        else {
+        let Some(&method) = dispatch.functions(slot).first() else {
             continue;
         };
         let f = &model.funcs[method];
@@ -53,13 +50,11 @@ pub(super) fn render_arena_dispatch(
             c_string_literal(&super::subroutine_null_site(f, "virtual method call"))
         ));
         out.push_str("    switch (llg_class_id(_this)) {\n");
-        for class in 0..model.classes.len() {
-            if let Some(implementation) = classes::virtual_impl_for_class(model, class, slot) {
-                out.push_str(&format!(
-                    "    case {class}: {{\n{}    }}\n",
-                    enter_implementation(model, &artifacts, f, implementation)
-                ));
-            }
+        for (class, implementation) in dispatch.implementations(model, slot) {
+            out.push_str(&format!(
+                "    case {class}: {{\n{}    }}\n",
+                enter_implementation(model, &artifacts, f, implementation)
+            ));
         }
         out.push_str(&format!("    default: llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, \"invalid class type in virtual call\"); llg_rt_mark_failed(); llg_rt_fatal_typed(0, \"invalid virtual class call\", NULL, 0, \"\", \"class dispatch\"); {default} return NULL;\n    }}\n}}\n\n"));
     }

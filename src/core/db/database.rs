@@ -801,6 +801,11 @@ impl Db {
         self.semantic_details.get(id).map(|detail| &**detail)
     }
 
+    /// Whether any conditional pattern declares a variable.
+    pub fn has_conditional_pattern_bindings(&self) -> bool {
+        !self.conditional_pattern_bindings.is_empty()
+    }
+
     /// Return owned conditional-pattern metadata, if `id` is a captured
     /// pattern node. Synthetic test databases do not carry frontend pattern
     /// metadata and therefore return `None`.

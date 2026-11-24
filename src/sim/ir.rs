@@ -165,10 +165,12 @@ pub use processes::{
 };
 mod functions;
 pub(in crate::sim) use functions::dimension_size;
+mod virtual_dispatch;
 pub use functions::{
     IrDpiExport, IrDpiImport, IrDpiType, IrFormal, IrFormalMode, IrFunc, IrLocal, IrVpiAutoStorage,
     IrVpiAutomatic,
 };
+pub(in crate::sim) use virtual_dispatch::VirtualDispatch;
 mod initialization;
 pub use initialization::{IrInitPhase, IrInitStep, IrInitTarget, IrInitialization};
 mod storage;

@@ -19,7 +19,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::sim::ir::IrModel;
+use crate::sim::ir::{IrModel, VirtualDispatch};
 
 use super::analysis::strongly_connected_components;
 use super::{direct_call_targets, CallTarget};
@@ -36,7 +36,11 @@ pub(super) struct RecursionAnalysis {
 }
 
 impl RecursionAnalysis {
-    pub(super) fn analyze(ir: &IrModel, suspendable: &BTreeSet<usize>) -> Self {
+    pub(super) fn analyze(
+        ir: &IrModel,
+        dispatch: &VirtualDispatch,
+        suspendable: &BTreeSet<usize>,
+    ) -> Self {
         let nodes = ir
             .funcs
             .iter()
@@ -54,7 +58,7 @@ impl RecursionAnalysis {
             let calls = direct_call_targets(ir, &ir.funcs[function].body);
             let callees = calls
                 .iter()
-                .flat_map(|target| target.functions(ir))
+                .flat_map(|target| target.functions(ir, dispatch))
                 .filter(|callee| nodes.contains(callee))
                 .collect::<BTreeSet<_>>();
             graph.insert(function, callees);
@@ -80,7 +84,7 @@ impl RecursionAnalysis {
         };
         for (function, calls) in &targets {
             for target in calls {
-                if !analysis.recursive_call(ir, *function, target) {
+                if !analysis.recursive_call(ir, dispatch, *function, target) {
                     continue;
                 }
                 match *target {
@@ -105,12 +109,18 @@ impl RecursionAnalysis {
 
     /// Whether `caller` enters `target` through the chain arena: some
     /// implementation of the target belongs to the caller's own component.
-    pub(super) fn recursive_call(&self, ir: &IrModel, caller: usize, target: &CallTarget) -> bool {
+    pub(super) fn recursive_call(
+        &self,
+        ir: &IrModel,
+        dispatch: &VirtualDispatch,
+        caller: usize,
+        target: &CallTarget,
+    ) -> bool {
         let Some(component) = self.component(caller) else {
             return false;
         };
         target
-            .functions(ir)
+            .functions(ir, dispatch)
             .into_iter()
             .any(|callee| self.component(callee) == Some(component))
     }

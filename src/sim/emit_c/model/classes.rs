@@ -489,38 +489,16 @@ fn container_storage_type(container: &crate::sim::ir::IrContainer) -> &'static s
         .unwrap_or("void")
 }
 
-fn virtual_slots(model: &IrModel) -> Vec<(usize, usize)> {
-    let mut slots = std::collections::BTreeMap::new();
-    for (index, function) in model.funcs.iter().enumerate() {
-        if let Some(slot) = function.virtual_slot {
-            slots.entry(slot).or_insert(index);
-        }
-    }
-    slots.into_iter().collect()
-}
-
 fn virtual_call_args(f: &IrFunc) -> String {
     super::functions::func_param_names(f)
 }
 
-/// The implementation a class runs for a slot. An inline-expanded template
-/// has no body: calls reach its specializations through a family slot of
-/// their own (`record_ref_family`), so its slot has no case for that class.
-pub(super) fn virtual_impl_for_class(model: &IrModel, class: usize, slot: usize) -> Option<usize> {
-    let mut current = Some(class);
-    while let Some(index) = current {
-        if let Some(function) = model.funcs.iter().position(|function| {
-            function.receiver_class == Some(index) && function.virtual_slot == Some(slot)
-        }) {
-            return (!model.funcs[function].inline_expanded).then_some(function);
-        }
-        current = model.classes.get(index).and_then(|class| class.base);
-    }
-    None
-}
-
-pub(super) fn render_virtual_dispatch_prototypes(model: &IrModel, out: &mut String) {
-    for (slot, function) in virtual_slots(model) {
+pub(super) fn render_virtual_dispatch_prototypes(
+    model: &IrModel,
+    dispatch: &VirtualDispatch,
+    out: &mut String,
+) {
+    for (slot, function) in dispatch.slots() {
         let f = &model.funcs[function];
         out.push_str(&format!(
             "static {} llg_class_dispatch_{}({});\n",
@@ -537,10 +515,11 @@ pub(super) fn render_virtual_dispatch_prototypes(model: &IrModel, out: &mut Stri
 /// entry with plain arguments.
 pub(super) fn render_virtual_dispatch_bodies(
     model: &IrModel,
+    dispatch: &VirtualDispatch,
     is_coroutine: impl Fn(usize) -> bool,
     out: &mut String,
 ) {
-    for (slot, function) in virtual_slots(model) {
+    for (slot, function) in dispatch.slots() {
         let f = &model.funcs[function];
         let ret = function_return_type(f);
         out.push_str(&format!(
@@ -554,10 +533,7 @@ pub(super) fn render_virtual_dispatch_bodies(
             c_string_literal(&super::subroutine_null_site(f, "virtual method call"))
         ));
         out.push_str("    switch (llg_class_id(_this)) {\n");
-        for class in 0..model.classes.len() {
-            let Some(implementation) = virtual_impl_for_class(model, class, slot) else {
-                continue;
-            };
+        for (class, implementation) in dispatch.implementations(model, slot) {
             let target = &model.funcs[implementation];
             if is_coroutine(implementation) {
                 out.push_str(&format!(
