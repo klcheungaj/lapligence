@@ -257,6 +257,19 @@ sparse array merges them back into the new value
 (`fixed_publication_keep_forced`). These helpers are `LLG_OUTLYING`; a write
 pays only the `g.force_count` test unless something is forced.
 
+A release of a variable (`llg_release_parts`, `llg_release_real`, from a
+statement or from VPI) ends in `redrive`: the model's const `llg_redrive_t`
+rows (`llg_redrives_register`) name each continuous driver of a releasable
+variable, and the rows of the released cell are repeated in place with
+ordinary blocking writes (CS-D3): the row's function, a copy of its source,
+or for a delayed driver the committed value of its inertial records
+(`inertial_redrive`). The first release sorts row numbers by storage address
+(keyed arrays are asked through `fixed_array_owns`); a per-row busy flag
+makes a release from inside a driver's own evaluation leave the value to
+that driver. Nothing else reads the table: a run without a release pays the
+registration only, and the index is dropped at the end of the run while the
+table stays for final procedures.
+
 Future NBAs own values and retained destinations after issuers finish, and can
 advance time without a process waiter. Masked writes merge into current storage.
 Tagged-member NBAs own a copy of their tag checks and re-check the target's tags

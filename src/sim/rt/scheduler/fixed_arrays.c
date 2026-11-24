@@ -203,6 +203,16 @@ static struct llg_fixed_block* fixed_block_of(const sv4_t* target) {
     return NULL;
 }
 
+// Whether `cell` is a cell of `array` (a release looks its array up, cold).
+static int32_t fixed_array_owns(const llg_fixed_array_t* array, const void* cell) {
+    uintptr_t address = (uintptr_t)cell;
+    for (const struct llg_fixed_block* block = array->blocks; block; block = block->next) {
+        uintptr_t start = (uintptr_t)block;
+        if (address >= start && address - start < fixed_block_bytes(block)) return 1;
+    }
+    return 0;
+}
+
 static struct llg_fixed_block* fixed_block_new(llg_fixed_array_t* array, uint64_t first, uint32_t cells, size_t cell_bytes) {
     struct llg_fixed_block* block = llg_checked_calloc(1, sizeof(*block) + cells * cell_bytes, "fixed array cells");
     block->array = array;

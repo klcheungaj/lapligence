@@ -90,7 +90,7 @@ pipeline (plus 1 + 2 + 3 = 6) after edge k + 2 and is sampled at edge k + 3.
 | --- | --- |
 | `[58] forced bus.dout: bus=99 dut=16` | The force names the interface variable; the pipeline's own output keeps 16. |
 | `[65] mon dout=99 held=16`, `[65] a_sum failed` | The clocking block and the assertion sample the forced value; the latch reads the pipeline's output. |
-| `[69] released bus.dout: bus=26 dut=26` | `bus.dout` is driven through an output port, so the release re-establishes the driven value (decision CS-D4); read one unit later (CS-D3). |
+| `[68] released bus.dout: bus=26 dut=26` | `bus.dout` is driven through an output port, so it holds the driven value when the VPI release returns (decisions CS-D3, CS-D4). |
 | `[78] forced stage 1 ...`, `[88] released stage 1: q=200` | A flip-flop variable keeps the forced value after the release until its next procedural assignment at 95. |
 | `[95]`, `[105] a_sum failed`; `mon dout=203` twice | Stage 2 captured 200 + 3 at 85 and again at 95. |
 | `[108] deposited stage 0: q=5 nxt1=83`, `[135] a_sum failed`, `mon dout=10` | A no-delay put is overwritten by the next clocked assignment; 5 + 2 + 3 = 10 arrives two edges later. |
@@ -538,10 +538,29 @@ variable at its forced value until an operand of the assignment changed
 by one, a variable driven by a continuous assignment, by an output port, an
 array element, a constant assignment and a packed structure, one variable
 only a procedure writes, and one that a `release` statement and a VPI release
-both name.
+both name, and reads them in the releasing process before it suspends
+(CS-D3) and one unit later.
 
 | Lines | Why |
 | --- | --- |
-| `[4] released: assigned=22 ported=21 row=23,24 both=25 stored=105 tied=77 pair=14` | The operand became 20 while the forces held; every continuously driven variable takes its driven value, `stored` keeps the forced 105. |
-| `[6] released again: ... both=25` | A VPI release after a statement release of the same variable. |
+| `[3] at the releases: assigned=22 ported=21 row=23,24 both=25 stored=105 tied=77 pair=14` | The operand became 20 while the forces held; every continuously driven variable holds its driven value as soon as it is released, `stored` keeps the forced 105. |
+| `[5] at the release: ... both=25` | A VPI release after a statement release of the same variable. |
 | `[7] next operand: ... stored=36` | The procedure assigns `stored` again. |
+
+## Release rule regression: `release_in_place.sv`
+
+Decision CS-D3 rests on the 10.6.2 sentences quoted for scenario 1 and on
+4.7, L3468-3470: "At any time while evaluating a procedural statement, the
+simulator may suspend execution and place the partially completed event as a
+pending event in the event region." A released variable that a continuous
+assignment drives holds the driven value in the statement after the release. The portable decision case
+covers assignments, ports, parts, structures, small arrays and a delayed
+assignment; this fixture adds the remaining forms. The operand is 2 at the
+releases (1 at the forces).
+
+| Lines | Why |
+| --- | --- |
+| `in the function: 3`, `in the method: 4`, `in the final procedure: 7` | The release repeats the driver wherever the statement runs; the final procedure sees operand 4. |
+| `one element: 6,205`, `both elements: 6,7` | *Clause-derived*: elements 4000 and 7 of a 5000-cell array, which llg keeps in a keyed container; each takes `in + 4` and `in + 5` when it is released and the other keeps its force. Some simulators give 0 here. |
+| `real: 3.0` | *Clause-derived*: 10.6.2 makes no exception for a real variable. Some simulators keep 99.5 until the operand changes. |
+| `released by its driver: 9`, `next operand: 10` | The assignment's function releases its own target while the assignment is evaluated: the evaluation under way delivers the value, the release does not start it again. |

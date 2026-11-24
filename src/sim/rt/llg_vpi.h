@@ -625,16 +625,6 @@ typedef struct {
     uint32_t ref_count;
 } llg_vpi_packed_t;
 int32_t llg_vpi_model_packed(const llg_vpi_packed_t* packed);
-/* A variable that continuous assignments drive (`storage`: its cell, or the
- * first cell or the keyed container of an array variable) and the one-bit
- * marker their processes wait on. vpi_put_value with vpiReleaseFlag toggles
- * the marker, as a release statement does, so the assignments run again
- * (IEEE 1800-2009 10.6.2, 38.34). The table is borrowed like the catalog. */
-typedef struct {
-    const void* storage;
-    sv4_t* marker;
-} llg_vpi_release_mark_t;
-int32_t llg_vpi_model_release_marks(const llg_vpi_release_mark_t* marks, size_t count);
 /* How the model was generated for vpi_put_delays: `writable` is 1 when every
  * delay the catalog names is runtime storage (generated for VPI
  * applications), `delay_select` the min:typ:max operand the model uses (0

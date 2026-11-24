@@ -160,6 +160,10 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         sampled_clocks,
         sampled_domains,
         processes,
+        // Redrive rows are no readers or writers: they repeat a driver that
+        // is walked itself, and a row whose storage is pruned goes with it
+        // (below).
+        redrives: _,
         init_steps,
         spawns: _,
         final_spawns: _,
@@ -175,7 +179,6 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         vpi_call_rows: _,
         vpi_compile_calls: _,
         vpi_builtin_calls: _,
-        vpi_release_marks,
         vpi_catalog: _,
         vpi_delays_writable: _,
         vpi_delay_select: _,
@@ -197,15 +200,6 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         access
             .receiver
             .expressions(&mut |child| collect_expr_reads(child, model, &mut rw));
-    }
-    // A release through VPI finds a variable and toggles its marker by
-    // address.
-    for mark in vpi_release_marks {
-        if let IrVpiReleaseTarget::Signal(signal) = mark.target {
-            rw.read(signal);
-        }
-        rw.read(mark.marker);
-        rw.write(mark.marker);
     }
     // Startup registers each clocking history source by address.
     for name in clocking_history {
@@ -486,6 +480,28 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
     for (sig, omit) in model.signals.iter_mut().zip(flags) {
         sig.omit = omit;
     }
+    // A redrive row repeats a driver whose storage is all kept; one that
+    // names pruned storage has nothing left to re-establish.
+    let signals = &model.signals;
+    model.redrives.retain_mut(|redrive| {
+        let omitted = |signal: usize| signals.get(signal).is_none_or(|signal| signal.omit);
+        let mut dead = redrive.targets.iter().any(|target| match target {
+            crate::sim::ir::IrRedriveTarget::Signal(signal) => omitted(*signal),
+            crate::sim::ir::IrRedriveTarget::Array(_) => false,
+        });
+        match &mut redrive.action {
+            crate::sim::ir::IrRedriveAction::Copy(source) => dead |= omitted(*source),
+            crate::sim::ir::IrRedriveAction::Evaluate(body) => {
+                super::traversal::walk_stmts_mut(body, &mut |expression| {
+                    if let IrExprKind::SigRead(signal) = expression.kind() {
+                        dead |= omitted(*signal);
+                    }
+                });
+            }
+            crate::sim::ir::IrRedriveAction::Committed => {}
+        }
+        !dead
+    });
     // A writer analysis may name leaves no statement touches (a record bound
     // whole to a native `ref` formal whose callee writes only some members,
     // SIM-008); omitted storage leaves the process write lists.

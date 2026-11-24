@@ -6,8 +6,8 @@ mod dynamic;
 pub(in crate::sim::emit_c) mod pack;
 use crate::sim::ir::{
     IrSdfTarget, IrVpiArgRef, IrVpiCode, IrVpiCompileCall, IrVpiConn, IrVpiConstant,
-    IrVpiContainer, IrVpiInstance, IrVpiObject, IrVpiReleaseTarget, IrVpiTiming, IrVpiTypespec,
-    IrVpiTypespecKind, IrVpiVarKind,
+    IrVpiContainer, IrVpiInstance, IrVpiObject, IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind,
+    IrVpiVarKind,
 };
 
 /// Marker suffix that keeps a port apart from the declaration it connects,
@@ -151,7 +151,10 @@ fn split_name(name: &str) -> Vec<&str> {
 }
 
 /// Storage of one signal after alias resolution: `(packed, real, net)`.
-pub(super) fn signal_storage(model: &IrModel, index: usize) -> Option<(String, String, String)> {
+pub(in crate::sim::emit_c) fn signal_storage(
+    model: &IrModel,
+    index: usize,
+) -> Option<(String, String, String)> {
     let mut current = index;
     let mut visited = std::collections::HashSet::new();
     loop {
@@ -720,28 +723,21 @@ pub(super) fn render_vpi_metadata(
     udp_put_definition
 }
 
-/// The extra start-up registrations of a catalog model, made right after
-/// `llg_vpi_model_init`: its packed rows (`llg_vpi_model_packed`) and the
-/// variables a release re-evaluates (`llg_vpi_model_release_marks`). Empty
-/// for a model without the catalog, whose start-up is unchanged.
-pub(in crate::sim::emit_c) fn vpi_catalog_registration(model: &IrModel) -> String {
-    if !model.vpi_catalog {
-        return String::new();
+/// The extra start-up registration of a catalog model: its packed rows
+/// (`llg_vpi_model_packed`), registered right after `llg_vpi_model_init`.
+/// Empty for a model without the catalog, whose start-up is unchanged.
+pub(in crate::sim::emit_c) fn vpi_packed_registration(model: &IrModel) -> &'static str {
+    if model.vpi_catalog {
+        " || !llg_vpi_model_packed(llg_vpi_packed)"
+    } else {
+        ""
     }
-    let mut registration = " || !llg_vpi_model_packed(llg_vpi_packed)".to_owned();
-    let marks = release_mark_rows(model).len();
-    if marks > 0 {
-        registration.push_str(&format!(
-            " || !llg_vpi_model_release_marks(llg_vpi_release_marks, {marks}u)"
-        ));
-    }
-    registration
 }
 
 /// The address a catalog row of array `array` names: its first cell, or
 /// its keyed container when sparse; `None` for a lexical activation array,
 /// which has no static storage.
-fn array_storage(array: &crate::sim::ir::IrArray) -> Option<String> {
+pub(in crate::sim::emit_c) fn array_storage(array: &crate::sim::ir::IrArray) -> Option<String> {
     if array.activation {
         None
     } else if array.sparse() {
@@ -749,54 +745,6 @@ fn array_storage(array: &crate::sim::ir::IrArray) -> Option<String> {
     } else {
         Some(format!("&{}[0]", array.c_name))
     }
-}
-
-/// `(storage, marker)` addresses of the model's release marks whose
-/// variable and marker both have storage.
-fn release_mark_rows(model: &IrModel) -> Vec<(String, String)> {
-    if !model.vpi_catalog {
-        return Vec::new();
-    }
-    model
-        .vpi_release_marks
-        .iter()
-        .filter_map(|mark| {
-            let marker = model
-                .signals
-                .get(mark.marker)
-                .filter(|marker| !marker.omit)?;
-            let storage = match mark.target {
-                IrVpiReleaseTarget::Signal(signal) => {
-                    if model.signals.get(signal)?.omit {
-                        return None;
-                    }
-                    let (packed, real, _) = signal_storage(model, signal)?;
-                    if packed == "NULL" {
-                        real
-                    } else {
-                        packed
-                    }
-                }
-                IrVpiReleaseTarget::Array(array) => array_storage(model.arrays.get(array)?)?,
-            };
-            (storage != "NULL").then(|| (storage, format!("&{}", marker.c_name)))
-        })
-        .collect()
-}
-
-/// Emit the continuously driven variables a release through
-/// `vpi_put_value` re-evaluates, each with the marker its drivers wait on.
-pub(super) fn render_vpi_release_marks(model: &IrModel, out: &mut String) {
-    let rows = release_mark_rows(model);
-    if rows.is_empty() {
-        return;
-    }
-    out.push_str("\n/* continuously driven variables a VPI release re-evaluates */\n");
-    out.push_str("static const llg_vpi_release_mark_t llg_vpi_release_marks[] = {\n");
-    for (storage, marker) in rows {
-        out.push_str(&format!("    {{ {storage}, {marker} }},\n"));
-    }
-    out.push_str("};\n");
 }
 
 /// Bits of the reference mask that ends a packed object row: which

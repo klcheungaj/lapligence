@@ -236,12 +236,14 @@ procedure (A12-D1), at startup. Log files are returned in
 Specify-block specparams are collected with the instance's
 parameters. A design without specify blocks costs one emptiness test.
 Force overlays visible storage while ordinary writes/driver slots remain live;
-release retains variable value or recomputes current net resolution. Releasing a
-variable toggles its hidden release marker, and releasing an element of a
-variable array toggles the array's (`release_array_marker`);
-`attach_release_reevaluation` makes the synthetic continuous drivers
-(assignments, port links) of the variable or array sensitive to it after all
-lowering, so they rerun (SV 10.6.2). Re-force replaces a matching entry per
+release retains variable value or recomputes current net resolution. A release
+names its variables and arrays (`released_targets`); after all lowering
+`collect_redrives` gives the synthetic continuous drivers (assignments, port
+links) of those, and in a model a VPI application can reach of every
+continuously driven variable, one `IrRedrive` row each: a copied source, a
+copy of the driver's statements, or its committed value when it is delayed.
+The runtime repeats the rows of a released variable inside the release (SV
+10.6.2, CS-D3); nothing waits on them. Re-force replaces a matching entry per
 bit. Keep typed constant-selected/concat targets; constant indexed, member and
 element selects of nets become fixed parts (`normalize_force_lhs`). An element
 of a static variable array (`ArrayElem`), a member of a packed-image element

@@ -3811,6 +3811,24 @@ void llg_force_expr_parts(const llg_force_part_t* parts, int32_t n_parts,
                           const llg_force_read_t* reads, int32_t n_reads);
 void llg_release_parts(const llg_force_part_t* parts, int32_t n_parts,
                        uint32_t stream_slice, int32_t stream_right_to_left);
+// One continuous driver of a variable a release may name (IEEE 1800-2009
+// 10.6.2): a release of a cell in [storage, storage + cells) (`stride` bytes
+// each; `cells` 0: any cell of the keyed array `storage`), by a statement or
+// through VPI, repeats the driver in place, so the variable holds the driven
+// value when the release returns: `evaluate` runs the driver's assignment
+// once; else `source` is copied to the cell; else the driver is delayed and
+// the value it last committed is assigned again, a pending update maturing
+// as scheduled. The table is borrowed from the model. Nothing reads it
+// outside a release, so a model that releases nothing pays one
+// registration.
+typedef struct {
+    const void* storage;
+    uint32_t cells;
+    uint32_t stride;
+    void (*evaluate)(void);
+    const sv4_t* source;
+} llg_redrive_t;
+void llg_redrives_register(const llg_redrive_t* rows, size_t count);
 void llg_force_real(double* target, llg_force_real_eval_fn eval,
                     const llg_force_read_t* reads, int32_t n_reads);
 // Whether a live force binding still reads `sig` (packed) or `real`. Exactly

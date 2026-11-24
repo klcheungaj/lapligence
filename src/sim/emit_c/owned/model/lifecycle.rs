@@ -420,7 +420,7 @@ pub(in crate::sim::emit_c) fn main(
             model.vpi_delay_select
         ));
     }
-    out.push_str(&format!("    if (!llg_vpi_model_init({}, llg_vpi_objects, llg_vpi_object_count){} || !llg_vpi_model_types(llg_vpi_type_tables) || !llg_vpi_model_dynamic(llg_vpi_dynamic_tables) || !llg_vpi_model_code(llg_vpi_code_tables) || !llg_vpi_startup_static(LLG_VPI_STATIC_ROUTINES) || !llg_vpi_startup()) goto start_failed;\n", c_string_literal(model.design_name()), crate::sim::emit_c::model::vpi::vpi_catalog_registration(model)));
+    out.push_str(&format!("    if (!llg_vpi_model_init({}, llg_vpi_objects, llg_vpi_object_count){} || !llg_vpi_model_types(llg_vpi_type_tables) || !llg_vpi_model_dynamic(llg_vpi_dynamic_tables) || !llg_vpi_model_code(llg_vpi_code_tables) || !llg_vpi_startup_static(LLG_VPI_STATIC_ROUTINES) || !llg_vpi_startup()) goto start_failed;\n", c_string_literal(model.design_name()), crate::sim::emit_c::model::vpi::vpi_packed_registration(model)));
     if let Some(check) = crate::sim::emit_c::model::vpi::vpi_builtin_check(model) {
         out.push_str(&format!("    if (!{check}) goto start_failed;\n"));
     }
@@ -435,6 +435,9 @@ pub(in crate::sim::emit_c) fn main(
     // access) stops the initializers and `llg_rt_run` returns before any
     // process runs, so the run ends through the normal end-of-run path;
     // any other reports and initialization goes on.
+    if let Some(registration) = super::redrive_registration(model) {
+        out.push_str(&format!("    {registration}\n"));
+    }
     out.push_str("    llg_model_initializers();\n");
     out.push_str(&crate::sim::emit_c::owned::coverage::fsm_startup(model));
     out.push_str(&crate::sim::emit_c::owned::coverage::toggle_startup(model));

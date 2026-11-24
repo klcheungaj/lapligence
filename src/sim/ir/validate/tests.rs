@@ -2593,37 +2593,38 @@ fn dependency_names_resolve_like_a_signal_scan() {
 }
 
 #[test]
-fn a_release_mark_names_a_variable_and_a_two_state_bit() {
-    use crate::sim::ir::{IrType, IrVpiReleaseMark, IrVpiReleaseTarget};
+fn a_redrive_names_variables_and_a_copy_keeps_one_packed_type() {
+    use crate::sim::ir::{IrRedrive, IrRedriveAction, IrRedriveTarget, IrType};
     let mut model = valid_model();
-    let mut marker = model.signals[0].clone();
-    marker.c_name = "llg_release_mark_0".to_string();
-    marker.ty = IrType::Packed {
-        width: 1,
-        signed: false,
-        two_state: true,
-    };
-    model.signals.push(marker);
-    let marker = model.signals.len() - 1;
-    model.vpi_release_marks.push(IrVpiReleaseMark {
-        target: IrVpiReleaseTarget::Signal(0),
-        marker,
+    let mut source = model.signals[0].clone();
+    source.c_name = "source".to_string();
+    model.signals.push(source);
+    model.redrives.push(IrRedrive {
+        targets: vec![IrRedriveTarget::Signal(0)],
+        action: IrRedriveAction::Copy(1),
     });
     if let Err(error) = model.validate() {
         panic!("{}: {}", error.path(), error.detail());
     }
-    model.vpi_release_marks[0].target = IrVpiReleaseTarget::Signal(marker + 1);
+    model.redrives[0].action = IrRedriveAction::Committed;
+    assert!(
+        model.validate().is_ok(),
+        "a delayed driver needs no operand"
+    );
+    model.redrives[0].action = IrRedriveAction::Copy(2);
+    assert!(model.validate().is_err(), "the source must exist");
+    model.redrives[0].action = IrRedriveAction::Copy(1);
+    model.redrives[0].targets = vec![IrRedriveTarget::Signal(2)];
     assert!(model.validate().is_err(), "the variable must exist");
-    model.vpi_release_marks[0].target = IrVpiReleaseTarget::Array(model.arrays.len());
+    model.redrives[0].targets = vec![IrRedriveTarget::Array(model.arrays.len())];
     assert!(model.validate().is_err(), "the array must exist");
-    model.vpi_release_marks[0].target = IrVpiReleaseTarget::Signal(0);
-    model.vpi_release_marks[0].marker = marker + 1;
-    assert!(model.validate().is_err(), "the marker must exist");
-    if let IrType::Packed { two_state, .. } = &mut model.signals[marker].ty {
-        *two_state = false;
+    model.redrives[0].targets = Vec::new();
+    assert!(model.validate().is_err(), "a row names a variable");
+    model.redrives[0].targets = vec![IrRedriveTarget::Signal(0)];
+    if let IrType::Packed { width, .. } = &mut model.signals[1].ty {
+        *width = 2;
     }
-    model.vpi_release_marks[0].marker = marker;
-    assert!(model.validate().is_err(), "the marker is a two-state bit");
+    assert!(model.validate().is_err(), "a copy keeps the type");
 }
 
 #[test]

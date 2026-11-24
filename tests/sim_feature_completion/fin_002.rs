@@ -432,6 +432,21 @@ fn vpi_release_reestablishes_continuous_assignments() {
     );
 }
 
+/// The release rule (decision CS-D3) where the portable case does not
+/// reach: releases in a function, a class method and a final procedure, a
+/// keyed array element, a real variable and a release made by the driver's
+/// own function while it is evaluated.
+#[test]
+fn releases_repeat_continuous_drivers_in_place() {
+    sim_cli::run_case_checked_matrix_with_files(
+        SUITE,
+        "release_in_place",
+        &[],
+        &[],
+        &scenario(fixture!("release_in_place.out"), &[]),
+    );
+}
+
 /// The value a `%v` strength display or a binary display stands for in a
 /// waveform: the logic value of each bit.
 fn logic_value(display: &str) -> String {

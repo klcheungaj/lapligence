@@ -8,7 +8,7 @@ vpi watch tb.bus.dout size=8
 [58] forced bus.dout: bus=99 dut=16
 [65] mon dout=99 held=16
 [65] a_sum failed
-[69] released bus.dout: bus=26 dut=26
+[68] released bus.dout: bus=26 dut=26
 [75] mon dout=26 held=26
 [78] forced stage 1: q=200 nxt2=46
 [85] mon dout=36 held=36

@@ -927,7 +927,7 @@ fn lower_model_with(
     if !cg.checker_free.is_empty() {
         cg.emit_free_variable_sets()?;
     }
-    cg.attach_release_reevaluation(keeps_vpi_catalog(options, &cg.model));
+    cg.collect_redrives(keeps_vpi_catalog(options, &cg.model))?;
     cg.finish_switch_network()?;
     // Sampled-value event clocks may be requested by any body lowered above.
     let sampled_clock_processes = cg.emit_sampled_clock_processes();
@@ -2316,12 +2316,9 @@ struct Codegen<'a> {
     /// Lazily built packed C storage name -> (readable signal index, true-net
     /// alias groups) for continuous-driver self-feedback analysis.
     feedback_storage: Option<HashMap<String, (usize, Vec<usize>)>>,
-    /// Released variable signal -> hidden marker toggled by its `release`
-    /// statements, so its continuous drivers re-evaluate (SV 10.6.2).
-    release_markers: HashMap<usize, usize>,
-    /// The same for an array variable an element `release` names: every
-    /// continuous driver of an element of the array re-evaluates.
-    release_array_markers: HashMap<usize, usize>,
+    /// The variables and arrays `release` statements name: their continuous
+    /// drivers get redrive rows (SV 10.6.2, `collect_redrives`).
+    released_targets: std::collections::BTreeSet<crate::sim::ir::IrRedriveTarget>,
     /// Hidden nets that carry a `disable iff` condition, keyed by instance
     /// and condition node.
     disable_conditions: HashMap<(NodeId, NodeId), usize>,
@@ -2809,8 +2806,7 @@ impl<'a> Codegen<'a> {
             wired_driver_sites: HashMap::new(),
             clocking_net_drivers: HashMap::new(),
             feedback_storage: None,
-            release_markers: HashMap::new(),
-            release_array_markers: HashMap::new(),
+            released_targets: std::collections::BTreeSet::new(),
             disable_conditions: HashMap::new(),
             disable_signal_conditions: HashMap::new(),
             structural_driver_sites: HashMap::new(),

@@ -23,8 +23,10 @@ type CoroutineProcessBody = (
 mod callbacks;
 mod initialization;
 mod lifecycle;
+mod redrive;
 pub(in crate::sim::emit_c) use initialization::storage_lifecycle;
 pub(in crate::sim::emit_c) use lifecycle::{main, SharedSpawns, SpawnClass};
+pub(in crate::sim::emit_c) use redrive::{redrive_registration, redrive_tables};
 
 /// A template definition no call reaches directly: each call selects a
 /// specialization for its actuals (open-array DPI imports and tasks waiting on

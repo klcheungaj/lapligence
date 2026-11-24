@@ -1636,6 +1636,17 @@ cleanup:
 
 }
 
+// A released variable takes the value its delayed continuous drivers last
+// committed (the value they hold now); an update still pending matures at
+// its time. Records are few and a release is rare, so this walks them.
+static void inertial_redrive(sv4_t* target) {
+    for (llg_inertial_t* driver = g.inertial_drivers; driver; driver = driver->next_all) {
+        if (driver->target == target && !driver->net && !driver->publication_net &&
+            !driver->part)
+            llg_ba(target, driver->current);
+    }
+}
+
 void llg_inertial_assign(llg_inertial_t** handle, sv4_t* target,
                          sv4_t value, uint64_t rise, uint64_t fall,
                          uint64_t turn_off) {

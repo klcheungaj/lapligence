@@ -158,9 +158,8 @@ module tb;
     #58 $vforce("tb.bus.dout", 99);
     $display("[%0t] forced bus.dout: bus=%0d dut=%0d", $time, bus.dout, dut.dout);
     #10 $vrelease("tb.bus.dout");
-    // The continuous assignment is evaluated again in its own region.
-    #1 $display("[%0t] released bus.dout: bus=%0d dut=%0d", $time, bus.dout, dut.dout);
-    #9 $vforce("tb.dut.g[1].s.q", 200);
+    $display("[%0t] released bus.dout: bus=%0d dut=%0d", $time, bus.dout, dut.dout);
+    #10 $vforce("tb.dut.g[1].s.q", 200);
     $display("[%0t] forced stage 1: q=%0d nxt2=%0d", $time, dut.g[1].s.q, $vget("tb.dut.g[2].s.nxt"));
     #10 $vrelease("tb.dut.g[1].s.q");
     $display("[%0t] released stage 1: q=%0d", $time, dut.g[1].s.q);

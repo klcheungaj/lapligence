@@ -1,7 +1,9 @@
 [1] driven: assigned=12 ported=11 row=13,14 both=15 stored=16 tied=77 pair=0a
 [2] forced: assigned=101 ported=102 row=13,103 both=104 stored=105 tied=106 pair=5a
 [3] forced, new operand: assigned=101 ported=102 row=23,103 both=104 stored=105 tied=106 pair=5a
+[3] at the releases: assigned=22 ported=21 row=23,24 both=25 stored=105 tied=77 pair=14
 [4] released: assigned=22 ported=21 row=23,24 both=25 stored=105 tied=77 pair=14
 [5] forced again: assigned=22 ported=21 row=23,24 both=107 stored=105 tied=77 pair=14
+[5] at the release: assigned=22 ported=21 row=23,24 both=25 stored=105 tied=77 pair=14
 [6] released again: assigned=22 ported=21 row=23,24 both=25 stored=105 tied=77 pair=14
 [7] next operand: assigned=32 ported=31 row=33,34 both=35 stored=36 tied=77 pair=1e

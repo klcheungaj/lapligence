@@ -1,10 +1,10 @@
 // FIN-002 defect regression: a release through vpi_put_value (38.34) of a
 // variable that a continuous assignment drives re-establishes the
 // assignment, exactly as a release statement does (10.6.2): the variable
-// takes the driven value without waiting for the next change of the
-// assignment's operands. A variable only procedures write keeps the forced
-// value until its next procedural assignment. The VPI application is
-// shared_force_vpi.c.
+// holds the driven value when the call returns, without waiting for the
+// next change of the assignment's operands. A variable only procedures
+// write keeps the forced value until its next procedural assignment. The
+// VPI application is shared_force_vpi.c.
 `timescale 1ns / 1ns
 
 module stage (
@@ -66,10 +66,12 @@ module tb;
     $vrelease("tb.pair");
     // One variable is released by a statement and forced again through VPI.
     release both;
+    show("at the releases");
     #1 show("released");
     $vforce("tb.both", 107);
     #1 show("forced again");
     $vrelease("tb.both");
+    show("at the release");
     #1 show("released again");
     in = 8'd30;
     #1 show("next operand");

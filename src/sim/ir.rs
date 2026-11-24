@@ -157,7 +157,9 @@ pub use assertions::{
     IrSequenceLocal, IrSequenceRange, IrSequenceTransition, IrSeverityLevel, IrSeverityOrigin,
 };
 mod processes;
-pub use processes::{IrPreFn, IrProcess, IrProcessKind, IrShape};
+pub use processes::{
+    IrPreFn, IrProcess, IrProcessKind, IrRedrive, IrRedriveAction, IrRedriveTarget, IrShape,
+};
 mod functions;
 pub(in crate::sim) use functions::dimension_size;
 pub use functions::{
@@ -175,8 +177,8 @@ mod vpi;
 pub use vpi::{
     IrVpiArgRef, IrVpiBuiltinCall, IrVpiCode, IrVpiCompileArg, IrVpiCompileCall, IrVpiConn,
     IrVpiConnRole, IrVpiConstant, IrVpiContainer, IrVpiDirection, IrVpiImport, IrVpiInstance,
-    IrVpiObject, IrVpiObjectKind, IrVpiQualifiers, IrVpiReleaseMark, IrVpiReleaseTarget,
-    IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind, IrVpiTypespecMember, IrVpiUdp, IrVpiVarKind,
+    IrVpiObject, IrVpiObjectKind, IrVpiQualifiers, IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind,
+    IrVpiTypespecMember, IrVpiUdp, IrVpiVarKind,
 };
 mod vpi_dynamic;
 pub use vpi_dynamic::{
@@ -671,6 +673,10 @@ pub struct IrModel {
     /// Comb drivers, then links, then always/initial processes — push order
     /// equals spawn order.
     pub(in crate::sim) processes: Vec<IrProcess>,
+    /// The continuous drivers a release repeats in place (IEEE 1800-2009
+    /// 10.6.2); empty for a model that can execute no release of a
+    /// continuously driven variable.
+    pub(in crate::sim) redrives: Vec<IrRedrive>,
     pub(in crate::sim) init_steps: Vec<IrInitStep>,
     /// Spawned function names in spawn order (labels resolve through
     /// `processes`).  Final-block processes are NOT in this list; they run
@@ -716,10 +722,6 @@ pub struct IrModel {
     /// call site; checked against VPI registrations at startup. Empty for
     /// hand-built IR fixtures.
     pub(in crate::sim) vpi_builtin_calls: Vec<IrVpiBuiltinCall>,
-    /// The continuously driven variables a release through `vpi_put_value`
-    /// re-evaluates, with their markers. Empty for a model no VPI
-    /// application can reach.
-    pub(in crate::sim) vpi_release_marks: Vec<IrVpiReleaseMark>,
     /// Whether the model emits its VPI object catalog. Generation clears it,
     /// with `vpi_objects`, when no application can reach the catalog: no
     /// user system task call site and no `CodegenOptions::vpi`.
@@ -917,6 +919,7 @@ impl IrModel {
             sampled_clocks: parts.sampled_clocks,
             sampled_domains: parts.sampled_domains,
             processes: parts.processes,
+            redrives: Vec::new(),
             init_steps: parts.init_steps,
             spawns: parts.spawns,
             final_spawns: parts.final_spawns,
@@ -931,7 +934,6 @@ impl IrModel {
             vpi_call_rows: Default::default(),
             vpi_compile_calls: Vec::new(),
             vpi_builtin_calls: Vec::new(),
-            vpi_release_marks: Vec::new(),
             vpi_catalog: true,
             vpi_delays_writable: false,
             vpi_delay_select: 1,

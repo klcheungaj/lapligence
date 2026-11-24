@@ -8,6 +8,7 @@ static void llg_net_strength_publish(llg_net_t* net);
 static void llg_switch_net_changed(llg_net_t* net);
 
 static llg_force_watch_fn force_watch_hook;
+static void redrive(void* cell);
 
 void llg_force_watch_hook(llg_force_watch_fn hook) { force_watch_hook = hook; }
 
@@ -467,6 +468,9 @@ void llg_release_parts(const llg_force_part_t* parts, int32_t n_parts,
         if (seen) continue;
         force_recompute_target(target, nets[i]);
         if (nets[i] && nets[i]->switch_net) llg_switch_net_changed(nets[i]);
+        // A net took its drivers' value above; a variable takes that of its
+        // continuous drivers here.
+        if (!nets[i]) redrive(target);
     }
     free(nets);
     change_check();
@@ -485,6 +489,7 @@ void llg_release_real(double* target) {
             break;
         }
     }
+    redrive(target);
     if (LLG_CO_UNLIKELY(force_watch_hook != NULL)) force_watch_hook(1, NULL, 0, target);
 }
 
@@ -549,4 +554,101 @@ void llg_release(sv4_t* sig) {
         sig, NULL, (int64_t)llg_sv4_width(*sig) - 1, 0, llg_sv4_width(*sig), 0, 0
     };
     llg_release_parts(&part, 1, 0, 0);
+}
+
+// ── redrives: a released variable takes its continuous drivers' value ─────
+
+static int32_t fixed_array_owns(const llg_fixed_array_t* array, const void* cell);
+static void inertial_redrive(sv4_t* target);
+
+static const llg_redrive_t* redrive_rows;
+static size_t redrive_count;
+// Row numbers, built by the first release: the rows with cells ordered by
+// storage address, then the keyed-array rows.
+static uint32_t* redrive_order;
+static size_t redrive_ranged;
+// Rows whose action is running: a release made from inside a driver's own
+// evaluation finds that driver busy and leaves the value to it.
+static uint8_t* redrive_busy;
+
+void llg_redrives_register(const llg_redrive_t* rows, size_t count) {
+    redrive_rows = rows;
+    redrive_count = rows ? count : 0u;
+}
+
+// The end of a run drops the index; the table stays for the releases of
+// final procedures, which rebuild it.
+static void redrives_release(void) {
+    free(redrive_order);
+    free(redrive_busy);
+    redrive_order = NULL;
+    redrive_busy = NULL;
+    redrive_ranged = 0;
+}
+
+// A fresh run never inherits the table of the model before it.
+static void redrives_forget(void) {
+    redrives_release();
+    redrive_rows = NULL;
+    redrive_count = 0;
+}
+
+static int32_t redrive_compare(const void* left, const void* right) {
+    uint32_t a = *(const uint32_t*)left, b = *(const uint32_t*)right;
+    uintptr_t at = (uintptr_t)redrive_rows[a].storage, bt = (uintptr_t)redrive_rows[b].storage;
+    if (at != bt) return at < bt ? -1 : 1;
+    return a < b ? -1 : a > b;
+}
+
+static void redrive_index(void) {
+    redrive_order = (uint32_t*)llg_checked_malloc(
+        redrive_count, sizeof(*redrive_order), "redrive index");
+    redrive_busy = (uint8_t*)llg_checked_calloc(
+        redrive_count, sizeof(*redrive_busy), "redrive guards");
+    size_t keyed = redrive_count;
+    for (size_t row = 0; row < redrive_count; row++) {
+        if (redrive_rows[row].cells) redrive_order[redrive_ranged++] = (uint32_t)row;
+        else redrive_order[--keyed] = (uint32_t)row;
+    }
+    qsort(redrive_order, redrive_ranged, sizeof(*redrive_order), redrive_compare);
+}
+
+static void redrive_run(uint32_t index, void* cell) {
+    if (redrive_busy[index]) return;
+    const llg_redrive_t* row = &redrive_rows[index];
+    redrive_busy[index] = 1;
+    if (row->evaluate) row->evaluate();
+    else if (row->source) llg_ba_from((sv4_t*)cell, row->source);
+    else inertial_redrive((sv4_t*)cell);
+    redrive_busy[index] = 0;
+}
+
+// The released variable at `cell` takes the value of each continuous driver
+// that drives it (IEEE 1800-2009 10.6.2): the writes are ordinary blocking
+// writes, so bits another force still holds keep their forced value. A
+// variable without a row is written by procedures only and keeps its value
+// until the next of their assignments.
+static void redrive(void* cell) {
+    if (!redrive_count || !cell) return;
+    if (!redrive_order) redrive_index();
+    uintptr_t key = (uintptr_t)cell;
+    size_t low = 0, high = redrive_ranged;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2u;
+        if ((uintptr_t)redrive_rows[redrive_order[middle]].storage <= key) low = middle + 1u;
+        else high = middle;
+    }
+    // Rows of one variable or array share their storage address and no two
+    // variables overlap, so the rows of this cell end at the first miss.
+    while (low) {
+        uint32_t index = redrive_order[--low];
+        const llg_redrive_t* row = &redrive_rows[index];
+        if (key - (uintptr_t)row->storage >= (uintptr_t)row->cells * row->stride) break;
+        redrive_run(index, cell);
+    }
+    for (size_t keyed = redrive_ranged; keyed < redrive_count; keyed++) {
+        uint32_t index = redrive_order[keyed];
+        if (fixed_array_owns((const llg_fixed_array_t*)redrive_rows[index].storage, cell))
+            redrive_run(index, cell);
+    }
 }

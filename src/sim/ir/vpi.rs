@@ -891,24 +891,3 @@ pub enum IrVpiImport {
     /// classes.
     Class(usize),
 }
-
-/// What an [`IrVpiReleaseMark`] names.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum IrVpiReleaseTarget {
-    /// A variable (index into [`super::IrModel::signals`]).
-    Signal(usize),
-    /// An array variable (index into [`super::IrModel::arrays`]); the marker
-    /// serves every element.
-    Array(usize),
-}
-
-/// A variable that continuous assignments drive and the hidden one-bit
-/// marker their processes wait on (IEEE 1800-2009 10.6.2). A release
-/// through `vpi_put_value` (38.34) toggles the marker, as a `release`
-/// statement does, so the assignments run again.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct IrVpiReleaseMark {
-    pub(in crate::sim) target: IrVpiReleaseTarget,
-    /// Index into [`super::IrModel::signals`].
-    pub(in crate::sim) marker: usize,
-}

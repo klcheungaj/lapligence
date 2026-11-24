@@ -6526,10 +6526,10 @@ fn cs_d2_ambiguous_known_strength() {
 }
 
 #[test]
-fn cs_d3_release_schedules_reevaluation() {
+fn cs_d3_release_takes_driven_value() {
     run_decision(
-        "CS-D3_release_schedules_reevaluation",
-        include_str!("fixtures/sim/lrm_decisions/CS-D3_release_schedules_reevaluation.out"),
+        "CS-D3_release_takes_driven_value",
+        include_str!("fixtures/sim/lrm_decisions/CS-D3_release_takes_driven_value.out"),
     );
 }
 

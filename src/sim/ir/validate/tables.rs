@@ -348,29 +348,41 @@ impl Validator<'_> {
             }
         }
 
-        for (idx, mark) in self.model.vpi_release_marks.iter().enumerate() {
-            let path = format!("vpi_release_marks[{idx}]");
-            let target_in_bounds = match mark.target {
-                crate::sim::ir::IrVpiReleaseTarget::Signal(signal) => {
-                    signal < self.model.signals.len()
-                }
-                crate::sim::ir::IrVpiReleaseTarget::Array(array) => array < self.model.arrays.len(),
-            };
-            if !target_in_bounds {
-                return self.fail(path, "VPI release mark names no variable");
-            }
-            let one_bit_marker = self.model.signals.get(mark.marker).is_some_and(|marker| {
-                matches!(
-                    marker.ty,
-                    crate::sim::ir::IrType::Packed {
-                        width: 1,
-                        two_state: true,
-                        ..
-                    }
-                )
+        for (idx, redrive) in self.model.redrives.iter().enumerate() {
+            let path = format!("redrives[{idx}]");
+            let signal_in_bounds = |signal: usize| signal < self.model.signals.len();
+            let targets_in_bounds = redrive.targets.iter().all(|target| match target {
+                crate::sim::ir::IrRedriveTarget::Signal(signal) => signal_in_bounds(*signal),
+                crate::sim::ir::IrRedriveTarget::Array(array) => *array < self.model.arrays.len(),
             });
-            if !one_bit_marker {
-                return self.fail(path, "VPI release marker must be a two-state bit");
+            if redrive.targets.is_empty() || !targets_in_bounds {
+                return self.fail(path, "redrive names no variable");
+            }
+            match &redrive.action {
+                crate::sim::ir::IrRedriveAction::Copy(source) => {
+                    let packed = |signal: usize| {
+                        self.model
+                            .signals
+                            .get(signal)
+                            .and_then(|signal| match signal.ty {
+                                crate::sim::ir::IrType::Packed { .. } => Some(signal.ty),
+                                crate::sim::ir::IrType::Real { .. } => None,
+                            })
+                    };
+                    let [crate::sim::ir::IrRedriveTarget::Signal(target)] =
+                        redrive.targets.as_slice()
+                    else {
+                        return self.fail(path, "a copied redrive has one variable target");
+                    };
+                    if packed(*source).is_none() || packed(*source) != packed(*target) {
+                        return self
+                            .fail(path, "a copied redrive needs packed signals of one type");
+                    }
+                }
+                crate::sim::ir::IrRedriveAction::Evaluate(body) => {
+                    self.validate_stmts(body, &[], &format!("{path}.body"))?;
+                }
+                crate::sim::ir::IrRedriveAction::Committed => {}
             }
         }
 

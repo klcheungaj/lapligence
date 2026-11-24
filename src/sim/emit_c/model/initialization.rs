@@ -500,7 +500,7 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
              \x20       return 1;\n\
              \x20   }}\n",
         c_string_literal(model.design_name()),
-        super::vpi::vpi_catalog_registration(model)
+        super::vpi::vpi_packed_registration(model)
     ));
     if let Some(check) = super::vpi::vpi_builtin_check(model) {
         out.push_str(&format!(

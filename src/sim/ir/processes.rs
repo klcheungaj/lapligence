@@ -318,3 +318,39 @@ impl IrProcess {
         &self.origin
     }
 }
+
+/// The storage an [`IrRedrive`] is found by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum IrRedriveTarget {
+    /// A variable (index into [`super::IrModel::signals`]).
+    Signal(usize),
+    /// An array variable (index into [`super::IrModel::arrays`]): the row
+    /// serves a release of any element.
+    Array(usize),
+}
+
+/// How a released variable takes the value of one continuous driver again.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrRedriveAction {
+    /// `target = source`: a whole packed signal copied to a whole packed
+    /// variable of the same width and state (a plain port link).
+    Copy(usize),
+    /// The driver's assignment statements, run once in the releasing
+    /// process.
+    Evaluate(Vec<IrStmt>),
+    /// A delayed driver of the whole variable or of whole array elements:
+    /// the value it last committed is assigned again; a pending update
+    /// matures as scheduled.
+    Committed,
+}
+
+/// One continuous driver of variables a release may name (IEEE 1800-2009
+/// 10.6.2): releasing one of `targets`, by a `release` statement or through
+/// `vpi_put_value`, performs `action` in place, so the variable has the
+/// driven value when the release returns. Nothing waits on or tracks a
+/// redrive; a model that executes no release never runs one.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrRedrive {
+    pub(in crate::sim) targets: Vec<IrRedriveTarget>,
+    pub(in crate::sim) action: IrRedriveAction,
+}
