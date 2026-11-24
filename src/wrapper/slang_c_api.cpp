@@ -210,12 +210,55 @@ void addChecked(uint64_t& total, uint64_t amount, uint64_t limit,
 }
 
 // A capture budget failure that names the effective limit, so callers can
-// identify the exhausted budget and its effective ceiling.
-[[noreturn]] void throwCountLimit(const char* description, uint64_t limit) {
-  throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
-                      std::string(description) + " limit exceeded (limit=" +
-                          std::to_string(limit) + ")");
+// identify the exhausted budget and its effective ceiling, and the amount the
+// design needs when the caller could determine it.
+[[noreturn]] void throwCountLimit(const char* description, uint64_t limit,
+                                  std::optional<uint64_t> needed = std::nullopt) {
+  std::string message = std::string(description) + " limit exceeded (limit=" +
+                        std::to_string(limit);
+  if (needed)
+    message += ", needs about " + std::to_string(*needed);
+  throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED, message + ")");
 }
+
+// Whether a full capture of the design omits `symbol` with everything below it.
+bool omittedFromFullCapture(const Symbol& symbol, bool simulationFacts) {
+  // A second definition of a package name (the frontend warns) is never bound
+  // by a lookup: every reference resolves to the first. The design holds one
+  // package per name; declaration-only capture keeps both definitions.
+  if (symbol.kind == SymbolKind::Package)
+    return !symbol.name.empty() &&
+           symbol.as<PackageSymbol>().getCompilation().getPackage(symbol.name) != &symbol;
+  // Slang makes the members a derived class inherits visible in it through
+  // transparent members. Names bind to the inherited member itself, so only
+  // simulation captures the alias. The alias of an enum value owns its node.
+  return symbol.kind == SymbolKind::TransparentMember && !simulationFacts &&
+         symbol.as<TransparentMemberSymbol>().wrapped.kind != SymbolKind::EnumValue;
+}
+
+// Counts the AST nodes a full semantic capture stores one semantic node for.
+// An estimate: capture shares a node between repeated visits and adds a few
+// nodes of its own.
+class SemanticNodeCount final
+    : public ASTVisitor<SemanticNodeCount, VisitFlags::AllGood | VisitFlags::Bad> {
+public:
+  uint64_t count = 0;
+
+  explicit SemanticNodeCount(bool simulationFacts) : simulationFacts(simulationFacts) {}
+
+  template<typename T>
+  void handle(const T& node) {
+    if constexpr (std::derived_from<T, Symbol>) {
+      if (omittedFromFullCapture(node, simulationFacts))
+        return;
+    }
+    ++count;
+    visitDefault(node);
+  }
+
+private:
+  bool simulationFacts;
+};
 
 struct EditionPolicy {
   LanguageVersion languageVersion;
@@ -547,12 +590,20 @@ struct Capture {
   std::vector<SourceRange> ignoredCoverOptionWrites;
   uint64_t valueBits = 0;
   uint64_t semanticEdgeCount = 0;
+  // The requested capture mode; the flags are documented in slang_c_api.h.
   bool declarationOnly = false;
+  bool editor = false;
+  // The design a full semantic capture walks, while it walks it.
+  const RootSymbol* semanticRoot = nullptr;
 
   Capture(CaptureOutput& output, const SourceManager& sourceManager,
-          const LlgSlangLimits& limits, bool declarationOnly = false)
+          const LlgSlangLimits& limits, uint32_t requestFlags)
       : output(output), sourceManager(sourceManager), limits(limits),
-        declarationOnly(declarationOnly) {}
+        declarationOnly((requestFlags & LLG_SLANG_COMPILE_LIBRARY_UNITS) != 0),
+        editor((requestFlags & LLG_SLANG_COMPILE_EDITOR) != 0) {}
+
+  // Whether the capture exports the facts only simulation reads.
+  bool simulationFacts() const { return !declarationOnly && !editor; }
 
   uint64_t maxDiagnostics() const {
     return effectiveLimit(limits.max_diagnostics, kDefaultMaxDiagnostics,
@@ -585,6 +636,19 @@ struct Capture {
   uint64_t maxSemanticNodes() const {
     return effectiveLimit(limits.max_semantic_nodes,
                           kDefaultMaxSemanticNodes, kHardMaxSemanticNodes);
+  }
+  // Reports the exhausted node budget. A full capture fails with the whole
+  // design elaborated, so the AST is walked once more, storing nothing, to
+  // tell the user which budget would admit it.
+  [[noreturn]] void throwSemanticNodeLimit() const {
+    std::optional<uint64_t> needed;
+    if (semanticRoot) {
+      SemanticNodeCount counter(simulationFacts());
+      semanticRoot->visit(counter);
+      // The capture already stored a full budget of nodes.
+      needed = std::max(counter.count, maxSemanticNodes() + 1);
+    }
+    throwCountLimit("semantic node", maxSemanticNodes(), needed);
   }
   uint64_t maxSemanticEdges() const {
     return effectiveLimit(limits.max_semantic_edges,
@@ -1437,7 +1501,7 @@ struct Capture {
     if (auto it = semanticIds.find(identity); it != semanticIds.end())
       return it->second;
     if (output.semantic_nodes.size() >= maxSemanticNodes())
-      throwCountLimit("semantic node", maxSemanticNodes());
+      throwSemanticNodeLimit();
     const uint64_t id = output.semantic_nodes.size();
     semanticIds.emplace(identity, id);
     pendingEdges.emplace_back();
@@ -1453,7 +1517,7 @@ struct Capture {
 
   uint64_t newSyntheticSemantic() {
     if (output.semantic_nodes.size() >= maxSemanticNodes())
-      throwCountLimit("semantic node", maxSemanticNodes());
+      throwSemanticNodeLimit();
     const uint64_t id = output.semantic_nodes.size();
     pendingEdges.emplace_back();
     chargeRecord(output, sizeof(LlgSlangSemanticNode));
@@ -3061,15 +3125,8 @@ public:
 
   template<std::derived_from<Symbol> T>
   void handle(const T& symbol) {
-    if constexpr (std::same_as<T, PackageSymbol>) {
-      // A second definition of a package name (the frontend warns) is never
-      // bound by a lookup: every reference resolves to the first. Simulation
-      // captures only that one, so the design holds one package per name; the
-      // language server keeps both definitions.
-      if (!capture.declarationOnly && !symbol.name.empty() &&
-          symbol.getCompilation().getPackage(symbol.name) != &symbol)
-        return;
-    }
+    if (!capture.declarationOnly && omittedFromFullCapture(symbol, capture.simulationFacts()))
+      return;
     if constexpr (std::same_as<T, InstanceBodySymbol>) {
       // Every mode records the reached definition bodies so shadowed
       // duplicates are found (captureShadowedDefinitions); library-unit
@@ -3089,14 +3146,14 @@ public:
     if (!markVisited(id))
       return;
     // The attribute instances of the VPI attribute owners (37.78) that are
-    // symbols; simulation captures only, the language server has no use.
+    // symbols.
     if constexpr (std::same_as<T, InstanceSymbol> || std::same_as<T, DefinitionSymbol> ||
                   std::same_as<T, NetSymbol> || std::same_as<T, VariableSymbol> ||
                   std::same_as<T, PortSymbol> || std::same_as<T, SubroutineSymbol> ||
                   std::same_as<T, PrimitiveInstanceSymbol> ||
                   std::same_as<T, ProceduralBlockSymbol> ||
                   std::same_as<T, ContinuousAssignSymbol>) {
-      if (!capture.declarationOnly)
+      if (capture.simulationFacts())
         captureAttributes(id, symbol);
     }
     if constexpr (std::same_as<T, UninstantiatedDefSymbol>) {
@@ -3648,7 +3705,7 @@ public:
     // after the traversal (captureForwardDeclarations). A specialization has
     // none; they belong to its generic class.
     if constexpr (std::same_as<T, ClassType> || std::same_as<T, GenericClassDefSymbol>) {
-      if (!capture.declarationOnly) {
+      if (capture.simulationFacts()) {
         if (const ForwardingTypedefSymbol* forward = symbol.getFirstForwardDecl())
           forwardDeclarationSites.emplace_back(id, forward);
       }
@@ -3824,7 +3881,7 @@ public:
     if constexpr (std::same_as<T, ExplicitImportSymbol> ||
                   std::same_as<T, WildcardImportSymbol>) {
       bindImportItem(symbol);
-      if (!capture.declarationOnly)
+      if (capture.simulationFacts())
         importSites.emplace_back(id, &symbol);
     }
     if constexpr (std::same_as<T, NetAliasSymbol>) {
@@ -10270,7 +10327,8 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
       LLG_SLANG_COMPILE_EDITION_SYSTEMVERILOG_2009 |
       LLG_SLANG_COMPILE_MERGED_COMPILATION_UNITS |
       LLG_SLANG_COMPILE_DELAY_SELECT_MIN |
-      LLG_SLANG_COMPILE_DELAY_SELECT_MAX;
+      LLG_SLANG_COMPILE_DELAY_SELECT_MAX |
+      LLG_SLANG_COMPILE_EDITOR;
   if ((request.flags & ~knownFlags) != 0)
     throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
                         "unknown compile request flags");
@@ -10751,8 +10809,7 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
     output->flags |= LLG_SLANG_SNAPSHOT_DELAY_SELECT_MAX;
   output->output_byte_limit = effectiveLimit(request.limits.max_output_bytes,
       kDefaultMaxOutputBytes, kHardMaxOutputBytes);
-  Capture capture{*output, sourceManager, request.limits,
-                  (request.flags & LLG_SLANG_COMPILE_LIBRARY_UNITS) != 0};
+  Capture capture{*output, sourceManager, request.limits, request.flags};
   capture.lexerSources = &sourceManager;
   output->sanitize_strings = std::any_of(
       sourceTexts.begin(), sourceTexts.end(), [](std::string_view text) {
@@ -10898,6 +10955,7 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
   ProfileStage semanticStage("wrapper.semantic");
   if (!capture.declarationOnly) {
     SemanticCapture semanticCapture(capture);
+    capture.semanticRoot = &root;
     root.visit(semanticCapture);
     for (const Symbol* definition : compilation.getDefinitions())
       definition->visit(semanticCapture);

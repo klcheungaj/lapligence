@@ -22,6 +22,9 @@ mod unbound_connections;
 #[path = "slang_semantics/duplicate_definitions.rs"]
 mod duplicate_definitions;
 
+#[path = "slang_semantics/editor_capture.rs"]
+mod editor_capture;
+
 use llg::core::db::{EventTriggerTiming, NodeKind, StmtKind};
 use llg::ffi::slang::{
     self, CompileOptions, CompileRequest, ConstantValue, SemanticEdge, SemanticEdgeRole,

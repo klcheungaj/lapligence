@@ -188,6 +188,10 @@ pub struct CompileOpts {
     /// Check every definition as an uninstantiated library unit instead of
     /// recursively elaborating inferred top-level designs.
     pub library_units: bool,
+    /// Omit the captured facts that only simulation reads, as the language
+    /// server does. `Db::from_slang` then holds no attribute instances, import
+    /// items, forward typedef links or inherited-member aliases.
+    pub editor: bool,
     /// Library map files are admitted and expanded by Rust before Slang.
     pub library_map_files: Vec<String>,
     /// Already-admitted library map buffers. Their names provide the relative
@@ -1251,6 +1255,7 @@ fn compile_source_groups(
             .collect::<Result<_, _>>()?,
         system_subroutines: opts.system_subroutines.clone(),
         library_units: opts.library_units,
+        editor: opts.editor,
         library_order: opts.library_order.clone(),
         default_library: opts.default_library.clone(),
         compilation_unit_mode: opts.compilation_unit_mode,
