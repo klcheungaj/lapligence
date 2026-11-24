@@ -23,6 +23,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+// Test builds only: renames the allocation calls of every runtime unit and of
+// the generated model (all of them include this header) to a wrapper that can
+// fail a chosen request. Kept behind the system headers above.
+#ifdef LLG_ALLOC_FAULT
+#include "llg_alloc_fault.h"
+#endif
+
 enum {
     LLG_SEVERITY_INFO = 0,
     LLG_SEVERITY_WARNING = 1,
