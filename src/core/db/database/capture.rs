@@ -1674,6 +1674,10 @@ impl Db {
             .map(|id| nodes[id.index()].name.clone())
             .unwrap_or_else(|| "design".to_owned());
         let coverage = coverage.finish(&nodes)?;
+        let conditional_pattern_bindings = conditional_patterns
+            .values()
+            .filter_map(|pattern| pattern.binding)
+            .collect();
         let fsm_tables = fsm::FsmTables::from_slang(snapshot, &nodes, &mut source_positions)?;
         let db = Self {
             nodes,
@@ -1686,6 +1690,7 @@ impl Db {
             semantic_kinds,
             semantic_details,
             conditional_patterns,
+            conditional_pattern_bindings,
             conditional_pattern_fields,
             program_instances,
             checker_instances,

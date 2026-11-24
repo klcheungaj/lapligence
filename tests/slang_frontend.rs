@@ -822,7 +822,7 @@ fn exhausted_export_budgets_name_their_limit() {
                 max_semantic_nodes: 100,
                 ..Limits::default()
             },
-            "semantic node limit exceeded (limit=100)",
+            "semantic node limit exceeded (limit=100, needs about ",
         ),
         (
             Limits {
@@ -845,6 +845,61 @@ fn exhausted_export_budgets_name_their_limit() {
         assert_eq!(error.kind(), SlangErrorKind::LimitExceeded);
         assert!(error.message().contains(expected), "{}", error.message());
     }
+}
+
+#[test]
+fn exhausted_node_budgets_report_about_the_nodes_needed() {
+    let sources = [Source::compilation_unit(
+        "many_registers.sv",
+        MANY_REGISTER_PROCESSES,
+    )];
+    for editor in [false, true] {
+        let compile = |limits| {
+            let options = CompileOptions {
+                editor,
+                ..many_register_options(64, limits)
+            };
+            slang::compile(&request(&sources, &options))
+        };
+        let needed = compile(Limits::default())
+            .expect("the default budget admits 64 processes")
+            .semantic_nodes
+            .len();
+        let error = compile(Limits {
+            max_semantic_nodes: 100,
+            ..Limits::default()
+        })
+        .expect_err("64 processes exceed 100 nodes");
+        let reported: usize = error
+            .message()
+            .split("needs about ")
+            .nth(1)
+            .and_then(|text| text.split(')').next())
+            .and_then(|text| text.parse().ok())
+            .unwrap_or_else(|| panic!("{}", error.message()));
+        assert!(
+            reported.abs_diff(needed) <= needed / 20,
+            "editor={editor}: reported {reported}, needed {needed}"
+        );
+    }
+
+    // Declaration-only capture walks the design in no one pass to count.
+    let options = CompileOptions {
+        library_units: true,
+        limits: Limits {
+            max_semantic_nodes: 4,
+            ..Limits::default()
+        },
+        ..CompileOptions::default()
+    };
+    let error = slang::compile(&request(&sources, &options)).expect_err("four nodes are too few");
+    assert!(
+        error
+            .message()
+            .contains("semantic node limit exceeded (limit=4)"),
+        "{}",
+        error.message()
+    );
 }
 
 #[test]

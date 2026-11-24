@@ -42,7 +42,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 78;
+const ABI_VERSION: u32 = 79;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -58,6 +58,7 @@ const COMPILE_EDITION_SYSTEMVERILOG_2009: u32 = 1 << 2;
 const COMPILE_MERGED_COMPILATION_UNITS: u32 = 1 << 3;
 const COMPILE_DELAY_SELECT_MIN: u32 = 1 << 4;
 const COMPILE_DELAY_SELECT_MAX: u32 = 1 << 5;
+const COMPILE_EDITOR: u32 = 1 << 6;
 const SNAPSHOT_HAS_ERRORS: u32 = 1 << 0;
 const SNAPSHOT_ANALYSIS_RAN: u32 = 1 << 1;
 const SNAPSHOT_EDITION_VERILOG_2001: u32 = 1 << 8;
@@ -368,7 +369,8 @@ impl str::FromStr for DelaySelection {
 
 /// Native and Rust-side capture limits for one compilation.
 ///
-/// [`Limits::default`] suits interactive and library callers.
+/// [`Limits::default`] suits library callers; the language server takes its
+/// limits from `llg::config::AnalysisConfig::frontend_limits`.
 /// [`Limits::simulator`] admits whole elaborated designs for batch simulation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
@@ -465,6 +467,9 @@ pub struct CompileOptions {
     /// Treat compilation units as library units so definitions are checked
     /// once without inferring and recursively elaborating design tops.
     pub library_units: bool,
+    /// Omit the captured facts that only simulation reads
+    /// (`LLG_SLANG_COMPILE_EDITOR`).
+    pub editor: bool,
     /// Search order for named source libraries used by configuration rules.
     pub library_order: Vec<String>,
     /// Name of the default source library. `work` is used when omitted.
@@ -2665,6 +2670,10 @@ fn call_native(request: &CompileRequest<'_>, sink: &RawSink) -> (u32, ErrorOwner
         abi_version: ABI_VERSION,
         flags: (if request.options.library_units {
             COMPILE_LIBRARY_UNITS
+        } else {
+            0
+        }) | (if request.options.editor {
+            COMPILE_EDITOR
         } else {
             0
         }) | request.options.edition.compile_flag()

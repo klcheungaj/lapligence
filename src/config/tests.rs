@@ -40,7 +40,8 @@ fn valid_config_resolves_paths_from_config_dir() {
          DEPTH = 1024\n\
          [analysis]\n\
          max_file_bytes = 17\n\
-         max_total_input_bytes = 91\n",
+         max_total_input_bytes = 91\n\
+         max_semantic_nodes = 250000\n",
     );
     let config = load.config.expect("valid config");
     assert_eq!(config.sources.directories[0], dir.join("rtl"));
@@ -54,6 +55,7 @@ fn valid_config_resolves_paths_from_config_dir() {
     assert_eq!(config.compile.top.as_deref(), Some("top"));
     assert_eq!(config.analysis.max_file_bytes, 17);
     assert_eq!(config.analysis.max_total_input_bytes, 91);
+    assert_eq!(config.analysis.max_semantic_nodes, 250_000);
     assert_eq!(
         config
             .compile
@@ -85,7 +87,58 @@ fn missing_config_uses_safe_defaults() {
     assert_eq!(defaults.analysis, AnalysisConfig::default());
     assert_eq!(defaults.analysis.max_file_bytes, 1024 * 1024);
     assert_eq!(defaults.analysis.max_total_input_bytes, 8 * 1024 * 1024);
+    assert_eq!(defaults.analysis.max_semantic_nodes, 1_000_000);
     let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn frontend_limits_follow_the_semantic_node_budget() {
+    let limits = |max_semantic_nodes| {
+        AnalysisConfig {
+            max_semantic_nodes,
+            ..AnalysisConfig::default()
+        }
+        .frontend_limits()
+    };
+    let base = Limits::default();
+
+    let default = AnalysisConfig::default().frontend_limits();
+    assert_eq!(default.max_semantic_nodes, DEFAULT_MAX_SEMANTIC_NODES);
+    assert_eq!(default.max_constants, base.max_constants);
+    assert_eq!(default.max_semantic_edges, base.max_semantic_edges);
+    assert_eq!(default.max_diagnostics, 62_500);
+    assert_eq!(default.max_related_diagnostics, 500_000);
+    assert_eq!(
+        default.max_output_bytes,
+        base.max_output_bytes + 512_000_000
+    );
+
+    let low = limits(1_000);
+    assert_eq!(low.max_semantic_nodes, 1_000);
+    assert_eq!(low.max_constants, base.max_constants);
+    assert_eq!(low.max_diagnostics, base.max_diagnostics);
+    assert_eq!(low.max_output_bytes, base.max_output_bytes + 512_000);
+
+    let high = limits(4_000_000);
+    assert_eq!(high.max_constants, 4 * base.max_constants);
+    assert_eq!(high.max_types, 4 * base.max_types);
+    assert_eq!(high.max_semantic_edges, 4 * base.max_semantic_edges);
+    assert_eq!(high.max_value_bits, 4 * base.max_value_bits);
+    assert_eq!(high.max_diagnostics, 250_000);
+
+    let ceiling = limits(MAX_SEMANTIC_NODES);
+    for count in [
+        ceiling.max_semantic_nodes,
+        ceiling.max_semantic_edges,
+        ceiling.max_constants,
+        ceiling.max_lexical_tokens,
+    ] {
+        assert_eq!(count, NATIVE_MAX_RECORDS);
+    }
+    for limits in [default, low, high, ceiling] {
+        assert_eq!(limits.max_sources, base.max_sources);
+        assert_eq!(limits.max_source_bytes, base.max_source_bytes);
+    }
 }
 
 #[test]
@@ -96,13 +149,15 @@ fn analysis_budgets_require_positive_integer_values_atomically() {
         "schema_version = 1\n\
          [analysis]\n\
          max_file_bytes = 1\n\
-         max_total_input_bytes = 2\n",
+         max_total_input_bytes = 2\n\
+         max_semantic_nodes = 3\n",
     );
     assert_eq!(
         valid.config.expect("positive budget config").analysis,
         AnalysisConfig {
             max_file_bytes: 1,
             max_total_input_bytes: 2,
+            max_semantic_nodes: 3,
         }
     );
 
@@ -132,6 +187,26 @@ fn analysis_budgets_require_positive_integer_values_atomically() {
     );
     assert!(negative.config.is_none());
     assert!(!negative.errors.is_empty());
+
+    for (value, accepted) in [
+        ("0", false),
+        ("-1", false),
+        ("1", true),
+        ("4294967295", true),
+        ("4294967296", false),
+    ] {
+        let load = write_and_load(
+            &root,
+            &format!("schema_version = 1\n[analysis]\nmax_semantic_nodes = {value}\n"),
+        );
+        assert_eq!(load.config.is_some(), accepted, "{value}");
+        assert_eq!(load.errors.is_empty(), accepted, "{value}");
+        if value == "0" || value == "4294967296" {
+            assert!(load.errors[0]
+                .message
+                .contains("analysis.max_semantic_nodes must be between 1 and 4294967295"));
+        }
+    }
 
     let wrong_type = write_and_load(
         &root,

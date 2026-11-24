@@ -28,7 +28,8 @@
 //!   integer, float or boolean values, converted to `NAME=VALUE` (a string is
 //!   the VALUE text; the others become exact SystemVerilog literals).
 //! * `[analysis]` bounds each unique language-server input file (1 MiB by
-//!   default) and the complete input set (8 MiB).
+//!   default), the complete input set (8 MiB) and the semantic nodes of a full
+//!   analysis.
 //! * Structural errors (malformed TOML, unknown fields/versions, wrong types,
 //!   out-of-range values) reject the whole config atomically. Individual
 //!   malformed `defines` entries or `param_overrides` keys/values are dropped
@@ -47,6 +48,7 @@ use crate::core::compile::{
     CompilationUnitMode, DelaySelection, LanguageEdition, SemanticTimeScale,
 };
 use crate::core::lint::LintConfig;
+use crate::ffi::slang::{Limits, NATIVE_MAX_RECORDS};
 use crate::sim::build::ModelOptLevel;
 
 pub use load::{load_config_file, parse_config_detailed, ConfigLoad, ParsedConfig};
@@ -72,6 +74,23 @@ pub const DEFAULT_MAX_FILE_BYTES: u64 = 1024 * 1024;
 
 /// Conservative default maximum size of all unique analysis inputs in bytes.
 pub const DEFAULT_MAX_TOTAL_INPUT_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Default semantic-node budget of one full language-server analysis. A full
+/// analysis peaks at about 0.6 KiB per node, so this default bounds that part
+/// of the server's memory near 600 MiB (`docs/config.md`).
+pub const DEFAULT_MAX_SEMANTIC_NODES: u64 = 1_000_000;
+
+/// Largest accepted semantic-node budget: the frontend's structural ceiling.
+pub const MAX_SEMANTIC_NODES: u64 = NATIVE_MAX_RECORDS;
+
+/// Export bytes a full analysis may spend per semantic node on top of the
+/// frontend's default budget. The charge of a node with its edges, constants
+/// and text measured 210 to 270 bytes.
+const EXPORT_BYTES_PER_SEMANTIC_NODE: u64 = 512;
+
+/// Semantic nodes per diagnostic of the frontend diagnostic budget. Class
+/// libraries get one unused or shadowed-declaration warning per 30 nodes.
+const SEMANTIC_NODES_PER_DIAGNOSTIC: u64 = 16;
 
 /// Fixed maximum size of a configuration file read.
 ///
@@ -212,14 +231,63 @@ pub struct LibrariesConfig {
     pub default: Option<String>,
 }
 
-/// Byte budgets applied to the unique root compilation units and literal
-/// include dependencies admitted to an LSP analysis. Language server only.
+/// Budgets of one LSP analysis: the bytes of the unique root compilation units
+/// and literal include dependencies admitted to it, and the semantic nodes its
+/// full elaboration may capture. Language server only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AnalysisConfig {
     /// Maximum bytes in one unique input file.
     pub max_file_bytes: u64,
     /// Maximum bytes across all unique input files.
     pub max_total_input_bytes: u64,
+    /// Maximum semantic nodes of a full elaboration capture, at most
+    /// [`MAX_SEMANTIC_NODES`]. Larger designs use the reduced library-unit
+    /// analysis.
+    pub max_semantic_nodes: u64,
+}
+
+impl AnalysisConfig {
+    /// Frontend capture limits of one analysis under this configuration.
+    ///
+    /// The node budget is the one knob, so that no other budget of an ordinary
+    /// design runs out first: above its default it raises every record and
+    /// value budget in proportion, and the export-byte and diagnostic budgets
+    /// follow it throughout. No other budget falls below the frontend's
+    /// default; the source budgets, which input admission bounds, keep it.
+    pub fn frontend_limits(&self) -> Limits {
+        let base = Limits::default();
+        let nodes = self.max_semantic_nodes;
+        let scaled = |default: u64| {
+            let scaled =
+                u128::from(default) * u128::from(nodes) / u128::from(DEFAULT_MAX_SEMANTIC_NODES);
+            u64::try_from(scaled).unwrap_or(u64::MAX).max(default)
+        };
+        let records = |default: u64| scaled(default).min(NATIVE_MAX_RECORDS);
+        let max_diagnostics = base
+            .max_diagnostics
+            .max(nodes / SEMANTIC_NODES_PER_DIAGNOSTIC);
+        let related_per_diagnostic = base.max_related_diagnostics / base.max_diagnostics;
+        Limits {
+            max_diagnostics,
+            max_related_diagnostics: max_diagnostics
+                .saturating_mul(related_per_diagnostic)
+                .min(NATIVE_MAX_RECORDS),
+            max_instances: records(base.max_instances),
+            max_parameters: records(base.max_parameters),
+            max_types: records(base.max_types),
+            max_value_bits: scaled(base.max_value_bits),
+            max_output_bytes: base
+                .max_output_bytes
+                .saturating_add(nodes.saturating_mul(EXPORT_BYTES_PER_SEMANTIC_NODE)),
+            max_semantic_nodes: nodes,
+            max_semantic_edges: records(base.max_semantic_edges),
+            max_lexical_tokens: records(base.max_lexical_tokens),
+            max_type_ranges: records(base.max_type_ranges),
+            max_type_members: records(base.max_type_members),
+            max_constants: records(base.max_constants),
+            ..base
+        }
+    }
 }
 
 impl Default for AnalysisConfig {
@@ -227,6 +295,7 @@ impl Default for AnalysisConfig {
         Self {
             max_file_bytes: DEFAULT_MAX_FILE_BYTES,
             max_total_input_bytes: DEFAULT_MAX_TOTAL_INPUT_BYTES,
+            max_semantic_nodes: DEFAULT_MAX_SEMANTIC_NODES,
         }
     }
 }

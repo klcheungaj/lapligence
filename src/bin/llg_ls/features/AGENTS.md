@@ -32,14 +32,14 @@ Analysis and request projections: `features.rs` and `features/`. Components:
 ## Recovery
 
 - On a native capture limit, retry the same buffers once as library units under
-  unchanged limits (the cap and guidance texts are in `llg_ls/config.rs`).
+  unchanged limits (budgets: `AnalysisConfig::frontend_limits`; guidance texts:
+  `llg_ls/config.rs`).
 - Recovery keeps lexical tokens, definition topology, direct references and
   named connections; it omits lint and instance-specific elaboration.
 - Never import the partial graph into execution, diagnose its intentionally
   absent expressions as DB failures, raise limits or read more files.
 - Keep the limit guidance in fatal and reduced-mode diagnostics when recovery
-  succeeds. Native caps are neither `llg.toml` settings nor raised by
-  `LLG_MEMORY_LIMIT_MB`.
+  succeeds. `LLG_MEMORY_LIMIT_MB` raises no capture limit.
 
 ## Limits
 

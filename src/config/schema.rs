@@ -79,6 +79,7 @@ pub(super) struct RawLibraries {
 pub(super) struct RawAnalysis {
     pub max_file_bytes: Option<u64>,
     pub max_total_input_bytes: Option<u64>,
+    pub max_semantic_nodes: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Default)]

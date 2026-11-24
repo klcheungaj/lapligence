@@ -32,7 +32,8 @@ escapes the safe interface. See [wrapper](../wrapper/readme.md),
 [owned database](../core/db/readme.md) and
 [patch preparation](../../patches/README.md).
 
-`Limits::default()` preserves the interactive/library capture budgets.
+`Limits::default()` preserves the library capture budgets; the language server
+scales them with its configured node budget (`AnalysisConfig::frontend_limits`).
 `Limits::simulator()` admits whole batch designs bounded only by memory: no
 byte or value-bit budget, and record counts and source buffers at their
 structural native ceilings. Export accounting covers captured records and
@@ -80,7 +81,7 @@ invocation locations in configuration diagnostics.
   delimiters; instance records must name distinct instance nodes of a
   reported scope. Parsing and binding happen in the owned DB.
 - `attributes` (ABI 69) are the attribute instances of simulation captures
-  (none in declaration-only captures): owner node, value constant, name range
+  (none in declaration-only and editor captures): owner node, value constant, name range
   and whether the value is a string literal, in source order per owner. The DB
   keeps them as `Db::attributes`, an instance's own before its definition's.
 - A `default disable iff` expression (`LLG_SLANG_EDGE_DEFAULT_DISABLE`) is owned

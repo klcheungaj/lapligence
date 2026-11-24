@@ -87,6 +87,13 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   unnamed member of an enum type (its base type), and the
   `LLG_SLANG_TYPEDEF_BUILTIN` auxiliary bit of a typedef renaming a built-in
   type.
+- Editor capture (`LLG_SLANG_COMPILE_EDITOR`, the language server's full
+  analysis) omits the facts only simulation reads, which the flag's comment in
+  `slang_c_api.h` lists; every other node, edge and token binding is the same.
+  The transparent members it omits were a tenth of the nodes of a class library.
+- A full capture that exhausts its semantic-node budget walks the elaborated
+  design once more to report about how many nodes it needs
+  (`SemanticNodeCount`); within 4% on UVM 1.2 and the perf designs.
 - Simulation capture exports which package items name references reached
   through each import declaration (IEEE 1800-2009 37.12 detail 4): after the
   root traversal, when every lookup has run, `captureImports` reads Slang's
@@ -95,9 +102,8 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   `LLG_SLANG_EDGE_IMPORTED` edge per item, in declaration order, from the
   import declaration node. An item reached through a package's re-export
   (26.6) also marks the import the exporting package declares. The cost is
-  one pass over the import declarations; declaration-only capture (the
-  language server) emits none.
-- Simulation capture names the path of a member access or method call
+  one pass over the import declarations.
+- Full capture names the path of a member access or method call
   through a virtual interface (IEEE 1800-2009 25.9) whose member or callee
   is, or lies in, an interface instance nested in the handle's interface, or
   lies in a generate block there (`v.tx`, `v.a.l.x`, `v.tx.f()`, `v.g.x`):

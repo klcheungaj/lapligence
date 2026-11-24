@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 78u
+#define LLG_SLANG_ABI_VERSION 79u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -112,7 +112,13 @@ enum {
    * (IEEE 1800-2009 11.12, 28.16.1). Neither bit selects the typical value;
    * both together are invalid. */
   LLG_SLANG_COMPILE_DELAY_SELECT_MIN = 1u << 4,
-  LLG_SLANG_COMPILE_DELAY_SELECT_MAX = 1u << 5
+  LLG_SLANG_COMPILE_DELAY_SELECT_MAX = 1u << 5,
+  /* (ABI v79) Omit the facts of a full capture that only simulation reads:
+   * attribute instances, the IMPORTED edges of import declarations, the
+   * FORWARD_DECLARATION edges of classes, and the transparent members through
+   * which a derived class shows inherited members. LIBRARY_UNITS captures
+   * omit all but the last as well. */
+  LLG_SLANG_COMPILE_EDITOR = 1u << 6
 };
 
 /* A time unit and precision: LLG_SLANG_TIME_UNIT_* codes and magnitudes. */
@@ -1362,7 +1368,7 @@ enum {
    * Slang keeps only the handle and the member, so these name the path a
    * consumer rebuilds. An instance array element is
    * named with its indices (`ls[1]`), as the member is when it is one.
-   * Simulation captures only. Not a child edge. */
+   * Full captures only. Not a child edge. */
   LLG_SLANG_EDGE_VIRTUAL_INTERFACE_SCOPE = 46,
   /* (ABI v78) From a class definition (a CLASS node with detail ClassType or
    * GenericClassDef) to each forward typedef that names it (`typedef class

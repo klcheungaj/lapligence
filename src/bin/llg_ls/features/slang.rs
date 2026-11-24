@@ -1,6 +1,7 @@
 //! Projection of Slang's owned diagnostics to LSP coordinates.
 
 use super::*;
+use llg::core::tokens::SourcePositions;
 use llg::ffi::slang::{
     DiagnosticProvider, DiagnosticSeverity as SlangSeverity, Snapshot, SourceRange,
 };
@@ -21,7 +22,7 @@ pub(super) fn project_snapshot_diagnostics(
 ) -> Vec<(String, LspDiagnostic)> {
     let inputs_by_name: HashMap<_, _> = inputs
         .iter()
-        .map(|input| (input.name, input.text))
+        .map(|input| (input.name, SourcePositions::new(input.text)))
         .collect();
     let files_by_id: HashMap<_, _> = snapshot
         .files
@@ -136,46 +137,23 @@ pub(super) fn mapped_origin(
 fn project_range(
     range: SourceRange,
     files: &HashMap<u64, &str>,
-    inputs: &HashMap<&str, &str>,
+    inputs: &HashMap<&str, SourcePositions<'_>>,
 ) -> Option<(String, Range)> {
     let path = *files.get(&range.file_id)?;
-    let text = *inputs.get(path)?;
+    let source = inputs.get(path)?;
     Some((
         path.to_owned(),
         Range::new(
-            byte_position(text, range.start),
-            byte_position(text, range.end.max(range.start)),
+            byte_position(source, range.start),
+            byte_position(source, range.end.max(range.start)),
         ),
     ))
 }
 
-pub(super) fn byte_position(text: &str, offset: u64) -> Position {
-    let mut end = usize::try_from(offset)
-        .unwrap_or(usize::MAX)
-        .min(text.len());
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    let mut line = 0;
-    let mut character = 0;
-    let mut chars = text[..end].chars().peekable();
-    while let Some(value) = chars.next() {
-        match value {
-            '\r' => {
-                line += 1;
-                character = 0;
-                if chars.peek() == Some(&'\n') {
-                    chars.next();
-                }
-            }
-            '\n' => {
-                line += 1;
-                character = 0;
-            }
-            _ => character += value.len_utf16() as u32,
-        }
-    }
-    Position::new(line, character)
+/// LSP position of a byte offset in an indexed source.
+pub(super) fn byte_position(source: &SourcePositions<'_>, offset: u64) -> Position {
+    let (line, column) = source.position(offset);
+    Position::new(line - 1, column - 1)
 }
 
 fn zero_range() -> Range {
@@ -190,8 +168,28 @@ mod tests {
     fn byte_offsets_use_utf16_coordinates() {
         let text = "module m;\n string s = \"😀λ\";\nendmodule\n";
         assert_eq!(
-            byte_position(text, text.find('😀').unwrap() as u64),
+            byte_position(&SourcePositions::new(text), text.find('😀').unwrap() as u64),
             Position::new(1, 13)
         );
+        // CR, LF and CRLF each end one line; an offset inside a CRLF pair and
+        // one inside a character clamp.
+        let text = "a\rb\nc\r\nd😀";
+        let source = SourcePositions::new(text);
+        for (offset, expected) in [
+            (0, (0, 0)),
+            (2, (1, 0)),
+            (4, (2, 0)),
+            (6, (3, 0)),
+            (7, (3, 0)),
+            (10, (3, 1)),
+            (100, (3, 3)),
+        ] {
+            let (line, character) = expected;
+            assert_eq!(
+                byte_position(&source, offset),
+                Position::new(line, character),
+                "{offset}"
+            );
+        }
     }
 }

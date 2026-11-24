@@ -270,9 +270,10 @@ impl<'a> ProtectedSource<'a> {
                     .get(start..)?
                     .find(['\r', '\n'])
                     .map_or(text.len(), |offset| start + offset);
+                let source = tokens::SourcePositions::new(text);
                 let range = Range::new(
-                    super::slang::byte_position(text, envelope.range.start),
-                    super::slang::byte_position(text, line_end as u64),
+                    super::slang::byte_position(&source, envelope.range.start),
+                    super::slang::byte_position(&source, line_end as u64),
                 );
                 let mut message = format!(
                     "protected envelope ({}): the encrypted content is not available and is \

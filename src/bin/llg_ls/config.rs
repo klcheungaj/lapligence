@@ -3,9 +3,9 @@
 //! The schema, parsing, validation and path resolution are shared with the
 //! `llg` driver and live in [`llg::config`]; see `docs/config.md` for the
 //! complete key reference. This module re-exports that contract for the rest
-//! of the server and adds the LSP-specific parts: the user guidance strings,
-//! the full-capture budget and the construction of Slang options from a
-//! root's config (shadow include trees, admitted buffers).
+//! of the server and adds the LSP-specific parts: the user guidance strings
+//! and the construction of Slang options from a root's config (shadow include
+//! trees, admitted buffers).
 //!
 //! The language server uses `[sources]` (directories/include/exclude),
 //! `[compile]` (top, include_dirs, defines, param_overrides, timescale), `[lint]`
@@ -29,15 +29,16 @@ pub use llg::config::{
 #[allow(unused_imports)]
 pub use llg::config::{AnalysisConfig, CompileConfig, ConfigLoad, SourcesConfig, SCHEMA_VERSION};
 
-/// Full elaboration capture budget before the LSP switches to source navigation.
-/// Lexical-token and exported-byte limits remain independently enforced.
-pub const MAX_FULL_SEMANTIC_NODES: u64 = 100_000;
-
 /// Actionable guidance for configurable LSP source admission limits.
 pub const SOURCE_SIZE_LIMIT_GUIDANCE: &str = "Exclude unneeded directories/files using [sources].exclude in llg.toml, or increase [analysis].max_file_bytes / max_total_input_bytes if sufficient memory is available. If a process-memory ceiling is configured, also allow sufficient LLG_MEMORY_LIMIT_MB; that setting alone does not raise source-size limits.";
 
-/// Native frontend caps are separate from the process-wide memory ceiling.
-pub const FRONTEND_LIMIT_GUIDANCE: &str = "Exclude unneeded directories/files using [sources].exclude in llg.toml, or increase the server's frontend capture limits if sufficient memory is available (these native limits are not llg.toml settings). Increasing LLG_MEMORY_LIMIT_MB alone does not raise native source/export limits.";
+/// Actionable guidance for the frontend capture limits of an analysis
+/// ([`llg::config::AnalysisConfig::frontend_limits`]), which are separate from
+/// the process-wide memory ceiling.
+pub const FRONTEND_LIMIT_GUIDANCE: &str = "Exclude unneeded directories/files using [sources].exclude in llg.toml, or raise [analysis].max_semantic_nodes in llg.toml if sufficient memory is available; the other capture limits scale with it. Increasing LLG_MEMORY_LIMIT_MB alone does not raise these limits, and that ceiling still applies to a larger analysis.";
+
+/// Guidance for the single-buffer token parse, whose limits are fixed.
+pub const TOKEN_PARSE_LIMIT_GUIDANCE: &str = "The tokens of one open buffer are parsed under fixed frontend limits that no llg.toml setting raises. Split the file, or exclude it using [sources].exclude in llg.toml.";
 
 /// Build a `CompileOpts` from a config and compiled file paths.
 ///
@@ -55,8 +56,8 @@ pub fn compile_opts(
 }
 
 /// Build Slang options from the exact source buffers admitted by the LSP.
-/// Bound speculative full semantic capture independently of source-token data;
-/// large designs use the shared source-navigation recovery profile.
+/// Designs above the configured capture limits use the shared
+/// source-navigation recovery profile.
 pub fn compile_opts_sources(
     config: &LlgConfig,
     sources: Vec<llg::core::compile::OwnedSource>,
@@ -76,10 +77,8 @@ pub fn compile_opts_sources(
             .into_iter()
             .map(|path| path.to_string_lossy().into_owned())
             .collect(),
-        limits: llg::ffi::slang::Limits {
-            max_semantic_nodes: MAX_FULL_SEMANTIC_NODES,
-            ..Default::default()
-        },
+        editor: true,
+        limits: config.analysis.frontend_limits(),
         ..Default::default()
     }
 }
@@ -113,6 +112,8 @@ fn compile_opts_with_include_dirs(
             .map(|(name, value)| format!("{name}={value}"))
             .collect(),
         include_dirs: include_args,
+        editor: true,
+        limits: config.analysis.frontend_limits(),
         ..Default::default()
     }
 }
@@ -183,7 +184,9 @@ mod tests {
              include_dirs = [\"inc\"]\n\
              defines = [\"SYNTHESIS\", \"WIDTH=8\"]\n\
              [compile.param_overrides]\n\
-             DEPTH = 16\n",
+             DEPTH = 16\n\
+             [analysis]\n\
+             max_semantic_nodes = 12345\n",
         );
         let config = load.config.expect("config");
         let search_dirs = include_dirs(&config);
@@ -208,6 +211,12 @@ mod tests {
             .all(|directory| !directory.starts_with("-I")));
         assert_eq!(opts.defines, ["SYNTHESIS", "WIDTH=8"]);
         assert_eq!(opts.param_overrides, ["DEPTH=16"]);
+        assert!(opts.editor);
+        assert_eq!(opts.limits, config.analysis.frontend_limits());
+        assert_eq!(opts.limits.max_semantic_nodes, 12_345);
+        let dump = compile_opts(&config, vec!["top.sv".to_owned()], &dir.join("shadow"));
+        assert!(dump.editor);
+        assert_eq!(dump.limits, opts.limits);
         let _ = std::fs::remove_dir_all(root);
     }
 }
