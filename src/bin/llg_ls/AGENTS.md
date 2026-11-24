@@ -34,7 +34,8 @@ read-only module explorer. Components: [readme](readme.md); user behavior:
   related locations. Ranges stay on the physical buffer; a `` `line``-mapped
   position adds a first related entry on that range.
 - Publish current failures while serving navigation from the last-good snapshot.
-- Exact semantic bindings outrank scoped fallback; ambiguity yields no target.
+- Highlighting and go-to-definition agree on every name: one table, no lookup by
+  spelling ([rules](../../../docs/semantic_tokens.md#names-and-definitions)).
 - Cache keys include the applicable buffer, defines, URI, request arguments and
   analysis epoch. Snapshot replacement or clearing advances the epoch; servable
   module-graph changes notify explorer clients.

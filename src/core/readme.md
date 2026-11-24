@@ -10,7 +10,7 @@ retain native pointers nor reopen source paths.
 | `db/` | Validated semantic arena, typed references, source buffers and import/test builders. |
 | `value.rs`, `elab.rs` | Exact four-state values, arbitrary-byte strings and pure value operations. |
 | `model.rs` | Editor and hierarchy projections. |
-| `tokens.rs`, `macros.rs` | Lexical tokens, exact declaration/reference bindings and macro information. |
+| `tokens.rs`, `macros.rs` | Lexical tokens, their declarations (`TokenRule`, `Bindings`) and the frontend's macros. |
 | `lint/` | Shared rules over the owned DB/design model. |
 | `design_checks.rs` | Design-wide elaboration errors over the owned DB (`ELAB-006` mixed time scales) that `llg` stops on and `llg_ls` publishes, one message text per check. |
 

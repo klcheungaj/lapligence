@@ -885,8 +885,9 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   each use site is one `keyword` token with no expansion token over it, text
   written in actual arguments (also nested) keeps its own kind, directives are
   keywords and inactive branches have no token. A macro defined only in another
-  project file is unknown in both paths (separate compilation units): its
-  diagnostic is published and the rest of the buffer stays tokenized. Unsaved
+  project file is unknown in both paths (separate compilation units): it has no
+  token, its diagnostic is published and the rest of the buffer stays tokenized.
+  Unsaved
   edits expand new macros with the committed include context.
 - `lsp_stdio/package_imports.rs`: package items used through compilation-unit,
   header and body wildcard imports, explicit import items and `pkg::name`,
@@ -896,9 +897,16 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   token. Import item names are references (`namespace`, the imported kind),
   never document symbols; unsaved edits resolve through the committed
   package units.
+- `lsp_stdio/identifiers.rs` (with `features/tests/identifiers.rs`): over the
+  project `fixtures/semantic_tokens/identifiers`, every word has a token exactly
+  when it has a definition (apart from the listed exceptions) in closed and open
+  files; one use of each kind of name leads to its declaration; macro names lead
+  to the `` `define `` in effect, include paths to the included file, attribute
+  names are `decorator`; hover, references and rename follow the same bindings.
+  A new kind of name goes into that fixture.
 - `lsp_stdio/duplicate_definitions.rs`: two files that define the same module
   each navigate within their own body (definition, hover, references, rename,
-  document symbols, also for uses before the declaration) in both serving
+  document symbols; a use before its declaration resolves to nothing) in both serving
   paths with one or both files open, the token streams agree and one
   `DuplicateDefinition` warning names the other definition;
   `slang_semantics/duplicate_definitions.rs` checks the capture in both modes.

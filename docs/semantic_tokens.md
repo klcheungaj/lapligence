@@ -5,7 +5,9 @@ page is the contract for what each SystemVerilog construct is sent as, with
 one ID per rule. Server rules (`ST-nn`) are tested; every one is checked by
 `tests/lsp_stdio/semantic_token_requirements.rs` over its fixture
 `tests/fixtures/semantic_tokens/requirements.sv`, in both serving paths, with
-exact type and modifier bits ([LSP acceptance](../tests/readme.md#lsp-acceptance)).
+exact type and modifier bits ([LSP acceptance](../tests/readme.md#lsp-acceptance));
+the rules of [Names and definitions](#names-and-definitions) are checked by
+`tests/lsp_stdio/identifiers.rs`.
 Client rules (`CL-nn`) are what a VS Code client contributes; the server
 cannot meet them alone.
 
@@ -102,20 +104,20 @@ positional words and bindings come from the capture in
 - **ST-19** Functions and tasks are `function`; system tasks and functions
   and built-in methods (`$display`, `q.size`) are `function` +
   `defaultLibrary` (every context: ST-40 to ST-43).
-- **ST-20** Named, implicit (`.a`) and interface port connection labels are
+- **ST-20** Resolved named, implicit (`.a`) and interface port connection labels are
   `function` + `connectionLabel`, and value and type parameter connection
   labels (`#(.W(2))`, `#(.T(logic))`) are `function` + `readonly` +
   `connectionLabel`, so a label is colored apart from its actual; actuals and
   positional connections keep their own types.
-- **ST-21** A text macro use site `` `NAME `` is one `keyword` token and the
+- **ST-21** A text macro use site `` `NAME `` is one `keyword` token, unless
+  the macro is undefined there (ST-22), and the
   name in `` `define NAME `` is `keyword` + `declaration` (ST-60). No token
   of an expansion is painted over the use site; text written in the actual
   arguments keeps its own type at its written position.
 - **ST-22** A name the capture could not resolve gets no token, so the editor
-  leaves it uncolored.
+  leaves it uncolored, and no definition (ST-78).
 - **ST-23** Strings are `string`, numbers `number`, operators and
-  punctuation (also `->`) `operator`. Comments and attribute names get no
-  token. The path operand of `` `include `` (22.4) is `string` with no
+  punctuation (also `->`) `operator`. Comments get no token. The path operand of `` `include `` (22.4) is `string` with no
   modifiers in both forms, `` "file" `` and `` <file> ``: one token over the
   whole operand, delimiters included. A macro operand
   (`` `include `PATH ``) has only the use-site token (ST-21), and the string
@@ -125,6 +127,16 @@ positional words and bindings come from the capture in
   and `import pk::x` is `namespace`, and `x` has the type of what it imports
   (ST-12, ST-13, ST-14, ST-19). Definition requests on either name reach the
   package or member declaration.
+- **ST-82** An attribute name (5.12) is `decorator` with no modifier, also
+  when it spells a declared name: `full_case` in `(* full_case *)` and
+  `async_reg` in `(* async_reg = "true" *)`. The value is an ordinary constant
+  expression, whose tokens keep their types. `decorator` is a standard LSP type
+  (3.17); VS Code gives it the scope `entity.name.decorator`, and where a theme
+  has no rule for that, `entity.name.function`, the scope of `function`
+  (`src/vs/platform/theme/common/tokenClassificationRegistry.ts`:
+  `registerTokenType('decorator', ..., [['entity.name.decorator'],
+  ['entity.name.function']])`). A client that does not know the type leaves the
+  name uncolored.
 - **ST-52** The names in the width of a size cast (6.24.1: "If the casting
   type is a constant expression with a positive integral value, the
   expression in parentheses shall be padded or truncated to the size
@@ -243,7 +255,8 @@ assign w = `A + `ABC(p, q);                 // `A, `ABC: keyword
   directive word is `controlFlow`.
 - **ST-62** The macro name operand of `` `ifdef ``, `` `ifndef ``,
   `` `elsif `` (22.6) and `` `undef `` (22.5.2) is `keyword` with no
-  modifier, like a use site (ST-60).
+  modifier, like a use site (ST-60), also when the macro is not defined there:
+  the operand asks whether it is.
 - **ST-63** A formal argument of a `` `define `` (22.5.1) is `parameter`, as
   clangd and rust-analyzer send the parameters of a function
   (`HighlightingKind::Parameter` → `"parameter"`): `declaration` at its name
@@ -257,9 +270,10 @@ assign w = `A + `ABC(p, q);                 // `A, `ABC: keyword
   macro's expansions give the name at that location (ST-10 to ST-20, ST-65).
   When the expansions disagree on the type or role, or the macro is never
   expanded in the compiled source, the name is unresolved (ST-22) and gets
-  no token. Body names are text of the macro, not references of the design:
-  they bind no navigation target and are not indexed, so references and a
-  rename of the design name leave the `` `define `` unchanged.
+  no token. A body name leads to what the expansions resolve it to, all of
+  them when they differ. It is text of the macro, not a reference of the
+  design: references do not list it, and a rename of the design name leaves the
+  `` `define `` unchanged.
 - **ST-65** In a class-scope name `C::f()`, `C#(...)::f()`, `C#(...)::T` and
   nested `C::Inner::f()` (8.23, 8.25.1), every class qualifier is `class`,
   `f` is `function` (ST-19) and `T` keeps its type (ST-12). A class method
@@ -351,9 +365,61 @@ always @(a or b) q = a;                              // a, b: their types
   assertion expression in an invalid node, whose resolved names the capture
   still binds (`bindInvalidChildNames` in `src/wrapper/slang_c_api.cpp`).
 
+## Names and definitions
+
+Highlighting and go-to-definition read one table of tokens and bindings, built
+from what Slang resolved (`core::tokens`; the rule and its exceptions are
+`TokenRule`). Hover, references and rename read the same bindings. Nothing is
+resolved by spelling.
+
+- **ST-78** A name has a token exactly when it has a definition. A name that
+  declares something leads to itself; an instance name leads to the definition
+  it instantiates. Only these tokens have no definition: keywords, numbers,
+  strings and operators; `$unit` and `$root`; names the language declares
+  (system tasks and functions, built-in methods, the `std` package, its classes
+  and their members, the iterator `item`); attribute names (ST-82); a macro
+  that `[compile] defines` or the language defines, the operand of a
+  conditional directive or `` `undef `` that is not defined there (ST-62), and
+  the operand words of other directives (ST-06).
+- **ST-79** These have neither a token nor a definition: a name used before its
+  declaration (6.5) or declared nowhere, a member the value's type lacks, the
+  name of an unknown module with its labels, a label the definition does not
+  declare, an undefined macro, and a name that depends on a type parameter of a
+  class that nothing specializes. The resolved names around them keep theirs.
+- **ST-80** A macro name leads to the `` `define `` in effect where it is
+  written: the last one before it in the same compilation unit, in the file or
+  in an included header, after any `` `undef ``. This holds for a use
+  `` `NAME ``, the name in `` `define NAME `` and the operand of
+  `` `ifdef ``, `` `ifndef ``, `` `elsif `` and `` `undef ``. A use in a
+  macro body is resolved where the body is expanded, and a header that several
+  units include leads to every definition they use. A `[compile] defines` entry
+  takes precedence over a `` `define `` of the same name, which then defines
+  nothing. Macro hover describes the same definitions.
+- **ST-81** The path of a resolved `` `include `` (22.4) leads to the start of
+  the included file, from every column of the operand with its quotes or angle
+  brackets. The file is the one the preprocessor read.
+- **ST-83** These names keep their types (ST-10 to ST-18) and lead to their
+  declarations although Slang keeps no expression for them: the base class and
+  the parameter assignments of a class header, class scope qualifiers, also
+  through a typedef (`C::type_id::f()`), named call arguments (`f(.a(x))`),
+  parameter defaults, generate conditions, the type of an assignment pattern
+  and its type keys (`t'{t2: 1}`), index expressions of hierarchical names
+  (`gb[N - 1].x`), `defparam` targets, `bind` targets, cross items, DPI export
+  names, attribute values, end labels, and the operands of an expression that
+  failed to bind (`ghost(x)`: `x`).
+- **ST-84** Names in a body that is not elaborated resolve like those of an
+  elaborated one: the other definition of a duplicate name, the untaken branch
+  of a generate construct, and a generic class that nothing specializes. Slang
+  elaborates no instance there, so a hierarchical name through one
+  (`u.x`) leads into the body of its definition. The block of a loop generate
+  construct with no iterations has no scope, so its names have no tokens.
+
 ## Serving paths
 
-- **ST-24** The project stream (committed analysis of an unopened file) and
+- **ST-24** An unopened file, and an open document whose text is what the
+  committed analysis compiled, are served from that analysis (the project
+  stream). Any other open document is served from the open-buffer stream. Both
+  serve the definitions of the same document (ST-78). The project stream and
   the open-buffer stream (the buffer compiled with the root's `[compile]
   defines`, the committed include context and the committed package and
   definition units of ST-29 and ST-75) agree token for token for the same
@@ -387,18 +453,20 @@ always @(a or b) q = a;                              // a, b: their types
   the package units of ST-29. A testbench that instantiates the design thus
   elaborates the design's hierarchy, as the project compile does.
 - **ST-50** A stream depends on other files only through what a commit
-  holds: the committed snapshot for an unopened file, and the root's
-  `[compile] defines` plus the committed include and package context for an
-  open buffer. When a commit changes what a stream served since the previous
-  commit was computed from (the defines, an include or package unit text, the
-  include directories, or a replaced snapshot), the server sends
+  holds: the committed snapshot for the project stream, and the root's
+  `[compile] defines` plus the committed include and package context for the
+  open-buffer stream. When a commit may change a stream served since the
+  previous commit (a replaced snapshot for an unopened file; a different
+  stream for an open document that the snapshot was compiled from; the
+  defines, an include or package unit text or the include directories for any
+  other open document), the server sends
   `workspace/semanticTokens/refresh` to a client that advertises
   `workspace.semanticTokens.refreshSupport`, so the editor re-requests its
   visible streams. A client asks for tokens as soon as it opens a document,
   usually before the first analysis commits (an editor restoring its open
   files); without the refresh the package items of that first stream stay
-  uncolored until the next edit. A commit that leaves those inputs equal
-  sends nothing (`ServedTokenInputs` in
+  uncolored until the next edit. A commit that leaves the streams equal
+  sends nothing (`ServedTokens` in
   `src/bin/llg_ls/lsp/handlers/state.rs`).
 - **ST-51** A root without `llg.toml` resolves packages from every file the
   default discovery finds (the root directory, recursive `.v`/`.sv`), in
