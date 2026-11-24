@@ -59,7 +59,9 @@ See [shared lint](../readme.md).
   signals connected to a black box (an instance of an unknown module),
   implicit nets and intrinsic pull/supply nets. Input/inout actuals are read
   through the owned port `high_expr`; the direct `high` target stays for
-  model/codegen consumers.
+  model/codegen consumers. Nothing in an untaken generate block reads or
+  drives: its declaration initializers, processes, continuous assignments,
+  primitives and instances do not exist (SV 27.3, 27.5).
 - `incomplete-sensitivity-list` (`sensitivity.rs`): partial/selected writes keep
   the signal as an input; identical findings from cloned instances are
   source-deduplicated. Edge, named-event, mixed/complex, `@*`, `always_*` and
