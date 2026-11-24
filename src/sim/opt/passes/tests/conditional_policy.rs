@@ -54,11 +54,11 @@ fn ambiguous_identical_nonconstant_arms_cannot_be_an_identity() {
     let value = IrExpr::new(IrExprKind::FormalRead(0), 129, false, None);
     for selector in [digit(2), digit(3)] {
         let mut expression = mux(selector, value.clone(), value.clone(), 129);
-        ident_expr(&mut expression);
+        walk_expr_mut(&mut expression, &mut ident_expr);
         fold_expr(&mut expression);
         assert!(matches!(expression.kind, IrExprKind::Mux { .. }));
     }
     let mut known = mux(digit(1), value.clone(), value.clone(), 129);
-    ident_expr(&mut known);
+    walk_expr_mut(&mut known, &mut ident_expr);
     assert_eq!(known, value);
 }

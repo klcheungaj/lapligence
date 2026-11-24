@@ -157,7 +157,7 @@ fn array_conditional_fold_skips_dead_arms_and_recognizes_dominant_one() {
 fn array_conditional_identity_keeps_unknown_equal_arms_and_effectful_selector() {
     let read = IrExpr::new(IrExprKind::SigRead(0), 8, false, None);
     let mut expr = array(unknown(1), read.clone(), read, unknown(8));
-    ident_expr(&mut expr);
+    walk_expr_mut(&mut expr, &mut ident_expr);
     assert!(matches!(expr.kind, IrExprKind::ArrayMux { .. }));
     let selector = IrExpr::new(
         IrExprKind::CallFn(Box::new(crate::sim::ir::IrCallExpr::new(
@@ -172,7 +172,7 @@ fn array_conditional_identity_keeps_unknown_equal_arms_and_effectful_selector() 
     );
     let mut expr = array(selector, konst(7, 8), konst(7, 8), unknown(8));
     fold_expr(&mut expr);
-    ident_expr(&mut expr);
+    walk_expr_mut(&mut expr, &mut ident_expr);
     assert!(matches!(expr.kind, IrExprKind::ArrayMux { .. }));
 }
 

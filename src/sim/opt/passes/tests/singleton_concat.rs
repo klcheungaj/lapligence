@@ -17,7 +17,7 @@ fn singleton_concat_keeps_signed_child_boundary() {
     let child = IrExpr::new(IrExprKind::FormalRead(0), 4, true, None);
     let mut expression = IrExpr::convert_to(concat(child), 32, true);
     let original = expression.clone();
-    ident_expr(&mut expression);
+    walk_expr_mut(&mut expression, &mut ident_expr);
     assert_eq!(expression, original);
     // An assignment/explicit cast must see four unsigned bits, not signed -2.
     let IrExprKind::Convert { a } = &expression.kind else {
@@ -31,7 +31,7 @@ fn singleton_concat_keeps_signed_child_boundary() {
 fn singleton_concat_removes_only_equivalent_unsigned_child() {
     let child = IrExpr::new(IrExprKind::FormalRead(0), 65, false, None);
     let mut expression = concat(child.clone());
-    ident_expr(&mut expression);
+    walk_expr_mut(&mut expression, &mut ident_expr);
     assert_eq!(expression, child);
 }
 
@@ -50,7 +50,7 @@ fn singleton_concat_does_not_expose_fill_markers() {
         ] {
             let mut expression = concat(child);
             let original = expression.clone();
-            ident_expr(&mut expression);
+            walk_expr_mut(&mut expression, &mut ident_expr);
             assert_eq!(expression, original, "fill={fill}");
         }
     }

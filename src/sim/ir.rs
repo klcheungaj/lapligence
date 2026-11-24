@@ -57,8 +57,8 @@ pub use objects::{
     IrVirtualInterfaceMethod, IrVirtualInterfaceNested,
 };
 
-use validate::CheckedModel;
 pub use validate::IrValidationError;
+use validate::{CheckedModel, IrPath};
 
 mod constants;
 pub use constants::IrConst;

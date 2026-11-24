@@ -77,7 +77,7 @@ fn fixed_array_reduction_optimizes_children_without_folding_away_iterations() {
         None,
     );
     let mut expr = reduction(source, body);
-    ident_expr(&mut expr);
+    walk_expr_mut(&mut expr, &mut ident_expr);
     fold_expr(&mut expr);
     let IrExprKind::FixedArrayReduce(plan) = &expr.kind else {
         panic!("fold must remain symbolic");
@@ -106,7 +106,7 @@ fn fixed_array_reduction_keeps_calls_in_a_constant_map_and_in_its_receiver() {
         )
     };
     let mut expr = reduction(call(16), call(8));
-    ident_expr(&mut expr);
+    walk_expr_mut(&mut expr, &mut ident_expr);
     fold_expr(&mut expr);
     let IrExprKind::FixedArrayReduce(plan) = &expr.kind else {
         unreachable!();
