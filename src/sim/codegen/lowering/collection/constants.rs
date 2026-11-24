@@ -66,9 +66,14 @@ impl<'a> Codegen<'a> {
                 _ => Err("enum constant without value in bound".to_string()),
             },
             NodeKind::Expr(ExprKind::Ref { target }) => {
-                match target.and_then(|t| self.param_vals.get(&t).map(|value| (t, value))) {
-                    Some((_, Val::Bits(b))) => Ok(b.clone()),
-                    Some((target, Val::Str(value))) => match self.kind(target) {
+                let Some((target, value)) =
+                    target.and_then(|target| Some((target, self.parameter_value(target)?)))
+                else {
+                    return Err("unresolved reference in bound".to_string());
+                };
+                match value.as_ref() {
+                    Val::Bits(b) => Ok(b.clone()),
+                    Val::Str(value) => match self.kind(target) {
                         NodeKind::Param { ty, .. } if ty.kind != "string" => match ty.width {
                             Some(width) => {
                                 Ok(string_to_value(value)?.cast(width as usize, ty.signed))
@@ -77,8 +82,7 @@ impl<'a> Codegen<'a> {
                         },
                         _ => Err("non-integer parameter in bound".to_string()),
                     },
-                    Some((_, Val::Real(_))) => Err("non-integer parameter in bound".to_string()),
-                    None => Err("unresolved reference in bound".to_string()),
+                    Val::Real(_) => Err("non-integer parameter in bound".to_string()),
                 }
             }
             NodeKind::Expr(ExprKind::Conditional {
@@ -170,18 +174,36 @@ impl<'a> Codegen<'a> {
         Ok(elab::Value::from_u64(1, 1, false))
     }
 
-    pub(in super::super) fn collected_parameter_value(
+    /// The value of a constant parameter reference. Module, interface,
+    /// package and generate-scope parameters and specparams are collected;
+    /// the parameters of a subroutine, a class or a procedural block are
+    /// not, and their value is the one of the referenced node: each
+    /// instance, class specialization and generate iteration owns its own
+    /// parameter nodes (SV 6.20, 8.24).
+    pub(in super::super) fn parameter_value(&self, parameter: NodeId) -> Option<Cow<'_, Val>> {
+        if let Some(value) = self.param_vals.get(&parameter) {
+            return Some(Cow::Borrowed(value));
+        }
+        let NodeKind::Param { value, .. } = self.kind(parameter) else {
+            return None;
+        };
+        let scope = self.node(parameter).parent?;
+        self.collected_parameter_value(scope, parameter, value.as_ref())
+            .map(Cow::Owned)
+    }
+
+    pub(super) fn collected_parameter_value(
         &self,
         scope: NodeId,
         parameter: NodeId,
         frontend_value: Option<&Val>,
-    ) -> Result<Option<Val>, String> {
+    ) -> Option<Val> {
         let fallback = || frontend_value.map(materialize_parameter_value);
         let NodeKind::Param { ty, .. } = self.kind(parameter) else {
-            return Ok(fallback());
+            return fallback();
         };
         if self.db.parameter_is_overridden(parameter) {
-            return Ok(fallback());
+            return fallback();
         }
         let parameter_name = self.node(parameter).name.as_str();
         let assignment_rhs = self.node(scope).children.iter().find_map(|child| {
@@ -201,7 +223,7 @@ impl<'a> Codegen<'a> {
                 .find(|child| matches!(self.kind(*child), NodeKind::Expr(_)))
         });
         let Some(assignment_rhs) = assignment_rhs else {
-            return Ok(fallback());
+            return fallback();
         };
         let integral_cast = matches!(
             self.kind(assignment_rhs),
@@ -212,40 +234,40 @@ impl<'a> Codegen<'a> {
             && !integral_cast
             && !self.contains_time_literal(assignment_rhs, &mut HashSet::new())
         {
-            return Ok(fallback());
+            return fallback();
         }
         let Ok(value) = self.eval_decl_value(assignment_rhs) else {
-            return Ok(fallback());
+            return fallback();
         };
         if ty.kind == "real" {
-            return Ok(Some(Val::Real(match value {
+            return Some(Val::Real(match value {
                 Val::Bits(value) => value.to_real(),
                 Val::Real(value) => value,
-                Val::Str(_) => return Ok(fallback()),
-            })));
+                Val::Str(_) => return fallback(),
+            }));
         }
         if ty.kind == "shortreal" {
             let value = match value {
                 Val::Bits(value) => value.to_real(),
                 Val::Real(value) => value,
-                Val::Str(_) => return Ok(fallback()),
+                Val::Str(_) => return fallback(),
             };
-            return Ok(Some(Val::Real((value as f32) as f64)));
+            return Some(Val::Real((value as f32) as f64));
         }
         let Some(width) = ty.width else {
-            return Ok(fallback());
+            return fallback();
         };
         let value = match value {
             Val::Bits(value) => value,
             Val::Real(value) => elab::real_to_bits(value, width as usize, ty.signed),
-            Val::Str(_) => return Ok(fallback()),
+            Val::Str(_) => return fallback(),
         };
-        Ok(Some(Val::Bits(materialize_decl_cast_value(
+        Some(Val::Bits(materialize_decl_cast_value(
             value,
             width as usize,
             ty.signed,
             self.db.is_two_state_type(parameter) || is_two_state_kind(&ty.kind),
-        ))))
+        )))
     }
 
     fn contains_time_literal(&self, node: NodeId, visited: &mut HashSet<NodeId>) -> bool {
@@ -322,7 +344,7 @@ impl<'a> Codegen<'a> {
                 Ok(value)
             }
             NodeKind::Expr(ExprKind::Ref { target }) => target
-                .and_then(|target| self.param_vals.get(&target).cloned())
+                .and_then(|target| self.parameter_value(target).map(Cow::into_owned))
                 .ok_or_else(|| "unresolved reference in declaration initializer".to_string()),
             NodeKind::Expr(ExprKind::Conditional {
                 predicate,

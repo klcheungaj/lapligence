@@ -356,7 +356,7 @@ impl<'a> Codegen<'a> {
                 .map(|bytes| String::from_utf8_lossy(&bytes).into_owned()),
             NodeKind::Expr(ExprKind::Ref {
                 target: Some(target),
-            }) => match self.param_vals.get(target)? {
+            }) => match self.parameter_value(*target)?.as_ref() {
                 Val::Str(text) => decode_verilog_string(text)
                     .ok()
                     .map(|bytes| String::from_utf8_lossy(&bytes).into_owned()),

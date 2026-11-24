@@ -504,8 +504,8 @@ impl Codegen<'_> {
             }
             NodeKind::Expr(ExprKind::Constant { const_type: ConstantType::String, value, .. }) => Ok(string_literal(decoded_string_bytes(value)?)),
             NodeKind::Expr(ExprKind::Ref {target:Some(target)}) if matches!(self.kind(*target),NodeKind::Param {ty,..} if ty.kind=="string") => self.lower_string(path,*target),
-            NodeKind::Param {ty,value,..} if ty.kind=="string" => {
-                match self.param_vals.get(&node).or(value.as_ref()) {
+            NodeKind::Param {ty,..} if ty.kind=="string" => {
+                match self.parameter_value(node).as_deref() {
                     Some(Val::Str(value))=>Ok(string_literal(decode_verilog_string(value)?)),
                     _=>Err("string parameter has no captured string value".to_owned()),
                 }

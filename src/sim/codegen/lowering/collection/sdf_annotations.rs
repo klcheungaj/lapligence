@@ -296,7 +296,7 @@ impl Codegen<'_> {
             NodeKind::Expr(ExprKind::Cast { operand, .. }) => self.sdf_constant_text(*operand),
             NodeKind::Expr(ExprKind::Ref {
                 target: Some(target),
-            }) => match self.param_vals.get(target)? {
+            }) => match self.parameter_value(*target)?.as_ref() {
                 Val::Str(text) => decode_verilog_string(text).ok().and_then(sdf_text),
                 Val::Bits(_) | Val::Real(_) => None,
             },

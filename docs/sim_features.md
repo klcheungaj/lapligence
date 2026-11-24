@@ -680,6 +680,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   defaults, nominal enums, `type()`, constant queries and folded real/string
   values support finite extents and names. Fixed struct/union parameters are
   readable whole or by member; override expressions retain their parent scope.
+  Parameters declared in procedural blocks, subroutines and methods are read
+  like module parameters
+  ([ki_block_parameters](../tests/fixtures/sim/feature_completion/ki_block_parameters/readme.md)).
   [Elaboration regression sources](../tests/sim_syn016_elaboration.rs) exercise
   bounded function/type/namespace cases; source presence is not fresh acceptance.
   Constant functions reading `defparam`-affected parameters have

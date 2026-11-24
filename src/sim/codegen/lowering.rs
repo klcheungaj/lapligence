@@ -240,6 +240,7 @@
 //!   processes launch in Reactive and `$exit` remains a typed runtime
 //!   operation.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::timescale::{real_delay_ticks, round_time_literal, time_literal_delay_ticks, Timescale};
