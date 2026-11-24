@@ -729,7 +729,7 @@ impl EmitCtx<'_, '_> {
                     .unwrap_or_else(|| lhs_integer_expr(0));
                 let suffix = args
                     .get(2)
-                    .map(|node| self.cg.lower_string(&self.path, *node))
+                    .map(|node| self.lower_time_suffix(*node))
                     .transpose()?
                     .unwrap_or_else(|| IrStringExpr::Literal(Vec::new()));
                 let minimum_field_width = args
@@ -822,6 +822,27 @@ impl EmitCtx<'_, '_> {
             }
             _ => Err(format!("unsupported system task {name} in `{}`", self.path)),
         }
+    }
+
+    /// The suffix string of `$timeformat`. An integral value prints as by
+    /// `%s`: NUL characters are spaces, except in a vector of at most 8 bits
+    /// (decision S24-D7).
+    fn lower_time_suffix(&mut self, node: NodeId) -> Result<IrStringExpr, String> {
+        let integral = self
+            .cg
+            .integral_string_argument(node)
+            .filter(|operand| !self.cg.is_string_expr(&self.path, *operand));
+        let Some(operand) = integral else {
+            return self.cg.lower_string(&self.path, node);
+        };
+        let value = self.cg.lower_expr(&self.path, operand)?;
+        Ok(IrStringExpr::Format {
+            format: Box::new(IrStringExpr::Literal(b"%s".to_vec())),
+            args: vec![crate::sim::ir::IrDisplayArg::Packed(value)],
+            scope: self.path.clone(),
+            run_time: None,
+            time_unit_fs: 0,
+        })
     }
 
     fn lower_stochastic_input(&mut self, node: NodeId, label: &str) -> Result<IrExpr, String> {

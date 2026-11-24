@@ -5517,6 +5517,22 @@ fn s26_d19_errors_end_the_load() {
 }
 
 #[test]
+fn s24_d7_integral_time_suffix() {
+    run_decision(
+        "S24-D7_integral_time_suffix",
+        include_str!("fixtures/sim/lrm_decisions/S24-D7_integral_time_suffix.out"),
+    );
+}
+
+#[test]
+fn s26_d18_start_after_finish_descends() {
+    run_decision(
+        "S26-D18_start_after_finish_descends",
+        include_str!("fixtures/sim/lrm_decisions/S26-D18_start_after_finish_descends.out"),
+    );
+}
+
+#[test]
 fn s27_d26_unknown_address_bits() {
     run_decision(
         "S27-D26_unknown_address_bits",

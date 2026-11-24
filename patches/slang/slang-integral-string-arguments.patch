@@ -8,17 +8,19 @@
  #include "slang/ast/symbols/VariableSymbols.h"
  #include "slang/ast/types/Type.h"
  #include "slang/diagnostics/ExpressionsDiags.h"
-@@ -88,6 +89,26 @@ bool SystemSubroutine::noHierarchical(EvalContext& context, const Expression& ex
+@@ -88,6 +89,28 @@ bool SystemSubroutine::noHierarchical(EvalContext& context, const Expression& ex
      return true;
  }
  
 +// Subroutines whose string arguments may also be "an integral data type containing a
-+// character string" (SV 21.3.1, 21.7): the value converts as by a cast to string.
++// character string" (SV 21.3.1, 21.7), and $timeformat, whose suffix the text does not
++// restrict: the value converts as by a cast to string.
 +static bool acceptsIntegralString(parsing::KnownSystemName name) {
 +    using parsing::KnownSystemName;
 +    switch (name) {
 +        case KnownSystemName::FOpen:
 +        case KnownSystemName::TestPlusArgs:
++        case KnownSystemName::TimeFormat:
 +        case KnownSystemName::System:
 +        case KnownSystemName::DumpFile:
 +        case KnownSystemName::DumpPortsOn:
@@ -35,7 +37,7 @@
  const Expression& SimpleSystemSubroutine::bindArgument(size_t argIndex, const ASTContext& context,
                                                         const ExpressionSyntax& syntax,
                                                         const Args& args) const {
-@@ -97,8 +118,19 @@ const Expression& SimpleSystemSubroutine::bindArgument(size_t argIndex, const AS
+@@ -97,8 +120,19 @@ const Expression& SimpleSystemSubroutine::bindArgument(size_t argIndex, const AS
      if (argIndex >= argTypes.size())
          return SystemSubroutine::bindArgument(argIndex, context, syntax, args);
  
