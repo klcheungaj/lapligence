@@ -361,6 +361,22 @@ every input and output pair is a path of its own (decision A19-D9).
   of 8 passes (3420 + 10 and 3428 + 10); the pulses on `b` (2, 4 and 8, all
   below 11) are rejected.
 
+## path_edges (30.4.3, 32.4.1, 37.35)
+
+`path_edges.sv` declares `(posedge a, b *> (y +: a))` and
+`if (a) (negedge c, d *> (z -: c))`; three instances differ in the IOPATH
+entries of `path_edges.sdf`. The edge is on the first input of a list
+(decision A8-D10).
+
+- VPI. The input terminals of `a$y` and `c$z` have `vpiPosedge` (13) and
+  `vpiNegedge` (50), those of `b$y` and `d$z` `vpiNoEdge`.
+- Annotation. `IOPATH (posedge a) y` changes `a$y`, `IOPATH b y` changes
+  `b$y`; `IOPATH (posedge b) y`, `(negedge a) y` and `(posedge d) z` name no
+  path and change nothing (`tb.v.b$y`, `tb.w.a$y` and `tb.w.d$z` keep their
+  declared delays).
+- Simulation. With a change of `b` at 401 and 601 `tb.u.y` moves after `b$y`
+  (21 rise, 22 fall); the fall of `b` at 601 starts that path as the rise does.
+
 ## actions (38.36.3)
 
 `actions.c` registers `cbError`, a `cbSignal` record for `SIGTERM` and, last,

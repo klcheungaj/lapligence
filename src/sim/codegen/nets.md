@@ -190,7 +190,7 @@ one hidden `ModulePathStamp` SensLoop process on the sources. A destination
 must be a whole net group driven only inside the instance subtree (Net-member
 slots of collapsed inout groups are storage, not drivers); IEEE 1364-2001
 also allows one driver site. Variable destinations fail with their location. A condition is lowered once per declaration in the
-instance scope (`IrModulePathSet::conditions`); edges map to `IrPathEdge`;
+instance scope (`IrModulePathSet::conditions`); edges (of the first input of a list, A8-D10) map to `IrPathEdge`;
 paths with exactly an `ifnone` path's terminals share a group, an
 unconditional duplicate of an `ifnone` path and all but the last duplicate
 `ifnone` are dropped (A8-D3; `dropped_path_pairs`, which get no VPI path

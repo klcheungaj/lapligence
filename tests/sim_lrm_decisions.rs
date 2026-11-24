@@ -5615,6 +5615,14 @@ fn a8_d8_pulse_trains() {
 }
 
 #[test]
+fn a8_d10_edge_of_first_input() {
+    run_decision(
+        "A8-D10_edge_of_first_input",
+        include_str!("fixtures/sim/lrm_decisions/A8-D10_edge_of_first_input.out"),
+    );
+}
+
+#[test]
 fn a8_d9_pulse_limits_keep_net_delay() {
     run_decision(
         "A8-D9_pulse_limits_keep_net_delay",

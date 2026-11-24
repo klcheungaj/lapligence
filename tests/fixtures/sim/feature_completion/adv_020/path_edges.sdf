@@ -1,0 +1,20 @@
+(DELAYFILE
+ (SDFVERSION "3.0")
+ (TIMESCALE 1ns)
+ (CELL (CELLTYPE "cell_t") (INSTANCE u)
+  (DELAY (ABSOLUTE
+   (IOPATH (posedge a) y (11) (12))
+   (IOPATH b y (21) (22))
+  )))
+ (CELL (CELLTYPE "cell_t") (INSTANCE v)
+  (DELAY (ABSOLUTE
+   (IOPATH a y (31) (32))
+   (IOPATH (posedge b) y (41) (42))
+  )))
+ (CELL (CELLTYPE "cell_t") (INSTANCE w)
+  (DELAY (ABSOLUTE
+   (IOPATH (negedge a) y (51) (52))
+   (IOPATH c z (61) (62))
+   (IOPATH (posedge d) z (71) (72))
+  )))
+)

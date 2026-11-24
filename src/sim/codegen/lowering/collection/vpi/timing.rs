@@ -325,7 +325,7 @@ impl Codegen<'_> {
                     .collect()
             })
             .unwrap_or_default();
-        let edge = match path.edge {
+        let edge = |input: usize| match path.input_edge(input) {
             None => 0,
             Some(PathEdge::Posedge) => POSEDGE,
             Some(PathEdge::Negedge) => NEGEDGE,
@@ -336,30 +336,32 @@ impl Codegen<'_> {
             edge,
             ..cg.vpi_conn(node, direction)
         };
-        let terminals = |cg: &Self, nodes: &[NodeId], direction, role, edge| {
-            nodes
-                .iter()
-                .map(|node| {
-                    (
-                        term(cg, *node, direction, role, edge),
-                        cg.vpi_terminal_text(*node),
-                    )
-                })
-                .collect::<Vec<_>>()
-        };
+        let terminals =
+            |cg: &Self, nodes: &[NodeId], direction, role, edge: &dyn Fn(usize) -> u8| {
+                nodes
+                    .iter()
+                    .enumerate()
+                    .map(|(index, node)| {
+                        (
+                            term(cg, *node, direction, role, edge(index)),
+                            cg.vpi_terminal_text(*node),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            };
         let inputs = terminals(
             self,
             &path.inputs,
             IrVpiDirection::Input,
             IrVpiConnRole::PathIn,
-            edge,
+            &edge,
         );
         let outputs = terminals(
             self,
             &path.outputs,
             IrVpiDirection::Output,
             IrVpiConnRole::PathOut,
-            0,
+            &|_| 0,
         );
         // The terminals every pair has.
         let mut shared = Vec::new();

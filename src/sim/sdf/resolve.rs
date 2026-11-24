@@ -424,12 +424,6 @@ impl<'t> Resolver<'t> {
         let whole = |name: &str| self.port_named(scope, name).and_then(|port| port.range);
         let mut found = Vec::new();
         for (index, path) in entry.paths.iter().enumerate() {
-            let edge_ok = match edge {
-                None => true,
-                Some(SdfEdge::Posedge) => path.edge == SdfTargetEdge::Posedge,
-                Some(SdfEdge::Negedge) => path.edge == SdfTargetEdge::Negedge,
-                Some(_) => false,
-            };
             let condition_ok = match condition {
                 None | Some(SdfPathCondition::None) => true,
                 Some(SdfPathCondition::Cond(condition)) => matches!(
@@ -438,11 +432,18 @@ impl<'t> Resolver<'t> {
                 ),
                 Some(SdfPathCondition::CondElse) => path.condition == SdfTargetCondition::IfNone,
             };
-            if !edge_ok || !condition_ok {
+            if !condition_ok {
                 continue;
             }
-            for (i, terminal) in path.inputs.iter().enumerate() {
-                if !terminal_matches(terminal, input, whole(&terminal.name)) {
+            for (i, declared) in path.inputs.iter().enumerate() {
+                let edge_ok = match edge {
+                    None => true,
+                    Some(SdfEdge::Posedge) => declared.edge == SdfTargetEdge::Posedge,
+                    Some(SdfEdge::Negedge) => declared.edge == SdfTargetEdge::Negedge,
+                    Some(_) => false,
+                };
+                let terminal = &declared.terminal;
+                if !edge_ok || !terminal_matches(terminal, input, whole(&terminal.name)) {
                     continue;
                 }
                 for (o, out) in path.outputs.iter().enumerate() {

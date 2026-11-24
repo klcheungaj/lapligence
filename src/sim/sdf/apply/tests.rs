@@ -2,7 +2,9 @@ use super::*;
 use crate::sim::sdf::{
     resolve, SdfLimits, SdfPortDirection, SdfScope, SdfScopeKind, SdfTargetPort,
 };
-use crate::sim::sdf::{SdfTargetCondition, SdfTargetEdge, SdfTargetPath, SdfTerminal};
+use crate::sim::sdf::{
+    SdfPathInput, SdfTargetCondition, SdfTargetEdge, SdfTargetPath, SdfTerminal,
+};
 
 fn number(text: &str) -> SdfNumber {
     SdfNumber::parse(text).expect("number")
@@ -36,9 +38,11 @@ fn targets(precision_fs: u64) -> SdfTargets {
     }
     cell.paths.push(SdfTargetPath {
         origin: String::new(),
-        inputs: vec![terminal("a")],
+        inputs: vec![SdfPathInput {
+            terminal: terminal("a"),
+            edge: SdfTargetEdge::None,
+        }],
         outputs: vec![terminal("y")],
-        edge: SdfTargetEdge::None,
         condition: SdfTargetCondition::None,
         rows: Vec::new(),
     });

@@ -1818,7 +1818,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   scheduled (least significant bit, x and z true; A8-D1, A8-D2), `ifnone`
   paths apply when no path with their terminals is active (A8-D3), and
   `posedge`/`negedge`/`edge` paths start at the last such edge of the input's
-  least significant bit (A8-D4; `edge` is SystemVerilog only). Each pair of
+  least significant bit (A8-D4; `edge` is SystemVerilog only) and of the first input of a list
+  (A8-D10). Each pair of
   consecutive scheduled destination transitions is a pulse (A8-D8): below the
   reject limit it vanishes, below the error limit it becomes x, otherwise it
   passes. A transition is timed from the value last scheduled and keeps that
