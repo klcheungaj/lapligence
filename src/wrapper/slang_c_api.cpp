@@ -9929,10 +9929,15 @@ public:
     if (directiveDepth == 0 && !token.isMissing() &&
         token.kind != parsing::TokenKind::EndOfFile)
       missingEndScope.reset();
-    if (macros)
-      addEditorToken(token);
-    else
+    if (macros) {
+      // A use written in the actual arguments of another use.
+      if (macroArgumentDepth != 0 && MacroCapture::isUse(token))
+        macros->use(token);
+      addEditorToken(token, 0);
+    }
+    else {
       addToken(token, 0);
+    }
   }
 
   // The directives and skipped tokens before a token. The preprocessor acted
@@ -9940,9 +9945,13 @@ public:
   void visitTrivia(parsing::Token token) {
     for (const parsing::Trivia& trivia : token.trivia()) {
       for (parsing::Token skipped : trivia.getSkippedTokens()) {
-        if (capture.editor)
+        if (macros) {
           visitTrivia(skipped);
-        addToken(skipped, LLG_SLANG_LEXICAL_SKIPPED);
+          addEditorToken(skipped, LLG_SLANG_LEXICAL_SKIPPED);
+        }
+        else {
+          addToken(skipped, LLG_SLANG_LEXICAL_SKIPPED);
+        }
       }
       if (syntax::SyntaxNode* directive = trivia.syntax();
           directive && directives.insert(directive).second) {
@@ -10768,27 +10777,40 @@ private:
   // What only editor capture makes of a token: a macro use refers to its
   // macro, and a name in a `define body that spells a formal argument to the
   // formal.
-  LLG_NOINLINE void addEditorToken(parsing::Token token) {
-    const size_t index = capture.output.lexical_tokens.size();
-    addToken(token, 0);
-    // A use written in the actual arguments of another use.
-    const bool use = MacroCapture::isUse(token);
-    if (use && macroArgumentDepth != 0)
-      macros->use(token);
-    if (index == capture.output.lexical_tokens.size())
-      return;
-    LlgSlangLexicalToken& record = capture.output.lexical_tokens[index];
-    if (use && !isExpansionCopy(record.flags)) {
-      record.kind = LLG_SLANG_LEXICAL_MACRO;
-      record.role = LLG_SLANG_LEXICAL_ROLE_REFERENCE;
+  LLG_NOINLINE void addEditorToken(parsing::Token token, uint32_t extraFlags) {
+    auto& tokens = capture.output.lexical_tokens;
+    const size_t index = tokens.size();
+    addToken(token, extraFlags);
+    LlgSlangLexicalToken* record = index < tokens.size() ? &tokens[index] : nullptr;
+    if (MacroCapture::isUse(token)) {
+      // An undefined macro stays in the expansion of the use whose argument it
+      // is written in, and replaces the record of the argument.
+      if (!record)
+        record = writtenArgument(token);
+      if (record && !isExpansionCopy(record->flags)) {
+        record->kind = LLG_SLANG_LEXICAL_MACRO;
+        record->role = LLG_SLANG_LEXICAL_ROLE_REFERENCE;
+      }
     }
-    else if (record.kind == LLG_SLANG_LEXICAL_MACRO_FORMAL &&
-             record.role != LLG_SLANG_LEXICAL_ROLE_DECLARATION) {
+    else if (record && record->kind == LLG_SLANG_LEXICAL_MACRO_FORMAL &&
+             record->role != LLG_SLANG_LEXICAL_ROLE_DECLARATION) {
       const auto formal = std::ranges::find(defineFormals, token.valueText(),
                                             [](const auto& name) { return name.valueText(); });
       if (formal != defineFormals.end())
-        capture.nameRepeat(capture.span(formal->range()), record.range);
+        capture.nameRepeat(capture.span(formal->range()), record->range);
     }
+  }
+
+  // The record of the written macro argument that an expanded token copies.
+  LlgSlangLexicalToken* writtenArgument(parsing::Token token) {
+    if (!token.location().valid() || !capture.sourceManager.isMacroLoc(token.location()))
+      return nullptr;
+    const auto range = capture.macroArgumentSpan(token.location(), token.rawText());
+    if (!range)
+      return nullptr;
+    const auto it = writtenArguments.find({range->file_id, range->start, range->end});
+    return it == writtenArguments.end() ? nullptr
+                                        : &capture.output.lexical_tokens[it->second];
   }
 
   void addToken(parsing::Token token, uint32_t extraFlags) {

@@ -179,7 +179,7 @@ impl MacroTable {
                 token.kind,
                 token.role,
                 token.is_skipped,
-                token.is_macro_expansion,
+                token.is_macro_expansion && !token.is_macro_argument,
                 token.range,
             ) {
                 add(range, MacroSiteKind::Use, None, false);
@@ -352,10 +352,18 @@ mod tests {
     use crate::core::tokens;
     use crate::ffi::slang;
 
-    /// The macros of one source unit compiled with `defines`.
+    /// The macros of one source unit, `t.sv`, compiled with `defines`.
     fn table(defines: &[&str], text: &str) -> MacroTable {
+        unit_tables(defines, &[("t.sv", text)])
+    }
+
+    /// The macros of source units compiled with `defines`.
+    fn unit_tables(defines: &[&str], units: &[(&str, &str)]) -> MacroTable {
         let defines: Vec<String> = defines.iter().map(|define| (*define).to_owned()).collect();
-        let sources = [slang::Source::compilation_unit("t.sv", text)];
+        let sources: Vec<_> = units
+            .iter()
+            .map(|(name, text)| slang::Source::compilation_unit(name, text))
+            .collect();
         let options = slang::CompileOptions {
             defines: defines
                 .iter()
@@ -501,6 +509,166 @@ endmodule
         assert_eq!(operand.kind, MacroSiteKind::Operand);
         // An operand that is not defined there is no macro.
         assert!(site(&macros, text, "`ifdef |NOT_DEFINED").is_none());
+    }
+
+    /// The branch the frontend takes is the one that defines, uses and names
+    /// macros, at every depth.
+    #[test]
+    fn only_the_taken_branches_of_nested_conditions_hold_names() {
+        let text = "\
+`define OUTER 1
+`ifdef OUTER
+`ifndef INNER
+`define FROM_IFNDEF 2
+`else
+`define FROM_INNER 3
+`endif
+`else
+`ifdef OUTER
+`define FROM_DEAD 4
+`endif
+`endif
+`ifdef ABSENT
+`define FROM_ABSENT 5
+`elsif ALSO_ABSENT
+`define FROM_ALSO_ABSENT 6
+`else
+`define FROM_ELSE 7
+`endif
+`ifdef (OUTER)
+`define FROM_PARENTHESES 8
+`endif
+module m;
+  int a = `FROM_IFNDEF, b = `FROM_INNER, c = `FROM_DEAD, d = `FROM_ABSENT;
+  int e = `FROM_ALSO_ABSENT, f = `FROM_ELSE, g = `FROM_PARENTHESES;
+endmodule
+";
+        let macros = table(&[], text);
+        for (marked, expected) in [
+            ("a = `|FROM_IFNDEF", &["2"] as &[&str]),
+            ("b = `|FROM_INNER", &[]),
+            ("c = `|FROM_DEAD", &[]),
+            ("d = `|FROM_ABSENT", &[]),
+            ("e = `|FROM_ALSO_ABSENT", &[]),
+            ("f = `|FROM_ELSE", &["7"]),
+            ("g = `|FROM_PARENTHESES", &["8"]),
+            ("`ifdef (|OUTER)", &["1"]),
+            // The frontend reads a condition nested in a branch it skips.
+            ("`else\n`ifdef |OUTER", &["1"]),
+        ] {
+            assert_eq!(bodies(&macros, text, marked), expected, "{marked}");
+        }
+        for marked in [
+            "`define |FROM_INNER",
+            "`define |FROM_DEAD",
+            "`define |FROM_ABSENT",
+            "`define |FROM_ALSO_ABSENT",
+        ] {
+            assert!(site(&macros, text, marked).is_none(), "{marked}");
+        }
+    }
+
+    /// A condition without an operand is an error, and the names are those of
+    /// the text the frontend kept: it reads the directives up to the next token
+    /// in place of the operand and skips the rest of the file.
+    #[test]
+    fn a_condition_without_an_operand_leaves_the_names_the_frontend_kept() {
+        let text = "\
+`define BEFORE 1
+module m;
+  int a = `BEFORE;
+endmodule
+`ifdef
+`define AFTER 2
+module n;
+  int b = `BEFORE, c = `AFTER;
+endmodule
+";
+        let macros = table(&[], text);
+        assert_eq!(bodies(&macros, text, "a = `|BEFORE"), ["1"]);
+        assert_eq!(bodies(&macros, text, "`define |AFTER"), ["2"]);
+        for marked in ["b = `|BEFORE", "c = `|AFTER"] {
+            assert!(site(&macros, text, marked).is_none(), "{marked}");
+        }
+    }
+
+    /// `` `undefineall `` defines the configured macros again.
+    #[test]
+    fn undef_and_undefineall_on_a_config_define() {
+        let text = "\
+module m;
+  int first = `W;
+`undef W
+  int second = `W;
+`undefineall
+  int third = `W;
+endmodule
+";
+        let macros = table(&["W=4"], text);
+        for (marked, expected) in [
+            ("first = `|W", &["4"] as &[&str]),
+            ("`undef |W", &["4"]),
+            ("second = `|W", &[]),
+            ("third = `|W", &["4"]),
+        ] {
+            assert_eq!(bodies(&macros, text, marked), expected, "{marked}");
+        }
+    }
+
+    #[test]
+    fn directives_are_no_macro_names() {
+        let text = "\
+`timescale 1ns/1ps
+`default_nettype none
+`celldefine
+module m;
+endmodule
+`endcelldefine
+`resetall
+`define OK 1
+";
+        let macros = table(&[], text);
+        assert_eq!(macros.sites("t.sv").len(), 1);
+        assert_eq!(bodies(&macros, text, "`define |OK"), ["1"]);
+    }
+
+    #[test]
+    fn a_unit_does_not_see_the_macros_of_another() {
+        let first = "`define SHARED local\nmodule a; string s = \"`SHARED\"; endmodule\n";
+        let second = "module b; int x = `SHARED, y = `CONFIGURED; endmodule\n";
+        let macros = unit_tables(&["CONFIGURED=9"], &[("a.sv", first), ("b.sv", second)]);
+        let at = |marked: &str| {
+            let column = second.find(marked).expect("text") as u32;
+            macros.site_at("b.sv", 0, column).expect("use")
+        };
+        let shared = at("`SHARED");
+        assert!(shared.definitions.is_empty() && !shared.predefined);
+        let configured = at("`CONFIGURED");
+        assert_eq!(
+            macros
+                .definitions(configured)
+                .next()
+                .map(|d| d.body.as_str()),
+            Some("9")
+        );
+        assert_eq!(macros.sites("a.sv").len(), 1);
+    }
+
+    #[test]
+    fn uses_in_actual_arguments_are_names_of_their_own() {
+        let text = "\
+`define W 4
+`define ADD(a, b) ((a) + (b))
+module m;
+  int x = `ADD(`W, `ADD(1, `GONE));
+endmodule
+";
+        let macros = table(&[], text);
+        assert_eq!(bodies(&macros, text, "x = `|ADD"), ["((a) + (b))"]);
+        assert_eq!(bodies(&macros, text, "ADD(`|W"), ["4"]);
+        assert_eq!(bodies(&macros, text, "W, `|ADD(1"), ["((a) + (b))"]);
+        let gone = site(&macros, text, "`|GONE").expect("undefined use");
+        assert!(gone.definitions.is_empty() && !gone.predefined);
     }
 
     #[test]
