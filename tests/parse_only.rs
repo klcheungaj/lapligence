@@ -59,6 +59,9 @@ fn parse_source_classifies_connection_labels_and_actuals_separately() {
         "    .clk(wa),\n",
         "    .q(tq)\n",
         "  );\n",
+        "  ghost #(.W(4)) u_ghost (.clk(wa));\n",
+        "endmodule\n",
+        "module child #(parameter W = 1, D = 1) (input clk, output [7:0] q);\n",
         "endmodule\n",
     );
 
@@ -85,6 +88,14 @@ fn parse_source_classifies_connection_labels_and_actuals_separately() {
             type_at(line, column),
             tokens::TOKEN_SLANG_PORT_CONNECTION_LABEL,
             "port connection label at {line}:{column}"
+        );
+    }
+    // The labels of an unknown module name nothing.
+    for (line, column) in [(15, 12), (15, 28)] {
+        assert_eq!(
+            type_at(line, column),
+            tokens::TOKEN_SLANG_IDENTIFIER,
+            "label of an unknown module at {line}:{column}"
         );
     }
     for (line, column) in [(6, 21), (6, 38), (6, 46), (12, 10), (13, 8)] {

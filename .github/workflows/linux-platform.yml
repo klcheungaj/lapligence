@@ -240,7 +240,8 @@ jobs:
   # None needs a Rust toolchain; the release job requires every combination
   # to pass. The ubuntu-24.04-clang row (x86_64 only) builds the generated
   # models and runtime with Clang (LLG_CC/CC); the other rows use the image's
-  # default `cc` (GCC).
+  # default `cc` (GCC). The ubuntu-24.04 row on x86_64 also installs GCC 14,
+  # which only the heavier-inlining maybe-uninitialized pass uses.
   test:
     name: test (${{ matrix.distro }})
     needs: build
@@ -265,6 +266,9 @@ jobs:
               build-essential clang cmake git ninja-build procps python3
           - distro: ubuntu-24.04
             image: ubuntu:24.04
+            # The package and the driver have the same name; `gcc` and `cc`
+            # stay the image's default. Empty on arm64.
+            heavy_inlining_gcc: ${{ inputs.arch == 'x86_64' && 'gcc-14' || '' }}
             install: >-
               export DEBIAN_FRONTEND=noninteractive &&
               apt-get update &&
@@ -331,11 +335,17 @@ jobs:
             --env LLG_BUILD_TIMINGS=/workspace/target/llg-build-timings.tsv \
             --env LLG_INSTALL="${{ matrix.install }}" \
             --env LLG_MODEL_CC="${{ matrix.model_cc }}" \
+            --env LLG_TEST_HEAVY_INLINING_GCC="${{ matrix.heavy_inlining_gcc }}" \
             "${{ matrix.image }}" sh -euxc '
               eval "$LLG_INSTALL"
               if [ -n "$LLG_MODEL_CC" ]; then
                 export LLG_CC="$LLG_MODEL_CC" CC="$LLG_MODEL_CC"
                 "$LLG_CC" --version
+              fi
+              if [ -n "$LLG_TEST_HEAVY_INLINING_GCC" ]; then
+                apt-get install -y --no-install-recommends "$LLG_TEST_HEAVY_INLINING_GCC"
+                "$LLG_TEST_HEAVY_INLINING_GCC" --version
+                cc --version
               fi
               touch /tmp/llg-ccache.env
               python3 scripts/ci_ccache.py activate --ccache /ccache-bin/ccache \

@@ -13,6 +13,7 @@ mod coordinates;
 mod diagnostics;
 mod document_symbols;
 mod hover;
+mod identifiers;
 mod module_graph;
 mod pipeline;
 mod recovery;
@@ -21,7 +22,7 @@ mod semantic_tokens;
 use pipeline::settings_obj;
 mod configuration;
 mod cross_file;
-use cross_file::{cross_file_analysis, multiline_port_analysis};
+use cross_file::{cross_file_analysis, A_SV, B_SV};
 mod port_connections;
 use port_connections::pos_of;
 mod classes;
@@ -76,6 +77,60 @@ impl Drop for TempDirGuard {
     fn drop(&mut self) {
         let _ = std::env::set_current_dir(&self.orig);
         let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// Compile `sources` in memory, one compilation unit each.
+fn analyze_sources(sources: &[(&'static str, &str)]) -> Analysis {
+    analyze(&CompileOpts {
+        sources: sources
+            .iter()
+            .map(|(name, text)| compile::OwnedSource::compilation_unit(hp(name), *text))
+            .collect(),
+        editor: true,
+        ..Default::default()
+    })
+}
+
+/// The definition of the name at the position, which has at most one.
+fn definition_at(a: &Analysis, file: &str, line: u32, col: u32) -> Option<Location> {
+    let mut definitions = definitions_at(a, file, line, col);
+    assert!(definitions.len() <= 1, "{definitions:?}");
+    definitions.pop()
+}
+
+/// The 0-based position of the `|` in `marked`, which without it occurs once
+/// in `text`.
+fn cursor(text: &str, marked: &str) -> (u32, u32) {
+    let offset = marked.find('|').expect("cursor mark");
+    let plain = marked.replacen('|', "", 1);
+    assert_eq!(text.matches(&plain).count(), 1, "{plain:?}");
+    let (line, col) = pos_of(text, &plain, 0);
+    assert!(!plain[..offset].contains('\n'), "{marked:?}");
+    (line, col + offset as u32)
+}
+
+/// Where the name at `marked` ([`cursor`]) in `file` is defined.
+fn definition_site(
+    a: &Analysis,
+    file: &str,
+    text: &str,
+    marked: &str,
+) -> Option<(String, Position)> {
+    let (line, col) = cursor(text, marked);
+    definition_at(a, file, line, col).map(|location| {
+        (
+            uri_file_path(&location.uri).to_string_lossy().into_owned(),
+            location.range.start,
+        )
+    })
+}
+
+/// The value of a markup hover.
+fn hover_text(hover: Option<Hover>) -> String {
+    match hover.expect("hover").contents {
+        HoverContents::Markup(markup) => markup.value,
+        other => panic!("expected markup hover: {other:?}"),
     }
 }
 
@@ -299,8 +354,8 @@ fn sample_analysis() -> Analysis {
 }
 
 /// [`sample_parts`] assembled with synthetic semantic reference bindings.
-fn sample_analysis_with_bindings(bindings: RefBindings) -> Analysis {
-    let (model, tokens) = sample_parts();
+fn sample_analysis_with_bindings(tokens: Vec<FileTokens>, bindings: tokens::Bindings) -> Analysis {
+    let (model, _) = sample_parts();
     Analysis::new_with_outcome(
         AnalysisOutcome::Valid,
         Vec::new(),
@@ -308,6 +363,6 @@ fn sample_analysis_with_bindings(bindings: RefBindings) -> Analysis {
         tokens,
         Vec::new(),
         bindings,
-        ConnectionInputs::default(),
+        None,
     )
 }

@@ -27,6 +27,10 @@ struct Tables {
     protected_envelopes: Vec<RawProtectedEnvelope>,
     fsm_pragmas: Vec<RawFsmPragma>,
     attributes: Vec<RawAttribute>,
+    lexical_targets: Vec<RawLexicalTarget>,
+    macro_definitions: Vec<RawMacroDefinition>,
+    macro_references: Vec<RawMacroReference>,
+    includes: Vec<RawInclude>,
 }
 
 impl Tables {
@@ -55,6 +59,10 @@ impl Tables {
             protected_envelope_count: self.protected_envelopes.len() as u64,
             fsm_pragma_count: self.fsm_pragmas.len() as u64,
             attribute_count: self.attributes.len() as u64,
+            lexical_target_count: self.lexical_targets.len() as u64,
+            macro_definition_count: self.macro_definitions.len() as u64,
+            macro_reference_count: self.macro_references.len() as u64,
+            include_count: self.includes.len() as u64,
         }
     }
 }
@@ -112,7 +120,11 @@ fn drive(sink: &RawSink, header: &RawStreamHeader, tables: &Tables, batch: usize
         edition_findings: edition_findings,
         protected_envelopes: protected_envelopes,
         fsm_pragmas: fsm_pragmas,
-        attributes: attributes
+        attributes: attributes,
+        lexical_targets: lexical_targets,
+        macro_definitions: macro_definitions,
+        macro_references: macro_references,
+        includes: includes
     );
     // SAFETY: `context` is the sink's builder.
     unsafe { (sink.end)(context) }

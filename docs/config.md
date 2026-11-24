@@ -629,7 +629,8 @@ the earlier definition as related information. Every body still navigates
 within itself: a name it declares resolves, for definition, hover,
 references, rename, document symbols and semantic tokens, to the declaration
 in the file that holds the use, in the project stream and in an open buffer
-alike. Names of other definitions (an instantiated module type, its port and
+alike. A name used before its declaration (an error) resolves in neither
+body. Names of other definitions (an instantiated module type, its port and
 parameter labels, `pkg::item`) refer to the definition the frontend selects.
 Lint and, without `[compile] top`, the frontend's semantic checks cover the
 elaborated body only

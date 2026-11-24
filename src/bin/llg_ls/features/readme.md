@@ -10,10 +10,11 @@ supplement elaborated data for precise navigation and highlighting.
 | `source_graph.rs` | Owned source-level module graph. |
 | `fallback.rs` | Syntax-error feature extraction. |
 | `protected.rs` | Protected envelopes as black boxes: hints instead of errors the hidden text explains ([behavior](../../../../docs/config.md#lsp-protected-source)). |
-| `symbol_index.rs`, `requests.rs` | Declaration/reference indexes and pure projections. |
+| `symbol_index.rs` | Declaration index of document and workspace symbols, completion and the explorer. |
+| `requests.rs` | Pure projections: the identifier table of a document (tokens and definitions), hover, references. |
 | `tests.rs`, `tests/` | Shared helpers and domain regressions. |
 
-Test domains cover graphs, recovery, coordinates, hover, bindings/connections,
+Test domains cover graphs, recovery, coordinates, hover, identifiers, bindings/connections,
 references/symbols/completion, diagnostics/tokens, analysis/configuration,
 cross-file behavior, packages, classes and shadow paths. See
 [source layout](../../../../docs/source_layout.md).

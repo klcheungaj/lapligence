@@ -3,7 +3,8 @@
 //! The native compiler receives in-memory source buffers and returns an owned
 //! snapshot. No native Slang object escapes the FFI call.
 
-use crate::core::tokens::FileTokens;
+use crate::core::macros::MacroTable;
+use crate::core::tokens::{Bindings, FileTokens};
 use crate::ffi::secure_fs::{self, AdmittedTarget, FileIdentity, OpenedPath};
 use crate::ffi::slang::{self, CompileOptions, CompileRequest, Define, Limits, ParameterOverride};
 use std::cell::Cell;
@@ -190,7 +191,8 @@ pub struct CompileOpts {
     pub library_units: bool,
     /// Omit the captured facts that only simulation reads, as the language
     /// server does. `Db::from_slang` then holds no attribute instances, import
-    /// items, forward typedef links or inherited-member aliases.
+    /// items, forward typedef links or inherited-member aliases. The names that
+    /// only tokens and navigation need are bound instead.
     pub editor: bool,
     /// Library map files are admitted and expanded by Rust before Slang.
     pub library_map_files: Vec<String>,
@@ -727,9 +729,12 @@ impl std::error::Error for CompileError {
 #[derive(Debug)]
 pub struct ParseOnlyOut {
     pub diagnostics: Vec<Diag>,
+    /// The parsed buffer's tokens, with the bindings and macros that a
+    /// project compile would give them. Targets may lie in other admitted
+    /// buffers.
     pub tokens: Vec<FileTokens>,
-    pub parsed_token_count: usize,
-    pub supplemented_token_count: usize,
+    pub bindings: Bindings,
+    pub macros: MacroTable,
 }
 
 /// Compile path-based and already-admitted in-memory sources with Slang.
@@ -4826,7 +4831,7 @@ pub fn parse_source(
 /// the buffer needs declarations from (the packages it imports): each is its
 /// own compilation unit, parsed as a library unit of the default library so
 /// its packages resolve without any of its modules becoming a top. Tokens
-/// are projected for `name` only.
+/// and bindings are projected for `name` only.
 pub fn parse_source_in_context(
     name: &str,
     text: &str,
@@ -4920,18 +4925,17 @@ fn parse_owned_in_context(
         defines: defines.to_vec(),
         include_dirs: include_dirs.to_vec(),
         library_sources,
+        editor: true,
         limits,
         ..CompileOpts::default()
     };
     let out = compile_sources(&sources, &opts)?;
-    let source_texts = [(name, text)];
-    let tokens = crate::core::tokens::from_slang_snapshot(&out.snapshot, &source_texts);
-    let parsed_token_count = tokens.iter().map(|file| file.nodes.len()).sum();
+    let projection = crate::core::tokens::project_slang(&out.snapshot, Some(name), defines);
     Ok(ParseOnlyOut {
         diagnostics: out.diagnostics,
-        tokens,
-        parsed_token_count,
-        supplemented_token_count: 0,
+        tokens: projection.tokens,
+        bindings: projection.bindings,
+        macros: projection.macros,
     })
 }
 

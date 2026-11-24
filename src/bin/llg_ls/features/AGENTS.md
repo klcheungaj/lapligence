@@ -22,12 +22,13 @@ Analysis and request projections: `features.rs` and `features/`. Components:
 - Merge elaborated instances with owned source-instance records to keep incoming
   edges, roots and declaration fallback for bodies excluded by explicit top
   selection; never reparse or reread files.
-- Slang lexical tokens and semantic IDs define identity. `core::tokens::RefBindings`
-  conflicts stay unbound, never resolved by name.
-- Navigation and explorer requests read committed `Analysis` only; isolated
-  semantic tokens are the one exception. Parameter hover/lint uses owned DB/model
-  data; macro hover uses the bounded analysis-time source table.
-- Scoped fallback never overrides exact bindings or resolves ambiguous locations.
+- Slang lexical tokens and semantic IDs define identity; nothing is resolved by
+  name. Tokens and definitions read one table, `core::tokens::Bindings` beside
+  the tokens; `TokenRule` holds the rule and its exceptions. To make a name
+  navigate, bind it in the capture.
+- Hover, references and rename read the same bindings and the committed
+  `Analysis` only; so do explorer requests. Parameter hover/lint uses owned
+  DB/model data, macro hover the frontend's macros (`core::macros`).
 
 ## Recovery
 

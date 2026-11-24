@@ -3,7 +3,7 @@
   "fixture": "module_inst",
   "schema": "llg.tokenDump/v1",
   "summary": {
-    "bindings": 13,
+    "bindings": 12,
     "modules": 2,
     "outcome": "valid"
   },

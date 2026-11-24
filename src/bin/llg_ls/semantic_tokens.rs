@@ -22,6 +22,9 @@ const TT_KEYWORD: u32 = 15;
 const TT_STRING: u32 = 18;
 const TT_NUMBER: u32 = 19;
 const TT_OPERATOR: u32 = 21;
+/// LSP 3.17 type of attribute names.
+const TT_DECORATOR: u32 = 22;
+const TT_DECORATOR_NAME: SemanticTokenType = SemanticTokenType::new("decorator");
 const TM_DECLARATION: u32 = 0;
 const TM_READONLY: u32 = 2;
 const TM_STATIC: u32 = 3;
@@ -70,6 +73,7 @@ pub fn legend() -> SemanticTokensLegend {
             SemanticTokenType::NUMBER,
             SemanticTokenType::REGEXP,
             SemanticTokenType::OPERATOR,
+            TT_DECORATOR_NAME,
         ],
         token_modifiers: vec![
             SemanticTokenModifier::DECLARATION,
@@ -98,15 +102,16 @@ pub fn encode(nodes: &[TokenInfo]) -> SemanticTokens {
             continue;
         }
         // A name in a `define body is highlighted as the source its
-        // expansions bind; unbound body names are unresolved (ST-22).
-        let kind = macro_body_kind(node.kind).unwrap_or(node.kind);
-        if is_unresolved_identifier(kind) {
+        // expansions bind.
+        let class = token_class(node.kind);
+        if class.rule() == TokenRule::Unresolved {
             continue;
         }
-        let Some((mut token_type, mut modifiers)) = token_type_for(kind) else {
+        let Some((mut token_type, mut modifiers)) = token_type_for(class) else {
             continue;
         };
-        // Directive and macro-usage words arrive as operator-kind tokens.
+        let kind = class.kind;
+        // Directive words arrive as operator-kind tokens.
         if kind == TOKEN_SLANG_OPERATOR {
             // `$unit` and `$root` are scope names, not system names
             // (ST-40); Slang lexes them as their own token kinds, which the
@@ -114,17 +119,9 @@ pub fn encode(nodes: &[TokenInfo]) -> SemanticTokens {
             if matches!(node.name.as_deref(), Some("$unit" | "$root")) {
                 token_type = TT_NAMESPACE;
             }
-            match node.name.as_deref().and_then(backtick_word) {
-                Some(BacktickWord::Directive) => {
-                    token_type = TT_KEYWORD;
-                    modifiers |= 1 << TM_CONTROL_FLOW;
-                }
-                // A macro use is a plain keyword (ST-60, user decision
-                // 2026-10-28): the `macro` type takes whatever a client or
-                // theme gives it, and the `keyword` mapping is the one every
-                // llg client sets to the normal keyword color.
-                Some(BacktickWord::MacroUsage) => token_type = TT_KEYWORD,
-                None => {}
+            if node.name.as_deref().is_some_and(is_directive_word) {
+                token_type = TT_KEYWORD;
+                modifiers |= 1 << TM_CONTROL_FLOW;
             }
         }
         // The capture marks words that are control flow only at some syntax
@@ -191,72 +188,46 @@ pub fn encode(nodes: &[TokenInfo]) -> SemanticTokens {
     }
 }
 
-/// A reference the capture could not resolve to any symbol is lexically a
-/// plain identifier. It gets no token, so the editor leaves it uncolored
-/// instead of painting a name that has no definition as a variable. Plain
-/// identifier declarations (instance names), bound references to them
-/// (`TOKEN_SLANG_BOUND_IDENTIFIER`) and block names (`TOKEN_SLANG_BLOCK`) are
-/// separate kinds and keep theirs.
-fn is_unresolved_identifier(kind: i32) -> bool {
-    kind == TOKEN_SLANG_IDENTIFIER
-}
-
-/// A grave-accent word in the token stream.
-#[derive(Debug, PartialEq, Eq)]
-enum BacktickWord {
-    /// An IEEE 1800-2009 22.1 compiler directive.
-    Directive,
-    /// Any other `` `name ``: a text macro usage (inside a macro body, where
-    /// the capture keeps it unexpanded).
-    MacroUsage,
-}
-
-/// Classify `` `name `` tokens. Compiler directives are keywords with
-/// `controlFlow` (user decision, 2026-10-27: every directive steers what is
-/// compiled, as `` `ifdef `` selects source the way `if` selects statements);
-/// every other grave-accent name is a macro usage. The macro
-/// quote and paste tokens (`` `" ``, ``` `` ```) are not words and keep the
-/// operator type.
-fn backtick_word(name: &str) -> Option<BacktickWord> {
-    let word = name.strip_prefix('`')?;
-    if !word
-        .bytes()
-        .next()
-        .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
-    {
-        return None;
-    }
-    Some(match word {
+/// Whether an operator token is a compiler directive (IEEE 1800-2009 22.1),
+/// which is a keyword with `controlFlow` (user decision, 2026-10-27: every
+/// directive steers what is compiled, as `` `ifdef `` selects source the way
+/// `if` selects statements). The macro quote and paste tokens (`` `" ``,
+/// ``` `` ```) are not words and keep the operator type.
+fn is_directive_word(name: &str) -> bool {
+    let Some(word) = name.strip_prefix('`') else {
+        return false;
+    };
+    matches!(
+        word,
         "ifdef"
-        | "ifndef"
-        | "elsif"
-        | "else"
-        | "endif"
-        | "begin_keywords"
-        | "celldefine"
-        | "default_nettype"
-        | "define"
-        | "end_keywords"
-        | "endcelldefine"
-        | "include"
-        | "line"
-        | "nounconnected_drive"
-        | "pragma"
-        | "resetall"
-        | "timescale"
-        | "unconnected_drive"
-        | "undef"
-        | "undefineall"
-        // IEEE 1800-2009 Annex E (1364-2001 Annex D): informative, but
-        // Slang lexes them as directives, so they steer compilation too.
-        | "default_decay_time"
-        | "default_trireg_strength"
-        | "delay_mode_distributed"
-        | "delay_mode_path"
-        | "delay_mode_unit"
-        | "delay_mode_zero" => BacktickWord::Directive,
-        _ => BacktickWord::MacroUsage,
-    })
+            | "ifndef"
+            | "elsif"
+            | "else"
+            | "endif"
+            | "begin_keywords"
+            | "celldefine"
+            | "default_nettype"
+            | "define"
+            | "end_keywords"
+            | "endcelldefine"
+            | "include"
+            | "line"
+            | "nounconnected_drive"
+            | "pragma"
+            | "resetall"
+            | "timescale"
+            | "unconnected_drive"
+            | "undef"
+            | "undefineall"
+            // IEEE 1800-2009 Annex E (1364-2001 Annex D): informative, but
+            // Slang lexes them as directives, so they steer compilation too.
+            | "default_decay_time"
+            | "default_trireg_strength"
+            | "delay_mode_distributed"
+            | "delay_mode_path"
+            | "delay_mode_unit"
+            | "delay_mode_zero"
+    )
 }
 
 /// Which llg keyword modifier a keyword token carries. Only keyword tokens
@@ -318,9 +289,8 @@ fn keyword_class(name: &str) -> KeywordClass {
     }
 }
 
-fn token_type_for(kind: i32) -> Option<(u32, u32)> {
-    let (kind, slang_declaration) = token_base_kind(kind);
-    let declaration = slang_declaration || matches!(kind, TOKEN_GENVAR_DECL);
+fn token_type_for(class: TokenClass) -> Option<(u32, u32)> {
+    let kind = class.kind;
     let readonly = matches!(
         kind,
         TOKEN_SLANG_PARAMETER | TOKEN_SLANG_PORT | TOKEN_SLANG_ENUM_MEMBER
@@ -364,9 +334,13 @@ fn token_type_for(kind: i32) -> Option<(u32, u32)> {
         // clangd and rust-analyzer send function parameters.
         TOKEN_SLANG_MACRO_FORMAL => TT_PARAMETER,
         TOKEN_SLANG_METHOD => TT_METHOD,
-        // The name a `define declares or a conditional directive or `undef
-        // names is a plain keyword, like its use sites (ST-60, ST-62).
+        // A macro use is a plain keyword (ST-60, user decision 2026-10-28):
+        // the `macro` type takes whatever a client or theme gives it, and the
+        // `keyword` mapping is the one every llg client sets to the normal
+        // keyword color. So are the name a `define declares and the one a
+        // conditional directive or `undef names (ST-62).
         TOKEN_SLANG_MACRO => TT_KEYWORD,
+        TOKEN_SLANG_ATTRIBUTE => TT_DECORATOR,
         TOKEN_SLANG_KEYWORD | TOKEN_SLANG_CONTROL_KEYWORD => TT_KEYWORD,
         TOKEN_SLANG_STRING => TT_STRING,
         TOKEN_SLANG_NUMBER => TT_NUMBER,
@@ -375,7 +349,7 @@ fn token_type_for(kind: i32) -> Option<(u32, u32)> {
         _ => return None,
     };
     let mut modifiers = 0;
-    if declaration {
+    if class.declaration {
         modifiers |= 1 << TM_DECLARATION;
     }
     if readonly || kind == TOKEN_SLANG_PARAMETER_CONNECTION_LABEL {
@@ -473,11 +447,12 @@ mod tests {
         for library_units in [false, true] {
             let compiled = compile::compile(&CompileOpts {
                 library_units,
+                editor: true,
                 sources: vec![OwnedSource::compilation_unit(hp("/virtual/top.sv"), source)],
                 ..Default::default()
             })
             .unwrap();
-            let files = from_slang_snapshot(&compiled.snapshot, &[(hp("/virtual/top.sv"), source)]);
+            let files = from_slang_snapshot(&compiled.snapshot, Some(hp("/virtual/top.sv")));
             out.push((
                 format!("library_units={library_units}"),
                 decode(source, &files[0].nodes),
@@ -615,7 +590,6 @@ endmodule\n";
                 (6, "`W", 0, "`W", TT_KEYWORD, 0),
                 (6, "L)", 0, "L", TT_VARIABLE, readonly),
                 (7, "`DECL", 0, "`DECL", TT_KEYWORD, 0),
-                (8, "`UNKNOWN", 0, "`UNKNOWN", TT_KEYWORD, 0),
                 (9, "q", 0, "q", TT_VARIABLE, declaration),
                 (9, "v", 0, "v", TT_PARAMETER, readonly),
             ] {
@@ -635,6 +609,13 @@ endmodule\n";
                 ("dv".to_owned(), TT_VARIABLE, 0),
                 "{profile}"
             );
+            // A macro that is not defined has no token.
+            let line8: Vec<_> = tokens
+                .iter()
+                .filter(|t| t.0 == 8)
+                .map(|t| t.2.as_str())
+                .collect();
+            assert_eq!(line8, ["assign", "dv", "=", ";"], "{profile}");
             // Nothing but the use site and the written arguments: the
             // expansion `((v) + (1))` adds no token on the usage line.
             let line6: Vec<_> = tokens
@@ -663,10 +644,10 @@ endmodule\n";
                 ..Default::default()
             })
             .unwrap();
-            let files = from_slang_snapshot(&out.snapshot, &[(hp("/virtual/top.sv"), source)]);
+            let files = from_slang_snapshot(&out.snapshot, Some(hp("/virtual/top.sv")));
             for node in &files[0].nodes {
                 if matches!(node.name.as_deref(), Some("WIDTH" | "LIMIT" | "DEPTH")) {
-                    let (kind, modifiers) = token_type_for(node.kind).unwrap();
+                    let (kind, modifiers) = token_type_for(token_class(node.kind)).unwrap();
                     assert_eq!(kind, TT_VARIABLE, "library={library_units} {node:?}");
                     assert_ne!(modifiers & (1 << TM_READONLY), 0, "{node:?}");
                 }
@@ -759,12 +740,12 @@ endmodule\n";
         assert_eq!(legend.token_types[TT_KEYWORD as usize].as_str(), "keyword");
         assert_eq!(
             legend.token_types.len(),
-            TT_OPERATOR as usize + 1,
+            TT_DECORATOR as usize + 1,
             "only standard token types"
         );
         assert_eq!(
-            legend.token_types.last().map(|t| t.as_str()),
-            Some("operator")
+            legend.token_types[TT_DECORATOR as usize].as_str(),
+            "decorator"
         );
         for (index, name) in [
             (TM_CONNECTION_LABEL, "connectionLabel"),
@@ -1658,7 +1639,7 @@ endmodule
     }
 
     #[test]
-    fn backtick_words_split_directives_macro_usages_and_quote_tokens() {
+    fn directive_words_are_the_compiler_directives() {
         for word in [
             "`begin_keywords",
             "`celldefine",
@@ -1682,20 +1663,25 @@ endmodule
             "`delay_mode_unit",
             "`delay_mode_zero",
         ] {
-            assert_eq!(backtick_word(word), Some(BacktickWord::Directive), "{word}");
+            assert!(is_directive_word(word), "{word}");
         }
         for word in ["`ifdef", "`ifndef", "`elsif", "`else", "`endif"] {
-            assert_eq!(backtick_word(word), Some(BacktickWord::Directive), "{word}");
+            assert!(is_directive_word(word), "{word}");
         }
-        for word in ["`WIDTH", "`_m", "`__FILE__", "`definex", "`accelerate"] {
-            assert_eq!(
-                backtick_word(word),
-                Some(BacktickWord::MacroUsage),
-                "{word}"
-            );
-        }
-        for word in ["`\"", "``", "`\\`\"", "`", "+", "define"] {
-            assert_eq!(backtick_word(word), None, "{word}");
+        for word in [
+            "`WIDTH",
+            "`_m",
+            "`__FILE__",
+            "`definex",
+            "`accelerate",
+            "`\"",
+            "``",
+            "`\\`\"",
+            "`",
+            "+",
+            "define",
+        ] {
+            assert!(!is_directive_word(word), "{word}");
         }
     }
 
@@ -1804,10 +1790,9 @@ endmodule\n";
             ..Default::default()
         })
         .unwrap();
-        let (_, bindings, _, _, _) = llg::core::tokens::project_slang(
-            &compiled.snapshot,
-            &[(hp("/virtual/top.sv"), source)],
-        );
+        let bindings = llg::core::tokens::project_slang(&compiled.snapshot, None, &[])
+            .bindings
+            .references;
         let column = |line: usize, word: &str| {
             let text = source.lines().nth(line).unwrap();
             text.rfind(word).unwrap() as u32
@@ -1846,7 +1831,7 @@ endmodule\n";
                 ..Default::default()
             })
             .unwrap();
-            let files = from_slang_snapshot(&out.snapshot, &[(hp("/virtual/top.sv"), source)]);
+            let files = from_slang_snapshot(&out.snapshot, Some(hp("/virtual/top.sv")));
             let arguments: Vec<_> = files[0]
                 .nodes
                 .iter()
@@ -1854,7 +1839,7 @@ endmodule\n";
                 .collect();
             assert_eq!(arguments.len(), 2);
             for node in arguments {
-                let (kind, modifiers) = token_type_for(node.kind).unwrap();
+                let (kind, modifiers) = token_type_for(token_class(node.kind)).unwrap();
                 assert_eq!(kind, TT_VARIABLE, "library={library_units} {node:?}");
                 assert_eq!(modifiers & (1 << TM_READONLY), 0, "{node:?}");
             }
@@ -1871,14 +1856,17 @@ endmodule\n";
             .filter(|node| matches!(node.name.as_deref(), Some("WIDTH" | "LIMIT")))
             .collect();
         assert_eq!(parameters.len(), 7);
-        for node in parameters {
-            let (kind, modifiers) = token_type_for(node.kind).unwrap();
-            let want = if node.kind == TOKEN_SLANG_PARAMETER_CONNECTION_LABEL {
-                TT_FUNCTION
-            } else {
-                TT_VARIABLE
-            };
-            assert_eq!(kind, want, "{node:?}");
+        let labels = parameters
+            .iter()
+            .filter(|node| node.kind == TOKEN_SLANG_IDENTIFIER)
+            .count();
+        assert_eq!(labels, 2, "labels of an unknown module resolve to nothing");
+        for node in &parameters {
+            if node.kind == TOKEN_SLANG_IDENTIFIER {
+                continue;
+            }
+            let (kind, modifiers) = token_type_for(token_class(node.kind)).unwrap();
+            assert_eq!(kind, TT_VARIABLE, "{node:?}");
             assert_ne!(modifiers & (1 << TM_READONLY), 0, "{node:?}");
         }
     }
@@ -1893,7 +1881,7 @@ endmodule\n";
                 ..Default::default()
             })
             .unwrap();
-            let files = from_slang_snapshot(&out.snapshot, &[(hp("/virtual/top.sv"), source)]);
+            let files = from_slang_snapshot(&out.snapshot, Some(hp("/virtual/top.sv")));
             let locals: Vec<_> = files[0]
                 .nodes
                 .iter()
@@ -1901,7 +1889,7 @@ endmodule\n";
                 .collect();
             assert_eq!(locals.len(), 2);
             for node in locals {
-                let (kind, modifiers) = token_type_for(node.kind).unwrap();
+                let (kind, modifiers) = token_type_for(token_class(node.kind)).unwrap();
                 assert_eq!(kind, TT_VARIABLE, "library={library_units} {node:?}");
                 assert_eq!(modifiers & (1 << TM_READONLY), 0, "{node:?}");
             }
@@ -1937,14 +1925,20 @@ endmodule\n";
     }
 
     #[test]
-    fn instantiated_module_names_without_a_visible_definition_use_class_highlighting() {
-        let source = "module top;\n  missing_mod u0 ();\n  missing_mod #(.P(1)) u1 ();\n  if (1) begin : g\n    missing_mod u2 ();\n  end\nendmodule\n";
+    fn module_names_and_labels_without_a_visible_definition_have_no_token() {
+        let source = "module top;\n  missing_mod u0 ();\n  missing_mod #(.P(1)) u1 (.q());\n  if (1) begin : g\n    missing_mod u2 ();\n  end\nendmodule\n";
         for (profile, tokens) in profiles(source) {
-            for line in [1, 2, 4] {
+            for token in &tokens {
+                assert!(
+                    !matches!(token.2.as_str(), "missing_mod" | "P" | "q" | ".P" | ".q"),
+                    "{profile}: {token:?}"
+                );
+            }
+            for (line, name) in [(1, "u0"), (2, "u1"), (4, "u2")] {
                 assert_eq!(
-                    type_at(&tokens, source, line, "missing_mod", 0),
-                    TT_CLASS,
-                    "{profile} line {line}"
+                    type_at(&tokens, source, line, name, 0),
+                    TT_VARIABLE,
+                    "{profile}: {name}"
                 );
             }
         }

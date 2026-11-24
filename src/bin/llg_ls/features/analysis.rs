@@ -40,26 +40,13 @@ pub struct Analysis {
     /// Workspace symbol index (declarations + reference sites) built from the
     /// model and the tokens.
     pub index: SymbolIndex,
-    /// Reference occurrence → bound declaration, captured from Slang lexical
-    /// semantic IDs. Keys are the 0-based positions of emitted reference
-    /// tokens, so definition requests at exact positions are binding-precise.
-    /// Resolved named connection labels are folded in as well, targeting the
-    /// child module's declaration — together with the paired connection
-    /// ACTUALS (`.clk(wa)` binds `.clk` to the child's port and `wa` to
-    /// `wa`'s own declaration in the instantiating/parent scope;
-    /// `#(.W(expr))` binds `.W` to the child's parameter and `expr`'s
-    /// leading identifier to its own parent-scope declaration).
-    /// Includes parse-backed enum bindings when semantic DB folded a package/class
-    /// use into a literal; the same facts are available in the lexical
-    /// fallback alongside connection bindings.
-    pub ref_bindings: RefBindings,
-    /// Slang reference positions that are unresolved or ambiguous. Request
-    /// handling must not replace the missing semantic identity with a name
-    /// match from another scope.
-    pub(crate) unresolved_bindings: tokens::UnresolvedBindings,
+    /// What every token of [`Analysis::tokens`] names, captured from Slang's
+    /// lexical semantic ids. Definition, hover, references and rename read
+    /// these, as highlighting reads the tokens; nothing is resolved by name.
+    pub bindings: tokens::Bindings,
     /// Rendered declaration snippets (`logic [3:0] val`, …) keyed by
     /// `(file, line1, col1)` of the declaration token, captured from semantic DB
-    /// during the same walk as [`Analysis::ref_bindings`].  Position-accurate
+    /// during the same walk as [`Analysis::bindings`].  Position-accurate
     /// even where several same-named declarations live in one module (inner-
     /// scope shadowing), so hover text describes exactly the object at that
     /// position instead of the first name match in the model.  Empty for
@@ -82,20 +69,36 @@ pub struct Analysis {
     /// explorer can apply the configured-top root union without rereading
     /// configuration during a request.
     pub(crate) configured_top: Option<String>,
-    /// Preprocessor macro table ([`core::macros::MacroTable`]) over the exact
-    /// compiled sources: config `[compile] defines` seed every file and one
-    /// conservative scan per file resolves in-source `` `define ``/`` `undef ``
-    /// positionally (see `core::macros` for the documented
-    /// semantics).  Built once per analysis commit — never inside a request —
-    /// so macro-usage hover stays a pure read over committed data.  Empty for
-    /// hand-built analyses.
+    /// The macros of the compile, with the resolution of every written macro
+    /// name. Empty for hand-built analyses.
     pub(super) macros: macros::MacroTable,
+    /// Fingerprints of the texts the frontend read, by file name.
+    sources: HashMap<String, SourceFingerprint>,
     /// Include search prefixes, include-only buffers and package- and
     /// definition-declaring units of the admitted project compile, shared
     /// with the isolated open-buffer token parse so an open buffer sees the
     /// headers (and their macros), packages and definitions its project
     /// compile saw. Empty for hand-built and preflight-failed analyses.
     pub(crate) include_context: Arc<IncludeContext>,
+}
+
+/// What identifies one source text: its length and a digest of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceFingerprint {
+    length: usize,
+    digest: u64,
+}
+
+impl SourceFingerprint {
+    pub fn of(text: &str) -> Self {
+        use std::hash::Hasher;
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        hasher.write(text.as_bytes());
+        Self {
+            length: text.len(),
+            digest: hasher.finish(),
+        }
+    }
 }
 
 /// The context one admitted project compile gives an isolated open-buffer
@@ -142,8 +145,8 @@ impl Analysis {
     /// Public so tests can build an [`Analysis`] without running Slang; the
     /// production pipeline uses the same constructor inside [`analyze`].
     ///
-    /// Passes an empty semantic DB binding map — hand-built analyses have no
-    /// elaborated design behind them, matching the lexical fallback shape.
+    /// Passes empty bindings: hand-built analyses have no elaborated design
+    /// behind them.
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn new(
         diagnostics: Vec<Diag>,
@@ -158,8 +161,8 @@ impl Analysis {
             model,
             tokens,
             lint,
-            HashMap::new(),
-            ConnectionInputs::default(),
+            tokens::Bindings::default(),
+            None,
         )
     }
 
@@ -167,33 +170,16 @@ impl Analysis {
     /// pipeline state and can therefore provide a more precise outcome than
     /// diagnostics alone allow.
     ///
-    /// `semantic_bindings` carries the reference→declaration identities
-    /// captured from Slang's lexical table. The
-    /// final map is the union of those, the port-connection-derived ones (see
-    /// [`ConnectionInputs`]), and nothing else:
-    ///
-    /// * resolved port-label targets are inserted FIRST (tagged
-    ///   `via_label`), each followed by its paired connection ACTUAL target
-    ///   (tagged `via_connection`) so the label navigates to the child port and
-    ///   the ACTUAL to the parent-scope declaration;
-    /// * parse-backed enum bindings are inserted before fallback and semantic DB;
-    /// * parse-fallback connection bindings are inserted next (they only
-    ///   exist when no semantic DB design was produced);
-    /// * semantic DB bindings are inserted after them, winning collisions against the
-    ///   label/fallback inputs because they reflect what elaboration actually
-    ///   bound;
-    /// * semantic DB-mode ACTUAL bindings are re-inserted LAST but never override an
-    ///   existing entry: elaboration-backed targets at an actual position are
-    ///   already binding-precise, so the parent-scope fold only fills positions
-    ///   no explicit binding captured.
+    /// `bindings` are the identities captured from Slang's lexical table, and
+    /// `declarations` the positions of its declaration tokens.
     pub fn new_with_outcome(
         outcome: AnalysisOutcome,
         diagnostics: Vec<Diag>,
         model: DesignModel,
         tokens: Vec<FileTokens>,
         lint: Vec<LintDiag>,
-        semantic_bindings: RefBindings,
-        connections: ConnectionInputs,
+        bindings: tokens::Bindings,
+        declarations: Option<&ParseDeclPositions>,
     ) -> Analysis {
         Self::new_with_outcome_and_sources(
             outcome,
@@ -201,8 +187,8 @@ impl Analysis {
             model,
             tokens,
             lint,
-            semantic_bindings,
-            connections,
+            bindings,
+            declarations,
             &FeatureSourceMaps::default(),
         )
     }
@@ -212,25 +198,14 @@ impl Analysis {
         outcome: AnalysisOutcome,
         diagnostics: Vec<Diag>,
         mut model: DesignModel,
-        mut tokens: Vec<FileTokens>,
+        tokens: Vec<FileTokens>,
         lint: Vec<LintDiag>,
-        semantic_bindings: RefBindings,
-        connections: ConnectionInputs,
+        bindings: tokens::Bindings,
+        declarations: Option<&ParseDeclPositions>,
         source_maps: &FeatureSourceMaps,
     ) -> Analysis {
         normalize_model_positions(source_maps, &mut model);
-        append_synthetic_tokens(&mut tokens, &connections.parse_enum_tokens);
-        let mut index = SymbolIndex::from_parts(
-            &model,
-            &tokens,
-            connections.parse_decls.as_ref(),
-            &connections.pairs,
-            &connections.parse_enum_decls,
-            &connections.parse_enum_ref_positions,
-            &connections.unresolved_enum_refs,
-        );
-        index.attach_exact_label_bindings(&tokens, &semantic_bindings);
-        let ref_bindings = merged_ref_bindings(&index, &model, semantic_bindings, &connections);
+        let index = SymbolIndex::from_parts(&model, &tokens, declarations);
         Analysis {
             outcome,
             diagnostics,
@@ -238,16 +213,24 @@ impl Analysis {
             model,
             tokens,
             index,
-            ref_bindings,
-            unresolved_bindings: connections.unresolved_bindings,
+            bindings,
             decl_details: HashMap::new(),
             lint,
             design: Vec::new(),
             module_graph: ModuleGraph::default(),
             configured_top: None,
             macros: macros::MacroTable::default(),
+            sources: HashMap::new(),
             include_context: Arc::default(),
         }
+    }
+
+    /// Whether the tokens and bindings of `file` were captured from the text
+    /// with this fingerprint, so they answer for a buffer that holds it.
+    pub(crate) fn compiled_from(&self, file: &str, text: SourceFingerprint) -> bool {
+        file_tokens(self, file)
+            .and_then(|tokens| self.sources.get(&tokens.path))
+            .is_some_and(|compiled| *compiled == text)
     }
 
     /// Attach the include context of the compile that produced this analysis.
@@ -331,8 +314,8 @@ impl Analysis {
             empty_design(),
             Vec::new(),
             Vec::new(),
-            HashMap::new(),
-            ConnectionInputs::default(),
+            tokens::Bindings::default(),
+            None,
         )
     }
 
@@ -374,29 +357,6 @@ impl Analysis {
         diagnostics: Vec<(String, LspDiagnostic)>,
     ) {
         self.frontend_diagnostics = diagnostics;
-    }
-}
-
-/// Add parse-backed qualified enum members that Slang does not expose as a
-/// standalone semantic/parse token.  Existing positions win so a normal parse/semantic
-/// token keeps its richer classification.
-pub(super) fn append_synthetic_tokens(tokens: &mut Vec<FileTokens>, synthetic: &[TokenInfo]) {
-    for node in synthetic {
-        let Some(file_tokens) = tokens.iter_mut().find(|ft| ft.path == node.file) else {
-            tokens.push(FileTokens {
-                path: node.file.clone(),
-                nodes: vec![node.clone()],
-            });
-            continue;
-        };
-        if file_tokens
-            .nodes
-            .iter()
-            .any(|existing| existing.line == node.line && existing.col == node.col)
-        {
-            continue;
-        }
-        file_tokens.nodes.push(node.clone());
     }
 }
 
@@ -598,229 +558,6 @@ pub(super) fn normalize_instance_positions(
         }
         normalize_instance_positions(maps, &mut instance.children);
     }
-}
-
-/// The final `Analysis.ref_bindings` map.
-///
-/// Insertion order defines collision resolution (later insert wins, except
-/// for the connection-ACTUAL fold, which never overrides):
-///
-/// 1. **Connection-label fold** (`via_label`): resolved named connection
-///    labels are binding-precise by construction — port labels point at the
-///    child module's port declaration ([`SymbolIndex::port_labels`]),
-///    parameter-override labels at the child module's parameter declaration
-///    ([`SymbolIndex::param_labels`]) — so they seed the map from the index.
-/// 2. **Parse-fallback connection bindings**: port/parameter label entries
-///    resolved against the recorded child declarations plus actual entries
-///    resolved to the parent-scope declaration; only non-empty when no semantic DB
-///    design exists.
-/// 3. **semantic DB bindings** captured during the semantic token walk
-///    (`core::tokens::collect_all_tokens`): where both capture paths produced
-///    an entry for the same position, the Slang semantic target wins because
-///    it reflects what elaboration actually bound,
-///    including for connections the label heuristic cannot classify.
-/// 4. **Connection ACTUAL bindings** (`via_connection`, semantic DB mode): the
-///    paired actual of every resolved label points at the actual signal's
-///    OWN declaration in the instantiating (parent) scope.  These are
-///    inserted last but only into positions that have no binding yet — an
-///    existing explicit binding (elaboration-backed or fallback) wins.
-pub(super) fn merged_ref_bindings(
-    index: &SymbolIndex,
-    model: &DesignModel,
-    semantic_bindings: RefBindings,
-    connections: &ConnectionInputs,
-) -> RefBindings {
-    let mut out: RefBindings = HashMap::new();
-    // Pairing map: 0-based label position → (0-based actual position, actual
-    // identifier text).  Both sides of a connection live in the instantiating
-    // file.
-    type SourcePosition = (String, u32, u32);
-    type ActualBinding = ((u32, u32), String);
-    let mut actual_of: HashMap<SourcePosition, ActualBinding> = HashMap::new();
-    for pair in &connections.pairs {
-        if let (Some((line0, col0)), Some(name)) = (pair.actual, pair.actual_name.as_deref()) {
-            actual_of.insert(
-                (
-                    pair.file.clone(),
-                    pair.label.0.saturating_sub(1),
-                    pair.label.1.saturating_sub(1),
-                ),
-                (
-                    (line0.saturating_sub(1), col0.saturating_sub(1)),
-                    name.to_owned(),
-                ),
-            );
-        }
-    }
-    // Connection ACTUAL bindings collected separately so they can be
-    // inserted AFTER the semantic DB map without overriding it.
-    let mut actual_bindings: RefBindings = HashMap::new();
-    for ((file, line, col), idx) in index.port_labels.iter().chain(index.param_labels.iter()) {
-        let Some(decl) = index.decls.get(*idx) else {
-            continue;
-        };
-        out.insert(
-            (file.clone(), *line, *col),
-            DeclTarget {
-                name: decl.name.clone(),
-                kind: kind_label(decl.kind).to_owned(),
-                file: decl.file.clone(),
-                line0: decl.line,
-                col0: decl.col,
-                via_label: true,
-                via_connection: false,
-            },
-        );
-        // Bind the connected signal's position to its own declaration in the
-        // enclosing (parent) scope — NOT to the child object.
-        if let Some(((actual_line, actual_col), actual_name)) =
-            actual_of.get(&(file.clone(), *line, *col))
-        {
-            if let Some(target) =
-                parent_scope_actual_target(&index.decls, model, file, *line, actual_name)
-            {
-                actual_bindings.insert((file.clone(), *actual_line, *actual_col), target);
-            }
-        }
-    }
-    // Parse-backed enum bindings fill the gap left when semantic DB folds a
-    // package/class-qualified constant use into a literal.  semantic DB remains the
-    // authoritative winner if it did emit a binding at the same coordinate.
-    for (key, target) in &connections.parse_enum_bindings {
-        out.insert(key.clone(), target.clone());
-    }
-    for (key, target) in &connections.fallback_bindings {
-        out.insert(key.clone(), target.clone());
-    }
-    for (key, target) in semantic_bindings {
-        out.insert(key, target);
-    }
-    // Existing explicit binding wins: never overwrite an semantic DB/fallback entry.
-    for (key, target) in actual_bindings {
-        out.entry(key).or_insert(target);
-    }
-    for key in &connections.unresolved_bindings {
-        out.remove(key);
-    }
-    out
-}
-
-/// One candidate declaration for parent-scope ACTUAL resolution:
-/// a `(0-based line, 0-based column)` position of a declared identifier.
-pub(super) type ActualCandidatePos = (u32, u32);
-
-/// A module body span in inclusive 0-based line coordinates.
-///
-/// `last0 == None` when the end position is unknown;
-/// such spans never win containment.
-pub(super) struct ModuleSpan0 {
-    pub(super) first0: u32,
-    pub(super) last0: Option<u32>,
-}
-
-impl ModuleSpan0 {
-    fn contains(&self, line0: u32) -> bool {
-        match self.last0 {
-            Some(last) => self.first0 <= line0 && line0 <= last,
-            None => false,
-        }
-    }
-
-    fn len(&self) -> u32 {
-        self.last0
-            .unwrap_or(self.first0)
-            .saturating_sub(self.first0)
-    }
-}
-
-/// Resolve the declaration of a connection ACTUAL identifier in the
-/// instantiating (parent) scope and build its binding target.
-///
-/// Selection over `decls` (already restricted by the caller to the wanted
-/// name):
-///
-/// 1. Candidates are the declarations in the instantiating file whose
-///    enclosing module span contains the instantiation line (`spans`
-///    supplies those spans; innermost wins).  Among them the nearest ABOVE
-///    the instantiation line is chosen (nearest below as a last resort —
-///    still the right namespace).
-/// 2. Without a containing span or an in-span candidate: the nearest
-///    candidate above the instantiation line.
-/// 3. Otherwise NO target — the actual stays unbound and the existing
-///    fallback resolution applies.
-pub(super) fn select_parent_scope_position(
-    positions: &[ActualCandidatePos],
-    spans: &[ModuleSpan0],
-    inst_line0: u32,
-) -> Option<ActualCandidatePos> {
-    if positions.is_empty() {
-        return None;
-    }
-    // Innermost module span containing the instantiation line.
-    let scope = spans
-        .iter()
-        .filter(|span| span.contains(inst_line0))
-        .min_by_key(|span| (span.len(), span.first0));
-    let pool: Vec<ActualCandidatePos> = match scope {
-        Some(span) => {
-            let inside: Vec<ActualCandidatePos> = positions
-                .iter()
-                .copied()
-                .filter(|&(line0, _)| span.contains(line0))
-                .collect();
-            if inside.is_empty() {
-                positions.to_vec()
-            } else {
-                inside
-            }
-        }
-        None => positions.to_vec(),
-    };
-    // Nearest above the instantiation line; ties break to the rightmost
-    // column.  Only when nothing sits above does the nearest below win
-    // (same parent scope, declared after the instantiation).
-    let mut ranked: Vec<ActualCandidatePos> = pool;
-    ranked.sort_by_key(|&(line0, col0)| (line0 > inst_line0, line0.abs_diff(inst_line0), col0));
-    ranked.into_iter().next()
-}
-
-/// Build the parent-scope binding target for one connection ACTUAL
-/// (semantic DB mode): candidates come from the symbol index, the kind from
-/// [`SymKind`] via [`kind_label`].
-pub(super) fn parent_scope_actual_target(
-    decls: &[SymEntry],
-    model: &DesignModel,
-    inst_file: &str,
-    inst_line0: u32,
-    actual_name: &str,
-) -> Option<DeclTarget> {
-    let positions: Vec<ActualCandidatePos> = decls
-        .iter()
-        .filter(|d| d.is_decl && d.name == actual_name && d.file == inst_file)
-        .map(|d| (d.line, d.col))
-        .collect();
-    let spans: Vec<ModuleSpan0> = model
-        .modules
-        .iter()
-        .filter(|m| m.file.as_deref() == Some(inst_file))
-        .map(|m| ModuleSpan0 {
-            first0: m.line.saturating_sub(1),
-            last0: (m.end_line > 0).then(|| m.end_line.saturating_sub(1)),
-        })
-        .collect();
-    let (line0, col0) = select_parent_scope_position(&positions, &spans, inst_line0)?;
-    let decl = decls
-        .iter()
-        .find(|d| d.is_decl && d.file == inst_file && d.line == line0 && d.col == col0)?;
-    Some(DeclTarget {
-        name: decl.name.clone(),
-        kind: kind_label(decl.kind).to_owned(),
-        file: decl.file.clone(),
-        line0: decl.line,
-        col0: decl.col,
-        via_label: false,
-        via_connection: true,
-    })
 }
 
 pub(super) fn outcome_from_diagnostics(diagnostics: &[Diag]) -> AnalysisOutcome {
@@ -1091,8 +828,7 @@ pub(super) fn analyze_inner_slang(
         .iter()
         .map(|source| (source.name.as_str(), source.text.as_str()))
         .collect();
-    let (tokens, bindings, unresolved_bindings, decl_details, declarations) =
-        tokens::project_slang(&out.snapshot, &source_texts);
+    let projection = tokens::project_slang(&out.snapshot, None, &opts.defines);
     crate::llg_debug!(
         "event=slang.tokens.end root={} generation={} tokens={} elapsed_us={}",
         root,
@@ -1179,29 +915,29 @@ pub(super) fn analyze_inner_slang(
     } else {
         AnalysisOutcome::Valid
     };
-    let macro_table = macros::build_table(&opts.defines, &source_texts, None);
     let source_maps = FeatureSourceMaps::from_sources(&source_texts);
-    let connections = ConnectionInputs {
-        parse_decls: Some(declarations),
-        unresolved_bindings,
-        ..ConnectionInputs::default()
-    };
     let mut analysis = Analysis::new_with_outcome_and_sources(
         outcome,
         diagnostics,
         model,
-        tokens,
+        projection.tokens,
         lint_diags,
-        bindings,
-        connections,
+        projection.bindings,
+        Some(&projection.declarations),
         &source_maps,
     )
-    .with_macros(macro_table)
-    .with_decl_details(decl_details)
+    .with_macros(projection.macros)
+    .with_decl_details(projection.details)
     .with_module_graph(module_graph)
     .with_configured_top(opts.top.clone());
     analysis.attach_frontend_diagnostics(frontend_diagnostics);
     analysis.design = design_diags;
+    analysis.sources = out
+        .snapshot
+        .files
+        .iter()
+        .map(|file| (file.name.clone(), SourceFingerprint::of(&file.text)))
+        .collect();
     analysis
 }
 
@@ -1258,6 +994,7 @@ fn analyze_library_units_after_limit(
         defines: opts.defines.clone(),
         include_dirs: opts.include_dirs.clone(),
         library_units: true,
+        editor: opts.editor,
         compilation_unit_mode: opts.compilation_unit_mode,
         limits: opts.limits,
         ..CompileOpts::default()
@@ -1320,8 +1057,8 @@ pub fn empty_analysis() -> Analysis {
         empty_design(),
         Vec::new(),
         Vec::new(),
-        HashMap::new(),
-        ConnectionInputs::default(),
+        tokens::Bindings::default(),
+        None,
     )
 }
 

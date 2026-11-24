@@ -7,18 +7,15 @@
 //! ([`references_at_with_options`] with `include_declaration = true`), so
 //! rename and find-references can never disagree about what an occurrence is.
 //!
-//! Known v1 limitation (inherited from the symbol index): resolution away
-//! from binding-precise positions is name-based + scope-aware, so a reference
-//! set can conflate same-named declarations across scopes (inner-scope
-//! shadowing).  Rename inherits that approximation verbatim from
-//! find-references.
+//! An occurrence is a name the frontend bound to the declaration, so names in
+//! macro text and names that do not resolve are left unchanged.
 
 use std::collections::HashMap;
 
 use tower_lsp::lsp_types::{Position, Range, TextEdit, Url, WorkspaceEdit};
 
-use crate::features::{references_at_with_options, Analysis, SymEntry};
-use llg::core::model::SymKind;
+use crate::features::{declaration_at, identifier_at, references_at_with_options, Analysis};
+use llg::core::tokens::TokenInfo;
 
 /// Reserved SystemVerilog keywords (curated IEEE 1800 subset covering the
 /// common declaration, process, control, type, class/constraint, config and
@@ -180,33 +177,30 @@ fn is_plain_identifier(name: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
 }
 
-/// The indexed symbol under the 0-based `(line, col)` cursor when it may be
-/// renamed.
+/// The name under the 0-based `(line, col)` cursor when it may be renamed.
 ///
-/// Instance-name declarations are excluded on purpose: the index resolves an
-/// instance to its module *definition* (goto-definition semantics), so a
-/// rename there would retarget every occurrence of the type family instead of
-/// the instance name.  Keyword positions never hit the index and are therefore
-/// not renamable either.
-fn rename_target<'a>(a: &'a Analysis, file: &str, line: u32, col: u32) -> Option<&'a SymEntry> {
-    let e = a.index.entry_at(file, line, col)?;
-    if e.is_decl && e.kind == SymKind::Instance {
-        return None;
-    }
-    Some(e)
+/// Instance-name declarations are excluded on purpose: they lead to the
+/// definition they instantiate, so a client would offer to rename one name and
+/// show the other.
+fn rename_target<'a>(a: &'a Analysis, file: &str, line: u32, col: u32) -> Option<&'a TokenInfo> {
+    declaration_at(a, file, line, col)?;
+    let token = identifier_at(a, file, line, col)?;
+    let instance =
+        a.bindings
+            .navigation
+            .contains_key(&(token.file.clone(), token.line - 1, token.col - 1));
+    (!instance).then_some(token)
 }
 
 /// The identifier range plus current name at the 0-based `(line, col)` cursor,
 /// when a renamable symbol sits there.  `None` means "not renamable" and maps
 /// to a null/error prepareRename response client-side.
 pub fn prepare_rename(a: &Analysis, file: &str, line: u32, col: u32) -> Option<(Range, String)> {
-    let e = rename_target(a, file, line, col)?;
-    let len = e.name.chars().count() as u32;
-    let range = Range::new(
-        Position::new(e.line, e.col),
-        Position::new(e.line, e.col + len),
-    );
-    Some((range, e.name.clone()))
+    let token = rename_target(a, file, line, col)?;
+    let name = token.name.clone()?;
+    let start = Position::new(token.line - 1, token.col - 1);
+    let end = Position::new(token.line - 1, token.col - 1 + name.chars().count() as u32);
+    Some((Range::new(start, end), name))
 }
 
 /// An invalid replacement identifier in a rename request.
@@ -261,8 +255,8 @@ pub fn rename(
         });
     }
     // Same computation as textDocument/references with includeDeclaration —
-    // spans come straight from the indexed entries (start column + name
-    // width), so longer identifiers sharing a prefix are never touched.
+    // spans are the captured name tokens, so longer identifiers sharing a
+    // prefix are never touched.
     let locations = references_at_with_options(a, file, line, col, true);
     if locations.is_empty() {
         return Ok(None);
@@ -295,150 +289,75 @@ pub fn rename(
 mod tests {
     use super::*;
     use crate::test_paths::host_path as hp;
-    use llg::core::model::{DesignModel, Direction, InstanceModel, ModuleDef, PortModel, TypeInfo};
-    use llg::core::tokens::{self, FileTokens, TokenInfo};
+    use llg::core::compile::{CompileOpts, OwnedSource};
 
-    /// Hand-built single-file analysis mirroring the real pipeline's token
-    /// shapes for:
-    ///
-    /// ```text
-    /// /x/ren.sv
-    /// 1: module m(input logic data, output logic data_out);
-    /// 2:   assign data_out = data;
-    /// 3: endmodule
-    /// ```
-    ///
-    /// `/x/top.sv` instantiates `m` so the module type-name ref exercises
-    /// cross-file edits:
-    ///
-    /// ```text
-    /// /x/top.sv
-    /// 4: module top;
-    /// 5:   m u0();
-    /// 6: endmodule
-    /// ```
+    const REN: &str = concat!(
+        "module m(input logic data, output logic data_out);\n",
+        "  assign data_out = data;\n",
+        "endmodule : m\n",
+    );
+    const TOP: &str = concat!(
+        "`define DATA data\n",
+        "module top;\n",
+        "  logic w, o;\n",
+        "  m u0(.data(w), .data_out(o));\n",
+        "  wire data;\n",
+        "  assign data = `DATA;\n",
+        "  assign o = late;\n",
+        "  logic late;\n",
+        "endmodule\n",
+    );
+
+    /// Two ports whose names share a prefix in `/x/ren.sv`, and an instance of
+    /// their module in `/x/top.sv`.
     fn prefix_analysis() -> Analysis {
-        let node = |line: u32, col: u32, t: i32, name: &str| TokenInfo {
-            line,
-            col,
-            end_line: line,
-            end_col: col + name.len() as u32,
-            kind: t,
-            name: Some(name.to_owned()),
-            file: String::new(), // filled per file below
-        };
-        let mk = |nodes: Vec<(u32, u32, i32, &str)>, path: &str| -> FileTokens {
-            FileTokens {
-                path: path.to_owned(),
-                nodes: nodes
-                    .into_iter()
-                    .map(|(l, c, t, n)| {
-                        let mut v = node(l, c, t, n);
-                        v.file = path.to_owned();
-                        v
-                    })
-                    .collect(),
-            }
-        };
+        analysis_of(&[("/x/ren.sv", REN), ("/x/top.sv", TOP)])
+    }
 
-        let ren_file = mk(
-            vec![
-                (
-                    1,
-                    8,
-                    tokens::TOKEN_SLANG_MODULE + tokens::TOKEN_DECLARATION_OFFSET,
-                    "m",
-                ),
-                (
-                    1,
-                    22,
-                    tokens::TOKEN_SLANG_PORT + tokens::TOKEN_DECLARATION_OFFSET,
-                    "data",
-                ),
-                (
-                    1,
-                    41,
-                    tokens::TOKEN_SLANG_PORT + tokens::TOKEN_DECLARATION_OFFSET,
-                    "data_out",
-                ),
-                (2, 10, tokens::TOKEN_SLANG_IDENTIFIER, "data_out"),
-                (2, 21, tokens::TOKEN_SLANG_IDENTIFIER, "data"),
-                // A parse-tree keyword token: named but never classified into
-                // the index, so it must not become a rename target.
-                (3, 1, 900_001, "module"),
-            ],
-            hp("/x/ren.sv"),
-        );
-        let top_file = mk(
-            vec![
-                (
-                    4,
-                    8,
-                    tokens::TOKEN_SLANG_MODULE + tokens::TOKEN_DECLARATION_OFFSET,
-                    "top",
-                ),
-                (5, 3, tokens::TOKEN_SLANG_IDENTIFIER, "m"),
-                (
-                    5,
-                    5,
-                    tokens::TOKEN_SLANG_IDENTIFIER + tokens::TOKEN_DECLARATION_OFFSET,
-                    "u0",
-                ),
-            ],
-            hp("/x/top.sv"),
-        );
+    fn analysis_of(sources: &[(&'static str, &str)]) -> Analysis {
+        let _shadow = crate::features::TEST_PROCESS_SHADOW_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        crate::features::analyze(&CompileOpts {
+            sources: sources
+                .iter()
+                .map(|(file, text)| OwnedSource::compilation_unit(hp(file), *text))
+                .collect(),
+            editor: true,
+            ..Default::default()
+        })
+    }
 
-        let port = |name: &str, dir: Direction| PortModel {
-            name: name.to_owned(),
-            direction: dir,
-            ty: TypeInfo {
-                kind: "logic".to_owned(),
-                width: Some(1),
-                signed: false,
-                type_name: None,
-            },
-        };
-        let model = DesignModel {
-            design_name: "top".to_owned(),
-            top_instances: vec![InstanceModel {
-                name: "tb".to_owned(),
-                def_name: "m".to_owned(),
-                full_name: "tb".to_owned(),
-                file: Some(hp("/x/ren.sv").to_owned()),
-                line: 9,
-                col: 1,
-                ports: vec![
-                    port("data", Direction::Input),
-                    port("data_out", Direction::Output),
-                ],
-                signals: Vec::new(),
-                params: Vec::new(),
-                gen_scopes: Vec::new(),
-                funcs: Vec::new(),
-                children: Vec::new(),
-            }],
-            modules: vec![
-                ModuleDef {
-                    name: "m".to_owned(),
-                    file: Some(hp("/x/ren.sv").to_owned()),
-                    line: 1,
-                    col: 8,
-                    end_line: 3,
-                    end_col: 10,
-                },
-                ModuleDef {
-                    name: "top".to_owned(),
-                    file: Some(hp("/x/top.sv").to_owned()),
-                    line: 4,
-                    col: 8,
-                    end_line: 6,
-                    end_col: 10,
-                },
-            ],
-            packages: Vec::new(),
-            classes: Vec::new(),
-        };
-        Analysis::new(Vec::new(), model, vec![ren_file, top_file], Vec::new())
+    /// The edits of renaming the name at the position in [`prefix_analysis`].
+    fn edits(file: &'static str, line: u32, col: u32) -> Vec<(String, u32, u32, u32)> {
+        edits_in(&prefix_analysis(), file, line, col)
+    }
+
+    /// The edits of renaming the name at the position, as file, line, columns.
+    fn edits_in(
+        analysis: &Analysis,
+        file: &'static str,
+        line: u32,
+        col: u32,
+    ) -> Vec<(String, u32, u32, u32)> {
+        let edit = rename(analysis, hp(file), line, col, "din")
+            .expect("valid name")
+            .expect("occurrences exist");
+        let mut edits: Vec<_> = edit
+            .changes
+            .expect("plain changes map")
+            .into_iter()
+            .flat_map(|(uri, edits)| {
+                let path = uri.to_file_path().unwrap().to_string_lossy().into_owned();
+                edits.into_iter().map(move |edit| {
+                    assert_eq!(edit.new_text, "din");
+                    let Range { start, end } = edit.range;
+                    (path.clone(), start.line, start.character, end.character)
+                })
+            })
+            .collect();
+        edits.sort();
+        edits
     }
 
     #[test]
@@ -506,85 +425,67 @@ mod tests {
         assert!(prepare_rename(&a, hp("/x/ren.sv"), 2, 3).is_none());
         // Anywhere off-symbol.
         assert!(prepare_rename(&a, hp("/x/ren.sv"), 20, 0).is_none());
-    }
-
-    #[test]
-    fn rename_replaces_exactly_the_identifier_spans_across_files() {
-        let a = prefix_analysis();
-        // Rename the PORT `data` from its declaration.
-        let edit = rename(&a, hp("/x/ren.sv"), 0, 21, "din")
-            .expect("valid name")
-            .expect("occurrences exist");
-        let changes = edit.changes.expect("plain changes map");
-
-        let ren_edits = changes
-            .get(&Url::from_file_path(hp("/x/ren.sv")).unwrap())
-            .expect("edits in /x/ren.sv");
-        assert_eq!(ren_edits.len(), 2, "decl + one use in ren.sv");
-        assert_eq!(
-            ren_edits[0].range,
-            Range::new(Position::new(0, 21), Position::new(0, 25))
-        );
-        assert_eq!(
-            ren_edits[1].range,
-            Range::new(Position::new(1, 20), Position::new(1, 24))
-        );
-        for edit in ren_edits {
-            assert_eq!(edit.new_text, "din");
-        }
-
-        // Prefix-collision safety: `data_out` keeps its own occurrences.
-        let top_edits = changes.get(&Url::from_file_path(hp("/x/top.sv")).unwrap());
-        assert!(top_edits.is_none(), "renaming `data` must not touch top.sv");
-    }
-
-    #[test]
-    fn rename_is_prefix_collision_safe_in_the_same_file() {
-        let a = prefix_analysis();
-        // Same request from the USE site of `data` (line 1): the `data_out`
-        // use on the very same line must stay untouched.
-        let edit = rename(&a, hp("/x/ren.sv"), 1, 22, "din")
-            .expect("valid name")
-            .expect("occurrences exist");
-        let changes = edit.changes.unwrap();
-        let edits = changes
-            .get(&Url::from_file_path(hp("/x/ren.sv")).unwrap())
-            .unwrap();
-        for edit in edits {
-            let start = edit.range.start;
+        // An instance name, a macro name at its definition and its use, a name
+        // in macro text, a use before the declaration.
+        for (line, col) in [(3, 4), (0, 8), (5, 17), (0, 13), (6, 13)] {
             assert!(
-                !(start.line == 1 && start.character >= 9 && start.character < 17),
-                "the `data_out` use at 1:9 must not be edited: {edit:?}"
+                prepare_rename(&a, hp("/x/top.sv"), line, col).is_none(),
+                "{line}:{col}"
             );
         }
-        assert_eq!(edits.len(), 2);
+    }
+
+    /// `data_out` shares a prefix with the port `data` and `top` declares a
+    /// `data` of its own; neither is an occurrence.
+    #[test]
+    fn rename_replaces_exactly_the_bound_names_across_files() {
+        let expected = [
+            (hp("/x/ren.sv").to_owned(), 0, 21, 25),
+            (hp("/x/ren.sv").to_owned(), 1, 20, 24),
+            (hp("/x/top.sv").to_owned(), 3, 8, 12),
+        ];
+        for (file, line, col) in [
+            ("/x/ren.sv", 0, 21),
+            ("/x/ren.sv", 1, 22),
+            ("/x/top.sv", 3, 9),
+        ] {
+            assert_eq!(edits(file, line, col), expected, "{file}:{line}:{col}");
+        }
     }
 
     #[test]
-    fn rename_of_module_covers_instantiation_type_names() {
-        let a = prefix_analysis();
-        let edit = rename(&a, hp("/x/ren.sv"), 0, 7, "m2")
-            .expect("valid name")
-            .expect("module occurrences exist");
-        let changes = edit.changes.unwrap();
+    fn rename_of_module_covers_instantiation_type_names_and_the_end_label() {
+        let expected = [
+            (hp("/x/ren.sv").to_owned(), 0, 7, 8),
+            (hp("/x/ren.sv").to_owned(), 2, 12, 13),
+            (hp("/x/top.sv").to_owned(), 3, 2, 3),
+        ];
+        for (file, line, col) in [
+            ("/x/ren.sv", 0, 7),
+            ("/x/ren.sv", 2, 12),
+            ("/x/top.sv", 3, 2),
+        ] {
+            assert_eq!(edits(file, line, col), expected, "{file}:{line}:{col}");
+        }
+    }
 
-        let ren_edits = changes
-            .get(&Url::from_file_path(hp("/x/ren.sv")).unwrap())
-            .expect("module decl edit");
-        assert_eq!(ren_edits.len(), 1);
-        assert_eq!(
-            ren_edits[0].range,
-            Range::new(Position::new(0, 7), Position::new(0, 8))
+    /// A name that a macro argument declares is renamed there and at its uses.
+    #[test]
+    fn rename_covers_a_name_declared_in_a_macro_argument() {
+        let text = concat!(
+            "`define PORT(name) input logic name\n",
+            "module m(`PORT(data));\n",
+            "  wire o = data;\n",
+            "endmodule\n",
         );
-
-        let top_edits = changes
-            .get(&Url::from_file_path(hp("/x/top.sv")).unwrap())
-            .expect("type-name ref edit");
-        assert_eq!(top_edits.len(), 1);
-        assert_eq!(
-            top_edits[0].range,
-            Range::new(Position::new(4, 2), Position::new(4, 3))
-        );
+        let a = analysis_of(&[("/x/m.sv", text)]);
+        let expected = [
+            (hp("/x/m.sv").to_owned(), 1, 15, 19),
+            (hp("/x/m.sv").to_owned(), 2, 11, 15),
+        ];
+        for (line, col) in [(1, 15), (2, 12)] {
+            assert_eq!(edits_in(&a, "/x/m.sv", line, col), expected, "{line}:{col}");
+        }
     }
 
     #[test]

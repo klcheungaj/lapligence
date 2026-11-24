@@ -9,7 +9,8 @@ destroyed and every table streams to the caller's `LlgSlangSink`. Contracts:
 - `slang_c_api.h`: the C ABI (the source of truth for records, codes, edge roles
   and auxiliary bits).
 - `slang_c_api.cpp`: compile, capture, metadata parse and streaming.
-- `slang_platform.hpp/.cpp`: the only platform conditionals (glibc heap trim).
+- `slang_platform.hpp/.cpp`: the only platform and compiler conditionals (glibc
+  heap trim, `LLG_NOINLINE`).
 - `mimalloc_shim.c`: GNU/LLD `--wrap` of C `malloc`/`free` on musl.
 - `slang/`: vendored Slang (patched through `patches/slang/`; never edited here).
 

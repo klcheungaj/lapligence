@@ -2,19 +2,10 @@
 
 use super::*;
 
-/// Hand-built two-file `Analysis` proving package-item resolution:
-///
-/// * `/x/p.sv`: `package my_pkg; parameter int P = 3; typedef enum logic
-///   [1:0] { IDLE, RUN } state_t; endpackage` — package decl at 0-based
-///   (0,8), `P` param decl at (1,16), `IDLE`/`RUN` enum const decls at
-///   (2,29)/(2,35).
-/// * `/x/u.sv`: `module top` with reference tokens in both spellings the
-///   index must handle: full `my_pkg::P` / `my_pkg::IDLE` at (2,15)/
-///   (3,15), bare `P` / `IDLE` at (4,15)/(5,15), and a bare `my_pkg` at
-///   (6,15).
-///
-/// Token roles mirror the Slang snapshot: package, parameter, and enum member
-/// declarations carry the declaration offset, while uses are identifiers.
+/// Hand-built `Analysis` of `/x/p.sv`: `package my_pkg; parameter int P = 3;
+/// typedef enum logic [1:0] { IDLE, RUN } state_t; endpackage` — package decl
+/// at 0-based (0,8), `P` param decl at (1,16), `IDLE`/`RUN` enum const decls
+/// at (2,29)/(2,35) — and a module `top` in `/x/u.sv`.
 fn package_item_analysis() -> Analysis {
     let node = |line: u32, col: u32, t: i32, name: &str| TokenInfo {
         line,
@@ -69,19 +60,12 @@ fn package_item_analysis() -> Analysis {
         hp("/x/p.sv"),
     );
     let u_file = mk(
-        vec![
-            (
-                1,
-                8,
-                tokens::TOKEN_SLANG_MODULE + tokens::TOKEN_DECLARATION_OFFSET,
-                "top",
-            ),
-            (3, 16, tokens::TOKEN_SLANG_IDENTIFIER, "my_pkg::P"),
-            (4, 16, tokens::TOKEN_SLANG_IDENTIFIER, "my_pkg::IDLE"),
-            (5, 16, tokens::TOKEN_SLANG_IDENTIFIER, "P"),
-            (6, 16, tokens::TOKEN_SLANG_IDENTIFIER, "IDLE"),
-            (7, 16, tokens::TOKEN_SLANG_IDENTIFIER, "my_pkg"),
-        ],
+        vec![(
+            1,
+            8,
+            tokens::TOKEN_SLANG_MODULE + tokens::TOKEN_DECLARATION_OFFSET,
+            "top",
+        )],
         hp("/x/u.sv"),
     );
 
@@ -150,188 +134,115 @@ fn package_item_analysis() -> Analysis {
     Analysis::new(Vec::new(), model, vec![p_file, u_file], Vec::new())
 }
 
-#[test]
-fn package_item_definition_resolves_full_and_bare_spellings() {
-    let a = package_item_analysis();
-    // `my_pkg::P` (0-based (2,15) in u.sv) → P decl at (1,16) in p.sv.
-    let loc = definition_at(&a, hp("/x/u.sv"), 2, 15).expect("definition of my_pkg::P ref");
-    assert_eq!(loc.uri, Url::from_file_path(hp("/x/p.sv")).unwrap());
-    assert_eq!(loc.range.start, Position::new(1, 16), "loc: {loc:?}");
-    // `my_pkg::IDLE` (0-based (3,15)) → IDLE decl at (2,29) in p.sv.
-    let loc = definition_at(&a, hp("/x/u.sv"), 3, 15).expect("definition of my_pkg::IDLE ref");
-    assert_eq!(loc.uri, Url::from_file_path(hp("/x/p.sv")).unwrap());
-    assert_eq!(loc.range.start, Position::new(2, 29), "loc: {loc:?}");
-    // Bare `P` (0-based (4,15)) falls back to the workspace-wide same-name
-    // declaration: the package param.
-    let loc = definition_at(&a, hp("/x/u.sv"), 4, 15).expect("definition of bare P ref");
-    assert_eq!(loc.uri, Url::from_file_path(hp("/x/p.sv")).unwrap());
-    assert_eq!(loc.range.start, Position::new(1, 16), "loc: {loc:?}");
-    // Bare `IDLE` (0-based (5,15)) likewise resolves to the package enum
-    // const.
-    let loc = definition_at(&a, hp("/x/u.sv"), 5, 15).expect("definition of bare IDLE ref");
-    assert_eq!(loc.uri, Url::from_file_path(hp("/x/p.sv")).unwrap());
-    assert_eq!(loc.range.start, Position::new(2, 29), "loc: {loc:?}");
-    // `my_pkg` alone (0-based (6,15)) → the package declaration.
-    let loc = definition_at(&a, hp("/x/u.sv"), 6, 15).expect("definition of my_pkg ref");
-    assert_eq!(loc.uri, Url::from_file_path(hp("/x/p.sv")).unwrap());
-    assert_eq!(loc.range.start, Position::new(0, 8), "loc: {loc:?}");
-}
+const CLASS_ITEMS: &str = concat!(
+    "package class_pkg;\n",
+    "  class StateHolder;\n",
+    "    typedef enum logic [1:0] {IDLE, READY} state_t;\n",
+    "  endclass\n",
+    "endpackage\n",
+    "module use_it;\n",
+    "  import class_pkg::*;\n",
+    "  int a = StateHolder::READY;\n",
+    "  int b = class_pkg::StateHolder::IDLE;\n",
+    "  int c = class_pkg::ABSENT;\n",
+    "endmodule\n",
+);
 
 #[test]
-fn parse_enum_binding_uses_member_range_and_rejects_ambiguous_target() {
-    let base = package_item_analysis();
-    let target = ParseEnumDecl {
-        name: "IDLE".to_owned(),
-        file: hp("/x/p.sv").to_owned(),
-        line1: 3,
-        col1: 30,
-        scope: Some("my_pkg".to_owned()),
-    };
-    let use_key = (hp("/x/u.sv").to_owned(), 3, 23);
-    let mut bindings = HashMap::new();
-    bindings.insert(
-        use_key.clone(),
-        DeclTarget {
-            name: "IDLE".to_owned(),
-            kind: "enum constant".to_owned(),
-            file: hp("/x/p.sv").to_owned(),
-            line0: 2,
-            col0: 29,
-            via_label: false,
-            via_connection: false,
-        },
-    );
-    let a = Analysis::new_with_outcome(
-        AnalysisOutcome::Valid,
-        Vec::new(),
-        base.model,
-        base.tokens,
-        Vec::new(),
-        HashMap::new(),
-        ConnectionInputs {
-            parse_enum_decls: vec![target.clone()],
-            parse_enum_bindings: bindings,
-            parse_enum_ref_positions: [use_key.clone()].into_iter().collect(),
-            parse_enum_tokens: vec![TokenInfo {
-                line: 4,
-                col: 24,
-                end_line: 4,
-                end_col: 28,
-                kind: tokens::TOKEN_SLANG_ENUM_MEMBER + tokens::TOKEN_DECLARATION_OFFSET,
-                name: Some("IDLE".to_owned()),
-                file: hp("/x/u.sv").to_owned(),
-            }],
-            ..ConnectionInputs::default()
-        },
-    );
-    // The qualified token's package prefix starts at column 15, but the
-    // binding key and returned range are anchored to the member at 23.
-    let loc = definition_at(&a, hp("/x/u.sv"), 3, 23).expect("enum member binding");
-    assert_eq!(loc.uri, Url::from_file_path(hp("/x/p.sv")).unwrap());
+fn class_qualified_enum_members_resolve_to_the_member() {
+    let _guards = analysis_guards();
+    let a = analyze_sources(&[("/x/u.sv", CLASS_ITEMS)]);
+    for (marked, declaration) in [
+        ("StateHolder::|READY", "{IDLE, |READY}"),
+        ("StateHolder::|IDLE", "{|IDLE, READY}"),
+        ("= |StateHolder::READY", "class |StateHolder;"),
+        ("class_pkg::|StateHolder", "class |StateHolder;"),
+        ("import |class_pkg", "package |class_pkg"),
+        ("= |class_pkg::StateHolder", "package |class_pkg"),
+    ] {
+        let (line, col) = cursor(CLASS_ITEMS, declaration);
+        assert_eq!(
+            definition_site(&a, hp("/x/u.sv"), CLASS_ITEMS, marked),
+            Some((hp("/x/u.sv").to_owned(), Position::new(line, col))),
+            "{marked}"
+        );
+    }
     assert_eq!(
-        loc.range,
-        Range::new(Position::new(2, 29), Position::new(2, 33))
+        definition_site(&a, hp("/x/u.sv"), CLASS_ITEMS, "class_pkg::|ABSENT"),
+        None
     );
-    assert!(references_at(&a, hp("/x/u.sv"), 3, 23)
-        .iter()
-        .any(|location| location.range.start == Position::new(2, 29)));
-
-    let ambiguous = package_item_analysis();
-    let second = ParseEnumDecl {
-        name: "IDLE".to_owned(),
-        file: hp("/x/other.sv").to_owned(),
-        line1: 7,
-        col1: 12,
-        scope: Some("my_pkg".to_owned()),
-    };
-    let ambiguous = Analysis::new_with_outcome(
-        AnalysisOutcome::Valid,
-        Vec::new(),
-        ambiguous.model,
-        ambiguous.tokens,
-        Vec::new(),
-        HashMap::new(),
-        ConnectionInputs {
-            parse_enum_decls: vec![target, second],
-            unresolved_enum_refs: [use_key.clone()].into_iter().collect(),
-            parse_enum_ref_positions: [use_key.clone()].into_iter().collect(),
-            parse_enum_tokens: vec![TokenInfo {
-                line: 4,
-                col: 24,
-                end_line: 4,
-                end_col: 28,
-                kind: tokens::TOKEN_SLANG_ENUM_MEMBER + tokens::TOKEN_DECLARATION_OFFSET,
-                name: Some("IDLE".to_owned()),
-                file: hp("/x/u.sv").to_owned(),
-            }],
-            ..ConnectionInputs::default()
-        },
-    );
-    assert!(definition_at(&ambiguous, hp("/x/u.sv"), 3, 23).is_none());
-    assert!(references_at(&ambiguous, hp("/x/u.sv"), 3, 23).is_empty());
 }
 
+const PACKAGE_ITEMS: &str = concat!(
+    "package my_pkg;\n",
+    "  parameter int P = 3;\n",
+    "  typedef enum logic [1:0] {IDLE, RUN} state_t;\n",
+    "endpackage\n",
+    "package other_pkg;\n",
+    "  typedef enum {IDLE, STOP} other_t;\n",
+    "endpackage\n",
+    "module full;\n",
+    "  int a = my_pkg::P;\n",
+    "  my_pkg::state_t s = my_pkg::RUN;\n",
+    "endmodule\n",
+    "module bare;\n",
+    "  import my_pkg::*;\n",
+    "  int b = P;\n",
+    "  state_t t = RUN;\n",
+    "endmodule\n",
+    "module ambiguous;\n",
+    "  import my_pkg::*;\n",
+    "  import other_pkg::*;\n",
+    "  int c = IDLE;\n",
+    "  int d = STOP;\n",
+    "endmodule\n",
+);
+
+/// A package item is one declaration whether a name spells its package or
+/// imports it; a name that two imports offer is none of them.
 #[test]
-fn parse_class_qualified_enum_binding_targets_the_member() {
-    let target = ParseEnumDecl {
-        name: "READY".to_owned(),
-        file: hp("/x/classes.sv").to_owned(),
-        line1: 2,
-        col1: 27,
-        scope: Some("StateHolder".to_owned()),
+fn package_items_resolve_through_both_spellings() {
+    let _guards = analysis_guards();
+    let a = analyze_sources(&[("/x/p.sv", PACKAGE_ITEMS)]);
+    let at = |marked| {
+        let (line, col) = cursor(PACKAGE_ITEMS, marked);
+        Some((hp("/x/p.sv").to_owned(), Position::new(line, col)))
     };
-    let key = (hp("/x/use.sv").to_owned(), 3, 23);
-    let mut bindings = HashMap::new();
-    bindings.insert(
-        key.clone(),
-        DeclTarget {
-            name: "READY".to_owned(),
-            kind: "enum constant".to_owned(),
-            file: target.file.clone(),
-            line0: 1,
-            col0: 26,
-            via_label: false,
-            via_connection: false,
-        },
+    for (marked, declaration) in [
+        ("my_pkg::|P;", "int |P = 3"),
+        ("int b = |P;", "int |P = 3"),
+        ("= |my_pkg::P;", "package |my_pkg"),
+        ("my_pkg::|state_t s", "{IDLE, RUN} |state_t"),
+        ("  |state_t t", "{IDLE, RUN} |state_t"),
+        ("my_pkg::|RUN;", "{IDLE, |RUN}"),
+        ("t = |RUN;", "{IDLE, |RUN}"),
+        ("d = |STOP;", "{IDLE, |STOP}"),
+    ] {
+        assert_eq!(
+            definition_site(&a, hp("/x/p.sv"), PACKAGE_ITEMS, marked),
+            at(declaration),
+            "{marked}"
+        );
+    }
+    assert_eq!(
+        definition_site(&a, hp("/x/p.sv"), PACKAGE_ITEMS, "c = |IDLE;"),
+        None
     );
-    let a = Analysis::new_with_outcome(
-        AnalysisOutcome::Valid,
-        Vec::new(),
-        empty_design(),
-        vec![FileTokens {
-            path: hp("/x/use.sv").to_owned(),
-            nodes: vec![TokenInfo {
-                line: 4,
-                col: 11,
-                end_line: 4,
-                end_col: 28,
-                kind: tokens::TOKEN_SLANG_IDENTIFIER,
-                name: Some("StateHolder::READY".to_owned()),
-                file: hp("/x/use.sv").to_owned(),
-            }],
-        }],
-        Vec::new(),
-        HashMap::new(),
-        ConnectionInputs {
-            parse_enum_decls: vec![target],
-            parse_enum_bindings: bindings,
-            parse_enum_ref_positions: [key].into_iter().collect(),
-            parse_enum_tokens: vec![TokenInfo {
-                line: 4,
-                col: 24,
-                end_line: 4,
-                end_col: 24,
-                kind: tokens::TOKEN_SLANG_ENUM_MEMBER + tokens::TOKEN_DECLARATION_OFFSET,
-                name: Some("READY".to_owned()),
-                file: hp("/x/use.sv").to_owned(),
-            }],
-            ..ConnectionInputs::default()
-        },
-    );
-    let loc = definition_at(&a, hp("/x/use.sv"), 3, 23).expect("class enum member");
-    assert_eq!(loc.uri, Url::from_file_path(hp("/x/classes.sv")).unwrap());
-    assert_eq!(loc.range.start, Position::new(1, 26));
-    assert_eq!(loc.range.end, Position::new(1, 31));
+    let references = |marked| -> Vec<Position> {
+        let (line, col) = cursor(PACKAGE_ITEMS, marked);
+        references_at(&a, hp("/x/p.sv"), line, col)
+            .into_iter()
+            .map(|location| location.range.start)
+            .collect()
+    };
+    let expected: Vec<Position> = ["{IDLE, |RUN}", "my_pkg::|RUN;", "t = |RUN;"]
+        .map(|marked| at(marked).expect("site").1)
+        .to_vec();
+    for marked in ["{IDLE, |RUN}", "my_pkg::|RUN;", "t = |RUN;"] {
+        assert_eq!(references(marked), expected, "{marked}");
+    }
+    assert_eq!(references("{|IDLE, RUN}").len(), 1);
+    assert!(references("c = |IDLE;").is_empty());
 }
 
 #[test]
@@ -346,13 +257,6 @@ fn package_item_hover_shows_enum_value() {
     assert!(value.contains("IDLE"), "value: {value}");
     assert!(value.contains("enum const"), "value: {value}");
     assert!(value.contains("0"), "value: {value}");
-    // Hover through the use-site ref shows the same package item.
-    let hover = hover_at(&a, hp("/x/u.sv"), 3, 15).expect("hover on my_pkg::IDLE ref");
-    let value = match hover.contents {
-        HoverContents::Markup(m) => m.value,
-        _ => panic!("expected markup hover"),
-    };
-    assert!(value.contains("IDLE"), "value: {value}");
 }
 
 #[test]

@@ -87,10 +87,25 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   unnamed member of an enum type (its base type), and the
   `LLG_SLANG_TYPEDEF_BUILTIN` auxiliary bit of a typedef renaming a built-in
   type.
-- Editor capture (`LLG_SLANG_COMPILE_EDITOR`, the language server's full
-  analysis) omits the facts only simulation reads, which the flag's comment in
-  `slang_c_api.h` lists; every other node, edge and token binding is the same.
+- Editor capture (`LLG_SLANG_COMPILE_EDITOR`, the language server's
+  captures) omits the facts only simulation reads and records what only tokens
+  and navigation need; the flag's comment in `slang_c_api.h` lists both. Every
+  other node and edge is the same; definitions that only a shadowed definition
+  instantiates are added. A simulator capture does nothing of the latter but
+  test the flag: what a function that every capture calls does for the editor
+  is behind the test, in a `LLG_NOINLINE` function so the code around it stays
+  the same.
   The transparent members it omits were a tenth of the nodes of a class library.
+- The added names are lexical data. A name that would need a semantic node of
+  its own (one in a generic class that nothing specializes, or written in a
+  macro argument or class header) is bound to the text of its declaration
+  instead (`bindByText`, `LlgSlangLexicalTarget::target_token`). A name that
+  Slang evaluates and discards is looked up again in the scope of the symbol
+  or statement block being visited (`lookupContext`, `captureNames`), and one
+  in an expression that failed to bind where Slang keeps no operand
+  (`bindInvalidNames`). A hierarchical name through an instance that is not
+  elaborated is walked through the captured definition bodies after the
+  traversal (`bindUnelaboratedName`).
 - A full capture that exhausts its semantic-node budget walks the elaborated
   design once more to report about how many nodes it needs
   (`SemanticNodeCount`); within 4% on UVM 1.2 and the perf designs.
@@ -160,7 +175,8 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
 - Named statement blocks, labeled statements (Slang makes each one a named
   block) and generate block names get `LLG_SLANG_LEXICAL_BLOCK` from the
   syntax, so declaration-only capture classifies them too: the opening name is
-  the declaration, a matching end label (`end : blk`, `join : f`) binds to it,
+  the declaration, a matching end label (`end : blk`, `join : f`) binds to it
+  (the end labels of other declarations bind in editor capture),
   and resolved references (`disable blk`, the `g` of `g[0].x`) take the kind
   from the bound generate or statement-block scope. Instance names keep their
   kind. A keyword carries `LLG_SLANG_LEXICAL_CONTROL_FLOW` only where its
@@ -191,7 +207,8 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   `` `define `` body text it was copied from (`Capture::macroBodySpan`), so
   its lexical bindings are keyed by the body range and bind the body token:
   every expansion binds it again, and the merge keeps a kind and role only
-  when all bindings agree (and a target only when the targets agree too).
+  when all bindings agree. In editor capture it has a target record
+  (`LlgSlangLexicalTarget`) for each declaration an expansion resolves it to.
   The expansion copy also keeps a binding at its use-site range; it gives
   the copy no kind or role, only the compilation-unit forward-reference
   flag, which is decided where the macro expands.
@@ -199,6 +216,14 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   are `LLG_SLANG_LEXICAL_MACRO_FORMAL`; other body names are identifiers
   until an expansion binds them. The net type of `` `default_nettype ``
   (`none` included) is a keyword.
+- In editor capture, attribute names are `LLG_SLANG_LEXICAL_ATTRIBUTE` without a
+  target, from the syntax. Slang parses the variables of a clocking item as the same syntax.
+- In editor capture, the preprocessor's macro and include events
+  (`MacroCapture`) give one
+  `LlgSlangMacroDefinition` per effective `` `define ``, one
+  `LlgSlangMacroReference` per written name and resolution (with the uses in a
+  body resolved where it is expanded), and one `LlgSlangInclude` per resolved
+  directive, so consumers scan no source text.
 - Class specializations: the names written in a `C#(...)::name` value
   assignment bind from the overridden parameter initializer when this use
   site wrote it, else by lookup in the context of the symbol or statement

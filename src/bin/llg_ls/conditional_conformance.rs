@@ -1,22 +1,22 @@
-//! Cross-scanner conformance corpus for conditional-compilation directives.
+//! Conformance corpus for conditional-compilation directives.
 //!
 //! Test-only module (compiled under `cfg(test)` only): it feeds ONE table of
-//! tricky snippets through BOTH evaluators — the core macro-table scanner
-//! (`llg::core::macros`, backing macro hover) and the bin's inactive-range
-//! scanner (`crate::inactive_ranges`, backing editor dimming) — and asserts
-//! they agree on whether the probe region is LIVE. This is the regression net
-//! for the empirically verified divergence where `` `ifdef (PAREN) `` was
-//! accepted by the dimmer but rejected by hover ("undimmed code whose macro
-//! hover claims not defined").
+//! tricky snippets through the preprocessor of a compile, whose macro table
+//! (`llg::core::macros`) backs macro hover and definition, and through the
+//! bin's inactive-range scanner (`crate::inactive_ranges`, backing editor
+//! dimming), and asserts they agree on whether the probe region is LIVE.
 //!
 //! Agreement is measured mechanically: every snippet ends with a
-//! `` `CORPUS_PROBE `` usage line. Hover reports liveness as "the probe
+//! `` `CORPUS_PROBE `` usage line. The table reports liveness as "the probe
 //! usage was recorded at all" (dead regions record nothing); the dimmer
 //! reports liveness as "no range covers the probe line". Both must equal the
 //! expected value AND each other. Sources are always fully terminated so the
-//! dimmer's whole-file fail-active rule stays out of the picture.
+//! dimmer's whole-file fail-active rule stays out of the picture. A dead probe
+//! never comes first after a parenthesized condition (an error before IEEE
+//! 1800-2023): Slang reads that token, in search of an operator, before it
+//! decides the branch.
 
-use llg::core::macros::build_table;
+use llg::core::compile::parse_source;
 
 use crate::inactive_ranges::inactive_line_ranges;
 
@@ -38,14 +38,12 @@ fn assert_probe_liveness(name: &str, source: &str, defines: &[&str], expect_live
         .iter()
         .any(|range| range.start_line <= probe_line0 && probe_line0 <= range.end_line);
 
-    let args = defines
-        .iter()
-        .map(|define| (*define).to_owned())
-        .collect::<Vec<_>>();
-    let table = build_table(&args, &[(FILE, source)], None);
+    let table = parse_source(FILE, source, &owned_defines)
+        .expect("parse corpus source")
+        .macros;
     // Column 1 sits inside the probe's `` `NAME `` span (backtick occupies
     // column 0); dead regions record no usage at all.
-    let hover_live = table.usage_at(FILE, probe_line0, 1).is_some();
+    let hover_live = table.site_at(FILE, probe_line0, 1).is_some();
 
     assert_eq!(
         hover_live, !dimmed,
@@ -78,11 +76,11 @@ corpus! {
     plain_ifdef_defined_shows =>
         "`ifdef FOO\n`CORPUS_PROBE\n`endif", &["FOO"], true;
     paren_ifdef_undefined_hides =>
-        "`ifdef (FOO)\n`CORPUS_PROBE\n`endif", &[], false;
+        "`ifdef (FOO)\nfirst\n`CORPUS_PROBE\n`endif", &[], false;
     paren_ifdef_defined_shows =>
         "`ifdef (FOO)\n`CORPUS_PROBE\n`endif", &["FOO"], true;
     paren_ifndef_defined_hides =>
-        "`ifndef (FOO)\n`CORPUS_PROBE\n`endif", &["FOO"], false;
+        "`ifndef (FOO)\nfirst\n`CORPUS_PROBE\n`endif", &["FOO"], false;
     paren_ifndef_undefined_shows =>
         "`ifndef (FOO)\n`CORPUS_PROBE\n`endif", &[], true;
     unclosed_paren_still_parses_the_identifier =>
@@ -100,7 +98,7 @@ corpus! {
     paren_elsif_takes_branch_when_defined =>
         "`ifdef A\nwrong\n`elsif (B)\n`CORPUS_PROBE\n`endif", &["B"], true;
     paren_elsif_dead_when_first_branch_taken =>
-        "`ifdef A\nwrong\n`elsif (B)\n`CORPUS_PROBE\n`endif", &["A"], false;
+        "`ifdef A\nwrong\n`elsif (B)\nfirst\n`CORPUS_PROBE\n`endif", &["A"], false;
     else_takes_remainder_when_all_conditions_fail =>
         "`ifdef A\nwrong\n`elsif (B)\nwrong\n`else\n`CORPUS_PROBE\n`endif", &[], true;
     nested_else_live_when_inner_condition_undefined =>
@@ -144,7 +142,7 @@ corpus! {
     in_source_define_feeds_paren_condition =>
         "`define FOO 1\n`ifdef (FOO)\n`CORPUS_PROBE\n`endif", &[], true;
     in_source_undef_removes_paren_condition =>
-        "`define FOO 1\n`undef FOO\n`ifdef (FOO)\n`CORPUS_PROBE\n`endif", &[], false;
+        "`define FOO 1\n`undef FOO\n`ifdef (FOO)\nfirst\n`CORPUS_PROBE\n`endif", &[], false;
     trailing_text_after_condition_agrees =>
         "`ifdef FOO extra\n`CORPUS_PROBE\n`endif", &["FOO"], true;
     comment_after_condition_agrees =>

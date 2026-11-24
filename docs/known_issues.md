@@ -3902,26 +3902,27 @@ gaps below remain.
 
 ### Symptom
 
-- Attribute names (`(* keep *)`) get no token.
 - An open buffer requested before its root's first analysis commits has no
   include context, so header macros are unknown there; a client without
   `semanticTokens.refreshSupport` keeps that stream until its next request
   (clients with it get a refresh, ST-50).
+- A macro use in the default text of a formal argument
+  (`` `define M(a = `W) ``) has no token and no definition.
 
 ### Cause
 
-The capture (`LexicalCapture` in `src/wrapper/slang_c_api.cpp`) gives
-attribute names no kind. The isolated parse reads the include context of the
-committed analysis only.
+The isolated parse reads the include context of the committed analysis only.
+Slang keeps no location for a default text once it is expanded.
 
 ### Intended direction
 
-Give attribute names a decorator kind.
+Let a client without refresh support request the stream after the first
+analysis; record the uses in a default text where it is substituted.
 
 ### Reproduce
 
-Request semantic tokens for a file with `(* keep *) logic a;`: the stream
-has no token at `keep`.
+Request the definition at `` `W `` in `` `define M(a = `W) (a) ``: there is
+none, although a use `` `M() `` expands it.
 
 ## Semantic token kinds that need more capture (llg_ls)
 
@@ -3940,7 +3941,7 @@ stock VS Code themes except where noted.
   analogue model. (Sequence, property and let names became `function` and
   their instances are bound since LS-TOKENS-13, ST-71.)
 - At a let instance (`l(a, b)`, 11.13) neither the let name nor the names
-  of its actual arguments get a token: Slang expands the let to its body
+  of its actual arguments get a token or a definition: Slang expands the let to its body
   expression and keeps no syntax of the call (the actuals carry the syntax
   of the formal references). Sequence and property instances are bound.
 - In a sequence or property declaration that no assertion instantiates,
@@ -3951,10 +3952,13 @@ stock VS Code themes except where noted.
   checked), a use of a type parameter inside a module whose instance
   overrides it (`#(.T(logic [1:0]))`) is `type`, not `typeParameter` (same
   `#4EC9B0` in Dark+); the declaration stays `typeParameter`.
-- A generate `case (expr)` condition has no reference token, and neither
-  have the user names of a generate `if (expr)` condition (`D` in
-  `if ($clog2(D) > 2)`, found by LS-BIF); `$name` calls there are tokenized
-  from their spelling (ST-40).
+- These names have neither a token nor a definition, although a declaration
+  exists: those in the block of a loop generate construct with no iterations
+  (Slang creates no block), a name that depends on a type parameter of a
+  class that nothing specializes (`member.f()` with `ELEMENT member`), the
+  names of a `for` statement whose header fails to bind, a member of a module
+  with several definitions that only the one the frontend did not select
+  declares, and the method name of a call on a value that fails to bind.
 
 ### Cause
 
@@ -4024,7 +4028,12 @@ the gaps below remain in the open-buffer path only.
 - A package the buffer names only through text that the lexical scan cannot
   see (a `[compile] defines` macro or a header the buffer does not include
   expanding to `pkg::`, a package name built by token pasting) stays unknown
-  in the open-buffer stream; its items get no token there.
+  in the open-buffer stream; its items get no token and no definition there.
+- An edited header that other files include is compiled alone until the
+  analysis of the edit commits, so the names it takes from the scope that
+  includes it (the package of a class library's header) have neither a token
+  nor a definition meanwhile. Definitions read the committed analysis before
+  they shared the table of the tokens, at the positions of the unedited text.
 - A definition the buffer names only through text the lexical scan cannot
   see (a `[compile] defines` macro or a header the buffer does not include
   expanding to the name, a name built by token pasting) stays unknown in the

@@ -30,7 +30,7 @@ pub(super) struct RootState {
     pub(super) analysis_epoch: u64,
     /// Inputs of the semantic-token streams served since the last commit,
     /// which decide whether that commit asks the client to re-request them.
-    pub(super) served_tokens: ServedTokenInputs,
+    pub(super) served_tokens: ServedTokens,
     /// Diagnostics published for this root's documents (open or closed).
     pub(super) diagnostics: BTreeMap<Url, Vec<Diagnostic>>,
     /// Digest of the last primary payload sent per URI by this root, so
@@ -202,84 +202,123 @@ pub(super) struct CommitOutcome {
     pub(super) module_explorer_changed: bool,
     /// Whether a semantic-token stream served before this commit may differ
     /// from one computed now, and the client takes a refresh request
-    /// ([`ServedTokenInputs`]).
+    /// ([`ServedTokens`]).
     pub(super) semantic_tokens_refresh: bool,
 }
 
-/// What the semantic-token streams served for one root since its last
-/// commit were computed from, so a commit asks the client to re-request them
-/// (`workspace/semanticTokens/refresh`) only when one may now differ. A
-/// client requests tokens when a document opens or its text changes, and
-/// never because another file or the first analysis committed; without the
-/// refresh, a stream served before the first commit (no package or include
-/// context yet) or before a package file changed stays on screen.
+/// The semantic-token streams served for one root, so a commit asks the
+/// client to re-request them (`workspace/semanticTokens/refresh`) only when one
+/// may now differ. A client requests tokens when a document opens or its text
+/// changes, and never because another file or the first analysis committed;
+/// without the refresh, a stream served before the first commit (no package or
+/// include context yet) or before a package file changed stays on screen.
 ///
-/// An open buffer's stream is a function of its text, the root's
-/// `[compile] defines` and the committed include context; the client covers
-/// text changes, so only the other two are recorded. Any other stream is the
-/// committed snapshot's, which every replacement may change. Fallback streams
-/// an open buffer gets when its isolated parse is refused (stale revision,
-/// size limit, saturated flights, parse failure) are not recorded: the next
-/// edit re-requests them. Nothing is recorded for a client without
+/// The stream of an open document is a function of its text, which the client
+/// covers, and of either the committed snapshot, when that was compiled from
+/// the text, or the root's `[compile] defines` and committed include context.
+/// The stream of a closed file is the committed snapshot's, which every
+/// replacement may change. Nothing is recorded for a client without
 /// `workspace.semanticTokens.refreshSupport`.
 #[derive(Debug, Default)]
-pub(super) struct ServedTokenInputs {
-    /// A stream came from the committed snapshot (an unopened file).
-    snapshot: bool,
-    /// The defines and include context of the isolated parses served.
-    isolated: Option<(Vec<String>, Arc<features::IncludeContext>)>,
-    /// Isolated parses used different defines or contexts.
-    mixed: bool,
+pub(super) struct ServedTokens {
+    /// A closed file was served since the last refresh.
+    closed: bool,
+    /// The last stream of each open document.
+    open: HashMap<Url, ServedOpenStream>,
 }
 
-impl ServedTokenInputs {
-    /// Record a stream served from the committed snapshot.
-    pub(super) fn record_snapshot(&mut self) {
-        self.snapshot = true;
+#[derive(Debug)]
+struct ServedOpenStream {
+    defines: Vec<String>,
+    context: Arc<features::IncludeContext>,
+    /// [`stream_digest`] of the stream; `None` while it is computed.
+    digest: Option<u64>,
+}
+
+impl ServedTokens {
+    /// Record a request for a closed file.
+    pub(super) fn record_closed(&mut self) {
+        self.closed = true;
     }
 
-    /// Record an isolated open-buffer parse with these inputs.
-    pub(super) fn record_isolated(
+    /// Record a request for an open document with these inputs.
+    pub(super) fn record_open(
         &mut self,
+        uri: &Url,
         defines: &[String],
         context: &Arc<features::IncludeContext>,
     ) {
-        match &self.isolated {
-            None => self.isolated = Some((defines.to_vec(), Arc::clone(context))),
-            Some((recorded_defines, recorded)) => {
-                let same = recorded_defines == defines
-                    && (Arc::ptr_eq(recorded, context) || recorded.same_inputs(context));
-                self.mixed |= !same;
-            }
+        self.open.insert(
+            uri.clone(),
+            ServedOpenStream {
+                defines: defines.to_vec(),
+                context: Arc::clone(context),
+                digest: None,
+            },
+        );
+    }
+
+    /// Record the stream that answered a request recorded by
+    /// [`record_open`](Self::record_open), unless a commit settled it.
+    pub(super) fn record_stream(&mut self, uri: &Url, digest: u64) {
+        if let Some(stream) = self.open.get_mut(uri) {
+            stream.digest = Some(digest);
         }
     }
 
-    /// Whether a recorded stream may differ from one computed against the
-    /// inputs a commit leaves current (`defines`, `context`, and whether it
-    /// replaced the snapshot). Clears what the decision settles: a snapshot
-    /// record survives a commit that kept the snapshot.
+    /// Whether a recorded stream may differ from one computed after a commit
+    /// that leaves these defines and include context current and replaced the
+    /// snapshot or not. `committed` digests the new snapshot's stream of an
+    /// open document it was compiled from; `open` tells whether a document
+    /// still is. A refresh makes the client request every stream again, so it
+    /// clears the records.
     pub(super) fn take_refresh(
         &mut self,
         snapshot_replaced: bool,
         defines: &[String],
-        context: &features::IncludeContext,
+        context: &Arc<features::IncludeContext>,
+        open: impl Fn(&Url) -> bool,
+        committed: impl Fn(&Url) -> Option<u64>,
     ) -> bool {
-        let isolated_changed = self.mixed
+        self.open.retain(|uri, _| open(uri));
+        let refresh = (self.closed && snapshot_replaced)
             || self
-                .isolated
-                .as_ref()
-                .is_some_and(|(recorded_defines, recorded)| {
-                    recorded_defines != defines || !recorded.same_inputs(context)
+                .open
+                .iter_mut()
+                .any(|(uri, stream)| match committed(uri) {
+                    Some(digest) => stream.digest != Some(digest),
+                    None => {
+                        let changed =
+                            stream.defines != defines || !stream.context.same_inputs(context);
+                        // Equal texts of the replaced snapshot are released.
+                        stream.context = Arc::clone(context);
+                        changed
+                    }
                 });
-        let refresh = isolated_changed || (self.snapshot && snapshot_replaced);
-        let keep_snapshot = self.snapshot && !refresh;
-        *self = ServedTokenInputs {
-            snapshot: keep_snapshot,
-            ..ServedTokenInputs::default()
-        };
+        if refresh {
+            *self = ServedTokens::default();
+        }
         refresh
     }
 }
+
+/// Digest of an encoded stream.
+pub(super) fn stream_digest(tokens: &SemanticTokens) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for token in &tokens.data {
+        (
+            token.delta_line,
+            token.delta_start,
+            token.length,
+            token.token_type,
+            token.token_modifiers_bitset,
+        )
+            .hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
 /// What [`Backend::apply_discovery`] did with one walk's file sets.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum DiscoveryOutcome {
@@ -329,15 +368,16 @@ pub(crate) struct Backend {
     /// epoch, so entries never outlive the snapshot they were computed from;
     /// access bypasses the serialized lifecycle queue exactly like the
     /// underlying handlers do.
-    pub(super) definition_cache: MemoCache<RequestKey, Option<Location>>,
     pub(super) hover_cache: MemoCache<RequestKey, Option<Hover>>,
     pub(super) references_cache: MemoCache<RequestKey, Vec<Location>>,
-    /// Open-buffer isolated token streams keyed on (uri, buffer text,
-    /// effective `-D` defines, committed analysis epoch) — the exact inputs
-    /// of the request-local compile.
-    pub(super) open_token_cache: Arc<MemoCache<String, SemanticTokens>>,
-    /// In-flight keyed single-flight coordination for open-buffer semantic
-    /// token misses.  This is separate from the result cache so cache changes
+    /// Open-buffer isolated parses keyed on (uri, buffer text, effective
+    /// `-D` defines, committed analysis epoch) — the exact inputs of the
+    /// request-local compile.
+    pub(super) open_token_cache: Arc<MemoCache<String, OpenTokenResult>>,
+    /// Fingerprint of the last text of each open document, by URI.
+    pub(super) fingerprints: MemoCache<String, (SharedText, features::SourceFingerprint)>,
+    /// In-flight keyed single-flight coordination for open-buffer parse
+    /// misses.  This is separate from the result cache so cache changes
     /// owned by another module do not affect the bounded wait lifecycle.
     pub(super) open_token_flights: Arc<OpenTokenFlightRegistry>,
     /// Inactive-range results keyed on (uri, text digest, effective
@@ -368,10 +408,10 @@ impl Backend {
                 client_order: ClientOrder::default(),
                 semantic_tokens_refresh: false,
             })),
-            definition_cache: MemoCache::new(NAVIGATION_CACHE_CAPACITY),
             hover_cache: MemoCache::new(NAVIGATION_CACHE_CAPACITY),
             references_cache: MemoCache::new(NAVIGATION_CACHE_CAPACITY),
             open_token_cache: Arc::new(MemoCache::new(TOKEN_CACHE_CAPACITY)),
+            fingerprints: MemoCache::new(NAVIGATION_CACHE_CAPACITY),
             open_token_flights: Arc::new(OpenTokenFlightRegistry::new()),
             inactive_cache: MemoCache::new(NAVIGATION_CACHE_CAPACITY),
         }
@@ -381,17 +421,12 @@ impl Backend {
     /// `llg/dumpTokens` so tests and users can observe warm short-circuits.
     pub(super) fn cache_stats(&self) -> (CacheStats, usize) {
         let mut total = CacheStats::default();
-        for stats in [
-            self.definition_cache.stats(),
-            self.hover_cache.stats(),
-            self.references_cache.stats(),
-        ] {
+        for stats in [self.hover_cache.stats(), self.references_cache.stats()] {
             total.add(&stats);
         }
         total.add(&self.open_token_cache.stats());
         total.add(&self.inactive_cache.stats());
-        let entries = self.definition_cache.len()
-            + self.hover_cache.len()
+        let entries = self.hover_cache.len()
             + self.references_cache.len()
             + self.open_token_cache.len()
             + self.inactive_cache.len();
@@ -644,7 +679,7 @@ impl Backend {
                 pending_parent_id: None,
                 scheduler: SchedulerState::default(),
                 analysis_epoch: 0,
-                served_tokens: ServedTokenInputs::default(),
+                served_tokens: ServedTokens::default(),
             },
             errors,
         )

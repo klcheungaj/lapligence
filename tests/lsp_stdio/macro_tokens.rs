@@ -11,8 +11,9 @@
 //   its own kind at its written position, also through nested macros.
 // * directives are `keyword` (conditional ones with `controlFlow`); inactive
 //   `ifdef` branches carry no token.
-// * an unknown macro is a Slang diagnostic and the rest of the buffer is
-//   still tokenized (a syntax error degrades the stream per token).
+// * an unknown macro is a Slang diagnostic and has no token, like any name
+//   without a declaration; the rest of the buffer is still tokenized (a
+//   syntax error degrades the stream per token).
 
 use super::*;
 
@@ -257,9 +258,8 @@ fn lsp_stdio_macro_use_sites_and_arguments_match_in_both_serving_paths() {
 }
 
 /// A macro defined only in another project file is unknown (separate
-/// compilation units): the use site keeps its `keyword` token, Slang reports the
-/// unknown macro, and the rest of the buffer is still tokenized in both
-/// serving paths.
+/// compilation units): the use site has no token, Slang reports the unknown
+/// macro, and the rest of the buffer is still tokenized in both serving paths.
 #[test]
 fn lsp_stdio_unknown_macro_keeps_the_rest_of_the_buffer_in_both_serving_paths() {
     let workspace = macro_tokens_workspace("unknown");
@@ -300,10 +300,11 @@ fn lsp_stdio_unknown_macro_keeps_the_rest_of_the_buffer_in_both_serving_paths() 
                 .expect("open macro_user.sv");
         }
         let rows = token_rows(&mut client, &workspace.user, &types, &modifiers);
-        assert_eq!(
-            sole_token(&rows, source, "`OTHER_W", 0, 0),
-            ("keyword".to_owned(), Vec::new()),
-            "opened={opened}"
+        let (line, character) = position_of(source, "`OTHER_W", 0);
+        assert!(
+            rows.iter()
+                .all(|row| (row.line, row.character) != (line, character)),
+            "opened={opened}: {rows:?}"
         );
         assert_eq!(
             sole_token(&rows, source, "macro_user", 0, 0),

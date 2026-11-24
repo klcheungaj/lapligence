@@ -38,6 +38,8 @@ mod diagnostics;
 mod duplicate_definitions;
 #[path = "lsp_stdio/hover_completion.rs"]
 mod hover_completion;
+#[path = "lsp_stdio/identifiers.rs"]
+mod identifiers;
 #[path = "lsp_stdio/legacy_constructs.rs"]
 mod legacy_constructs;
 #[path = "lsp_stdio/lifecycle.rs"]

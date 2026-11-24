@@ -84,9 +84,13 @@ pub(super) enum Table {
     ProtectedEnvelopes,
     FsmPragmas,
     Attributes,
+    LexicalTargets,
+    MacroDefinitions,
+    MacroReferences,
+    Includes,
 }
 
-const TABLE_COUNT: usize = Table::Attributes as usize + 1;
+const TABLE_COUNT: usize = Table::Includes as usize + 1;
 const TABLES: [Table; TABLE_COUNT] = [
     Table::Files,
     Table::RelatedDiagnostics,
@@ -109,6 +113,10 @@ const TABLES: [Table; TABLE_COUNT] = [
     Table::ProtectedEnvelopes,
     Table::FsmPragmas,
     Table::Attributes,
+    Table::LexicalTargets,
+    Table::MacroDefinitions,
+    Table::MacroReferences,
+    Table::Includes,
 ];
 
 impl Table {
@@ -135,6 +143,10 @@ impl Table {
             Self::ProtectedEnvelopes => "protected envelope records",
             Self::FsmPragmas => "FSM pragma records",
             Self::Attributes => "attribute records",
+            Self::LexicalTargets => "lexical target records",
+            Self::MacroDefinitions => "macro definition records",
+            Self::MacroReferences => "macro reference records",
+            Self::Includes => "include records",
         }
     }
 
@@ -161,6 +173,10 @@ impl Table {
             Self::ProtectedEnvelopes => std::mem::size_of::<RawProtectedEnvelope>(),
             Self::FsmPragmas => std::mem::size_of::<RawFsmPragma>(),
             Self::Attributes => std::mem::size_of::<RawAttribute>(),
+            Self::LexicalTargets => std::mem::size_of::<RawLexicalTarget>(),
+            Self::MacroDefinitions => std::mem::size_of::<RawMacroDefinition>(),
+            Self::MacroReferences => std::mem::size_of::<RawMacroReference>(),
+            Self::Includes => std::mem::size_of::<RawInclude>(),
         }
     }
 }
@@ -227,6 +243,10 @@ pub(super) struct StreamBuilder {
     fsm_scopes: HashSet<sources::FsmScopeKey>,
     fsm_instance_keys: HashSet<(sources::FsmScopeKey, u64)>,
     attributes: Vec<Attribute>,
+    lexical_targets: Vec<LexicalTarget>,
+    macro_definitions: Vec<MacroDefinition>,
+    macro_references: Vec<MacroReference>,
+    includes: Vec<Include>,
 }
 
 impl StreamBuilder {
@@ -276,6 +296,10 @@ impl StreamBuilder {
             fsm_scopes: HashSet::new(),
             fsm_instance_keys: HashSet::new(),
             attributes: Vec::new(),
+            lexical_targets: Vec::new(),
+            macro_definitions: Vec::new(),
+            macro_references: Vec::new(),
+            includes: Vec::new(),
         }
     }
 
@@ -321,6 +345,10 @@ impl StreamBuilder {
             fsm_pragmas: self.fsm_pragmas,
             fsm_instances: self.fsm_instances,
             attributes: self.attributes,
+            lexical_targets: self.lexical_targets,
+            macro_definitions: self.macro_definitions,
+            macro_references: self.macro_references,
+            includes: self.includes,
         };
         Ok((snapshot, self.profile))
     }
@@ -366,6 +394,10 @@ impl StreamBuilder {
             raw.protected_envelope_count,
             raw.fsm_pragma_count,
             raw.attribute_count,
+            raw.lexical_target_count,
+            raw.macro_definition_count,
+            raw.macro_reference_count,
+            raw.include_count,
         ];
         let header = Header {
             flags: raw.flags,
@@ -465,6 +497,19 @@ impl StreamBuilder {
             limits.max_lexical_tokens,
             "protected envelope records",
         )?;
+        // Every record of these tables comes from captured tokens.
+        for table in [
+            Table::LexicalTargets,
+            Table::MacroDefinitions,
+            Table::MacroReferences,
+            Table::Includes,
+        ] {
+            enforce_count(
+                header.count(table),
+                limits.max_lexical_tokens,
+                table.label(),
+            )?;
+        }
         let mut output_bytes = 0_u64;
         for table in TABLES {
             let bytes = header
@@ -517,6 +562,13 @@ impl StreamBuilder {
         // bounds them like every other table.
         self.fsm_pragmas.reserve_exact(capacity(Table::FsmPragmas));
         self.attributes.reserve_exact(capacity(Table::Attributes));
+        self.lexical_targets
+            .reserve_exact(capacity(Table::LexicalTargets));
+        self.macro_definitions
+            .reserve_exact(capacity(Table::MacroDefinitions));
+        self.macro_references
+            .reserve_exact(capacity(Table::MacroReferences));
+        self.includes.reserve_exact(capacity(Table::Includes));
         self.header = Some(header);
         // Native capture is complete once the header arrives; the stream
         // phase covers delivery and decoding.
@@ -938,6 +990,55 @@ impl StreamBuilder {
         }
         Ok(())
     }
+
+    pub(super) fn lexical_targets(&mut self, raw: &[RawLexicalTarget]) -> Result<(), SlangError> {
+        self.enter(Table::LexicalTargets, raw.len())?;
+        for item in raw {
+            let target = preprocessor::decode_lexical_target(
+                item,
+                &self.lexical_tokens,
+                self.semantic_nodes.len(),
+                self.lexical_targets.last(),
+            )?;
+            self.lexical_targets.push(target);
+        }
+        Ok(())
+    }
+
+    pub(super) fn macro_definitions(
+        &mut self,
+        raw: &[RawMacroDefinition],
+    ) -> Result<(), SlangError> {
+        self.enter(Table::MacroDefinitions, raw.len())?;
+        for item in raw {
+            let definition = preprocessor::decode_macro_definition(item, &self.files)?;
+            self.macro_definitions.push(definition);
+        }
+        Ok(())
+    }
+
+    pub(super) fn macro_references(&mut self, raw: &[RawMacroReference]) -> Result<(), SlangError> {
+        self.enter(Table::MacroReferences, raw.len())?;
+        for item in raw {
+            let reference = preprocessor::decode_macro_reference(
+                item,
+                &self.files,
+                self.macro_definitions.len(),
+                self.macro_references.last(),
+            )?;
+            self.macro_references.push(reference);
+        }
+        Ok(())
+    }
+
+    pub(super) fn includes(&mut self, raw: &[RawInclude]) -> Result<(), SlangError> {
+        self.enter(Table::Includes, raw.len())?;
+        for item in raw {
+            let include = preprocessor::decode_include(item, &self.files, self.includes.last())?;
+            self.includes.push(include);
+        }
+        Ok(())
+    }
 }
 
 /// Run one receiver for a sink callback, recording its first error.
@@ -1057,6 +1158,10 @@ batch_receivers! {
     sink_protected_envelopes: RawProtectedEnvelope => ProtectedEnvelopes, protected_envelopes;
     sink_fsm_pragmas: RawFsmPragma => FsmPragmas, fsm_pragmas;
     sink_attributes: RawAttribute => Attributes, attributes;
+    sink_lexical_targets: RawLexicalTarget => LexicalTargets, lexical_targets;
+    sink_macro_definitions: RawMacroDefinition => MacroDefinitions, macro_definitions;
+    sink_macro_references: RawMacroReference => MacroReferences, macro_references;
+    sink_includes: RawInclude => Includes, includes;
 }
 
 /// The callback table whose context is `builder`. The returned value borrows
@@ -1087,6 +1192,10 @@ pub(super) fn sink_for(builder: &mut StreamBuilder) -> RawSink {
         protected_envelopes: sink_protected_envelopes,
         fsm_pragmas: sink_fsm_pragmas,
         attributes: sink_attributes,
+        lexical_targets: sink_lexical_targets,
+        macro_definitions: sink_macro_definitions,
+        macro_references: sink_macro_references,
+        includes: sink_includes,
         end: sink_end,
     }
 }

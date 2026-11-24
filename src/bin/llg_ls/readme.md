@@ -16,7 +16,7 @@ An instance of an unknown module is a black box: Slang's `UnknownModule` error i
 published once on the module name, the analysis (a `Compile` outcome with feature
 data) replaces the last-good snapshot, and everything else stays elaborated. The
 instance name hovers as `<module> <instance>`, its actuals bind to the parent
-scope, its labels and module name have no target, lint treats its connections as
+scope, its labels and module name have no token and no target, lint treats its connections as
 possibly driven and read, and the explorer shows it as a declaration-only child
 without a definition.
 

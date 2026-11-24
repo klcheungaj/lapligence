@@ -1,169 +1,260 @@
-//! macros — preprocessor macro tables backing macro-usage hover.
+//! macros — the text macros of one compilation, as Slang's preprocessor
+//! resolved them.
 //!
-//! Slang expands directives before semantic capture, so this module builds a
-//! conservative macro view from the exact source buffers the LSP commits:
-//!
-//! 1. **Config defines seed every file.**  The root's `[compile] defines`
-//!    ([`parse_config_defines`] over `CompileOpts::defines`, i.e. the
-//!    validated `NAME[=VALUE]` entries) act as if defined on the command
-//!    line before any source text of EVERY analyzed file.  They are the
-//!    authoritative base table and hot-reload through config changes.
-//! 2. **In-source directives resolve per file, positionally.**  Each
-//!    analyzed file is scanned in ONE conservative pass over its exact
-//!    compiled text, honoring `` `define `` / `` `undef `` /
-//!    `` `undefineall `` and conditional compilation (`` `ifdef `` /
-//!    `` `ifndef `` / `` `elsif `` / `` `else `` / `` `endif``, evaluated
-//!    against the evolving in-file table).  Last definition wins (LRM); a
-//!    usage resolves against the table state at its own position, so an
-//!    in-source redefinition overrides the config value only from its
-//!    definition point onward, and `` `undef `` removes even a config-seeded
-//!    name.  Comments and string literals are skipped: directives or usages
-//!    inside them do not exist.
-//!
-//! Documented approximations (deliberate, conservative — they can lose a
-//! value but never invent a wrong one):
-//!
-//! * Include files are NOT followed: a macro defined only in a header
-//!   resolves as undefined here.
-//! * In-source definitions do not leak across files (per-file scoping instead
-//!   of the classic compilation-order-dependent global scope).
-//! * Usages inside a `` `define `` body resolve at the DEFINITION point
-//!   rather than at expansion time.
-//! * Escaped identifiers (`\foo` up to the next white space) are not tracked:
-//!   a `` `NAME `` sequence inside an escaped identifier (e.g. `` \a`WIDTH b ``)
-//!   still records a usage even though a real preprocessor would fold the
-//!   whole token into the identifier.
-//!
-//! Conditional-directive grammar and failure semantics are shared with the
-//! inactive-region dimmer (`bin/llg_ls/inactive_ranges.rs`) so macro hover can
-//! never contradict the editor's dimming: both accept ONE optional
-//! surrounding paren pair around a bare identifier (`` `ifdef (NAME) ``), and
-//! an unparseable condition fails safe as an always-active branch that can
-//! hide nothing. A corpus test in the bin pins the two scanners together.
+//! [`MacroTable`] holds every `` `define `` that took effect and every written
+//! macro name with the definitions it stands for. Macro hover and
+//! go-to-definition on a macro name read this one table. The capture resolves
+//! each name in the state of the preprocessor at that position
+//! (`LlgSlangMacroReference` in `src/wrapper/slang_c_api.h`): headers count
+//! where they are included, inactive conditional text does not count,
+//! redefinition and `` `undef `` take effect from their position on, and a
+//! use written in a `` `define `` body is resolved where the macro is
+//! expanded. A `[compile] defines` entry takes precedence over a source
+//! `` `define `` of the same name until the source undefines it.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
-/// One known macro definition, snapshotted at resolution time.
+use crate::core::tokens::{DeclTarget, SnapshotSources, TARGET_MACRO};
+use crate::ffi::slang::{LexicalKind, LexicalRole, MacroReferenceKind, Snapshot, SourceRange};
+
+/// One macro definition.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MacroDefinition {
     /// Macro name (without the leading backtick).
     pub name: String,
-    /// Formal argument names for function-like macros (`None` for simple
-    /// macros).  Empty parentheses yield `Some(Vec::new())`.
+    /// Formal arguments of a function-like macro as written (`None` for a
+    /// simple macro). Empty parentheses yield `Some(Vec::new())`.
     pub args: Option<Vec<String>>,
-    /// Replacement text.  Backslash-newline continuations are joined into a
-    /// single space; surrounding whitespace is trimmed.  Empty for a bare
-    /// `` `define NAME ``.
+    /// Replacement text with each white-space run and line continuation as
+    /// one space. Empty for a bare `` `define NAME ``.
     pub body: String,
-    /// `true` when seeded from `[compile] defines` rather
-    /// than from a source `` `define `` directive.
-    pub from_config: bool,
-    /// Defining source file (`None` for config defines).
-    pub file: Option<String>,
-    /// 1-based defining line within [`MacroDefinition::file`] (0 for config
-    /// defines).
-    pub line1: u32,
+    /// `None` for a `[compile] defines` entry.
+    pub source: Option<MacroSource>,
 }
 
-impl MacroDefinition {
-    fn config(name: &str, body: &str) -> MacroDefinition {
-        MacroDefinition {
-            name: name.to_owned(),
-            args: None,
-            body: body.to_owned(),
-            from_config: true,
-            file: None,
-            line1: 0,
-        }
-    }
+/// Where a `` `define `` names its macro.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MacroSource {
+    pub file: String,
+    /// 1-based line and UTF-16 column of the name.
+    pub line: u32,
+    pub col: u32,
 }
 
-/// One recorded macro usage (a `` `NAME `` occurrence) with its resolution.
-#[derive(Debug, Clone)]
-pub struct MacroUsage {
-    /// Usage line (0-based).
+/// How a macro name is written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MacroSiteKind {
+    /// The name in a `` `define ``.
+    Definition,
+    /// `` `NAME ``.
+    Use,
+    /// The operand of a conditional directive or `` `undef ``.
+    Operand,
+}
+
+/// One written macro name with its resolution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MacroSite {
+    /// 0-based line.
     pub line0: u32,
-    /// Column of the backtick (0-based, UTF-16 units).
+    /// 0-based UTF-16 columns of the name (with the grave accent of a use)
+    /// and one past it.
     pub col_start0: u32,
-    /// One past the NAME's last character (the span covers `` `NAME ``;
-    /// 0-based, UTF-16 units).
     pub col_end0: u32,
-    /// Macro name without the leading backtick (kept even when unresolved,
-    /// so the undefined-macro message can name what was clicked).
+    /// Macro name (without the leading backtick).
     pub name: String,
-    /// The resolved definition at this position, or `None` when the macro is
-    /// not defined under the current configuration.
-    pub definition: Option<MacroDefinition>,
+    pub kind: MacroSiteKind,
+    /// Indices of the source definitions: none for a macro that is not
+    /// defined there or is predefined, several when the syntax trees that
+    /// include the file, or the expansions of the body that holds the use,
+    /// resolve the name differently.
+    definitions: Vec<usize>,
+    /// A `[compile] defines` entry or the language defines the macro.
+    pub predefined: bool,
 }
 
-impl MacroUsage {
-    /// Macro name without the leading backtick.
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-}
-
-/// One recorded `` `define `` site (the NAME identifier after the keyword),
-/// so hovering a definition renders the same text as hovering a usage.
-#[derive(Debug, Clone)]
-pub struct MacroDecl {
-    /// Directive line (0-based).
-    pub line0: u32,
-    /// First column of the NAME identifier (0-based, UTF-16 units).
-    pub col_start0: u32,
-    /// One past the NAME's last character (0-based, UTF-16 units).
-    pub col_end0: u32,
-    /// The defined macro.
-    pub definition: MacroDefinition,
-}
-
-/// Per-file scan result: usages and definition sites, sorted by position.
-#[derive(Debug, Default)]
-pub struct FileMacros {
-    usages: Vec<MacroUsage>,
-    decls: Vec<MacroDecl>,
-}
-
-/// Macro tables for one analysis root, keyed by compiled file path.
-///
-/// Built once per analysis commit (see [`build_table`]); hover requests only
-/// look positions up, so serving stays a pure read over committed data.
+/// The macros of one compilation.
 #[derive(Debug, Default)]
 pub struct MacroTable {
-    files: BTreeMap<String, FileMacros>,
-    config_count: usize,
+    /// The source definitions, then the `[compile] defines` entries.
+    definitions: Vec<MacroDefinition>,
+    /// Index of the first `[compile] defines` entry.
+    config_start: usize,
+    /// Written names by file, sorted by position.
+    files: HashMap<String, Vec<MacroSite>>,
     /// Display note naming the configuration source for undefined-macro
     /// messages (e.g. the effective `llg.toml` path); optional.
     config_note: Option<String>,
 }
 
 impl MacroTable {
-    /// Whether neither config defines nor scanned files contributed anything.
-    pub fn is_empty(&self) -> bool {
-        self.files.is_empty() && self.config_count == 0
+    /// The macros of `snapshot`, compiled with `defines`.
+    pub(crate) fn from_slang(
+        snapshot: &Snapshot,
+        sources: &SnapshotSources<'_>,
+        defines: &[String],
+    ) -> Self {
+        let mut definitions = Vec::with_capacity(snapshot.macro_definitions.len());
+        let mut files: HashMap<String, Vec<MacroSite>> = HashMap::new();
+        let mut add = |range: SourceRange, kind, definition: Option<usize>, predefined| {
+            let Some(source) = sources.file(range.file_id) else {
+                return;
+            };
+            let (line, col) = source.positions.position(range.start);
+            let (_, end_col) = source.positions.position(range.end);
+            let sites = match files.get_mut(source.name) {
+                Some(sites) => sites,
+                None => files.entry(source.name.to_owned()).or_default(),
+            };
+            let text = source.positions.text(range);
+            let text = match kind {
+                MacroSiteKind::Use => text.strip_prefix('`').unwrap_or(text),
+                _ => text,
+            };
+            sites.push(MacroSite {
+                line0: line - 1,
+                col_start0: col - 1,
+                col_end0: end_col.saturating_sub(1).max(col),
+                name: text
+                    .strip_prefix('\\')
+                    .unwrap_or(text)
+                    .trim_end()
+                    .to_owned(),
+                kind,
+                definitions: definition.into_iter().collect(),
+                predefined,
+            });
+        };
+        for definition in &snapshot.macro_definitions {
+            let Some(source) = sources.file(definition.name.file_id) else {
+                // Keeps the indices of the macro references.
+                definitions.push(MacroDefinition::config("", ""));
+                continue;
+            };
+            let name = source.positions.text(definition.name);
+            let (line, col) = source.positions.position(definition.name.start);
+            let formals = definition.function_like.then(|| {
+                formal_names(source.positions.text(SourceRange {
+                    start: definition.name.end,
+                    end: definition.body.start,
+                    ..definition.range
+                }))
+            });
+            add(
+                definition.name,
+                MacroSiteKind::Definition,
+                Some(definitions.len()),
+                false,
+            );
+            definitions.push(MacroDefinition {
+                name: name
+                    .strip_prefix('\\')
+                    .unwrap_or(name)
+                    .trim_end()
+                    .to_owned(),
+                args: formals,
+                body: one_line(source.positions.text(definition.body)),
+                source: Some(MacroSource {
+                    file: source.name.to_owned(),
+                    line,
+                    col,
+                }),
+            });
+        }
+        for reference in &snapshot.macro_references {
+            let kind = match reference.kind {
+                MacroReferenceKind::Use => MacroSiteKind::Use,
+                MacroReferenceKind::Test | MacroReferenceKind::Undef => MacroSiteKind::Operand,
+            };
+            add(
+                reference.range,
+                kind,
+                reference.definition,
+                reference.definition.is_none(),
+            );
+        }
+        // Uses of macros that are not defined have no reference record.
+        for token in &snapshot.lexical_tokens {
+            if let (LexicalKind::Macro, LexicalRole::Reference, false, false, Some(range)) = (
+                token.kind,
+                token.role,
+                token.is_skipped,
+                token.is_macro_expansion && !token.is_macro_argument,
+                token.range,
+            ) {
+                add(range, MacroSiteKind::Use, None, false);
+            }
+        }
+        for sites in files.values_mut() {
+            sites.sort_by_key(|site| (site.line0, site.col_start0));
+            sites.dedup_by(|next, kept| {
+                let same = (next.line0, next.col_start0) == (kept.line0, kept.col_start0);
+                if same {
+                    kept.predefined |= next.predefined;
+                    for definition in &next.definitions {
+                        if !kept.definitions.contains(definition) {
+                            kept.definitions.push(*definition);
+                        }
+                    }
+                }
+                same
+            });
+        }
+        let config_start = definitions.len();
+        definitions.extend(parse_config_defines(defines));
+        Self {
+            definitions,
+            config_start,
+            files,
+            config_note: None,
+        }
     }
 
-    /// The usage whose `` `NAME `` span covers `(line0, col0)`, if any.
-    pub fn usage_at(&self, file: &str, line0: u32, col0: u32) -> Option<&MacroUsage> {
-        self.files
-            .get(file)?
-            .usages
+    /// The macro name whose span covers the 0-based position.
+    pub fn site_at(&self, file: &str, line0: u32, col0: u32) -> Option<&MacroSite> {
+        let sites = self.files.get(file)?;
+        let after = sites.partition_point(|site| (site.line0, site.col_start0) <= (line0, col0));
+        sites[..after]
+            .last()
+            .filter(|site| site.line0 == line0 && col0 < site.col_end0)
+    }
+
+    /// The definitions a written name stands for. A predefined macro of the
+    /// language has none.
+    pub fn definitions<'a>(
+        &'a self,
+        site: &'a MacroSite,
+    ) -> impl Iterator<Item = &'a MacroDefinition> + 'a {
+        let config = &self.definitions[self.config_start..];
+        site.definitions
             .iter()
-            .find(|u| u.line0 == line0 && u.col_start0 <= col0 && col0 < u.col_end0)
+            .map(|index| &self.definitions[*index])
+            .chain(
+                config
+                    .iter()
+                    .filter(|_| site.predefined)
+                    // The last entry of a name wins, as in the compile request.
+                    .rfind(|definition| definition.name == site.name),
+            )
     }
 
-    /// The `` `define `` NAME identifier covering `(line0, col0)`, if any.
-    pub fn decl_at(&self, file: &str, line0: u32, col0: u32) -> Option<&MacroDecl> {
-        self.files
-            .get(file)?
-            .decls
-            .iter()
-            .find(|d| d.line0 == line0 && d.col_start0 <= col0 && col0 < d.col_end0)
+    /// The `` `define `` names that a written name leads to.
+    pub fn targets<'a>(&'a self, site: &'a MacroSite) -> impl Iterator<Item = DeclTarget> + 'a {
+        self.definitions(site).filter_map(|definition| {
+            let source = definition.source.as_ref()?;
+            DeclTarget::from_decl_coords(
+                &definition.name,
+                TARGET_MACRO,
+                &source.file,
+                source.line,
+                source.col,
+            )
+        })
     }
 
-    /// Number of config defines seeding every file's table.
-    pub fn config_defines(&self) -> usize {
-        self.config_count
+    /// Every written name of `file`, sorted by position.
+    pub fn sites(&self, file: &str) -> &[MacroSite] {
+        self.files.get(file).map_or(&[], Vec::as_slice)
     }
 
     /// Display note used by undefined-macro messages (the config file path
@@ -178,6 +269,54 @@ impl MacroTable {
     }
 }
 
+impl MacroDefinition {
+    fn config(name: &str, body: &str) -> Self {
+        Self {
+            name: name.to_owned(),
+            args: None,
+            body: body.to_owned(),
+            source: None,
+        }
+    }
+}
+
+/// The formal arguments in the text between a macro's name and its body, as
+/// written: the top-level commas of the parenthesized list separate them.
+fn formal_names(text: &str) -> Vec<String> {
+    let list = text.trim();
+    let list = list
+        .strip_prefix('(')
+        .and_then(|list| list.rfind(')').map(|end| &list[..end]))
+        .unwrap_or(list);
+    let mut formals = Vec::new();
+    let mut depth = 0_usize;
+    let mut quoted = false;
+    let mut start = 0;
+    for (offset, c) in list.char_indices() {
+        match c {
+            '"' => quoted = !quoted,
+            '(' | '[' | '{' if !quoted => depth += 1,
+            ')' | ']' | '}' if !quoted => depth = depth.saturating_sub(1),
+            ',' if !quoted && depth == 0 => {
+                formals.push(one_line(&list[start..offset]));
+                start = offset + 1;
+            }
+            _ => {}
+        }
+    }
+    let last = one_line(&list[start..]);
+    if !last.is_empty() || !formals.is_empty() {
+        formals.push(last);
+    }
+    formals
+}
+
+/// `text` with each white-space run and line continuation as one space.
+fn one_line(text: &str) -> String {
+    let joined = text.replace("\\\r\n", " ").replace("\\\n", " ");
+    joined.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn is_identifier_start(byte: Option<u8>) -> bool {
     matches!(byte, Some(b) if b.is_ascii_alphabetic() || b == b'_')
 }
@@ -187,10 +326,10 @@ fn is_identifier_continue(byte: u8) -> bool {
 }
 
 /// Parse validated compile definitions (`NAME`, `NAME=VALUE`) into
-/// config-origin macro definitions.  Entries that do not reduce to a plain
+/// config-origin macro definitions. Entries that do not reduce to a plain
 /// identifier name are dropped defensively (the config layer already
 /// validates them).
-pub fn parse_config_defines(args: &[String]) -> Vec<MacroDefinition> {
+fn parse_config_defines(args: &[String]) -> Vec<MacroDefinition> {
     let mut out = Vec::new();
     for arg in args {
         let (name, value) = match arg.split_once('=') {
@@ -207,983 +346,424 @@ pub fn parse_config_defines(args: &[String]) -> Vec<MacroDefinition> {
     out
 }
 
-/// Build the whole table: seed every source with the config defines, then run
-/// the single-pass scanner per file.  `sources` pairs absolute paths with the
-/// exact text each file was compiled from (shadow-staged buffer text wins
-/// exactly as it was admitted to Slang).
-pub fn build_table(
-    config_defines_args: &[String],
-    sources: &[(&str, &str)],
-    config_note: Option<&str>,
-) -> MacroTable {
-    let seed = parse_config_defines(config_defines_args);
-    let mut files = BTreeMap::new();
-    for (path, text) in sources {
-        files.insert((*path).to_owned(), scan_file(path, text, &seed));
-    }
-    MacroTable {
-        config_count: seed.len(),
-        config_note: config_note.map(str::to_owned),
-        files,
-    }
-}
-
-// ── Single-pass scanner ───────────────────────────────────────────────────────
-
-/// Compiler directive keywords following a backtick.  These never count as
-/// macro usages; any other backtick-identifier does.
-const DIRECTIVE_KEYWORDS: &[&str] = &[
-    "define",
-    "undef",
-    "undefineall",
-    "ifdef",
-    "ifndef",
-    "elsif",
-    "else",
-    "endif",
-    "include",
-    "timescale",
-    "resetall",
-    "default_nettype",
-    "line",
-    "begin_keywords",
-    "end_keywords",
-    "celldefine",
-    "endcelldefine",
-    "pragma",
-    "unconnected_drive",
-    "nounconnected_drive",
-    "accelerate",
-    "noaccelerate",
-    "default_decay_time",
-    "default_trireg_strength",
-    "delay_mode_distributed",
-    "delay_mode_path",
-    "delay_mode_unit",
-    "delay_mode_zero",
-    "__FILE__",
-    "__LINE__",
-];
-
-#[derive(Debug, Clone, Copy)]
-struct CondFrame {
-    /// Whether all enclosing conditionals were active when this one opened.
-    parent_active: bool,
-    /// Whether some branch of THIS conditional already matched.
-    taken: bool,
-    /// Whether the current branch is active.
-    active: bool,
-}
-
-struct Scan<'a> {
-    src: &'a str,
-    bytes: &'a [u8],
-    path: &'a str,
-    idx: usize,
-    /// 1-based line of `idx`.
-    line: u32,
-    /// 1-based UTF-16 column of `idx`.
-    col: u32,
-    table: HashMap<String, MacroDefinition>,
-    conds: Vec<CondFrame>,
-    usages: Vec<MacroUsage>,
-    decls: Vec<MacroDecl>,
-}
-
-impl<'a> Scan<'a> {
-    fn new(src: &'a str, path: &'a str) -> Scan<'a> {
-        Scan {
-            src,
-            bytes: src.as_bytes(),
-            path,
-            idx: 0,
-            line: 1,
-            col: 1,
-            table: HashMap::new(),
-            conds: Vec::new(),
-            usages: Vec::new(),
-            decls: Vec::new(),
-        }
-    }
-
-    fn peek(&self) -> Option<char> {
-        self.src[self.idx..].chars().next()
-    }
-
-    fn byte_at(&self, offset: usize) -> Option<u8> {
-        self.bytes.get(self.idx + offset).copied()
-    }
-
-    fn advance(&mut self) -> Option<char> {
-        let ch = self.peek()?;
-        self.idx += ch.len_utf8();
-        if ch == '\n' {
-            self.line += 1;
-            self.col = 1;
-        } else {
-            self.col += ch.len_utf16() as u32;
-        }
-        Some(ch)
-    }
-
-    fn skip_spaces(&mut self) {
-        while matches!(self.peek(), Some(' ') | Some('\t')) {
-            self.advance();
-        }
-    }
-
-    fn active(&self) -> bool {
-        self.conds.last().is_none_or(|frame| frame.active)
-    }
-
-    /// Consume up to and including the next newline, honoring backslash-newline
-    /// continuations.
-    fn skip_to_line_end(&mut self) {
-        loop {
-            match self.advance() {
-                None | Some('\n') => return,
-                Some('\\') => {
-                    if self.byte_at(0) == Some(b'\r') {
-                        self.advance();
-                    }
-                    if self.byte_at(0) == Some(b'\n') {
-                        self.advance();
-                    }
-                }
-                Some(_) => {}
-            }
-        }
-    }
-
-    fn read_identifier(&mut self) -> Option<String> {
-        if !is_identifier_start(self.byte_at(0)) {
-            return None;
-        }
-        let start = self.idx;
-        self.idx += 1;
-        self.col += 1;
-        while self
-            .bytes
-            .get(self.idx)
-            .copied()
-            .is_some_and(is_identifier_continue)
-        {
-            self.idx += 1;
-            self.col += 1;
-        }
-        Some(self.src[start..self.idx].to_owned())
-    }
-
-    /// Whole-line-directive heuristic: only whitespace precedes the cursor on
-    /// this line.
-    fn at_line_start(&self) -> bool {
-        let mut back = self.idx;
-        while back > 0 {
-            match self.bytes[back - 1] {
-                b'\n' => return true,
-                b' ' | b'\t' | b'\r' => back -= 1,
-                _ => return false,
-            }
-        }
-        true
-    }
-
-    fn record_usage(&mut self, tick_line: u32, tick_col: u32, name: String) {
-        let definition = self.table.get(&name).cloned();
-        self.usages.push(MacroUsage {
-            line0: tick_line - 1,
-            col_start0: tick_col - 1,
-            col_end0: tick_col + name.chars().count() as u32,
-            name,
-            definition,
-        });
-    }
-
-    /// Dispatch after the backtick was consumed at `(tick_line, tick_col)`.
-    fn handle_backtick(&mut self, tick_line: u32, tick_col: u32) {
-        match self.peek() {
-            // SV string literals (`"…`) and escaped sequences (`\…) are not
-            // macro references.
-            Some('"') | Some('\\') => {
-                self.skip_sv_quoted_or_escaped();
-                return;
-            }
-            _ => {}
-        }
-        let Some(name) = self.read_identifier() else {
-            return; // lone backtick or punctuation: not a reference
-        };
-        if !DIRECTIVE_KEYWORDS.contains(&name.as_str()) {
-            if self.active() {
-                self.record_usage(tick_line, tick_col, name);
-            }
-            return;
-        }
-        match name.as_str() {
-            // Conditional bookkeeping runs in every branch state so nesting
-            // stays correct; the frame logic itself consults parent_active.
-            "ifdef" | "ifndef" => self.handle_ifdef(name == "ifndef"),
-            "elsif" => self.handle_elsif(),
-            "else" => self.handle_else(),
-            "endif" => {
-                self.conds.pop();
-                self.skip_to_line_end();
-            }
-            _ if !self.active() => {
-                // Definitions/mutations inside dead regions never take
-                // effect, but their lines must still be consumed.
-                self.skip_to_line_end();
-            }
-            "define" => self.handle_define(),
-            "undef" => self.handle_undef(),
-            "undefineall" => {
-                self.table.clear();
-                self.skip_to_line_end();
-            }
-            _ => {
-                if self.at_line_start() {
-                    self.skip_to_line_end();
-                }
-                // Mid-line informational directives leave the remainder of
-                // the line scannable; only the keyword was consumed.
-            }
-        }
-    }
-
-    /// `` `" `` opens an SV string literal; `` `\ `` escapes whatever
-    /// follows.  Both end at the closing quote/backslash or the newline.
-    fn skip_sv_quoted_or_escaped(&mut self) {
-        self.advance(); // the `"` or `\
-        while let Some(ch) = self.peek() {
-            self.advance();
-            if ch == '"' || ch == '\n' {
-                return;
-            }
-        }
-    }
-
-    /// Skip one optional opening paren plus surrounding spaces, the shared
-    /// conditional-directive grammar with the inactive-region dimmer
-    /// (`` `ifdef (NAME) ``).  Callers read the identifier right after.
-    fn skip_optional_condition_paren(&mut self) {
-        self.skip_spaces();
-        if self.peek() == Some('(') {
-            self.advance();
-            self.skip_spaces();
-        }
-    }
-
-    fn handle_ifdef(&mut self, inverted: bool) {
-        self.skip_optional_condition_paren();
-        let parent_active = self.active();
-        // Unparseable conditions fail safe exactly like the inactive-region
-        // scanner: the branch is treated as ACTIVE (nothing inside can be
-        // hidden) but counts as untaken, so sibling `elsif`/`else` branches
-        // stay live too.
-        let (target_known, holds) = match self.read_identifier() {
-            Some(target) => (true, self.table.contains_key(&target) != inverted),
-            None => (false, true),
-        };
-        self.conds.push(CondFrame {
-            parent_active,
-            taken: parent_active && target_known && holds,
-            active: parent_active && (!target_known || holds),
-        });
-        self.skip_to_line_end();
-    }
-
-    fn handle_elsif(&mut self) {
-        self.skip_optional_condition_paren();
-        // Same fail-safe shape as `handle_ifdef`: an unparseable condition
-        // matches whenever no real branch has matched yet.
-        let eligible = self
-            .conds
-            .last()
-            .is_some_and(|frame| frame.parent_active && !frame.taken);
-        let (target_known, holds) = match self.read_identifier() {
-            Some(target) => (true, self.table.contains_key(&target)),
-            None => (false, true),
-        };
-        if let Some(frame) = self.conds.last_mut() {
-            if eligible && (!target_known || holds) {
-                frame.active = true;
-                frame.taken = true;
-            } else {
-                frame.active = false;
-            }
-        }
-        self.skip_to_line_end();
-    }
-
-    fn handle_else(&mut self) {
-        if let Some(frame) = self.conds.last_mut() {
-            frame.active = frame.parent_active && !frame.taken;
-            frame.taken = true;
-        }
-        self.skip_to_line_end();
-    }
-
-    fn handle_undef(&mut self) {
-        self.skip_spaces();
-        if let Some(target) = self.read_identifier() {
-            self.table.remove(&target);
-        }
-        self.skip_to_line_end();
-    }
-
-    /// `` `define NAME[(args)] BODY`` — capture the raw body (with
-    /// continuations), update the table, and record the NAME span plus the
-    /// usages inside the body (resolved at definition time).
-    fn handle_define(&mut self) {
-        self.skip_spaces();
-        let def_line = self.line;
-        let Some(name) = self.read_identifier() else {
-            // Malformed directive: swallow the line so nothing leaks.
-            self.skip_to_line_end();
-            return;
-        };
-        let name_start_col = self.col - name.chars().count() as u32;
-        let name_end_col = self.col;
-        // An IMMEDIATE '(' introduces formal arguments (no space allowed).
-        let args = if self.peek() == Some('(') {
-            self.advance();
-            let mut names = Vec::new();
-            loop {
-                self.skip_spaces();
-                if self.peek() == Some(')') {
-                    self.advance();
-                    break;
-                }
-                match self.read_identifier() {
-                    Some(arg) => names.push(arg),
-                    None => break, // malformed list: stop consuming args
-                }
-                self.skip_spaces();
-                match self.peek() {
-                    Some(',') => {
-                        self.advance();
-                    }
-                    Some(')') => {
-                        self.advance();
-                        break;
-                    }
-                    // Default argument value (`b=5`): consume it so the body
-                    // display starts after the formal-argument list instead
-                    // of at a stray `= 5) …`.  Nesting is tracked so defaults
-                    // containing commas/brackets stay intact.
-                    Some('=') => {
-                        self.advance();
-                        let mut depth = 0usize;
-                        loop {
-                            match self.peek() {
-                                Some('(') | Some('[') | Some('{') => depth += 1,
-                                Some(')') | Some(',') if depth == 0 => break,
-                                Some(')') | Some(']') | Some('}') => {
-                                    depth = depth.saturating_sub(1)
-                                }
-                                None => break,
-                                _ => {}
-                            }
-                            self.advance();
-                        }
-                        // Consume the separating comma so the next loop
-                        // iteration starts cleanly at the next argument name.
-                        if self.peek() == Some(',') {
-                            self.advance();
-                        }
-                    }
-                    _ => break,
-                }
-            }
-            Some(names)
-        } else {
-            None
-        };
-        // Body: the rest of the LOGICAL line, honoring backslash-newline
-        // continuations.  `raw` keeps the verbatim text (real newlines) for
-        // the position-accurate nested-usage scan; `logical` joins
-        // continuations into single spaces for display.
-        let body_line = self.line;
-        let body_col = self.col;
-        let mut raw = String::new();
-        let mut logical = String::new();
-        loop {
-            match self.peek() {
-                Some('\n') => {
-                    if logical.trim_end_matches('\r').ends_with('\\') {
-                        while logical.ends_with('\\') || logical.ends_with('\r') {
-                            logical.pop();
-                        }
-                        logical.push(' ');
-                        raw.push('\n');
-                        self.advance();
-                        continue;
-                    }
-                    break;
-                }
-                Some(ch) => {
-                    logical.push(ch);
-                    raw.push(ch);
-                    self.advance();
-                }
-                None => break,
-            }
-        }
-        // Display form: collapse every whitespace run (continuation joins and
-        // indentation) into one space.
-        let body = logical.split_whitespace().collect::<Vec<_>>().join(" ");
-
-        if self.active() {
-            let definition = MacroDefinition {
-                name: name.clone(),
-                args,
-                body,
-                from_config: false,
-                file: Some(self.path.to_owned()),
-                line1: def_line,
-            };
-            self.decls.push(MacroDecl {
-                line0: def_line - 1,
-                col_start0: name_start_col - 1,
-                col_end0: name_end_col - 1,
-                definition: definition.clone(),
-            });
-            self.table.insert(name, definition);
-            // Usages inside the body resolve against the table state AT THE
-            // DEFINITION point (documented approximation of expansion-time
-            // resolution); positions map back into the source via the raw
-            // capture.
-            scan_body_usages(&raw, body_line, body_col, &self.table, &mut self.usages);
-        }
-        // The capture consumed through end-of-line; nothing further on this
-        // line can leak.
-    }
-
-    fn run(&mut self) {
-        while self.idx < self.src.len() {
-            match self.peek() {
-                Some(c) if c.is_whitespace() => {
-                    self.advance();
-                }
-                Some('/') if self.byte_at(1) == Some(b'/') => {
-                    self.skip_to_line_end();
-                }
-                Some('/') if self.byte_at(1) == Some(b'*') => {
-                    self.advance();
-                    self.advance();
-                    while self.idx < self.src.len() {
-                        if self.peek() == Some('*') && self.byte_at(1) == Some(b'/') {
-                            self.advance();
-                            self.advance();
-                            break;
-                        }
-                        self.advance();
-                    }
-                }
-                Some('"') => self.skip_verilog_string(),
-                Some('`') => {
-                    let (tick_line, tick_col) = (self.line, self.col);
-                    self.advance();
-                    self.handle_backtick(tick_line, tick_col);
-                }
-                Some(_) => {
-                    self.advance();
-                }
-                None => break,
-            }
-        }
-    }
-
-    /// A plain double-quoted literal; Verilog strings never span lines, so an
-    /// unterminated quote is confined to its own line.
-    fn skip_verilog_string(&mut self) {
-        self.advance(); // opening quote
-        while let Some(ch) = self.peek() {
-            if ch == '\\' {
-                self.advance();
-                self.advance();
-                continue;
-            }
-            self.advance();
-            if ch == '"' || ch == '\n' {
-                return;
-            }
-        }
-    }
-}
-
-fn scan_file(path: &str, text: &str, seed: &[MacroDefinition]) -> FileMacros {
-    let mut scan = Scan::new(text, path);
-    for def in seed {
-        scan.table.insert(def.name.clone(), def.clone());
-    }
-    scan.run();
-    scan.usages.sort_by_key(|u| (u.line0, u.col_start0));
-    scan.decls.sort_by_key(|d| (d.line0, d.col_start0));
-    FileMacros {
-        usages: scan.usages,
-        decls: scan.decls,
-    }
-}
-
-/// Record the `` `NAME `` usages inside a `` `define `` body, resolved against
-/// the table state at the definition point.  `(line, col)` is the 1-based
-/// source position of the body's first character; the raw capture keeps real
-/// newlines so continuation lines map back exactly.
-fn scan_body_usages(
-    raw: &str,
-    line: u32,
-    col: u32,
-    table: &HashMap<String, MacroDefinition>,
-    out: &mut Vec<MacroUsage>,
-) {
-    let mut idx = 0usize;
-    let mut cur_line = line;
-    let mut cur_col = col;
-    while idx < raw.len() {
-        let ch = match raw[idx..].chars().next() {
-            Some(ch) => ch,
-            None => break,
-        };
-        match ch {
-            c if c.is_whitespace() => {
-                if c == '\n' {
-                    cur_line += 1;
-                    cur_col = 1;
-                } else {
-                    cur_col += c.len_utf16() as u32;
-                }
-                idx += c.len_utf8();
-            }
-            '/' if raw.as_bytes().get(idx + 1) == Some(&b'/') => {
-                while idx < raw.len() && !raw[idx..].starts_with('\n') {
-                    idx += 1;
-                }
-            }
-            '/' if raw.as_bytes().get(idx + 1) == Some(&b'*') => {
-                idx += 2;
-                while idx < raw.len() && !raw[idx..].starts_with("*/") {
-                    idx += 1;
-                }
-                idx = (idx + 2).min(raw.len());
-            }
-            '"' => {
-                idx += 1;
-                cur_col += 1;
-                while idx < raw.len() {
-                    let esc = raw.as_bytes()[idx] == b'\\';
-                    let inner = raw[idx..].chars().next().unwrap_or('"');
-                    idx += inner.len_utf8();
-                    cur_col += inner.len_utf16() as u32;
-                    if esc {
-                        continue;
-                    }
-                    if inner == '"' || inner == '\n' {
-                        break;
-                    }
-                }
-            }
-            '`' => {
-                let (tick_line, tick_col) = (cur_line, cur_col);
-                idx += 1;
-                cur_col += 1;
-                // SV quoted/escaped forms are not references.
-                if matches!(raw[idx..].chars().next(), Some('"') | Some('\\')) {
-                    continue;
-                }
-                let start = idx;
-                if is_identifier_start(raw.as_bytes().get(idx).copied()) {
-                    idx += 1;
-                    cur_col += 1;
-                    while raw
-                        .as_bytes()
-                        .get(idx)
-                        .copied()
-                        .is_some_and(is_identifier_continue)
-                    {
-                        idx += 1;
-                        cur_col += 1;
-                    }
-                    let name = &raw[start..idx];
-                    if !DIRECTIVE_KEYWORDS.contains(&name) {
-                        out.push(MacroUsage {
-                            line0: tick_line - 1,
-                            col_start0: tick_col - 1,
-                            col_end0: tick_col + name.chars().count() as u32,
-                            name: name.to_owned(),
-                            definition: table.get(name).cloned(),
-                        });
-                    }
-                }
-            }
-            _ => {
-                cur_col += ch.len_utf16() as u32;
-                idx += ch.len_utf8();
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::tokens;
+    use crate::ffi::slang;
 
-    /// Build a table over one file and return (usages, decls) for it.
-    fn scan_one(config: &[&str], text: &str) -> (Vec<MacroUsage>, Vec<MacroDecl>, MacroTable) {
-        let args: Vec<String> = config.iter().map(|define| (*define).to_owned()).collect();
-        let table = build_table(&args, &[("t.sv", text)], None);
-        let entries = table.files.get("t.sv").expect("scanned file");
-        (entries.usages.clone(), entries.decls.clone(), table)
+    /// The macros of one source unit, `t.sv`, compiled with `defines`.
+    fn table(defines: &[&str], text: &str) -> MacroTable {
+        unit_tables(defines, &[("t.sv", text)])
     }
 
-    fn usage_for<'a>(usages: &'a [MacroUsage], name: &str) -> &'a MacroDefinition {
-        usages
+    /// The macros of source units compiled with `defines`.
+    fn unit_tables(defines: &[&str], units: &[(&str, &str)]) -> MacroTable {
+        let defines: Vec<String> = defines.iter().map(|define| (*define).to_owned()).collect();
+        let sources: Vec<_> = units
             .iter()
-            .find(|u| u.definition.as_ref().is_some_and(|d| d.name == name))
-            .and_then(|u| u.definition.as_ref())
-            .unwrap_or_else(|| panic!("usage of `{name} not resolved"))
-    }
-
-    #[test]
-    fn config_defines_resolve_everywhere_in_the_file() {
-        let text = "module m;\n  localparam int A = `DEPTH;\n\
-                     `undef DEPTH\n  localparam int B = `DEPTH;\nendmodule\n";
-        let (usages, _, _) = scan_one(&["DEPTH=16"], text);
-        assert_eq!(usage_for(&usages, "DEPTH").body, "16");
-        // After `undef even the config-seeded macro is gone (LRM semantics).
-        let later = usages
-            .iter()
-            .find(|u| u.line0 == 3)
-            .expect("post-undef usage");
-        assert!(later.definition.is_none(), "undef removes config seeds");
-    }
-
-    #[test]
-    fn in_source_define_overrides_config_from_its_point_onward() {
-        let text = "module m;\n  localparam int A = `WIDTH;\n\
-                     `define WIDTH 8\n  localparam int B = `WIDTH;\nendmodule\n";
-        let (usages, _, _) = scan_one(&["WIDTH=4"], text);
-        assert_eq!(usage_for(&usages, "WIDTH").body, "4");
-        assert!(usage_for(&usages, "WIDTH").from_config);
-        let after = usages
-            .iter()
-            .find(|u| u.line0 == 3)
-            .and_then(|u| u.definition.as_ref())
-            .expect("resolved post-redefine usage");
-        assert_eq!(after.body, "8");
-        assert!(!after.from_config);
-        assert_eq!(after.line1, 3);
-        assert_eq!(after.file.as_deref(), Some("t.sv"));
-    }
-
-    #[test]
-    fn use_before_define_resolves_to_config_only() {
-        let text = "localparam int A = `W;\n`define W 2\nlocalparam int B = `W;\n";
-        let (usages, _, _) = scan_one(&["W=1"], text);
-        assert_eq!(usage_for(&usages, "W").body, "1");
-        assert_eq!(
-            usages
+            .map(|(name, text)| slang::Source::compilation_unit(name, text))
+            .collect();
+        let options = slang::CompileOptions {
+            defines: defines
                 .iter()
-                .find(|u| u.line0 == 2)
-                .and_then(|u| u.definition.as_ref())
-                .map(|d| d.body.clone()),
-            Some("2".to_owned())
-        );
+                .map(|define| {
+                    let (name, value) = match define.split_once('=') {
+                        Some((name, value)) => (name, Some(value)),
+                        None => (define.as_str(), None),
+                    };
+                    slang::Define {
+                        name: name.to_owned(),
+                        value: value.map(str::to_owned),
+                    }
+                })
+                .collect(),
+            library_units: true,
+            editor: true,
+            ..Default::default()
+        };
+        let snapshot = slang::compile(&slang::CompileRequest {
+            sources: &sources,
+            library_sources: &[],
+            options: &options,
+        })
+        .expect("compile");
+        tokens::project_slang(&snapshot, None, &defines).macros
+    }
+
+    /// The written name at the `|` of `marked`, which without it occurs once
+    /// in `text`.
+    fn site<'a>(table: &'a MacroTable, text: &str, marked: &str) -> Option<&'a MacroSite> {
+        let plain = marked.replacen('|', "", 1);
+        assert_eq!(text.matches(&plain).count(), 1, "{plain:?}");
+        let at = text.find(&plain).expect("text") + marked.find('|').expect("mark");
+        let line = text[..at].matches('\n').count() as u32;
+        let col = text[..at].rfind('\n').map_or(at, |start| at - start - 1) as u32;
+        table.site_at("t.sv", line, col)
+    }
+
+    /// The bodies of the definitions that the name at `marked` stands for.
+    fn bodies(table: &MacroTable, text: &str, marked: &str) -> Vec<String> {
+        site(table, text, marked).map_or_else(Vec::new, |site| {
+            table
+                .definitions(site)
+                .map(|definition| definition.body.clone())
+                .collect()
+        })
     }
 
     #[test]
-    fn redefinition_last_wins() {
-        let text = "`define V 1\nx = `V;\n`define V 2\ny = `V;\n";
-        let (usages, _, _) = scan_one(&[], text);
-        assert_eq!(usage_for(&usages, "V").body, "1");
+    fn the_definition_in_effect_at_a_use_wins() {
+        let text = "\
+module m;
+  int early = `W;
+`define W 4
+  int first = `W;
+`define W 8
+  int second = `W;
+`undef W
+  int third = `W;
+`define W 16
+`undefineall
+  int fourth = `W;
+endmodule
+";
+        let macros = table(&[], text);
+        for (marked, expected) in [
+            ("early = `|W", &[] as &[&str]),
+            ("first = `|W", &["4"]),
+            ("second = `|W", &["8"]),
+            ("`undef |W", &["8"]),
+            ("third = `|W", &[]),
+            ("fourth = `|W", &[]),
+            ("`define |W 8", &["8"]),
+        ] {
+            assert_eq!(bodies(&macros, text, marked), expected, "{marked}");
+        }
+        let early = site(&macros, text, "early = `|W").expect("undefined use");
+        assert_eq!(early.kind, MacroSiteKind::Use);
+        assert!(early.definitions.is_empty() && !early.predefined);
+    }
+
+    #[test]
+    fn a_config_define_wins_over_a_source_definition() {
+        let text = "\
+module m;
+  int first = `W;
+  int other = `FLAG;
+`define W 8
+  int second = `W;
+endmodule
+";
+        let macros = table(&["W=4", "FLAG"], text);
+        for marked in ["first = `|W", "second = `|W"] {
+            let used = site(&macros, text, marked).expect("use");
+            assert!(used.predefined, "{marked}");
+            assert_eq!(bodies(&macros, text, marked), ["4"], "{marked}");
+            assert_eq!(macros.targets(used).count(), 0, "{marked}");
+        }
+        assert_eq!(bodies(&macros, text, "other = `|FLAG"), [""]);
+        // The frontend ignores the directive, so it defines nothing.
+        assert!(site(&macros, text, "`define |W").is_none());
+    }
+
+    #[test]
+    fn a_macro_the_language_defines_has_no_definition() {
+        let text = "module m;\n  int line = `__LINE__;\nendmodule\n";
+        let macros = table(&[], text);
+        let site = site(&macros, text, "`|__LINE__").expect("use");
+        assert!(site.predefined);
+        assert_eq!(macros.definitions(site).count(), 0);
+    }
+
+    #[test]
+    fn inactive_text_comments_and_strings_hold_no_names() {
+        let text = "\
+// `IN_COMMENT
+module m;
+`define USED 1
+`ifdef NOT_DEFINED
+`define IN_INACTIVE 2
+  int inactive = `USED;
+`elsif USED
+  string text = \"`IN_STRING\";
+`else
+`undef USED
+`endif
+  int active = `USED;
+endmodule
+";
+        let macros = table(&[], text);
+        for marked in [
+            "`|IN_COMMENT",
+            "`define |IN_INACTIVE",
+            "inactive = `|USED",
+            "`|IN_STRING",
+            "`undef |USED",
+        ] {
+            assert!(site(&macros, text, marked).is_none(), "{marked}");
+        }
+        assert_eq!(bodies(&macros, text, "active = `|USED;\nendmodule"), ["1"]);
+        assert_eq!(bodies(&macros, text, "`elsif |USED"), ["1"]);
+        let operand = site(&macros, text, "`elsif |USED").expect("operand");
+        assert_eq!(operand.kind, MacroSiteKind::Operand);
+        // An operand that is not defined there is no macro.
+        assert!(site(&macros, text, "`ifdef |NOT_DEFINED").is_none());
+    }
+
+    /// The branch the frontend takes is the one that defines, uses and names
+    /// macros, at every depth.
+    #[test]
+    fn only_the_taken_branches_of_nested_conditions_hold_names() {
+        let text = "\
+`define OUTER 1
+`ifdef OUTER
+`ifndef INNER
+`define FROM_IFNDEF 2
+`else
+`define FROM_INNER 3
+`endif
+`else
+`ifdef OUTER
+`define FROM_DEAD 4
+`endif
+`endif
+`ifdef ABSENT
+`define FROM_ABSENT 5
+`elsif ALSO_ABSENT
+`define FROM_ALSO_ABSENT 6
+`else
+`define FROM_ELSE 7
+`endif
+`ifdef (OUTER)
+`define FROM_PARENTHESES 8
+`endif
+module m;
+  int a = `FROM_IFNDEF, b = `FROM_INNER, c = `FROM_DEAD, d = `FROM_ABSENT;
+  int e = `FROM_ALSO_ABSENT, f = `FROM_ELSE, g = `FROM_PARENTHESES;
+endmodule
+";
+        let macros = table(&[], text);
+        for (marked, expected) in [
+            ("a = `|FROM_IFNDEF", &["2"] as &[&str]),
+            ("b = `|FROM_INNER", &[]),
+            ("c = `|FROM_DEAD", &[]),
+            ("d = `|FROM_ABSENT", &[]),
+            ("e = `|FROM_ALSO_ABSENT", &[]),
+            ("f = `|FROM_ELSE", &["7"]),
+            ("g = `|FROM_PARENTHESES", &["8"]),
+            ("`ifdef (|OUTER)", &["1"]),
+            // The frontend reads a condition nested in a branch it skips.
+            ("`else\n`ifdef |OUTER", &["1"]),
+        ] {
+            assert_eq!(bodies(&macros, text, marked), expected, "{marked}");
+        }
+        for marked in [
+            "`define |FROM_INNER",
+            "`define |FROM_DEAD",
+            "`define |FROM_ABSENT",
+            "`define |FROM_ALSO_ABSENT",
+        ] {
+            assert!(site(&macros, text, marked).is_none(), "{marked}");
+        }
+    }
+
+    /// A condition without an operand is an error, and the names are those of
+    /// the text the frontend kept: it reads the directives up to the next token
+    /// in place of the operand and skips the rest of the file.
+    #[test]
+    fn a_condition_without_an_operand_leaves_the_names_the_frontend_kept() {
+        let text = "\
+`define BEFORE 1
+module m;
+  int a = `BEFORE;
+endmodule
+`ifdef
+`define AFTER 2
+module n;
+  int b = `BEFORE, c = `AFTER;
+endmodule
+";
+        let macros = table(&[], text);
+        assert_eq!(bodies(&macros, text, "a = `|BEFORE"), ["1"]);
+        assert_eq!(bodies(&macros, text, "`define |AFTER"), ["2"]);
+        for marked in ["b = `|BEFORE", "c = `|AFTER"] {
+            assert!(site(&macros, text, marked).is_none(), "{marked}");
+        }
+    }
+
+    /// `` `undefineall `` defines the configured macros again.
+    #[test]
+    fn undef_and_undefineall_on_a_config_define() {
+        let text = "\
+module m;
+  int first = `W;
+`undef W
+  int second = `W;
+`undefineall
+  int third = `W;
+endmodule
+";
+        let macros = table(&["W=4"], text);
+        for (marked, expected) in [
+            ("first = `|W", &["4"] as &[&str]),
+            ("`undef |W", &["4"]),
+            ("second = `|W", &[]),
+            ("third = `|W", &["4"]),
+        ] {
+            assert_eq!(bodies(&macros, text, marked), expected, "{marked}");
+        }
+    }
+
+    #[test]
+    fn directives_are_no_macro_names() {
+        let text = "\
+`timescale 1ns/1ps
+`default_nettype none
+`celldefine
+module m;
+endmodule
+`endcelldefine
+`resetall
+`define OK 1
+";
+        let macros = table(&[], text);
+        assert_eq!(macros.sites("t.sv").len(), 1);
+        assert_eq!(bodies(&macros, text, "`define |OK"), ["1"]);
+    }
+
+    #[test]
+    fn a_unit_does_not_see_the_macros_of_another() {
+        let first = "`define SHARED local\nmodule a; string s = \"`SHARED\"; endmodule\n";
+        let second = "module b; int x = `SHARED, y = `CONFIGURED; endmodule\n";
+        let macros = unit_tables(&["CONFIGURED=9"], &[("a.sv", first), ("b.sv", second)]);
+        let at = |marked: &str| {
+            let column = second.find(marked).expect("text") as u32;
+            macros.site_at("b.sv", 0, column).expect("use")
+        };
+        let shared = at("`SHARED");
+        assert!(shared.definitions.is_empty() && !shared.predefined);
+        let configured = at("`CONFIGURED");
         assert_eq!(
-            usages
-                .iter()
-                .find(|u| u.line0 == 3)
-                .and_then(|u| u.definition.as_ref())
-                .map(|d| d.body.clone()),
-            Some("2".to_owned())
+            macros
+                .definitions(configured)
+                .next()
+                .map(|d| d.body.as_str()),
+            Some("9")
         );
+        assert_eq!(macros.sites("a.sv").len(), 1);
     }
 
     #[test]
-    fn undef_removes_source_define() {
-        let text = "`define W 8\n`undef W\nx = `W;\n";
-        let (usages, _, _) = scan_one(&[], text);
-        let only = usages.first().expect("one usage");
-        assert!(only.definition.is_none(), "`undef must remove the macro");
+    fn uses_in_actual_arguments_are_names_of_their_own() {
+        let text = "\
+`define W 4
+`define ADD(a, b) ((a) + (b))
+module m;
+  int x = `ADD(`W, `ADD(1, `GONE));
+endmodule
+";
+        let macros = table(&[], text);
+        assert_eq!(bodies(&macros, text, "x = `|ADD"), ["((a) + (b))"]);
+        assert_eq!(bodies(&macros, text, "ADD(`|W"), ["4"]);
+        assert_eq!(bodies(&macros, text, "W, `|ADD(1"), ["((a) + (b))"]);
+        let gone = site(&macros, text, "`|GONE").expect("undefined use");
+        assert!(gone.definitions.is_empty() && !gone.predefined);
     }
 
     #[test]
-    fn comments_and_strings_hide_directives_and_usages() {
-        let text = concat!(
-            "// `define FAKE 1\n",
-            "/* `define FAKE2 2\n   `FAKE2 */\n",
-            "localparam string S = \"inside `FAKE3 literal\";\n",
-            "x = `FAKE + `REAL;\n",
-            "`define REAL 9\n",
-        );
-        let args = vec!["REAL=5".to_owned()];
-        let table = build_table(&args, &[("t.sv", text)], None);
-        let entries = table.files.get("t.sv").expect("scanned");
-        // Only the two usages on the x = line are real.
-        assert_eq!(entries.usages.len(), 2, "{:?}", entries.usages);
-        assert!(entries.usages.iter().all(|u| u.line0 == 4));
-        assert!(
-            entries.usages[0].definition.is_none(),
-            "FAKE stays undefined"
-        );
-        assert_eq!(entries.usages[1].definition.as_ref().unwrap().body, "5");
-        // No definition leaked from comments; only the trailing real define.
-        assert_eq!(table.files["t.sv"].decls.len(), 1);
-        assert_eq!(table.files["t.sv"].decls[0].definition.name, "REAL");
-    }
-
-    #[test]
-    fn false_ifdef_branches_are_skipped() {
-        let text = concat!(
-            "`ifdef MISSING\n",
-            "`define WRONG 1\n",
-            "`elsif ALSO_MISSING\n",
-            "`define WRONG2 2\n",
-            "`else\n",
-            "`define RIGHT 3\n",
-            "`endif\n",
-            "x = `RIGHT;\n",
-        );
-        let (usages, decls, _) = scan_one(&[], text);
-        assert_eq!(decls.len(), 1, "only the taken branch defines");
-        assert_eq!(decls[0].definition.name, "RIGHT");
-        assert_eq!(usage_for(&usages, "RIGHT").body, "3");
-        assert!(
-            !usages
-                .iter()
-                .any(|u| u.name() == "WRONG" || u.name() == "WRONG2"),
-            "dead-region usages are not recorded"
-        );
-    }
-
-    #[test]
-    fn parenthesized_condition_selects_branches_like_the_dimmer() {
-        // One optional surrounding paren pair is part of the shared grammar
-        // with the inactive-region scanner.
-        let defined = concat!(
-            "`define PAREN 1\n",
-            "`ifdef (PAREN)\n",
-            "`define INSIDE 2\n",
-            "`endif\n",
-            "x = `INSIDE;\n",
-        );
-        let (usages, decls, _) = scan_one(&[], defined);
-        assert_eq!(decls.len(), 2, "PAREN and INSIDE both define");
-        assert_eq!(decls[1].definition.name, "INSIDE");
-        assert_eq!(usage_for(&usages, "INSIDE").body, "2");
-
-        let undefined = concat!(
-            "`ifdef (PAREN)\n",
-            "`define HIDDEN 2\n",
-            "`else\n",
-            "`define SHOWN 3\n",
-            "`endif\n",
-            "x = `SHOWN;\n",
-        );
-        let (_usages, decls, _) = scan_one(&[], undefined);
-        assert_eq!(decls.len(), 1);
-        assert_eq!(decls[0].definition.name, "SHOWN");
-
-        let elsif_paren = concat!(
-            "`ifdef A\n",
-            "`define FROM_A 1\n",
-            "`elsif (B)\n",
-            "`define FROM_B 2\n",
-            "`endif\n",
-            "x = `FROM_B;\n",
-        );
-        let (usages, decls, _) = scan_one(&["B"], elsif_paren);
-        assert_eq!(decls.len(), 1);
-        assert_eq!(usage_for(&usages, "FROM_B").body, "2");
-    }
-
-    #[test]
-    fn unparseable_condition_fails_safe_like_the_dimmer() {
-        // An unparseable condition opens an always-active branch that hides
-        // nothing and stays untaken — mirroring the inactive-range scanner's
-        // fail-safe policy so hover never contradicts dimming.
-        let bare = concat!(
-            "`ifdef\n",
-            "`define BARE 1\n",
-            "`else\n",
-            "`define FROM_ELSE 2\n",
-            "`endif\n",
-            "x = `BARE + `FROM_ELSE;\n",
-        );
-        let (usages, decls, _) = scan_one(&[], bare);
-        assert_eq!(decls.len(), 2, "both branches stay live after a bare ifdef");
-        assert_eq!(usage_for(&usages, "BARE").body, "1");
-        assert_eq!(usage_for(&usages, "FROM_ELSE").body, "2");
-
-        let double_paren = concat!(
-            "`ifdef ((FOO)\n",
-            "`define STILL_LIVE 1\n",
-            "`endif\n",
-            "x = `STILL_LIVE;\n",
-        );
-        let (usages, decls, _) = scan_one(&[], double_paren);
-        assert_eq!(decls.len(), 1);
-        assert_eq!(usage_for(&usages, "STILL_LIVE").body, "1");
-    }
-
-    #[test]
-    fn nested_ifdef_tracks_parent_state() {
-        let text = concat!(
-            "`define OUTER 1\n",
-            "`ifdef OUTER\n",
-            "`ifndef INNER\n",
-            "`define NESTED 7\n",
-            "`endif\n",
-            "`endif\n",
-            "x = `NESTED;\n",
-        );
-        let (usages, _, _) = scan_one(&[], text);
-        assert_eq!(usage_for(&usages, "NESTED").body, "7");
-    }
-
-    #[test]
-    fn multiline_body_continuation_is_joined() {
-        let text = "`define LONG \\\n  alpha + \\\n  beta\nx = `LONG;\n";
-        let (usages, decls, _) = scan_one(&[], text);
-        assert_eq!(decls[0].definition.body, "alpha + beta");
-        assert_eq!(usage_for(&usages, "LONG").body, "alpha + beta");
-    }
-
-    #[test]
-    fn function_like_macro_captures_args() {
-        let text = "`define MAX(a, b) ((a) > (b)) ? (a) : (b)\nx = `MAX(p, q);\n";
-        let (usages, decls, _) = scan_one(&[], text);
-        let def = &decls[0].definition;
+    fn a_definition_keeps_its_formals_and_its_body_on_one_line() {
+        let text = "\
+`define SUM(a, b = `W, c = {1, 2}) \\
+  ((a) + \\
+   (b))
+`define EMPTY() 7
+`define BARE
+`define SIMPLE (1)
+module m;
+  int x = `SUM(1);
+endmodule
+";
+        let macros = table(&[], text);
+        let definition = |marked: &str| {
+            let site = site(&macros, text, marked).expect("definition");
+            assert_eq!(site.kind, MacroSiteKind::Definition, "{marked}");
+            macros.definitions(site).next().expect("definition")
+        };
+        let sum = definition("`define |SUM");
         assert_eq!(
-            def.args.as_deref(),
-            Some(&["a".to_owned(), "b".to_owned()][..])
+            sum.args.as_deref(),
+            Some(&["a".to_owned(), "b = `W".to_owned(), "c = {1, 2}".to_owned()][..])
         );
-        assert_eq!(def.body, "((a) > (b)) ? (a) : (b)");
-        assert_eq!(usage_for(&usages, "MAX").args, def.args);
-    }
-
-    #[test]
-    fn function_like_default_arguments_do_not_leak_into_body() {
-        // Regression: `b=5` used to end argument parsing at the `=`, so the
-        // displayed body started at "= 5) a+b".
-        let text = "`define M(a, b=5) a+b\nx = `M(p);\n";
-        let (usages, decls, _) = scan_one(&[], text);
-        let def = &decls[0].definition;
+        assert_eq!(sum.body, "((a) + (b))");
+        assert_eq!(definition("`define |EMPTY").args, Some(Vec::new()));
+        let bare = definition("`define |BARE");
+        assert_eq!((bare.args.as_deref(), bare.body.as_str()), (None, ""));
+        let simple = definition("`define |SIMPLE");
         assert_eq!(
-            def.args.as_deref(),
-            Some(&["a".to_owned(), "b".to_owned()][..])
+            (simple.args.as_deref(), simple.body.as_str()),
+            (None, "(1)")
         );
-        assert_eq!(def.body, "a+b");
-        assert_eq!(usage_for(&usages, "M").body, "a+b");
+        assert_eq!(bodies(&macros, text, "x = `|SUM(1)"), ["((a) + (b))"]);
     }
 
     #[test]
-    fn default_argument_with_nested_comma_stays_intact() {
-        let text = "`define N(a, b={1, 2}, c=3) c\nx = `N(p);\n";
-        let (_, decls, _) = scan_one(&[], text);
-        let def = &decls[0].definition;
-        assert_eq!(
-            def.args.as_deref(),
-            Some(&["a".to_owned(), "b".to_owned(), "c".to_owned()][..])
-        );
-        assert_eq!(def.body, "c");
+    fn a_use_in_a_body_resolves_where_the_body_is_expanded() {
+        let text = "\
+`define INNER 1
+`define OUTER `INNER + 1
+module m;
+  int first = `OUTER;
+`define INNER 2
+  int second = `OUTER;
+endmodule
+";
+        let macros = table(&[], text);
+        let mut found = bodies(&macros, text, "`define OUTER `|INNER");
+        found.sort();
+        assert_eq!(found, ["1", "2"]);
+    }
+
+    /// What the directive sees, or else what the rest of the unit defines.
+    #[test]
+    fn a_use_in_a_body_that_is_never_expanded_resolves_at_the_directive() {
+        let text = "\
+`define EARLY `INNER
+`define INNER 1
+`define UNUSED `INNER + 1
+`define INNER 2
+`define NEVER `ABSENT
+module m;
+endmodule
+";
+        let macros = table(&[], text);
+        assert_eq!(bodies(&macros, text, "`define UNUSED `|INNER"), ["1"]);
+        assert_eq!(bodies(&macros, text, "`define EARLY `|INNER"), ["2"]);
+        assert!(bodies(&macros, text, "`define NEVER `|ABSENT").is_empty());
     }
 
     #[test]
-    fn bare_define_has_empty_body_and_decl_hover_site() {
-        let text = "`define EN\nx = `EN;\n";
-        let (usages, decls, table) = scan_one(&[], text);
-        assert_eq!(decls[0].definition.body, "");
-        assert_eq!(decls[0].line0, 0);
-        assert_eq!(usage_for(&usages, "EN").body, "");
-        // The NAME identifier of the directive is itself hoverable.
-        assert!(table.decl_at("t.sv", 0, 8).is_some());
-        assert!(table.decl_at("t.sv", 0, 10).is_none());
+    fn a_site_covers_the_grave_accent_and_the_name() {
+        let text = "`define W 4\nmodule m;\n  int x = `W;\nendmodule\n";
+        let macros = table(&[], text);
+        let site = macros.site_at("t.sv", 2, 10).expect("grave accent");
+        assert_eq!((site.col_start0, site.col_end0), (10, 12));
+        assert!(macros.site_at("t.sv", 2, 11).is_some());
+        assert!(macros.site_at("t.sv", 2, 12).is_none());
+        assert!(macros.site_at("t.sv", 2, 9).is_none());
+        assert_eq!(macros.sites("t.sv").len(), 2);
+        assert!(macros.sites("other.sv").is_empty());
     }
 
     #[test]
-    fn usage_inside_define_body_resolves_at_definition_point() {
-        let text = "`define BASE 6\n`define WRAPPED (`BASE + 1)\ny = `WRAPPED;\n";
-        let (usages, _, _) = scan_one(&[], text);
-        // The nested `BASE sits on line 1 inside the body.
-        let nested = usages
-            .iter()
-            .find(|u| u.line0 == 1 && u.name() == "BASE")
-            .expect("nested usage recorded");
-        assert_eq!(nested.definition.as_ref().unwrap().body, "6");
-    }
-
-    #[test]
-    fn directives_are_never_usages() {
-        let text = "`timescale 1ns/1ps\n`include \"x.vh\"\n`resetall\n`define OK 1\nx = `OK;\n";
-        let (usages, _, _) = scan_one(&[], text);
-        assert_eq!(usages.len(), 1);
-        assert_eq!(usages[0].name(), "OK");
-    }
-
-    #[test]
-    fn undefineall_clears_everything() {
-        let text = "`undefineall\nx = `GONE;\n";
-        let args = vec!["GONE=1".to_owned()];
-        let table = build_table(&args, &[("t.sv", text)], None);
-        let usages = &table.files["t.sv"].usages;
-        assert!(usages.first().unwrap().definition.is_none());
-    }
-
-    #[test]
-    fn per_file_scoping_keeps_tables_independent() {
-        let text_b = "y = `SHARED;\n";
-        let args = vec!["SHARED=cfg".to_owned()];
-        let table = build_table(
-            &args,
-            &[
-                ("a.sv", "`define SHARED local\nx = `SHARED;\n"),
-                ("b.sv", text_b),
-            ],
-            None,
-        );
-        let a_usage = &table.files["a.sv"].usages[0];
-        let b_usage = &table.files["b.sv"].usages[0];
-        assert_eq!(a_usage.definition.as_ref().unwrap().body, "local");
-        assert_eq!(b_usage.definition.as_ref().unwrap().body, "cfg");
-    }
-
-    #[test]
-    fn usage_spans_cover_the_backtick_and_name() {
-        let text = "module m; endmodule\nx = `WIDTHY + 1;\n`define WIDTHY 3\n";
-        let args = vec![];
-        let table = build_table(&args, &[("t.sv", text)], None);
-        // `` `WIDTHY `` starts at col 4 (0-based), length 7.
-        let line = 1u32;
-        assert!(table.usage_at("t.sv", line, 4).is_some());
-        assert!(table.usage_at("t.sv", line, 10).is_some()); // last char
-        assert!(table.usage_at("t.sv", line, 11).is_none()); // past the end
-        assert!(table.usage_at("t.sv", line, 3).is_none()); // before tick
-    }
-
-    #[test]
-    fn parse_config_defines_rejects_non_identifiers() {
-        let args = vec![
-            "GOOD=1".to_owned(),
-            "BARE".to_owned(),
-            "_BAD_NAME=x".to_owned(),
-            "9BAD=2".to_owned(),
-        ];
-        // Leading underscores are valid SystemVerilog identifiers; an entry
-        // beginning with a digit is dropped.
-        let defs = parse_config_defines(&args);
-        assert_eq!(defs.len(), 3);
-        assert_eq!(defs[0].name, "GOOD");
-        assert_eq!(defs[0].body, "1");
-        assert_eq!(defs[1].name, "BARE");
-        assert_eq!(defs[1].body, "");
-        assert_eq!(defs[2].name, "_BAD_NAME");
+    fn config_defines_that_are_no_identifier_are_dropped() {
+        let defines = ["A", "B=1", "C=", "_D=4", "1BAD", "BAD-NAME=2", "", "=3"].map(str::to_owned);
+        let parsed: Vec<_> = parse_config_defines(&defines)
+            .into_iter()
+            .map(|definition| (definition.name, definition.body))
+            .collect();
+        let expected = [("A", ""), ("B", "1"), ("C", ""), ("_D", "4")]
+            .map(|(name, body)| (name.to_owned(), body.to_owned()));
+        assert_eq!(parsed, expected);
     }
 }

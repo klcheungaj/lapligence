@@ -3,8 +3,10 @@
 // Contract (`docs/config.md#lsp-duplicate-definitions`):
 // * two files that both declare `module dup_top` (variants of one design)
 //   each navigate within their own body: definition, hover, references and
-//   rename of a name the body declares stay in that file, also for uses
-//   written before the declaration (an error the frontend reports);
+//   rename of a name the body declares stay in that file;
+// * a use written before the declaration (an error the frontend reports) has
+//   no token, definition or hover, and is no reference, like any name without
+//   a declaration in effect;
 // * the frontend elaborates one of the definitions and warns on the other
 //   one's name (`DuplicateDefinition`); both bodies keep their declaration
 //   symbols and semantic tokens;
@@ -134,7 +136,8 @@ fn rows_for(
 }
 
 /// Definition, hover, references and rename of every occurrence of every
-/// name in `path` stay within `path` and reach its own declaration.
+/// name in `path` stay within `path` and reach its own declaration. An
+/// occurrence before that declaration resolves to nothing.
 fn check_navigation(client: &mut LspProcess, path: &Path, source: &str, what: &str) {
     let uri = file_uri(path);
     for name in NAMES {
@@ -142,7 +145,24 @@ fn check_navigation(client: &mut LspProcess, path: &Path, source: &str, what: &s
             let (line, character) = position_of(source, &format!("logic {name};"), 0);
             (line, character + 6)
         };
-        let occurrences = word_positions(source, name);
+        let all = word_positions(source, name);
+        let (early, occurrences): (Vec<_>, Vec<_>) = all
+            .iter()
+            .copied()
+            .partition(|position| *position < declaration);
+        assert!(!early.is_empty() && occurrences.len() > 1, "{what} {name}");
+        for &position in &early {
+            let params = json!({ "textDocument": { "uri": uri }, "position": start(position) });
+            for method in ["textDocument/definition", "textDocument/hover"] {
+                let result = client
+                    .request(method, params.clone())
+                    .expect("navigation response");
+                assert!(
+                    result.is_null(),
+                    "{what} {name}@{position:?}: {method}: {result}"
+                );
+            }
+        }
         let expected: Vec<_> = occurrences
             .iter()
             .map(|position| (uri.clone(), *position))
@@ -320,7 +340,7 @@ fn lsp_stdio_same_named_definitions_navigate_within_their_own_file() {
         }
     }
 
-    // A bound use is a variable token in each body.
+    // A bound use is a variable token in each body, an early one no token.
     for ((_, source), rows) in workspace.files.iter().zip(&project) {
         let (line, character) = position_of(source, ".ok(ok_r)", 0);
         let row = rows
@@ -328,6 +348,12 @@ fn lsp_stdio_same_named_definitions_navigate_within_their_own_file() {
             .find(|row| row.0 == line && row.1 == character + 4)
             .unwrap_or_else(|| panic!("no token on the ok_r actual: {rows:?}"));
         assert_eq!(row.2, "variable", "{row:?}");
+        let (line, character) = position_of(source, "assign ok = ok_r", 0);
+        assert!(
+            rows.iter()
+                .all(|row| (row.0, row.1) != (line, character + 12)),
+            "{rows:?}"
+        );
     }
     client.shutdown();
 }

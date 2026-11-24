@@ -363,6 +363,10 @@ struct CaptureOutput {
   std::vector<LlgSlangProtectedEnvelope> protected_envelopes;
   std::vector<LlgSlangFsmPragma> fsm_pragmas;
   std::vector<LlgSlangAttribute> attributes;
+  std::vector<LlgSlangLexicalTarget> lexical_targets;
+  std::vector<LlgSlangMacroDefinition> macro_definitions;
+  std::vector<LlgSlangMacroReference> macro_references;
+  std::vector<LlgSlangInclude> includes;
 };
 
 namespace {
@@ -515,6 +519,21 @@ struct Capture {
     bool macroBody = false;
   };
 
+  struct NameDeclaration {
+    LlgSlangSourceRange range;
+    uint32_t kind;
+  };
+
+  // A name that repeats a declared one: an end label, a begin name after a
+  // statement label, a formal argument in a `define body, or a name that
+  // binds without a semantic node. Ranges are physical name spans. A
+  // statement or generate block declares its name by syntax alone (`block`).
+  struct NameRepeat {
+    LlgSlangSourceRange declaration;
+    LlgSlangSourceRange repeats[2];
+    bool block;
+  };
+
   struct GenvarLexicalScope {
     LlgSlangSourceRange range;
     std::string name;
@@ -573,9 +592,14 @@ struct Capture {
   std::vector<LexicalBinding> lexicalBindings;
   std::vector<LlgSlangSourceRange> connectionActualRanges;
   std::vector<GenvarLexicalScope> genvarLexicalScopes;
-  // Struct and union member declaration names from the syntax. A member that
-  // nothing references has no semantic node, so its name would stay unbound.
-  std::vector<LlgSlangSourceRange> fieldDeclarations;
+  // Declared names that have no semantic node: struct and union members, which
+  // get one only when something references them, and the names in a generic
+  // class that nothing specializes.
+  std::vector<NameDeclaration> nameDeclarations;
+  // The name in a `define body that declares a node, by node id. Every
+  // expansion of the macro declares a node of its own by it.
+  std::unordered_map<uint64_t, LlgSlangSourceRange> bodyDeclarations;
+  std::vector<NameRepeat> nameRepeats;
   std::unordered_map<uint64_t, uint64_t> lexicalTargetAliases;
   std::unordered_map<const syntax::SyntaxNode*, std::vector<uint64_t>>
       sourceIdentityGroups;
@@ -1820,13 +1844,56 @@ struct Capture {
       connectionActualRanges.push_back(physical);
   }
 
-  void fieldDeclaration(parsing::Token token) {
-    if (fieldDeclarations.size() >= maxLexicalTokens())
+  // A name that its syntax or type declares, without a semantic node.
+  void nameDeclaration(const LlgSlangSourceRange& range, uint32_t kind) {
+    if (nameDeclarations.size() >= maxLexicalTokens())
       throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
-                          "field declaration limit exceeded");
-    const auto physical = tokenSpan(token);
-    if (physical.file_id != LLG_SLANG_INVALID_ID)
-      fieldDeclarations.push_back(physical);
+                          "name declaration limit exceeded");
+    if (range.file_id != LLG_SLANG_INVALID_ID)
+      nameDeclarations.push_back({range, kind});
+  }
+
+  void nameRepeat(const NameRepeat& repeat) {
+    if (repeat.declaration.file_id == LLG_SLANG_INVALID_ID)
+      return;
+    if (nameRepeats.size() >= maxLexicalTokens())
+      throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
+                          "repeated name limit exceeded");
+    nameRepeats.push_back(repeat);
+  }
+
+  void nameRepeat(const LlgSlangSourceRange& declaration,
+                  const LlgSlangSourceRange& repeat) {
+    nameRepeat({declaration, {repeat, {LLG_SLANG_INVALID_ID, 0, 0}}, false});
+  }
+
+  // The written name that declares a symbol.
+  LlgSlangSourceRange nameSpan(const Symbol& symbol) const {
+    if (!symbol.location.valid() || symbol.name.empty())
+      return {LLG_SLANG_INVALID_ID, 0, 0};
+    if (auto written = macroArgumentSpan(symbol.location, symbol.name))
+      return *written;
+    size_t length = symbol.name.size();
+    if (sourceManager.isFileLoc(symbol.location)) {
+      const std::string_view text = sourceManager.getSourceText(symbol.location.buffer());
+      const size_t start = symbol.location.offset();
+      // The location of an escaped identifier (IEEE 1800-2009 5.6.1) is its
+      // backslash, which its name lacks.
+      const size_t escape = start < text.size() && text[start] == '\\' ? 1 : 0;
+      if (start + escape > text.size() ||
+          text.substr(start + escape, length) != symbol.name)
+        return {LLG_SLANG_INVALID_ID, 0, 0};
+      length += escape;
+    }
+    return span(symbol.location, length);
+  }
+
+  // A name that refers to a symbol's written declaration (see `NameRepeat`).
+  // A name copied from a `define body stays unbound: every expansion binds the
+  // body text, and one does not speak for the others.
+  void nameReference(parsing::Token token, const Symbol& symbol) {
+    if (!token.isMissing() && !macroBodySpan(token.location(), token.rawText()))
+      nameRepeat(nameSpan(symbol), tokenSpan(token));
   }
 
   void genvarLexicalScope(SourceRange range, std::string_view name,
@@ -2927,15 +2994,21 @@ std::string indexedInstanceName(const InstanceSymbol& symbol) {
   return indexedName;
 }
 
+uint32_t lexicalKindForSemantic(const LlgSlangSemanticNode& node);
+
 class SemanticCapture final
     : public ASTVisitor<SemanticCapture, VisitFlags::AllGood | VisitFlags::Bad> {
 public:
   explicit SemanticCapture(Capture& capture) : capture(capture) {}
 
-  void bindSourceConnections(
-      Compilation& compilation,
-      const std::unordered_map<const Symbol*, const InstanceSymbol*>& instances) {
-    for (const auto* symbol : sourceConnections) {
+  // Bind the definition and connection names of the instances that Slang
+  // does not elaborate because their scope is not instantiated (a generate
+  // branch that is not taken, a shadowed definition, every body of a
+  // declaration-only capture). Called when every definition is captured.
+  void bindUninstantiatedConnections(Compilation& compilation) {
+    for (const auto& [name, scope] : unelaboratedNames)
+      bindUnelaboratedName(compilation, *name, *scope);
+    for (const auto* symbol : uninstantiated) {
       const auto* syntaxNode = symbol->getSyntax();
       const auto* scope = symbol->getParentScope();
       if (!syntaxNode || !scope ||
@@ -2943,10 +3016,12 @@ public:
         continue;
       const auto* definition =
           compilation.tryGetDefinition(symbol->definitionName, *scope).definition;
-      const auto found = instances.find(definition);
-      if (found == instances.end())
+      if (!definition)
         continue;
-      const auto& body = found->second->body;
+      const auto found = sourceBodies.find(definition->getSyntax());
+      if (found == sourceBodies.end())
+        continue;
+      const InstanceBodySymbol& body = *found->second;
       const auto& instance = syntaxNode->as<syntax::HierarchicalInstanceSyntax>();
       for (const auto* connection : instance.connections) {
         if (connection->kind != syntax::SyntaxKind::NamedPortConnection)
@@ -2962,12 +3037,14 @@ public:
       const auto& hierarchy = instance.parent->as<syntax::HierarchyInstantiationSyntax>();
       const uint64_t definitionId = capture.ensureSemantic(definition);
       capture.lexicalBinding(hierarchy.type, definitionId, LLG_SLANG_LEXICAL_ROLE_REFERENCE);
-      const uint64_t id = capture.ensureSemantic(symbol);
-      auto& node = capture.output.semantic_nodes[static_cast<size_t>(id)];
-      node.kind = LLG_SLANG_SEMANTIC_INSTANCE;
-      node.subkind = LLG_SLANG_INSTANCE_SINGLE;
-      node.definition_name = storeString(capture.output, symbol->definitionName);
+      auto& node = capture.output.semantic_nodes[static_cast<size_t>(
+          capture.ensureSemantic(symbol))];
       node.target_id = definitionId;
+      if (capture.declarationOnly) {
+        node.kind = LLG_SLANG_SEMANTIC_INSTANCE;
+        node.subkind = LLG_SLANG_INSTANCE_SINGLE;
+        node.definition_name = storeString(capture.output, symbol->definitionName);
+      }
       if (!hierarchy.parameters)
         continue;
       for (const auto* assignment : hierarchy.parameters->parameters) {
@@ -2980,6 +3057,16 @@ public:
                                    LLG_SLANG_LEXICAL_ROLE_CONNECTION_LABEL);
         }
       }
+    }
+  }
+
+  // Names the targets of lexical bindings that the traversal did not visit: a
+  // member of a structure that only assignment pattern keys name, a method of
+  // a class specialization.
+  void captureLexicalTargets() {
+    for (const auto& [id, symbol] : unvisitedTargets) {
+      if (capture.output.semantic_nodes[static_cast<size_t>(id)].name.len == 0)
+        captureReferenceTarget(*symbol);
     }
   }
 
@@ -3146,7 +3233,10 @@ public:
     }
     const uint64_t rootId = capture.ensureSemantic(&root);
     for (const Symbol* definition : definitions) {
-      if (!rootDefinition(*definition) || namesakes[definition->name] < 2 ||
+      // Navigation also needs the definitions that only a shadowed body
+      // instantiates, which Slang neither elaborates nor takes as unreferenced.
+      if (!rootDefinition(*definition) ||
+          (!capture.editor && namesakes[definition->name] < 2) ||
           sourceBodies.contains(definition->getSyntax()))
         continue;
       auto& instance = InstanceSymbol::createInvalid(
@@ -3176,7 +3266,7 @@ public:
       // duplicates are found (captureShadowedDefinitions); library-unit
       // capture keeps one body per definition.
       const bool firstBody =
-          sourceBodies.insert(symbol.getDefinition().getSyntax()).second;
+          sourceBodies.try_emplace(symbol.getDefinition().getSyntax(), &symbol).second;
       if (capture.declarationOnly && !firstBody)
         return;
     }
@@ -3201,8 +3291,8 @@ public:
         captureAttributes(id, symbol);
     }
     if constexpr (std::same_as<T, UninstantiatedDefSymbol>) {
-      if (capture.declarationOnly)
-        sourceConnections.push_back(&symbol);
+      if (capture.declarationOnly || capture.editor)
+        uninstantiated.push_back(&symbol);
     }
     // An implicitly instantiated nested module, interface or program (SV
     // 23.4, 24.3) uses its declaration as instance syntax. The definition and
@@ -3236,9 +3326,12 @@ public:
     if (symbol.kind != SymbolKind::TransparentMember) {
       if (auto written = capture.macroArgumentSpan(symbol.location, symbol.name))
         capture.lexicalBinding(*written, id, LLG_SLANG_LEXICAL_ROLE_DECLARATION);
-      else if (auto body = capture.macroBodySpan(symbol.location, symbol.name))
+      else if (auto body = capture.macroBodySpan(symbol.location, symbol.name)) {
         capture.lexicalBinding(*body, id, LLG_SLANG_LEXICAL_ROLE_DECLARATION,
                                LLG_SLANG_LEXICAL_UNKNOWN, true);
+        if (capture.editor)
+          capture.bodyDeclarations.emplace(id, *body);
+      }
     }
     if constexpr (std::same_as<T, SequenceSymbol> || std::same_as<T, PropertySymbol> ||
                   std::same_as<T, LetDeclSymbol>)
@@ -3782,6 +3875,19 @@ public:
           definitionId;
       capture.semanticEdge(id, LLG_SLANG_EDGE_REFERENCE, definitionId);
     }
+    if constexpr (std::same_as<T, InstanceArraySymbol>) {
+      // An array names its definition through its elements.
+      const Symbol* element = &symbol;
+      while (element && element->kind == SymbolKind::InstanceArray) {
+        const auto elements = element->as<InstanceArraySymbol>().elements;
+        element = elements.empty() ? nullptr : elements.front();
+      }
+      if (capture.editor && element && element->kind == SymbolKind::Instance) {
+        const uint64_t definitionId =
+            capture.ensureSemantic(&element->as<InstanceSymbol>().getDefinition());
+        capture.output.semantic_nodes[static_cast<size_t>(id)].target_id = definitionId;
+      }
+    }
     if constexpr (std::same_as<T, ModportPortSymbol>) {
       if (symbol.internalSymbol) {
         const uint64_t internalId =
@@ -3856,8 +3962,11 @@ public:
       // DPI imports are declarations only.  Visiting getBody() would expose
       // native syntax implementation details and can manufacture a phantom
       // body node for a prototype with no body.
-      if (!symbol.flags.has(MethodFlags::DPIImport))
+      if (!symbol.flags.has(MethodFlags::DPIImport)) {
+        const Symbol* outer = std::exchange(lookupOwner, &symbol);
         symbol.getBody().visit(*this);
+        lookupOwner = outer;
+      }
     }
     if constexpr (std::same_as<T, PrimitiveInstanceSymbol>) {
       if (const TimingControl* delay = symbol.getDelay())
@@ -3945,6 +4054,7 @@ public:
       for (const Type* specialization : orderedSpecializations(symbol))
         specialization->visit(*this);
       lookupOwner = outer;
+      captureUnspecialized(symbol);
     }
     else {
       const Symbol* outer = std::exchange(lookupOwner, &symbol);
@@ -4032,6 +4142,8 @@ public:
         handle(*component);
     }
     captureSourceReferences(symbol);
+    if (capture.editor)
+      bindEditorNames(symbol);
     if constexpr (std::same_as<T, InterfacePortSymbol>)
       bindInterfacePortType(symbol);
     if constexpr (std::same_as<T, InstanceBodySymbol> ||
@@ -4063,10 +4175,11 @@ public:
       }
     }
     if (capture.declarationOnly) {
-      bindValueName(expression);
-      bindNameTokens(expression);
-      if constexpr (std::same_as<T, InvalidExpression>)
+      bindUncapturedNames(expression);
+      if constexpr (std::same_as<T, InvalidExpression>) {
         bindInvalidSubtree(expression.child);
+        bindInvalidNames(expression);
+      }
       visitDefault(expression);
       return;
     }
@@ -4097,8 +4210,10 @@ public:
       markCheckerActual(id, expression);
     bindNameTokens(expression);
     bindValueNameToken(expression, true);
-    if constexpr (std::same_as<T, InvalidExpression>)
+    if constexpr (std::same_as<T, InvalidExpression>) {
       bindInvalidSubtree(expression.child);
+      bindInvalidNames(expression);
+    }
     // Capturing a call's iterator or referenced symbol can append to the
     // semantic-node vector. Assemble a value and publish it by ID after those
     // insertions; a reference here would dangle when the vector grows.
@@ -4849,7 +4964,11 @@ private:
     if (!spelling || !named->isAlias())
       return;
     const auto token = spelling->getLastToken();
-    if (token.valueText() == named->name)
+    if (token.valueText() != named->name)
+      return;
+    if (namesByText)
+      capture.nameReference(token, *named);
+    else
       capture.lexicalBinding(token, captureReferenceTarget(*named),
                              LLG_SLANG_LEXICAL_ROLE_REFERENCE);
   }
@@ -4947,10 +5066,256 @@ private:
   // identity only, like its reference edges: the traversal fills every node it
   // visits, and consumers recognize a never-visited target (a built-in class
   // method such as mailbox `get`) by its unnamed node, so filling it here
-  // would change what they see.
+  // would change what they see. Editor capture names those that the source
+  // declares once the traversal is done (captureLexicalTargets).
   uint64_t lexicalTarget(const Symbol& symbol) {
-    return capture.declarationOnly ? captureReferenceTarget(symbol)
-                                   : capture.ensureSemantic(&symbol);
+    if (capture.declarationOnly)
+      return captureReferenceTarget(symbol);
+    const uint64_t id = capture.ensureSemantic(&symbol);
+    if (capture.editor && symbol.location.valid() &&
+        capture.output.semantic_nodes[static_cast<size_t>(id)].name.len == 0)
+      unvisitedTargets.emplace(id, &symbol);
+    return id;
+  }
+
+  // Binds a name to what it resolved to: the symbol's node, or the text of its
+  // declaration while `namesByText`.
+  void bindReference(parsing::Token token, const Symbol& target) {
+    if (namesByText)
+      capture.nameReference(token, target);
+    else
+      capture.lexicalBinding(token, lexicalTarget(target),
+                             LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+  }
+
+  // Runs `bind` with every name it binds bound to the text of its declaration,
+  // which adds no semantic node.
+  template<typename F>
+  void bindByText(F&& bind) {
+    const bool outer = std::exchange(namesByText, true);
+    bind();
+    namesByText = outer;
+  }
+
+  // A type name as written: `base`, `pkg::base`, `base #(T)` or
+  // `pkg::base #(T)`. `resolved` is the type it names.
+  void bindTypeName(const syntax::NameSyntax& name, const Type& resolved,
+                    const ASTContext& context) {
+    std::vector<parsing::Token> tokens;
+    collectNameTokens(name, tokens, false);
+    if (tokens.empty())
+      return;
+    const parsing::Token token = tokens.back();
+    const Symbol* target = resolved.name == token.valueText() ? &resolved : nullptr;
+    // A typedef or a type parameter that names the type.
+    if (!target && tokens.size() == 1) {
+      const Symbol* found = Lookup::unqualifiedAt(
+          *context.scope, token.valueText(), context.getLocation(), token.range());
+      const Type* named = nullptr;
+      if (found && found->isType())
+        named = &found->as<Type>();
+      else if (found && found->kind == SymbolKind::TypeParameter)
+        named = &found->as<TypeParameterSymbol>().targetType.getType();
+      if (named && named->isMatching(resolved))
+        target = found;
+    }
+    if (target) {
+      bindReference(token, *target);
+      bindScopeQualifiers(name, *target);
+    }
+  }
+
+  // The names in the parameter assignments `#(...)` of a written type name.
+  void captureClassArguments(const syntax::NameSyntax& name, const ASTContext& context) {
+    if (name.kind == syntax::SyntaxKind::ScopedName) {
+      const auto& scoped = name.as<syntax::ScopedNameSyntax>();
+      captureClassArguments(*scoped.left, context);
+      captureClassArguments(*scoped.right, context);
+    }
+    else if (name.kind == syntax::SyntaxKind::ClassName &&
+             boundNames.insert(&name).second) {
+      bindByText([&] {
+        captureNames(*name.as<syntax::ClassNameSyntax>().parameters, context);
+      });
+    }
+  }
+
+  // The base class name of a class (IEEE 1800-2009 8.13) and the names in its
+  // parameter assignments, looked up in the scope of the class.
+  void bindClassHeader(const ClassType& type) {
+    const syntax::SyntaxNode* declaration = type.getSyntax();
+    if (!declaration || declaration->kind != syntax::SyntaxKind::ClassDeclaration)
+      return;
+    const auto* extends =
+        declaration->as<syntax::ClassDeclarationSyntax>().extendsClause;
+    const Type* base = type.getBaseClass();
+    if (!extends || !base || base->isError() ||
+        !boundNames.insert(extends).second)
+      return;
+    const ASTContext context(type, LookupLocation::max);
+    bindByText([&] { bindTypeName(*extends->baseName, *base, context); });
+    captureClassArguments(*extends->baseName, context);
+  }
+
+  // The class qualifiers of a method or constraint block that is defined
+  // outside its class (`C::f`, IEEE 1800-2009 8.23, 18.5.1).
+  template<typename T>
+  void bindDefinitionQualifiers(const T& symbol) {
+    const syntax::SyntaxNode* definition = symbol.getSyntax();
+    if (!definition)
+      return;
+    const syntax::NameSyntax* name = nullptr;
+    if (syntax::FunctionDeclarationSyntax::isKind(definition->kind))
+      name = definition->as<syntax::FunctionDeclarationSyntax>().prototype->name;
+    else if (definition->kind == syntax::SyntaxKind::ConstraintDeclaration)
+      name = definition->as<syntax::ConstraintDeclarationSyntax>().name;
+    if (!name || name->kind != syntax::SyntaxKind::ScopedName ||
+        !boundNames.insert(name).second)
+      return;
+    bindByText([&] { bindScopeQualifiers(*name, symbol); });
+  }
+
+  // The steps of a value written in a macro argument (`a.b[i].c`), right to
+  // left from `names[count - 1]`, which names `value`. Slang keeps no syntax
+  // for the inner ones; elsewhere their reference nodes bind them.
+  void bindValueSteps(const std::vector<parsing::Token>& names, size_t count,
+                      const Expression* value) {
+    if (!capture.editor || count == 0 || !value ||
+        !capture.sourceManager.isMacroLoc(names.front().location()))
+      return;
+    const auto bind = [&](const Symbol& symbol) {
+      if (count == 0 || symbol.name.empty() || names[count - 1].valueText() != symbol.name)
+        return false;
+      capture.nameReference(names[--count], symbol);
+      return true;
+    };
+    while (true) {
+      switch (value->kind) {
+        case ExpressionKind::ElementSelect:
+          value = &value->as<ElementSelectExpression>().value();
+          continue;
+        case ExpressionKind::MemberAccess: {
+          const auto& access = value->as<MemberAccessExpression>();
+          if (!bind(access.member))
+            return;
+          value = &access.value();
+          continue;
+        }
+        case ExpressionKind::NamedValue:
+          bind(value->as<NamedValueExpression>().symbol);
+          return;
+        case ExpressionKind::HierarchicalValue:
+          bind(value->as<HierarchicalValueExpression>().symbol);
+          return;
+        default:
+          return;
+      }
+    }
+  }
+
+  // The object a method call is written on.
+  void bindReceiver(const syntax::SyntaxNode& method, const Expression* receiver) {
+    if (!capture.editor || method.kind != syntax::SyntaxKind::ScopedName)
+      return;
+    std::vector<parsing::Token> names;
+    collectNameTokens(method, names, false);
+    if (!names.empty())
+      bindValueSteps(names, names.size() - 1, receiver);
+  }
+
+  // The formal argument names of a call (`f(.a(x))`, IEEE 1800-2009 13.5.4), in
+  // editor capture.
+  void bindArgumentNames(const syntax::ArgumentListSyntax* list,
+                         const SubroutineSymbol& callee) {
+    if (!list)
+      return;
+    for (const syntax::ArgumentSyntax* argument : list->parameters) {
+      if (argument->kind != syntax::SyntaxKind::NamedArgument)
+        continue;
+      const parsing::Token name = argument->as<syntax::NamedArgumentSyntax>().name;
+      for (const FormalArgumentSymbol* formal : callee.getArguments()) {
+        if (formal->name == name.valueText()) {
+          capture.nameReference(name, *formal);
+          break;
+        }
+      }
+    }
+  }
+
+  // The names of a symbol that only editor capture binds.
+  template<std::derived_from<Symbol> T>
+  LLG_NOINLINE void bindEditorNames(const T& symbol) {
+    if (const Scope* scope = symbol.getParentScope())
+      bindAttributeNames(scope->getCompilation().getAttributes(symbol),
+                         ASTContext(*scope, LookupLocation::before(symbol)));
+    if constexpr (std::same_as<T, ClassType>)
+      bindClassHeader(symbol);
+    if constexpr (std::same_as<T, ParameterSymbol> ||
+                  std::same_as<T, TypeParameterSymbol>)
+      bindParameterDefault(symbol);
+    if constexpr (std::same_as<T, SubroutineSymbol> ||
+                  std::same_as<T, ConstraintBlockSymbol>)
+      bindDefinitionQualifiers(symbol);
+    if constexpr (std::same_as<T, GenerateBlockSymbol>)
+      bindGenerateConditions(symbol);
+    if constexpr (std::same_as<T, CoverCrossSymbol>)
+      bindCrossItems(symbol);
+    if constexpr (std::same_as<T, DefParamSymbol>)
+      bindDefParam(symbol);
+    if constexpr (std::derived_from<T, InstanceSymbolBase>)
+      bindDirectiveTarget(symbol);
+    // Holds no instances, but DPI exports.
+    if constexpr (std::same_as<T, PackageSymbol> || std::same_as<T, CompilationUnitSymbol>)
+      captureScopeConnections(symbol);
+  }
+
+  // The names in the conditions that select a generate block (IEEE 1800-2009
+  // 27.5): no expression of the block holds them, and Slang evaluates none in
+  // a scope that is not instantiated. The blocks of one construct share them.
+  void bindGenerateConditions(const GenerateBlockSymbol& block) {
+    const Scope* scope = block.getParentScope();
+    if (!scope)
+      return;
+    const ASTContext context(*scope, LookupLocation::before(block));
+    const auto bind = [&](const syntax::SyntaxNode& node) {
+      if (boundNames.insert(&node).second)
+        captureNames(node, context);
+    };
+    for (const syntax::SyntaxNode* node = block.getSyntax(); node; node = node->parent) {
+      const syntax::SyntaxNode* parent = node->parent;
+      if (!parent)
+        return;
+      switch (parent->kind) {
+        case syntax::SyntaxKind::IfGenerate:
+          bind(*parent->as<syntax::IfGenerateSyntax>().condition);
+          break;
+        case syntax::SyntaxKind::CaseGenerate:
+          bind(*parent->as<syntax::CaseGenerateSyntax>().condition);
+          break;
+        case syntax::SyntaxKind::StandardCaseItem:
+          for (const auto* item : parent->as<syntax::StandardCaseItemSyntax>().expressions)
+            bind(*item);
+          break;
+        case syntax::SyntaxKind::ElseClause:
+        case syntax::SyntaxKind::DefaultCaseItem:
+          break;
+        default:
+          return;
+      }
+    }
+  }
+
+  // The default of a parameter, which an instance or specialization that
+  // overrides it never binds.
+  template<typename T>
+  void bindParameterDefault(const T& parameter) {
+    const Scope* scope = parameter.getParentScope();
+    if (!scope || !parameter.defaultValSyntax ||
+        !(namesByText || parameter.isOverridden()) ||
+        !boundNames.insert(parameter.defaultValSyntax).second)
+      return;
+    const ASTContext context(*scope, LookupLocation::before(parameter));
+    bindByText([&] { captureNames(*parameter.defaultValSyntax, context); });
   }
 
   // The width of a size cast `w'(x)` (IEEE 1800-2009 6.24.1) is a constant
@@ -4986,16 +5351,13 @@ private:
 
   // Declaration-only capture keeps no expression nodes, so the token of each
   // resolved value reference is bound here instead; full capture derives the
-  // same bindings from its reference nodes. Also used inside invalid subtrees,
-  // which neither mode lowers.
+  // same bindings from its reference nodes. Also used inside invalid subtrees
+  // and unspecialized generic classes, which no mode lowers.
   template<std::derived_from<Expression> T>
-  void bindValueName(const T& expression) {
-    if constexpr (std::same_as<T, NamedValueExpression>) {
-      if (!expression.syntax)
-        bindNameRange(expression.sourceRange, expression.symbol);
-    }
+  LLG_NOINLINE void bindUncapturedNames(const T& expression) {
     bindValueNameToken(expression, false);
     captureTypeNameReference(expression);
+    bindNameTokens(expression);
   }
 
   // Binds the value name token of a reference. With `macroArgumentsOnly`
@@ -5007,13 +5369,17 @@ private:
     if constexpr (std::same_as<T, NamedValueExpression> ||
                   std::same_as<T, HierarchicalValueExpression> ||
                   std::same_as<T, MemberAccessExpression>) {
-      if (expression.syntax) {
+      if (!expression.syntax) {
+        if constexpr (std::same_as<T, NamedValueExpression>) {
+          if (!macroArgumentsOnly ||
+              (capture.editor &&
+               capture.sourceManager.isMacroLoc(expression.sourceRange.start())))
+            bindNameRange(expression.sourceRange, expression.symbol);
+        }
+      }
+      else {
         if (const Symbol* target = expression.getSymbolReference()) {
-          // Slang drops redundant parentheses from the expression but keeps
-          // them in its syntax (`(a)` in a macro body such as `((a) + (b))`).
-          const syntax::SyntaxNode* name = expression.syntax;
-          while (name->kind == syntax::SyntaxKind::ParenthesizedExpression)
-            name = name->template as<syntax::ParenthesizedExpressionSyntax>().expression;
+          const syntax::SyntaxNode* name = writtenSyntax(expression);
           auto token = name->getLastToken();
           // A value with member selects (`s.f`) carries the whole dotted
           // name as its syntax; the value is its leading step.
@@ -5025,11 +5391,19 @@ private:
               (!macroArgumentsOnly ||
                capture.macroArgumentSpan(token.location(), token.rawText()) ||
                capture.macroBodySpan(token.location(), token.rawText())))
-            capture.lexicalBinding(token, lexicalTarget(*target),
-                                   LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+            bindReference(token, *target);
         }
       }
     }
+  }
+
+  // Slang drops redundant parentheses from an expression but keeps them in its
+  // syntax (`(a)`).
+  static const syntax::SyntaxNode* writtenSyntax(const Expression& expression) {
+    const syntax::SyntaxNode* written = expression.syntax;
+    while (written && written->kind == syntax::SyntaxKind::ParenthesizedExpression)
+      written = written->as<syntax::ParenthesizedExpressionSyntax>().expression;
+    return written;
   }
 
   // Name tokens no reference node carries, bound in both capture modes:
@@ -5042,10 +5416,14 @@ private:
       if (!expression.syntax)
         bindNameRange(expression.sourceRange, *expression.symbol);
     }
-    if (!expression.syntax)
+    const syntax::SyntaxNode* written =
+        capture.editor ? writtenSyntax(expression) : expression.syntax;
+    if (!written)
       return;
+    if constexpr (std::derived_from<T, AssignmentPatternExpressionBase>)
+      bindPatternType(*written);
     if constexpr (std::same_as<T, NamedValueExpression>) {
-      bindScopeQualifiers(*expression.syntax, expression.symbol);
+      bindScopeQualifiers(*written, expression.symbol);
     }
     else if constexpr (std::same_as<T, StructuredAssignmentPatternExpression>) {
       bindPatternMemberKeys(expression);
@@ -5055,7 +5433,7 @@ private:
       // syntax of their own; their names are steps of the outer select's
       // name, so bind each member step right to left, and the qualifiers.
       std::vector<parsing::Token> names;
-      collectNameTokens(*expression.syntax, names, false);
+      collectNameTokens(*written, names, false);
       size_t index = names.size();
       const Expression* value = &expression;
       while (value->kind == ExpressionKind::MemberAccess) {
@@ -5063,10 +5441,10 @@ private:
         if (index == 0 || names[index - 1].valueText() != access.member.name ||
             access.member.name.empty())
           break;
-        capture.lexicalBinding(names[--index], lexicalTarget(access.member),
-                               LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+        bindReference(names[--index], access.member);
         value = &access.value();
       }
+      bindValueSteps(names, names.size(), &expression);
       const bool membersBound = value->kind != ExpressionKind::MemberAccess;
       while (value->kind == ExpressionKind::MemberAccess)
         value = &value->template as<MemberAccessExpression>().value();
@@ -5074,56 +5452,84 @@ private:
         const Symbol& root = value->template as<NamedValueExpression>().symbol;
         if (membersBound && index > 0 && !root.name.empty() &&
             names[index - 1].valueText() == root.name)
-          capture.lexicalBinding(names[index - 1], lexicalTarget(root),
-                                 LLG_SLANG_LEXICAL_ROLE_REFERENCE);
-        bindScopeQualifiers(*expression.syntax, root);
+          bindReference(names[index - 1], root);
+        bindScopeQualifiers(*written, root);
       }
       else if (value->kind == ExpressionKind::HierarchicalValue && membersBound &&
                index > 0) {
         // `u.p.f`: the hierarchical value `u.p` keeps no syntax here.
         const auto& hierarchical = value->template as<HierarchicalValueExpression>();
         if (names[index - 1].valueText() == hierarchical.symbol.name) {
-          capture.lexicalBinding(names[index - 1], lexicalTarget(hierarchical.symbol),
-                                 LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+          bindReference(names[index - 1], hierarchical.symbol);
           bindHierarchicalSteps(names, index, hierarchical.ref);
+          captureStepSelects(*written);
+        }
+      }
+    }
+    else if constexpr (std::same_as<T, ElementSelectExpression> ||
+                       std::same_as<T, RangeSelectExpression>) {
+      // `gb[0].x[1]`: the hierarchical value keeps no syntax here either.
+      if (!capture.editor)
+        return;
+      const Expression* value = &expression.value();
+      while (value->kind == ExpressionKind::ElementSelect)
+        value = &value->template as<ElementSelectExpression>().value();
+      if (value->kind == ExpressionKind::HierarchicalValue &&
+          !value->syntax && written->kind == syntax::SyntaxKind::ScopedName) {
+        std::vector<parsing::Token> names;
+        collectNameTokens(*written, names, false);
+        const auto& hierarchical = value->template as<HierarchicalValueExpression>();
+        if (!names.empty() && names.back().valueText() == hierarchical.symbol.name) {
+          bindReference(names.back(), hierarchical.symbol);
+          bindHierarchicalSteps(names, names.size(), hierarchical.ref);
+          captureStepSelects(*written);
         }
       }
     }
     else if constexpr (std::same_as<T, HierarchicalValueExpression>) {
-      bindHierarchicalPath(*expression.syntax, expression.ref);
+      bindHierarchicalPath(*written, expression.ref);
     }
     else if constexpr (std::same_as<T, AssertionInstanceExpression>) {
       // A sequence, property or let instance (`p(a)`, `s`; IEEE 1800-2009
       // 16.8, 16.13, 11.13) names its declaration; the node spans the call.
-      const syntax::SyntaxNode* name = expression.syntax;
+      const syntax::SyntaxNode* name = written;
       if (name->kind == syntax::SyntaxKind::InvocationExpression)
         name = name->template as<syntax::InvocationExpressionSyntax>().left;
       const auto token = name->getLastToken();
       if (!expression.symbol.name.empty() &&
           token.valueText() == expression.symbol.name) {
-        capture.lexicalBinding(token, lexicalTarget(expression.symbol),
-                               LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+        bindReference(token, expression.symbol);
         bindScopeQualifiers(*name, expression.symbol);
       }
     }
     else if constexpr (std::same_as<T, ConversionExpression>) {
       bindSizeCastNames(expression);
     }
+    else if constexpr (std::same_as<T, NewClassExpression>) {
+      const Expression* call = capture.editor ? expression.constructorCall() : nullptr;
+      if (call && call->kind == ExpressionKind::Call &&
+          written->kind == syntax::SyntaxKind::NewClassExpression) {
+        const auto& subroutine = call->as<CallExpression>().subroutine;
+        if (const auto* constructor = std::get_if<const SubroutineSymbol*>(&subroutine))
+          bindArgumentNames(
+              written->template as<syntax::NewClassExpressionSyntax>().argList,
+              **constructor);
+      }
+    }
     else if constexpr (std::same_as<T, ArbitrarySymbolExpression>) {
       const Symbol& target = *expression.symbol;
-      const auto token = expression.syntax->getLastToken();
+      const auto token = written->getLastToken();
       if (!target.name.empty() && token.valueText() == target.name)
-        capture.lexicalBinding(token, lexicalTarget(target),
-                               LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+        bindReference(token, target);
       if (expression.hierRef.target)
-        bindHierarchicalPath(*expression.syntax, expression.hierRef);
+        bindHierarchicalPath(*written, expression.hierRef);
       else
-        bindScopeQualifiers(*expression.syntax, target);
+        bindScopeQualifiers(*written, target);
     }
     else if constexpr (std::same_as<T, CallExpression>) {
       // `q.sum() with (item)` wraps the invocation `q.sum()` in the method
       // node, so unwrap both forms until the name itself is reached.
-      const syntax::SyntaxNode* name = expression.syntax;
+      const syntax::SyntaxNode* name = written;
       while (true) {
         if (name->kind == syntax::SyntaxKind::InvocationExpression)
           name = name->template as<syntax::InvocationExpressionSyntax>().left;
@@ -5139,6 +5545,9 @@ private:
         capture.lexicalBinding(token, LLG_SLANG_INVALID_ID,
                                LLG_SLANG_LEXICAL_ROLE_NONE,
                                LLG_SLANG_LEXICAL_SYSTEM_SUBROUTINE);
+        if (capture.editor && isSystemMethodCall(expression) &&
+            !expression.arguments().empty())
+          bindReceiver(*name, expression.arguments()[0]);
         // `std::randomize` (IEEE 1800-2009 18.12) names the built-in std
         // package, which has no source to navigate to: give the qualifier the
         // package kind without a target.
@@ -5170,9 +5579,13 @@ private:
                                LLG_SLANG_LEXICAL_SYSTEM_SUBROUTINE);
       }
       else {
-        capture.lexicalBinding(token, lexicalTarget(*target),
-                               LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+        bindReference(token, *target);
       }
+      bindReceiver(*name, expression.thisClass());
+      if (capture.editor && written->kind == syntax::SyntaxKind::InvocationExpression)
+        bindArgumentNames(
+            written->template as<syntax::InvocationExpressionSyntax>().arguments,
+            *target);
       bindScopeQualifiers(*name, *target);
     }
   }
@@ -5181,7 +5594,7 @@ private:
   // 1800-2009 10.9.2) names a member of the pattern's type; Slang keeps the
   // member but not the key's syntax, so match the written keys by name.
   void bindPatternMemberKeys(const StructuredAssignmentPatternExpression& expression) {
-    if (expression.memberSetters.empty())
+    if (expression.memberSetters.empty() && !capture.editor)
       return;
     const syntax::SyntaxNode* pattern = expression.syntax;
     if (pattern->kind == syntax::SyntaxKind::AssignmentPatternExpression)
@@ -5194,13 +5607,111 @@ private:
         continue;
       const parsing::Token key =
           item->key->as<syntax::IdentifierNameSyntax>().identifier;
+      bool member = false;
       for (const auto& setter : expression.memberSetters) {
         if (setter.member->name == key.valueText()) {
-          capture.lexicalBinding(key, lexicalTarget(*setter.member),
-                                 LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+          bindReference(key, *setter.member);
+          member = true;
           break;
         }
       }
+      // Any other key names a type (`'{t: 1}`) or is an index expression.
+      if (!member && capture.editor && !expression.typeSetters.empty()) {
+        if (const auto context = lookupContext())
+          captureNames(*item->key, *context);
+      }
+    }
+  }
+
+  // The type of an assignment pattern (`t'{...}`), which no expression holds.
+  void bindPatternType(const syntax::SyntaxNode& pattern) {
+    if (!capture.editor || pattern.kind != syntax::SyntaxKind::AssignmentPatternExpression)
+      return;
+    const auto* type = pattern.as<syntax::AssignmentPatternExpressionSyntax>().type;
+    if (!type)
+      return;
+    if (const auto context = lookupContext())
+      captureNames(*type, *context);
+  }
+
+  // The coverpoints of a cross (IEEE 1800-2009 19.6).
+  void bindCrossItems(const CoverCrossSymbol& cross) {
+    const syntax::SyntaxNode* syntaxNode = cross.getSyntax();
+    if (!syntaxNode || syntaxNode->kind != syntax::SyntaxKind::CoverCross)
+      return;
+    for (const syntax::NameSyntax* item : syntaxNode->as<syntax::CoverCrossSyntax>().items) {
+      const parsing::Token token = item->getLastToken();
+      for (const CoverpointSymbol* target : cross.targets) {
+        // A variable named as an item declares a coverpoint of that name.
+        if (target->name == token.valueText() && target->location != token.location()) {
+          bindReference(token, *target);
+          break;
+        }
+      }
+    }
+  }
+
+  // The hierarchical name of a defparam (IEEE 1800-2009 23.10.1).
+  void bindDefParam(const DefParamSymbol& symbol) {
+    const syntax::SyntaxNode* syntaxNode = symbol.getSyntax();
+    const Scope* scope = symbol.getParentScope();
+    if (!scope || !syntaxNode ||
+        syntaxNode->kind != syntax::SyntaxKind::DefParamAssignment)
+      return;
+    const ASTContext context(*scope, LookupLocation::before(symbol));
+    const auto& name = *syntaxNode->as<syntax::DefParamAssignmentSyntax>().name;
+    if (!bindLookupName(name, context))
+      unelaboratedNames.emplace_back(&name, scope);
+    captureSelects(name, context);
+  }
+
+  // The target of a bind directive (IEEE 1800-2009 23.11): a definition, or
+  // the hierarchical name of an instance.
+  void bindDirectiveTarget(const InstanceSymbolBase& instance) {
+    const syntax::SyntaxNode* syntaxNode = instance.getSyntax();
+    const Scope* scope = instance.getParentScope();
+    if (!syntaxNode || !scope ||
+        syntaxNode->kind != syntax::SyntaxKind::HierarchicalInstance || !syntaxNode->parent ||
+        !syntaxNode->parent->parent ||
+        syntaxNode->parent->parent->kind != syntax::SyntaxKind::BindDirective)
+      return;
+    const auto& directive = syntaxNode->parent->parent->as<syntax::BindDirectiveSyntax>();
+    const auto bindInstance = [&](const syntax::NameSyntax& name) {
+      std::vector<parsing::Token> names;
+      collectNameTokens(name, names, false);
+      const Symbol* step = &scope->asSymbol();
+      for (size_t index = names.size(); index-- > 0;) {
+        // The body of an instance and an element of an array have no name.
+        while (step) {
+          if (step->kind == SymbolKind::InstanceBody)
+            step = step->as<InstanceBodySymbol>().parentInstance;
+          else if (const Scope* parent = step->getParentScope(); parent && step->name.empty())
+            step = &parent->asSymbol();
+          else
+            break;
+        }
+        if (!step || step->name != names[index].valueText())
+          return;
+        bindReference(names[index], *step);
+        const Scope* parent = step->getParentScope();
+        if (!parent)
+          return;
+        step = &parent->asSymbol();
+      }
+    };
+    const DefinitionSymbol* definition =
+        scope->asSymbol().kind == SymbolKind::InstanceBody
+            ? &scope->asSymbol().as<InstanceBodySymbol>().getDefinition()
+            : nullptr;
+    const parsing::Token target = directive.target->getLastToken();
+    if (definition && directive.target->kind == syntax::SyntaxKind::IdentifierName &&
+        definition->name == target.valueText())
+      bindReference(target, *definition);
+    else
+      bindInstance(*directive.target);
+    if (directive.targetInstances) {
+      for (const syntax::NameSyntax* name : directive.targetInstances->targets)
+        bindInstance(*name);
     }
   }
 
@@ -5240,6 +5751,10 @@ private:
   // hierarchically; its operand expression keeps no syntax, the statement does.
   template<std::derived_from<Statement> T>
   void bindStatementNames(const T& statement) {
+    if (capture.editor && statement.syntax) {
+      if (const auto context = lookupContext())
+        bindAttributeNames(context->getCompilation().getAttributes(statement), *context);
+    }
     if constexpr (std::same_as<T, DisableStatement>) {
       if (!statement.syntax ||
           statement.syntax->kind != syntax::SyntaxKind::DisableStatement ||
@@ -5249,8 +5764,7 @@ private:
       const auto& target = statement.target.template as<ArbitrarySymbolExpression>();
       const auto token = name.getLastToken();
       if (token.valueText() == target.symbol->name)
-        capture.lexicalBinding(token, lexicalTarget(*target.symbol),
-                               LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+        bindReference(token, *target.symbol);
       if (target.hierRef.target)
         bindHierarchicalPath(name, target.hierRef);
     }
@@ -5258,20 +5772,41 @@ private:
 
   // An expression Slang builds inside a larger name (the value of `s.f`, a
   // symbol operand) keeps no syntax. Its range is its name token exactly when
-  // the name is one identifier spelled as the symbol's name.
+  // the name is one identifier spelled as the symbol's name. In a macro
+  // argument, where no reference node binds it, the range starts with it.
   void bindNameRange(SourceRange range, const Symbol& target) {
-    if (target.name.empty() || !range.start().valid() ||
-        !capture.sourceManager.isFileLoc(range.start()) ||
-        range.start().buffer() != range.end().buffer() ||
-        range.end().offset() - range.start().offset() != target.name.size())
+    const size_t length = target.name.size();
+    if (length == 0 || !range.start().valid())
       return;
-    const std::string_view text =
-        capture.sourceManager.getSourceText(range.start().buffer());
-    if (range.end().offset() > text.size() ||
-        text.substr(range.start().offset(), target.name.size()) != target.name)
+    std::optional<LlgSlangSourceRange> written;
+    if (capture.sourceManager.isFileLoc(range.start())) {
+      if (range.start().buffer() != range.end().buffer() ||
+          range.end().offset() - range.start().offset() != length)
+        return;
+      const std::string_view text =
+          capture.sourceManager.getSourceText(range.start().buffer());
+      if (range.end().offset() <= text.size() &&
+          text.substr(range.start().offset(), length) == target.name)
+        written = capture.span(range);
+    }
+    else if (auto argument = capture.editor
+                 ? capture.macroArgumentSpan(range.start(), target.name)
+                 : std::nullopt) {
+      const SourceLocation start =
+          capture.sourceManager.getFullyOriginalLoc(range.start());
+      const std::string_view text = capture.sourceManager.getSourceText(start.buffer());
+      const size_t end = start.offset() + length;
+      const char next = end < text.size() ? text[end] : ' ';
+      if (next != '_' && next != '$' && !std::isalnum(static_cast<unsigned char>(next)))
+        written = argument;
+    }
+    if (!written)
       return;
-    capture.lexicalBinding(range, lexicalTarget(target),
-                           LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+    if (namesByText)
+      capture.nameRepeat(capture.nameSpan(target), *written);
+    else
+      capture.lexicalBinding(*written, lexicalTarget(target),
+                             LLG_SLANG_LEXICAL_ROLE_REFERENCE);
   }
 
   // The value step of a name: Slang nests scoped names to the left, so member
@@ -5341,8 +5876,7 @@ private:
     // A name a macro builds is not spelled at its token; leave it unbound.
     if (!package || item.package.valueText() != package->name)
       return;
-    capture.lexicalBinding(item.package, lexicalTarget(*package),
-                           LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+    bindReference(item.package, *package);
     if constexpr (std::same_as<T, ExplicitImportSymbol>) {
       const Symbol* imported = symbol.importedSymbol();
       // An enum value is visible in its package through a transparent
@@ -5350,8 +5884,7 @@ private:
       if (imported && imported->kind == SymbolKind::TransparentMember)
         imported = &imported->template as<TransparentMemberSymbol>().wrapped;
       if (imported && item.item.valueText() == imported->name)
-        capture.lexicalBinding(item.item, lexicalTarget(*imported),
-                               LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+        bindReference(item.item, *imported);
     }
   }
 
@@ -5380,18 +5913,43 @@ private:
     for (auto token = qualifiers.rbegin(); token != qualifiers.rend(); ++token) {
       while (scope && scope->asSymbol().name != token->valueText())
         scope = scope->asSymbol().getParentScope();
-      if (!scope)
+      const Symbol* qualifier =
+          scope ? &scope->asSymbol() : typedefQualifier(*scoped.left, *token);
+      if (!qualifier || qualifier->kind == SymbolKind::CompilationUnit ||
+          qualifier->kind == SymbolKind::Root)
         return;
-      const Symbol& qualifier = scope->asSymbol();
-      if (qualifier.kind == SymbolKind::CompilationUnit ||
-          qualifier.kind == SymbolKind::Root)
-        return;
-      capture.lexicalBinding(*token, lexicalTarget(qualifier),
-                             LLG_SLANG_LEXICAL_ROLE_REFERENCE);
-      if (qualifier.kind == SymbolKind::ClassType)
-        bindSpecializationValues(qualifier.as<ClassType>(), *scoped.left);
-      scope = qualifier.getParentScope();
+      bindReference(*token, *qualifier);
+      if (qualifier->kind == SymbolKind::ClassType)
+        bindSpecializationValues(qualifier->as<ClassType>(), *scoped.left);
+      scope = qualifier->getParentScope();
     }
+  }
+
+  // A qualifier (the one that ends in `token`, of those of `names`) that names
+  // its class through a typedef or a type parameter (`C::type_id::create`),
+  // looked up in the context of the symbol or block being visited.
+  const Symbol* typedefQualifier(const syntax::NameSyntax& names, parsing::Token token) {
+    const auto context = capture.editor ? lookupContext() : std::nullopt;
+    if (!context)
+      return nullptr;
+    const syntax::NameSyntax* qualifier = &names;
+    while (true) {
+      std::vector<parsing::Token> tokens;
+      collectNameTokens(*qualifier, tokens, true);
+      if (!tokens.empty() && tokens.back().location() == token.location())
+        break;
+      if (qualifier->kind != syntax::SyntaxKind::ScopedName)
+        return nullptr;
+      qualifier = qualifier->as<syntax::ScopedNameSyntax>().left;
+    }
+    LookupResult result;
+    Lookup::name(*qualifier, *context, LookupFlags::None, result);
+    if (!result.found || result.hasError() || result.found->name != token.valueText())
+      return nullptr;
+    return result.found->kind == SymbolKind::TypeAlias ||
+                   result.found->kind == SymbolKind::TypeParameter
+               ? result.found
+               : nullptr;
   }
 
   // The value parameter assignments of a class specialization `C#(e)::name`
@@ -5448,6 +6006,17 @@ private:
     std::vector<parsing::Token> names;
     collectNameTokens(syntaxNode, names, false);
     bindHierarchicalSteps(names, names.size(), ref);
+    captureStepSelects(syntaxNode);
+  }
+
+  // The names in the index expressions of the steps of a hierarchical name
+  // (`gb[N - 1].x`), which Slang evaluates and discards. Those of its last
+  // step select from the value and are expressions.
+  void captureStepSelects(const syntax::SyntaxNode& name) {
+    if (!capture.editor || name.kind != syntax::SyntaxKind::ScopedName)
+      return;
+    if (const auto context = lookupContext())
+      captureSelects(*name.as<syntax::ScopedNameSyntax>().left, *context);
   }
 
   // Binds `names[0, count - 1)`, the steps before the reference's own name
@@ -5465,9 +6034,7 @@ private:
         const auto& element = ref.path[--step];
         const auto* selector = std::get_if<std::string_view>(&element.selector);
         if (selector && *selector == text && !text.empty()) {
-          capture.lexicalBinding(names[index],
-                                 lexicalTarget(*element.symbol),
-                                 LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+          bindReference(names[index], *element.symbol);
           break;
         }
       }
@@ -5492,15 +6059,15 @@ private:
     void handle(const T& expression) {
       // Full capture describes a reference target where it captures the
       // reference; no node is captured here, so describe it as that would.
-      if (!owner.capture.declarationOnly) {
+      if (!owner.capture.declarationOnly && !owner.namesByText) {
         if (const Symbol* target = expression.getSymbolReference())
           owner.describeReferenceTarget(*target);
       }
-      owner.bindValueName(expression);
-      owner.bindNameTokens(expression);
+      owner.bindUncapturedNames(expression);
       if constexpr (std::same_as<T, InvalidExpression>) {
         if (expression.child)
           expression.child->visit(*this);
+        owner.bindInvalidNames(expression);
       }
       else {
         visitDefault(expression);
@@ -5515,7 +6082,13 @@ private:
           statement.child->visit(*this);
       }
       else {
+        const Symbol* outer = owner.lookupOwner;
+        if constexpr (std::same_as<T, BlockStatement>) {
+          if (statement.blockSymbol)
+            owner.lookupOwner = statement.blockSymbol;
+        }
         visitDefault(statement);
+        owner.lookupOwner = outer;
       }
     }
 
@@ -5547,6 +6120,127 @@ private:
     child->visit(names);
   }
 
+  // Slang keeps none of the operands of some expressions that failed to bind
+  // (`ghost(x)`, `{x, ghost}`), and not the syntax of others (a call with a
+  // wrong argument). Their names are looked up where they are written.
+  void bindInvalidNames(const InvalidExpression& expression) {
+    const syntax::SyntaxNode* written = writtenSyntax(expression);
+    if (!capture.editor || !written || (expression.child && expression.child->syntax))
+      return;
+    const auto context = lookupContext();
+    if (!context)
+      return;
+    auto visitor = syntax::makeSyntaxVisitor(
+        [&](auto&, const syntax::NameSyntax& name) { captureNames(name, *context); },
+        // The names of a `with` clause belong to a scope of its own.
+        [](auto& self, const syntax::ArrayOrRandomizeMethodExpressionSyntax& call) {
+          call.method->visit(self);
+        });
+    written->visit(visitor);
+  }
+
+  // The names of a generic class (IEEE 1800-2009 8.25) that nothing
+  // specializes, so no scope of it is captured. Slang resolves them in a
+  // specialization with invalid parameters, as its own checks of the class do;
+  // what depends on the parameters stays unresolved. Nothing of it becomes a
+  // semantic node.
+  class UnspecializedNames final
+      : public ASTVisitor<UnspecializedNames, VisitFlags::AllGood | VisitFlags::Bad> {
+  public:
+    explicit UnspecializedNames(SemanticCapture& owner) : owner(owner) {}
+
+    template<std::derived_from<Symbol> T>
+    void handle(const T& symbol) {
+      if constexpr (std::same_as<T, TransparentMemberSymbol>)
+        owner.declareByText(symbol.wrapped);
+      else
+        owner.declareByText(symbol);
+      if constexpr (std::same_as<T, GenericClassDefSymbol>) {
+        owner.captureUnspecialized(symbol);
+      }
+      else {
+        const Symbol* outer = std::exchange(owner.lookupOwner, &symbol);
+        visitDefault(symbol);
+        owner.lookupOwner = outer;
+      }
+      owner.captureSourceReferences(symbol);
+      if constexpr (std::same_as<T, ClassType>)
+        owner.bindClassHeader(symbol);
+      if constexpr (std::same_as<T, ParameterSymbol> ||
+                    std::same_as<T, TypeParameterSymbol>)
+        owner.bindParameterDefault(symbol);
+      if constexpr (std::same_as<T, SubroutineSymbol> ||
+                    std::same_as<T, ConstraintBlockSymbol>)
+        owner.bindDefinitionQualifiers(symbol);
+    }
+
+    template<std::derived_from<Expression> T>
+    void handle(const T& expression) {
+      owner.bindUncapturedNames(expression);
+      if constexpr (std::same_as<T, InvalidExpression>) {
+        if (expression.child)
+          expression.child->visit(*this);
+        owner.bindInvalidNames(expression);
+      }
+      else {
+        visitDefault(expression);
+      }
+    }
+
+    template<std::derived_from<Statement> T>
+    void handle(const T& statement) {
+      owner.bindStatementNames(statement);
+      if constexpr (std::same_as<T, InvalidStatement>) {
+        if (statement.child)
+          statement.child->visit(*this);
+      }
+      else {
+        const Symbol* outer = owner.lookupOwner;
+        if constexpr (std::same_as<T, BlockStatement>) {
+          if (statement.blockSymbol)
+            owner.lookupOwner = statement.blockSymbol;
+        }
+        visitDefault(statement);
+        owner.lookupOwner = outer;
+      }
+    }
+
+    void handle(const InvalidTimingControl& timing) {
+      if (timing.child)
+        timing.child->visit(*this);
+    }
+
+    void handle(const InvalidAssertionExpr& expression) {
+      if (expression.child)
+        expression.child->visit(*this);
+    }
+
+  private:
+    SemanticCapture& owner;
+  };
+
+  void captureUnspecialized(const GenericClassDefSymbol& generic) {
+    if (!capture.editor || generic.numSpecializations() != 0 ||
+        !boundNames.insert(generic.getSyntax()).second)
+      return;
+    const Type& type = generic.getInvalidSpecialization();
+    if (type.isError())
+      return;
+    UnspecializedNames names(*this);
+    bindByText([&] { type.visit(names); });
+  }
+
+  // The written name that declares a symbol without a semantic node.
+  void declareByText(const Symbol& symbol) {
+    LlgSlangSemanticNode node{};
+    node.kind = semanticSymbolKind(symbol.kind);
+    const std::string_view detail = toString(symbol.kind);
+    node.detail = {reinterpret_cast<const uint8_t*>(detail.data()), detail.size()};
+    const uint32_t kind = lexicalKindForSemantic(node);
+    if (kind != LLG_SLANG_LEXICAL_IDENTIFIER)
+      capture.nameDeclaration(capture.nameSpan(symbol), kind);
+  }
+
   // An event control or assertion expression in which one name failed to
   // bind (`@(a or ghost)`, `@(posedge clk iff ghost)`) is wrapped, like an
   // invalid statement, in an Invalid node whose child no visitor enters, so
@@ -5561,18 +6255,184 @@ private:
   void captureNames(const syntax::SyntaxNode& syntaxNode, const ASTContext& context) {
     auto visitor = syntax::makeSyntaxVisitor(
         [&](auto&, const syntax::NameSyntax& name) {
+          if (capture.editor) {
+            captureEditorName(name, context);
+            return;
+          }
           LookupResult result;
           Lookup::name(name, context, LookupFlags::None, result);
           if (!result.found || result.hasError() || !result.selectors.empty())
             return;
           const auto token = name.getLastToken();
-          if (token.valueText() == result.found->name) {
-            capture.lexicalBinding(token, captureReferenceTarget(*result.found),
-                                   LLG_SLANG_LEXICAL_ROLE_REFERENCE);
-            bindScopeQualifiers(name, *result.found);
-          }
+          if (token.valueText() == result.found->name)
+            bindFoundName(name, token, *result.found);
         });
     syntaxNode.visit(visitor);
+  }
+
+  void bindFoundName(const syntax::NameSyntax& name, parsing::Token token,
+                     const Symbol& found) {
+    capture.lexicalBinding(token, captureReferenceTarget(found),
+                           LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+    bindScopeQualifiers(name, found);
+  }
+
+  LLG_NOINLINE void captureEditorName(const syntax::NameSyntax& name,
+                                      const ASTContext& context) {
+    // The lookup of a generic class name alone makes no specialization.
+    if (name.kind == syntax::SyntaxKind::ClassName) {
+      const auto token = name.as<syntax::ClassNameSyntax>().identifier;
+      const Symbol* found = Lookup::unqualifiedAt(*context.scope, token.valueText(),
+                                                  context.getLocation(), token.range());
+      if (found && found->name == token.valueText())
+        capture.nameReference(token, *found);
+      captureClassArguments(name, context);
+      return;
+    }
+    LookupResult result;
+    Lookup::name(name, context, LookupFlags::None, result);
+    captureClassArguments(name, context);
+    if (!result.found) {
+      if (!namesByText && name.kind == syntax::SyntaxKind::ScopedName)
+        unelaboratedNames.emplace_back(&name, context.scope.get());
+      return;
+    }
+    if (result.hasError())
+      return;
+    if (!result.selectors.empty()) {
+      bindSelectedName(name, result, context);
+      return;
+    }
+    const auto token = name.getLastToken();
+    const Symbol& found = *result.found;
+    if (token.valueText() == found.name) {
+      if (!visibleAt(token, found))
+        return;
+      if (namesByText) {
+        capture.nameReference(token, found);
+        bindScopeQualifiers(name, found);
+      }
+      else {
+        bindFoundName(name, token, found);
+      }
+    }
+    else if (found.isType()) {
+      // `pkg::C #(...)` ends in its parameter assignments.
+      bindByText([&] { bindTypeName(name, found.as<Type>(), context); });
+    }
+  }
+
+  // A hierarchical name through an instance that is not elaborated (`u.x` in
+  // the untaken branch of a generate construct) leads into the captured body
+  // of its definition.
+  void bindUnelaboratedName(Compilation& compilation, const syntax::NameSyntax& name,
+                            const Scope& scope) {
+    std::vector<parsing::Token> tokens;
+    collectNameTokens(name, tokens, false);
+    const Symbol* symbol =
+        tokens.empty() ? nullptr : Lookup::unqualified(scope, tokens[0].valueText());
+    if (!symbol || (symbol->kind != SymbolKind::UninstantiatedDef &&
+                    symbol->kind != SymbolKind::GenerateBlock))
+      return;
+    bindReference(tokens[0], *symbol);
+    for (size_t index = 1; index < tokens.size(); index++) {
+      const Scope* members = nullptr;
+      if (symbol->kind == SymbolKind::UninstantiatedDef) {
+        const Scope* parent = symbol->getParentScope();
+        const auto* definition = parent
+            ? compilation
+                  .tryGetDefinition(symbol->as<UninstantiatedDefSymbol>().definitionName,
+                                    *parent)
+                  .definition
+            : nullptr;
+        const auto found =
+            definition ? sourceBodies.find(definition->getSyntax()) : sourceBodies.end();
+        members = found == sourceBodies.end() ? nullptr : found->second;
+      }
+      else if (symbol->kind == SymbolKind::Instance) {
+        members = &symbol->as<InstanceSymbol>().body;
+      }
+      else if (symbol->kind == SymbolKind::GenerateBlock) {
+        members = &symbol->as<GenerateBlockSymbol>();
+      }
+      else if (ValueSymbol::isKind(symbol->kind)) {
+        members = symbol->as<ValueSymbol>().getType().getCanonicalType().as_if<Scope>();
+      }
+      symbol = members ? members->find(tokens[index].valueText()) : nullptr;
+      if (!symbol)
+        return;
+      bindReference(tokens[index], *symbol);
+    }
+  }
+
+  // A name that selects from the value it names (`v[i].f`): the value, the
+  // members and the names in the index expressions.
+  void bindSelectedName(const syntax::NameSyntax& name, const LookupResult& result,
+                        const ASTContext& context) {
+    const Symbol& found = *result.found;
+    std::vector<parsing::Token> tokens;
+    collectNameTokens(name, tokens, false);
+    const auto bindAt = [&](SourceLocation location, const Symbol& symbol) {
+      for (const parsing::Token& token : tokens) {
+        if (token.location() == location && token.valueText() == symbol.name) {
+          bindReference(token, symbol);
+          return;
+        }
+      }
+    };
+    captureSelects(name, context);
+    if (!visibleAt(name.getFirstToken(), found))
+      return;
+    bindLookupName(name, context);
+    const Type* type =
+        ValueSymbol::isKind(found.kind) ? &found.as<ValueSymbol>().getType() : nullptr;
+    for (const auto& selector : result.selectors) {
+      if (!type)
+        return;
+      const Type& canonical = type->getCanonicalType();
+      const auto* member = std::get_if<LookupResult::MemberSelector>(&selector);
+      if (!member) {
+        type = canonical.isArray() ? canonical.getArrayElementType() : nullptr;
+        continue;
+      }
+      const Scope* members = canonical.as_if<Scope>();
+      const Symbol* field = members ? members->find(member->name) : nullptr;
+      if (field && field->kind == SymbolKind::TransparentMember)
+        field = &field->as<TransparentMemberSymbol>().wrapped;
+      if (!field)
+        return;
+      bindAt(member->nameRange.start(), *field);
+      type = ValueSymbol::isKind(field->kind) ? &field->as<ValueSymbol>().getType() : nullptr;
+    }
+  }
+
+  // The names in the index expressions of a name's selects.
+  void captureSelects(const syntax::SyntaxNode& name, const ASTContext& context) {
+    if (name.kind == syntax::SyntaxKind::ScopedName) {
+      const auto& scoped = name.as<syntax::ScopedNameSyntax>();
+      captureSelects(*scoped.left, context);
+      captureSelects(*scoped.right, context);
+    }
+    else if (name.kind == syntax::SyntaxKind::IdentifierSelectName) {
+      for (const syntax::ElementSelectSyntax* select :
+           name.as<syntax::IdentifierSelectNameSyntax>().selectors)
+        captureNames(*select, context);
+    }
+  }
+
+  // Whether a value that a lookup found is visible where it is named. A lookup
+  // for names that Slang binds in a scope's connections sees the whole scope,
+  // and a name may only be used after its declaration (IEEE 1800-2009 6.5);
+  // class members (8.6) may be named before theirs.
+  bool visibleAt(parsing::Token token, const Symbol& symbol) const {
+    if (!ValueSymbol::isKind(symbol.kind))
+      return true;
+    const Scope* scope = symbol.getParentScope();
+    if (!scope || scope->asSymbol().kind == SymbolKind::ClassType)
+      return true;
+    return !capture.sourceManager
+                .isBeforeInCompilationUnit(token.location(), symbol.location)
+                .value_or(false);
   }
 
   // The names written in a sequence, property or let declaration (IEEE
@@ -5599,17 +6459,17 @@ private:
   // `dut.bridge_mode`, `s.f`) looked up in `context`: the token of the
   // symbol found, its scope qualifiers and its hierarchical path steps.
   // Member names after the found symbol stay to the expression bindings of
-  // the instances.
-  void bindLookupName(const syntax::NameSyntax& name, const ASTContext& context) {
+  // the instances. Returns whether the name was found.
+  bool bindLookupName(const syntax::NameSyntax& name, const ASTContext& context) {
     LookupResult result;
     Lookup::name(name, context, LookupFlags::None, result);
     if (!result.found || result.hasError())
-      return;
+      return false;
     const Symbol* found = result.found;
     if (found->kind == SymbolKind::TransparentMember)
       found = &found->as<TransparentMemberSymbol>().wrapped;
     if (found->name.empty())
-      return;
+      return true;
     std::vector<parsing::Token> tokens;
     collectNameTokens(name, tokens, false);
     // The found symbol's token is the last one inside the part of the name
@@ -5623,9 +6483,8 @@ private:
         count--;
     }
     if (count == 0 || tokens[count - 1].valueText() != found->name)
-      return;
-    capture.lexicalBinding(tokens[count - 1], lexicalTarget(*found),
-                           LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+      return true;
+    bindReference(tokens[count - 1], *found);
     if (!result.path.empty()) {
       HierarchicalReference reference;
       reference.target = found;
@@ -5636,6 +6495,7 @@ private:
     else {
       bindScopeQualifiers(name, *found);
     }
+    return true;
   }
 
   // Binds every name written in a syntax subtree by looking it up in one
@@ -5687,6 +6547,11 @@ private:
     const ASTContext& context;
   };
 
+  // Syntax already bound by text (`namesByText`): every specialization of a
+  // generic class holds it.
+  std::unordered_set<const syntax::SyntaxNode*> boundNames;
+  bool namesByText = false;
+
   // Sequence, property and let declarations already bound
   // (bindAssertionDeclarationNames).
   std::unordered_set<const syntax::SyntaxNode*> assertionDeclarations;
@@ -5707,6 +6572,14 @@ private:
         },
         [](auto& self, const syntax::GenerateRegionSyntax& region) {
           self.visitDefault(region);
+        },
+        // The subroutine a DPI export names (IEEE 1800-2009 35.7).
+        [&](auto&, const syntax::DPIExportSyntax& exported) {
+          if (!capture.editor)
+            return;
+          const Symbol* found = Lookup::unqualified(scope, exported.name.valueText());
+          if (found && found->kind == SymbolKind::Subroutine)
+            bindReference(exported.name, *found);
         },
         [](auto&, const syntax::MemberSyntax&) {});
     // Nested generate / module scopes are captured with their own symbol tables.
@@ -6173,10 +7046,19 @@ private:
 
   std::unordered_map<const RandSeqProductionSymbol*, const VariableSymbol*> productionResults;
 
-  // The definition facts of a package in its node's auxiliary, in the
-  // layout of an instance's (IEEE 1800-2009 37.10). `celldefine tags only
-  // modules (22.10) and `unconnected_drive pulls only module, program and
-  // interface ports (22.9), so a package is never a cell and never pulled.
+  // The names in the values of attributes (IEEE 1800-2009 5.12).
+  void bindAttributeNames(std::span<const AttributeSymbol* const> attributes,
+                          const ASTContext& context) {
+    for (const AttributeSymbol* attribute : attributes) {
+      const syntax::SyntaxNode* spec = attribute->getSyntax();
+      if (!spec || spec->kind != syntax::SyntaxKind::AttributeSpec ||
+          !boundNames.insert(spec).second)
+        continue;
+      if (const auto* value = spec->as<syntax::AttributeSpecSyntax>().value)
+        captureNames(*value, context);
+    }
+  }
+
   // Records the attribute instances of `symbol` (IEEE 1800-2009 5.12) for
   // owner `id`, in source order; Slang keeps the last of a repeated name.
   void captureAttributes(uint64_t id, const Symbol& symbol) {
@@ -6202,6 +7084,10 @@ private:
     }
   }
 
+  // The definition facts of a package in its node's auxiliary, in the
+  // layout of an instance's (IEEE 1800-2009 37.10). `celldefine tags only
+  // modules (22.10) and `unconnected_drive pulls only module, program and
+  // interface ports (22.9), so a package is never a cell and never pulled.
   static void addPackageDefinition(LlgSlangSemanticNode& result, const PackageSymbol& symbol) {
     if (symbol.defaultLifetime == VariableLifetime::Automatic)
       result.auxiliary |= LLG_SLANG_INSTANCE_AUTOMATIC;
@@ -6215,9 +7101,11 @@ private:
   // Instance bodies and generate blocks being captured, innermost last.
   std::vector<const Scope*> disableScopes;
   std::vector<bool> visited;
-  std::unordered_set<const syntax::SyntaxNode*> sourceBodies;
+  std::unordered_map<const syntax::SyntaxNode*, const InstanceBodySymbol*> sourceBodies;
   std::unordered_set<const syntax::SyntaxNode*> sourceGenerateBlocks;
-  std::vector<const UninstantiatedDefSymbol*> sourceConnections;
+  std::map<uint64_t, const Symbol*> unvisitedTargets;
+  std::vector<std::pair<const syntax::NameSyntax*, const Scope*>> unelaboratedNames;
+  std::vector<const UninstantiatedDefSymbol*> uninstantiated;
   // Import declarations (node ID, symbol) in capture order; captureImports
   // resolves their used items once every lookup has run.
   std::vector<std::pair<uint64_t, const Symbol*>> importSites;
@@ -8300,9 +9188,342 @@ uint32_t lexicalKindForSemantic(const LlgSlangSemanticNode& node) {
   }
 }
 
+// The text macros that a compilation's directives define, the written names
+// that resolve to them and the files that `include directives name
+// (LlgSlangMacroDefinition, LlgSlangMacroReference, LlgSlangInclude). Fed by
+// the lexical walk with every directive and macro use of a tree in the order
+// the preprocessor met them; the resolution rules are those of
+// Preprocessor::handleDefineDirective, handleUndefDirective and undefineAll.
+class MacroCapture {
+public:
+  MacroCapture(Capture& capture, SourceManager& sources, const Bag& parseOptions,
+               const std::unordered_map<std::string, uint64_t>& sourcePaths)
+      : capture(capture), sources(sources), sourcePaths(sourcePaths),
+        options(parseOptions.getOrDefault<parsing::PreprocessorOptions>()),
+        legacyProtect(parseOptions.getOrDefault<parsing::LexerOptions>().enableLegacyProtect) {}
+
+  void define(const syntax::DefineDirectiveSyntax& syntax) {
+    const std::string_view name = syntax.name.valueText();
+    if (syntax.name.isMissing() || name.empty() ||
+        parsing::LexerFacts::getDirectiveKind(name, legacyProtect) !=
+            syntax::SyntaxKind::MacroUsage)
+      return;
+    // A built-in or request define takes precedence until it is undefined.
+    if (!current.contains(name) && isPredefined(name))
+      return;
+    current[name] = definition(syntax);
+    version++;
+  }
+
+  void undef(parsing::Token name) {
+    reference(name, name.valueText(), LLG_SLANG_MACRO_UNDEF);
+    if (name.isMissing() || isBuiltIn(name.valueText()))
+      return;
+    current[name.valueText()] = kUndefined;
+    version++;
+  }
+
+  void undefineAll() {
+    current.clear();
+    version++;
+  }
+
+  void test(parsing::Token name) {
+    reference(name, name.valueText(), LLG_SLANG_MACRO_TEST);
+  }
+
+  static bool isUse(parsing::Token token) {
+    return token.kind == parsing::TokenKind::Directive &&
+           token.directiveKind() == syntax::SyntaxKind::MacroUsage;
+  }
+
+  void use(parsing::Token token) {
+    const uint64_t target =
+        reference(token, usedName(token), LLG_SLANG_MACRO_USE);
+    if (target < kFirstSpecial)
+      expand(target);
+  }
+
+  // The directive's operand, resolved by the source manager exactly as the
+  // preprocessor resolved it; a header guard that skipped the file does not
+  // change what the operand names.
+  void include(const syntax::IncludeDirectiveSyntax& syntax) {
+    const parsing::Token operand = syntax.fileName;
+    const std::string_view path = operand.valueText();
+    if (operand.isMissing() || path.size() < 3 || !syntax.directive.location().valid())
+      return;
+    const auto range = written(operand);
+    if (!range)
+      return;
+    const auto buffer = sources.readHeader(
+        path.substr(1, path.size() - 2), syntax.directive.location(),
+        sources.getLibraryFor(syntax.directive.location().buffer()), path[0] == '<',
+        options.additionalIncludePaths);
+    if (!buffer)
+      return;
+    const auto file = sourcePaths.find(sources.getFullPath(buffer->id).generic_string());
+    if (file == sourcePaths.end())
+      return;
+    chargeRecord(capture.output, sizeof(LlgSlangInclude));
+    capture.output.includes.push_back({*range, file->second});
+  }
+
+  // Ends one tree: the next one starts from the predefined macros. A name in
+  // the body of a macro that no use of the tree expanded keeps what the
+  // directive saw, or else the macro that the rest of the tree defined.
+  void finishTree() {
+    for (const uint64_t id : treeDefinitions) {
+      for (BodyUse& use : bodies[static_cast<size_t>(id)].uses) {
+        if (!use.targets.empty())
+          continue;
+        const uint64_t late =
+            use.atDirective != kUndefined ? use.atDirective : resolve(use.name);
+        if (late != kUndefined)
+          use.targets.push_back(late);
+      }
+    }
+    treeDefinitions.clear();
+    undefineAll();
+  }
+
+  void finish() {
+    for (const Body& body : bodies) {
+      for (const BodyUse& use : body.uses) {
+        if (use.range.file_id == LLG_SLANG_INVALID_ID)
+          continue;
+        for (const uint64_t target : use.targets)
+          push(use.range, target, LLG_SLANG_MACRO_USE);
+      }
+    }
+    const auto referenceKey = [](const LlgSlangMacroReference& record) {
+      return std::tie(record.range.file_id, record.range.start, record.range.end,
+                      record.kind, record.definition_id);
+    };
+    sortDistinct(capture.output.macro_references, referenceKey);
+    sortDistinct(capture.output.includes, [](const LlgSlangInclude& record) {
+      return std::tie(record.operand.file_id, record.operand.start, record.operand.end,
+                      record.file_id);
+    });
+  }
+
+private:
+  // Resolutions that are no definition id. Definition ids stay far below.
+  static constexpr uint64_t kUndefined = LLG_SLANG_INVALID_ID;
+  // Predefined, or defined by a directive that is not written in a source.
+  static constexpr uint64_t kPredefined = LLG_SLANG_INVALID_ID - 1;
+  static constexpr uint64_t kFirstSpecial = kPredefined;
+
+  // A use in a `define body, with every resolution its expansions gave it.
+  struct BodyUse {
+    std::string_view name;
+    LlgSlangSourceRange range;
+    uint64_t atDirective;
+    std::vector<uint64_t> targets;
+  };
+
+  struct Body {
+    std::vector<BodyUse> uses;
+    // The macro state that last expanded it.
+    uint64_t expanded = 0;
+  };
+
+  // What the preprocessor starts a tree with, asked from a preprocessor. The
+  // first question makes it, so a capture without macros has none.
+  bool isBuiltIn(std::string_view name) {
+    if (!builtIn)
+      builtIn.emplace(sources, allocator, diagnostics, probeOptions(false));
+    return builtIn->isDefined(name);
+  }
+
+  bool isPredefined(std::string_view name) {
+    if (!predefined)
+      predefined.emplace(sources, allocator, diagnostics, probeOptions(true));
+    return predefined->isDefined(name);
+  }
+
+  Bag probeOptions(bool predefines) const {
+    parsing::PreprocessorOptions probe;
+    probe.languageVersion = options.languageVersion;
+    if (predefines) {
+      probe.predefines = options.predefines;
+      probe.undefines = options.undefines;
+    }
+    Bag bag;
+    bag.set(std::move(probe));
+    return bag;
+  }
+
+  template<typename T, typename Key>
+  static void sortDistinct(std::vector<T>& records, const Key& key) {
+    std::sort(records.begin(), records.end(),
+              [&](const T& left, const T& right) { return key(left) < key(right); });
+    records.erase(std::unique(records.begin(), records.end(),
+                              [&](const T& left, const T& right) {
+                                return key(left) == key(right);
+                              }),
+                  records.end());
+  }
+
+  // As Preprocessor::findMacro strips the accent and the escape.
+  static std::string_view usedName(parsing::Token token) {
+    std::string_view name = token.valueText();
+    name.remove_prefix(std::min<size_t>(name.size(), 1));
+    if (name.starts_with('\\'))
+      name.remove_prefix(1);
+    return name;
+  }
+
+  uint64_t resolve(std::string_view name) {
+    if (const auto it = current.find(name); it != current.end())
+      return it->second;
+    return isPredefined(name) ? kPredefined : kUndefined;
+  }
+
+  // The source range that spells the token; none for text a macro built.
+  std::optional<LlgSlangSourceRange> written(parsing::Token token) const {
+    if (token.isMissing() || !token.location().valid())
+      return std::nullopt;
+    if (capture.sourceManager.isMacroLoc(token.location())) {
+      if (auto argument = capture.macroArgumentSpan(token.location(), token.rawText()))
+        return argument;
+      return capture.macroBodySpan(token.location(), token.rawText());
+    }
+    const auto range = capture.span(token.range());
+    if (range.file_id == LLG_SLANG_INVALID_ID)
+      return std::nullopt;
+    return range;
+  }
+
+  void push(const LlgSlangSourceRange& range, uint64_t target, uint32_t kind) {
+    if (capture.output.macro_references.size() >= capture.maxLexicalTokens())
+      throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
+                          "macro reference limit exceeded");
+    chargeRecord(capture.output, sizeof(LlgSlangMacroReference));
+    const bool special = target >= kFirstSpecial;
+    capture.output.macro_references.push_back(
+        {range, special ? LLG_SLANG_INVALID_ID : target, kind,
+         special ? uint32_t{LLG_SLANG_MACRO_PREDEFINED} : 0u});
+  }
+
+  uint64_t reference(parsing::Token token, std::string_view name, uint32_t kind) {
+    if (token.isMissing() || name.empty())
+      return kUndefined;
+    const uint64_t target = resolve(name);
+    if (target != kUndefined) {
+      if (const auto range = written(token))
+        push(*range, target, kind);
+    }
+    return target;
+  }
+
+  // Resolves the uses written in an expanded body, and in the bodies they
+  // expand, in the current state.
+  void expand(uint64_t root) {
+    std::vector<uint64_t> pending{root};
+    while (!pending.empty()) {
+      Body& body = bodies[static_cast<size_t>(pending.back())];
+      pending.pop_back();
+      if (body.expanded == version)
+        continue;
+      body.expanded = version;
+      for (BodyUse& use : body.uses) {
+        const uint64_t target = resolve(use.name);
+        if (target == kUndefined)
+          continue;
+        if (std::find(use.targets.begin(), use.targets.end(), target) ==
+            use.targets.end())
+          use.targets.push_back(target);
+        if (target < kFirstSpecial)
+          pending.push_back(target);
+      }
+    }
+  }
+
+  // The definition of a directive: one per written directive, however many
+  // trees include its file.
+  uint64_t definition(const syntax::DefineDirectiveSyntax& syntax) {
+    const auto name = written(syntax.name);
+    if (!name)
+      return kPredefined;
+    const auto [known, added] = ids.try_emplace(
+        std::pair{name->file_id, name->start}, capture.output.macro_definitions.size());
+    const uint64_t id = known->second;
+    treeDefinitions.push_back(id);
+    if (!added)
+      return id;
+    LlgSlangSourceRange range = *name;
+    if (const auto directive = written(syntax.directive);
+        directive && directive->file_id == name->file_id &&
+        directive->start <= name->start)
+      range.start = directive->start;
+    const auto extend = [&](parsing::Token token) {
+      const auto at = written(token);
+      if (at && at->file_id == range.file_id && at->end > range.end)
+        range.end = at->end;
+    };
+    if (syntax.formalArguments)
+      extend(syntax.formalArguments->closeParen);
+    LlgSlangSourceRange text{range.file_id, range.end, range.end};
+    bool first = true;
+    Body body;
+    for (const parsing::Token token : syntax.body) {
+      if (token.kind == parsing::TokenKind::LineContinuation)
+        continue;
+      if (first) {
+        if (const auto at = written(token);
+            at && at->file_id == range.file_id && at->start >= range.end)
+          text.start = at->start;
+        first = false;
+      }
+      extend(token);
+      if (isUse(token)) {
+        const auto at = written(token);
+        body.uses.push_back({usedName(token),
+                             at.value_or(LlgSlangSourceRange{LLG_SLANG_INVALID_ID, 0, 0}),
+                             resolve(usedName(token)),
+                             {}});
+      }
+    }
+    if (first)
+      text.start = range.end;
+    text.end = std::max(text.start, range.end);
+    range.end = text.end;
+    if (capture.output.macro_definitions.size() >= capture.maxLexicalTokens())
+      throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
+                          "macro definition limit exceeded");
+    chargeRecord(capture.output, sizeof(LlgSlangMacroDefinition));
+    capture.output.macro_definitions.push_back(
+        {*name, range, text,
+         syntax.formalArguments ? uint32_t{LLG_SLANG_MACRO_FUNCTION_LIKE} : 0u, 0});
+    bodies.push_back(std::move(body));
+    return id;
+  }
+
+  Capture& capture;
+  SourceManager& sources;
+  const std::unordered_map<std::string, uint64_t>& sourcePaths;
+  const parsing::PreprocessorOptions options;
+  const bool legacyProtect;
+  BumpAllocator allocator;
+  Diagnostics diagnostics;
+  std::optional<parsing::Preprocessor> builtIn;
+  std::optional<parsing::Preprocessor> predefined;
+  // Names whose state a directive of the current tree changed.
+  std::unordered_map<std::string_view, uint64_t> current;
+  // Counts changes of `current`.
+  uint64_t version = 1;
+  std::map<std::pair<uint64_t, uint64_t>, uint64_t> ids;
+  // By definition id.
+  std::vector<Body> bodies;
+  // The definitions that the current tree's directives made.
+  std::vector<uint64_t> treeDefinitions;
+};
+
 class LexicalCapture final : public syntax::SyntaxVisitor<LexicalCapture> {
 public:
-  explicit LexicalCapture(Capture& capture) : capture(capture) {}
+  // `macros` (null without LLG_SLANG_COMPILE_EDITOR) follows the directives.
+  LexicalCapture(Capture& capture, MacroCapture* macros)
+      : capture(capture), macros(macros) {}
 
   void handle(const syntax::NamedPortConnectionSyntax& syntax) {
     capture.lexicalBinding(syntax.name, LLG_SLANG_INVALID_ID,
@@ -8311,14 +9532,15 @@ public:
     visitDefault(syntax);
   }
 
-  // A definition that is not part of this compilation (an isolated buffer
-  // that instantiates a module from another file) leaves the type name
-  // unbound. Give it the module kind without a role so no navigation target is
-  // implied; a resolved binding for the same token takes precedence.
-  void handle(const syntax::HierarchyInstantiationSyntax& syntax) {
-    capture.lexicalBinding(syntax.type, LLG_SLANG_INVALID_ID,
-                           LLG_SLANG_LEXICAL_ROLE_NONE,
-                           LLG_SLANG_LEXICAL_MODULE);
+  // The name of an attribute (IEEE 1800-2009 5.12). Its value is an ordinary
+  // constant expression. Slang parses the variables of a clocking item (14.3)
+  // as the same syntax.
+  void handle(const syntax::AttributeSpecSyntax& syntax) {
+    if (capture.editor && syntax.parent &&
+        syntax.parent->kind == syntax::SyntaxKind::AttributeInstance)
+      capture.lexicalBinding(syntax.name, LLG_SLANG_INVALID_ID,
+                             LLG_SLANG_LEXICAL_ROLE_NONE,
+                             LLG_SLANG_LEXICAL_ATTRIBUTE);
     visitDefault(syntax);
   }
 
@@ -8346,6 +9568,17 @@ public:
     blockName(syntax.label ? &syntax.label->name : nullptr,
               syntax.beginName ? &syntax.beginName->name : nullptr,
               syntax.endName ? &syntax.endName->name : nullptr);
+    visitDefault(syntax);
+  }
+
+  // The end label of a declaration (`endfunction : f`) repeats its name.
+  void handle(const syntax::NamedBlockClauseSyntax& syntax) {
+    if (capture.editor) {
+      if (const parsing::Token declaration = endLabelDeclaration(syntax);
+          declaration && !declaration.isMissing() && !syntax.name.isMissing() &&
+          syntax.name.valueText() == declaration.valueText())
+        capture.nameRepeat(capture.tokenSpan(declaration), capture.tokenSpan(syntax.name));
+    }
     visitDefault(syntax);
   }
 
@@ -8399,6 +9632,8 @@ public:
   // body name is ordinary source text once expanded; it takes the kind its
   // expansions bind at the body text (`Capture::macroBodySpan`).
   void handle(const syntax::DefineDirectiveSyntax& syntax) {
+    if (macros)
+      macros->define(syntax);
     defineName = syntax.name.location();
     defineFormals.clear();
     if (syntax.formalArguments) {
@@ -8412,6 +9647,25 @@ public:
     defineFormals.clear();
   }
 
+  void handle(const syntax::UndefDirectiveSyntax& syntax) {
+    if (macros)
+      macros->undef(syntax.name);
+    visitDefault(syntax);
+  }
+
+  void handle(const syntax::NamedConditionalDirectiveExpressionSyntax& syntax) {
+    if (macros)
+      macros->test(syntax.name);
+    visitDefault(syntax);
+  }
+
+  // The operand may be a macro use, which is trivia of the operand token.
+  void handle(const syntax::IncludeDirectiveSyntax& syntax) {
+    visitDefault(syntax);
+    if (macros)
+      macros->include(syntax);
+  }
+
   // The net type of `default_nettype (22.8) is a net type keyword, or
   // `none`, which is a keyword only here.
   void handle(const syntax::DefaultNetTypeDirectiveSyntax& syntax) {
@@ -8421,7 +9675,8 @@ public:
 
   void handle(const syntax::StructUnionMemberSyntax& syntax) {
     for (const syntax::DeclaratorSyntax* declarator : syntax.declarators)
-      capture.fieldDeclaration(declarator->name);
+      capture.nameDeclaration(capture.tokenSpan(declarator->name),
+                              LLG_SLANG_LEXICAL_FIELD);
     visitDefault(syntax);
   }
 
@@ -8486,6 +9741,8 @@ public:
   // (`addToken`): the expansion, not the raw argument list, is what the
   // parser and elaboration saw, so it carries the token's kind and binding.
   void handle(const syntax::MacroUsageSyntax& syntax) {
+    if (macros)
+      macros->use(syntax.directive);
     visitToken(syntax.directive);
     if (!syntax.args)
       return;
@@ -8541,6 +9798,10 @@ public:
         break;
       case syntax::SyntaxKind::EndProtectDirective:
         protectClose(syntax, LLG_SLANG_PROTECT_ENCRYPTION, LLG_SLANG_PROTECT_LEGACY);
+        break;
+      case syntax::SyntaxKind::UndefineAllDirective:
+        if (macros)
+          macros->undefineAll();
         break;
       default:
         break;
@@ -8676,9 +9937,29 @@ public:
       if (skippedDepth == 0)
         fsmComments(token);
     }
+    visitTrivia(token);
+    if (directiveDepth == 0 && !token.isMissing() &&
+        token.kind != parsing::TokenKind::EndOfFile)
+      missingEndScope.reset();
+    if (macros)
+      addEditorToken(token, 0);
+    else
+      addToken(token, 0);
+  }
+
+  // The directives and skipped tokens before a token. The preprocessor acted
+  // on a directive before a token that the parser skipped like on any other.
+  void visitTrivia(parsing::Token token) {
     for (const parsing::Trivia& trivia : token.trivia()) {
-      for (parsing::Token skipped : trivia.getSkippedTokens())
-        addToken(skipped, LLG_SLANG_LEXICAL_SKIPPED);
+      for (parsing::Token skipped : trivia.getSkippedTokens()) {
+        if (macros) {
+          visitTrivia(skipped);
+          addEditorToken(skipped, LLG_SLANG_LEXICAL_SKIPPED);
+        }
+        else {
+          addToken(skipped, LLG_SLANG_LEXICAL_SKIPPED);
+        }
+      }
       if (syntax::SyntaxNode* directive = trivia.syntax();
           directive && directives.insert(directive).second) {
         directiveDepth++;
@@ -8686,11 +9967,10 @@ public:
         directiveDepth--;
       }
     }
-    if (directiveDepth == 0 && !token.isMissing() &&
-        token.kind != parsing::TokenKind::EndOfFile)
-      missingEndScope.reset();
-    addToken(token, 0);
   }
+
+  // A header of several trees is written in each of them.
+  void finishTree() { writtenArguments.clear(); }
 
   void bindSemanticTokens() {
     std::sort(capture.output.lexical_tokens.begin(),
@@ -8719,8 +9999,14 @@ public:
       return std::tie(left.file_id, left.start, left.end) <
              std::tie(right.file_id, right.start, right.end);
     };
-    std::sort(capture.fieldDeclarations.begin(), capture.fieldDeclarations.end(),
-              rangeLess);
+    // Only editor capture records a name twice; the first one counts.
+    if (capture.editor)
+      sortNameDeclarations();
+    else
+      std::sort(capture.nameDeclarations.begin(), capture.nameDeclarations.end(),
+                [&](const auto& left, const auto& right) {
+                  return rangeLess(left.range, right.range);
+                });
     for (const auto& binding : capture.lexicalBindings) {
       if (binding.range.file_id == LLG_SLANG_INVALID_ID)
         continue;
@@ -8842,6 +10128,9 @@ public:
         semanticId = capture.canonicalLexicalTarget(it->second.semantic_id);
         role = it->second.role;
         boundKind = it->second.kind;
+        if (capture.editor && !expandedMacro &&
+            bindEditorName(token, it->second, semanticId))
+          continue;
       }
       else if (auto it = declarations.find(
                    {token.range.file_id, token.range.start});
@@ -8863,7 +10152,8 @@ public:
             std::all_of(declarationName.begin() + tokenText.size(),
                         declarationName.end(),
                         [](char c) { return c >= '0' && c <= '9'; });
-        if (tokenText == declarationName || enumRangeName) {
+        if (tokenText == declarationName || enumRangeName ||
+            (capture.editor && escapedName(tokenText, declarationName))) {
           semanticId = it->second;
           role = LLG_SLANG_LEXICAL_ROLE_DECLARATION;
         }
@@ -8895,12 +10185,17 @@ public:
           }
         }
       }
-      if (role == LLG_SLANG_LEXICAL_ROLE_NONE &&
-          std::binary_search(capture.fieldDeclarations.begin(),
-                             capture.fieldDeclarations.end(), token.range,
-                             rangeLess)) {
-        role = LLG_SLANG_LEXICAL_ROLE_DECLARATION;
-        boundKind = LLG_SLANG_LEXICAL_FIELD;
+      if (role == LLG_SLANG_LEXICAL_ROLE_NONE) {
+        const auto declared = std::lower_bound(
+            capture.nameDeclarations.begin(), capture.nameDeclarations.end(), token.range,
+            [&](const auto& declaration, const auto& range) {
+              return rangeLess(declaration.range, range);
+            });
+        if (declared != capture.nameDeclarations.end() &&
+            !rangeLess(token.range, declared->range)) {
+          role = LLG_SLANG_LEXICAL_ROLE_DECLARATION;
+          boundKind = declared->kind;
+        }
       }
       const std::string_view tokenText(
           reinterpret_cast<const char*>(token.text.data), token.text.len);
@@ -8964,10 +10259,105 @@ public:
         token.kind = lexicalKindForSemantic(semantic);
       }
     }
-    bindBlockNames();
+    if (capture.editor)
+      bindBodyReferences();
+    bindNameRepeats();
+    if (capture.editor)
+      sortLexicalTargets();
   }
 
 private:
+  LLG_NOINLINE void sortNameDeclarations() {
+    std::stable_sort(capture.nameDeclarations.begin(), capture.nameDeclarations.end(),
+                     [](const auto& left, const auto& right) {
+                       return std::tie(left.range.file_id, left.range.start, left.range.end) <
+                              std::tie(right.range.file_id, right.range.start,
+                                       right.range.end);
+                     });
+  }
+
+  LLG_NOINLINE void sortLexicalTargets() {
+    std::stable_sort(capture.output.lexical_targets.begin(),
+                     capture.output.lexical_targets.end(),
+                     [](const auto& left, const auto& right) {
+                       return left.token_index < right.token_index;
+                     });
+  }
+
+  // An escaped identifier declares the name without the escape (IEEE 1800-2009
+  // 5.6.1).
+  LLG_NOINLINE static bool escapedName(std::string_view text, std::string_view name) {
+    return text.starts_with('\\') && text.substr(1) == name;
+  }
+
+  // What only editor capture makes of a bound name. Whether that is all: no
+  // declaration introduces an attribute name, whatever it spells. The targets
+  // of a name in a `define body are the declarations its expansions bind.
+  LLG_NOINLINE bool bindEditorName(LlgSlangLexicalToken& token,
+                                   const Capture::LexicalBinding& binding,
+                                   uint64_t semanticId) {
+    if (binding.kind == LLG_SLANG_LEXICAL_ATTRIBUTE) {
+      token.kind = binding.kind;
+      return true;
+    }
+    if (!binding.macroBody || binding.role != LLG_SLANG_LEXICAL_ROLE_REFERENCE)
+      return false;
+    const auto index =
+        static_cast<uint64_t>(&token - capture.output.lexical_tokens.data());
+    const auto targets = bodyTargets.find(
+        {binding.range.file_id, binding.range.start, binding.range.end});
+    if (targets == bodyTargets.end()) {
+      bodyReference(index, semanticId);
+    }
+    else if (targets->second.size() <= LLG_SLANG_MAX_LEXICAL_TARGETS) {
+      for (const uint64_t target : targets->second) {
+        if (!bodyReference(index, target))
+          addLexicalTarget(index, target, LLG_SLANG_INVALID_ID);
+      }
+    }
+    return false;
+  }
+
+  LLG_NOINLINE void bindBodyReferences() {
+    for (const auto& [index, declaration] : bodyReferences) {
+      for (const LlgSlangLexicalToken& token : tokensAt(declaration)) {
+        if (isCopy(token) || token.role != LLG_SLANG_LEXICAL_ROLE_DECLARATION)
+          continue;
+        const LlgSlangLexicalToken* tokens = capture.output.lexical_tokens.data();
+        addLexicalTarget(index, LLG_SLANG_INVALID_ID,
+                         static_cast<uint64_t>(&token - tokens));
+        break;
+      }
+    }
+  }
+
+  void addLexicalTarget(uint64_t token, uint64_t semanticId, uint64_t targetToken) {
+    if (capture.output.lexical_targets.size() >= capture.maxLexicalTokens())
+      throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
+                          "lexical target limit exceeded");
+    chargeRecord(capture.output, sizeof(LlgSlangLexicalTarget));
+    capture.output.lexical_targets.push_back({token, semanticId, targetToken});
+  }
+
+  static bool sameRange(const LlgSlangSourceRange& left, const LlgSlangSourceRange& right) {
+    return left.file_id == right.file_id && left.start == right.start &&
+           left.end == right.end;
+  }
+
+  const LlgSlangSourceRange* bodyDeclaration(uint64_t semanticId) const {
+    const auto found = capture.bodyDeclarations.find(semanticId);
+    return found != capture.bodyDeclarations.end() ? &found->second : nullptr;
+  }
+
+  // Whether a name in a `define body refers to one that a body declares; its
+  // target is that text, not what one expansion of it declared.
+  bool bodyReference(uint64_t token, uint64_t semanticId) {
+    const LlgSlangSourceRange* declaration = bodyDeclaration(semanticId);
+    if (declaration)
+      bodyReferences.emplace_back(token, *declaration);
+    return declaration != nullptr;
+  }
+
   // The lexical kind a binding gives its token.
   uint32_t boundLexicalKind(const Capture::LexicalBinding& binding) const {
     const uint64_t target = capture.canonicalLexicalTarget(binding.semantic_id);
@@ -8979,11 +10369,11 @@ private:
 
   // Every expansion of a macro binds the names of its `define body again.
   // The body token keeps a kind and role only when every binding agrees on
-  // them, and a target only when they also agree on the target; bindings
-  // that disagree (`v` a variable in one expansion and a type in another)
-  // leave an unbound identifier, which gets no token.
+  // them; bindings that disagree (`v` a variable in one expansion and a type
+  // in another) leave an unbound identifier, which gets no token. Bindings
+  // that agree on all but the target leave the targets in `bodyTargets`.
   void mergeMacroBodyBinding(Capture::LexicalBinding& merged,
-                             const Capture::LexicalBinding& binding) const {
+                             const Capture::LexicalBinding& binding) {
     if (merged.kind == LLG_SLANG_LEXICAL_IDENTIFIER &&
         merged.role == LLG_SLANG_LEXICAL_ROLE_NONE)
       return;
@@ -8992,21 +10382,35 @@ private:
         merged.role != binding.role) {
       merged = {merged.range, LLG_SLANG_INVALID_ID, LLG_SLANG_LEXICAL_ROLE_NONE,
                 LLG_SLANG_LEXICAL_IDENTIFIER, true};
+      if (capture.editor)
+        bodyTargets.erase({merged.range.file_id, merged.range.start, merged.range.end});
       return;
     }
-    if (capture.canonicalLexicalTarget(merged.semantic_id) !=
-        capture.canonicalLexicalTarget(binding.semantic_id)) {
+    const uint64_t known = capture.canonicalLexicalTarget(merged.semantic_id);
+    const uint64_t target = capture.canonicalLexicalTarget(binding.semantic_id);
+    if (known != target && !(capture.editor && addBodyTargets(merged.range, known, target))) {
       merged.kind = kind;
       merged.semantic_id = LLG_SLANG_INVALID_ID;
     }
   }
 
-  // One block name declaration and the names that repeat it (an end label, or
-  // a begin name after a statement label). Ranges are physical name spans.
-  struct BlockName {
-    LlgSlangSourceRange declaration;
-    LlgSlangSourceRange repeats[2];
-  };
+  // Adds two targets of a name in a `define body. Whether one name in a
+  // `define body declares both, so they are one target.
+  LLG_NOINLINE bool addBodyTargets(const LlgSlangSourceRange& range, uint64_t known,
+                                   uint64_t target) {
+    const LlgSlangSourceRange* knownText = bodyDeclaration(known);
+    const LlgSlangSourceRange* targetText = bodyDeclaration(target);
+    if (knownText && targetText && sameRange(*knownText, *targetText))
+      return true;
+    // One target more than the limit marks a name with too many.
+    auto& targets = bodyTargets[{range.file_id, range.start, range.end}];
+    for (const uint64_t id : {known, target}) {
+      if (id != LLG_SLANG_INVALID_ID && targets.size() <= LLG_SLANG_MAX_LEXICAL_TARGETS &&
+          std::find(targets.begin(), targets.end(), id) == targets.end())
+        targets.push_back(id);
+    }
+    return false;
+  }
 
   void blockName(const parsing::Token* label, const parsing::Token* begin,
                  const parsing::Token* end) {
@@ -9014,13 +10418,8 @@ private:
     if (!declaration || declaration->isMissing())
       return;
     const auto range = capture.tokenSpan(*declaration);
-    if (range.file_id == LLG_SLANG_INVALID_ID)
-      return;
-    if (blockNames.size() >= capture.maxLexicalTokens())
-      throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
-                          "block name limit exceeded");
-    BlockName name{range,
-                   {{LLG_SLANG_INVALID_ID, 0, 0}, {LLG_SLANG_INVALID_ID, 0, 0}}};
+    Capture::NameRepeat name{
+        range, {{LLG_SLANG_INVALID_ID, 0, 0}, {LLG_SLANG_INVALID_ID, 0, 0}}, true};
     size_t repeat = 0;
     for (const parsing::Token* token : {label ? begin : nullptr, end}) {
       // A mismatched end label is a frontend error and names nothing.
@@ -9028,54 +10427,116 @@ private:
           token->valueText() == declaration->valueText())
         name.repeats[repeat++] = capture.tokenSpan(*token);
     }
-    blockNames.push_back(name);
+    capture.nameRepeat(name);
   }
 
-  LlgSlangLexicalToken* tokenAt(const LlgSlangSourceRange& range) {
+  // The name of the declaration that an end label closes. Block names have
+  // their own handlers.
+  static parsing::Token endLabelDeclaration(const syntax::NamedBlockClauseSyntax& label) {
+    if (!label.parent)
+      return {};
+    const syntax::SyntaxNode& parent = *label.parent;
+    switch (parent.kind) {
+      case syntax::SyntaxKind::ModuleDeclaration:
+      case syntax::SyntaxKind::InterfaceDeclaration:
+      case syntax::SyntaxKind::ProgramDeclaration:
+      case syntax::SyntaxKind::PackageDeclaration:
+        return parent.as<syntax::ModuleDeclarationSyntax>().header->name;
+      case syntax::SyntaxKind::FunctionDeclaration:
+      case syntax::SyntaxKind::TaskDeclaration:
+        return parent.as<syntax::FunctionDeclarationSyntax>().prototype->name->getLastToken();
+      case syntax::SyntaxKind::ClassDeclaration:
+        return parent.as<syntax::ClassDeclarationSyntax>().name;
+      case syntax::SyntaxKind::ClockingDeclaration:
+        return parent.as<syntax::ClockingDeclarationSyntax>().blockName;
+      case syntax::SyntaxKind::UdpDeclaration:
+        return parent.as<syntax::UdpDeclarationSyntax>().name;
+      case syntax::SyntaxKind::CovergroupDeclaration:
+        return parent.as<syntax::CovergroupDeclarationSyntax>().name;
+      case syntax::SyntaxKind::PropertyDeclaration:
+        return parent.as<syntax::PropertyDeclarationSyntax>().name;
+      case syntax::SyntaxKind::SequenceDeclaration:
+        return parent.as<syntax::SequenceDeclarationSyntax>().name;
+      case syntax::SyntaxKind::CheckerDeclaration:
+        return parent.as<syntax::CheckerDeclarationSyntax>().name;
+      default:
+        return {};
+    }
+  }
+
+  // The tokens at a physical range: a header of several trees has one each.
+  std::span<LlgSlangLexicalToken> tokensAt(const LlgSlangSourceRange& range) {
     auto& tokens = capture.output.lexical_tokens;
-    const auto it = std::lower_bound(
-        tokens.begin(), tokens.end(), range, [](const auto& token, const auto& key) {
-          return std::tie(token.range.file_id, token.range.start, token.range.end) <
-                 std::tie(key.file_id, key.start, key.end);
-        });
-    if (it == tokens.end() || it->range.file_id != range.file_id ||
-        it->range.start != range.start || it->range.end != range.end)
-      return nullptr;
-    return &*it;
+    const auto less = [](const LlgSlangLexicalToken& token,
+                         const LlgSlangSourceRange& key) {
+      return std::tie(token.range.file_id, token.range.start, token.range.end) <
+             std::tie(key.file_id, key.start, key.end);
+    };
+    const auto first = std::lower_bound(tokens.begin(), tokens.end(), range, less);
+    auto last = first;
+    while (last != tokens.end() && last->range.file_id == range.file_id &&
+           last->range.start == range.start && last->range.end == range.end)
+      ++last;
+    return {first, last};
   }
 
-  // Runs after semantic binding over the sorted token table. A declaration
-  // that capture bound to its block scope already has the block kind; one
-  // without a scope (declaration-only capture, or a block Slang did not
-  // build) still gets the kind and the declaration role from its syntax. A
-  // repeated name refers to the declaration's block, or carries only the kind
-  // when the declaration has no target. A name bound to anything else keeps
-  // its binding.
-  void bindBlockNames() {
-    for (const auto& name : blockNames) {
-      LlgSlangLexicalToken* declaration = tokenAt(name.declaration);
-      if (!declaration || (declaration->flags & LLG_SLANG_LEXICAL_MACRO_EXPANSION))
-        continue;
-      if (declaration->kind == LLG_SLANG_LEXICAL_IDENTIFIER &&
-          declaration->semantic_id == LLG_SLANG_INVALID_ID) {
-        declaration->kind = LLG_SLANG_LEXICAL_BLOCK;
-        declaration->role = LLG_SLANG_LEXICAL_ROLE_DECLARATION;
-      }
-      if (declaration->kind != LLG_SLANG_LEXICAL_BLOCK)
-        continue;
-      for (const auto& range : name.repeats) {
-        if (range.file_id == LLG_SLANG_INVALID_ID)
+  static bool isCopy(const LlgSlangLexicalToken& token) {
+    return (token.flags & LLG_SLANG_LEXICAL_MACRO_EXPANSION) != 0 &&
+           (token.flags & LLG_SLANG_LEXICAL_MACRO_ARGUMENT) == 0;
+  }
+
+  // Runs after semantic binding over the sorted token table. A block name
+  // that capture bound to its scope already has the block kind; one without
+  // a scope (declaration-only capture, or a block Slang did not build) still
+  // gets the kind and the declaration role from its syntax. A repeated name
+  // refers to what the declaration declares, or to the declaration itself
+  // when it has no semantic target. A name bound to anything else keeps its
+  // binding.
+  LLG_NOINLINE void bindNameRepeats() {
+    for (const Capture::NameRepeat& name : capture.nameRepeats) {
+      const LlgSlangLexicalToken* declaration = nullptr;
+      for (LlgSlangLexicalToken& token : tokensAt(name.declaration)) {
+        if (isCopy(token) || (token.flags & LLG_SLANG_LEXICAL_SKIPPED) != 0)
           continue;
-        LlgSlangLexicalToken* repeat = tokenAt(range);
-        if (!repeat || repeat->kind != LLG_SLANG_LEXICAL_IDENTIFIER ||
-            repeat->semantic_id != LLG_SLANG_INVALID_ID ||
-            (repeat->flags & LLG_SLANG_LEXICAL_MACRO_EXPANSION))
-          continue;
-        repeat->kind = LLG_SLANG_LEXICAL_BLOCK;
-        if (declaration->semantic_id != LLG_SLANG_INVALID_ID) {
-          repeat->semantic_id = declaration->semantic_id;
-          repeat->role = LLG_SLANG_LEXICAL_ROLE_REFERENCE;
+        if (name.block && token.kind == LLG_SLANG_LEXICAL_IDENTIFIER &&
+            token.semantic_id == LLG_SLANG_INVALID_ID) {
+          token.kind = LLG_SLANG_LEXICAL_BLOCK;
+          token.role = LLG_SLANG_LEXICAL_ROLE_DECLARATION;
         }
+        if (!declaration)
+          declaration = &token;
+      }
+      if (!declaration ||
+          (name.block && declaration->kind != LLG_SLANG_LEXICAL_BLOCK) ||
+          (declaration->semantic_id == LLG_SLANG_INVALID_ID &&
+           declaration->role != LLG_SLANG_LEXICAL_ROLE_DECLARATION))
+        continue;
+      for (const LlgSlangSourceRange& range : name.repeats) {
+        if (range.file_id != LLG_SLANG_INVALID_ID)
+          bindNameRepeat(range, *declaration);
+      }
+    }
+  }
+
+  void bindNameRepeat(const LlgSlangSourceRange& range,
+                      const LlgSlangLexicalToken& declaration) {
+    for (LlgSlangLexicalToken& repeat : tokensAt(range)) {
+      if (isCopy(repeat) || (repeat.flags & LLG_SLANG_LEXICAL_SKIPPED) != 0 ||
+          repeat.semantic_id != LLG_SLANG_INVALID_ID ||
+          repeat.role != LLG_SLANG_LEXICAL_ROLE_NONE ||
+          (repeat.kind != LLG_SLANG_LEXICAL_IDENTIFIER &&
+           repeat.kind != LLG_SLANG_LEXICAL_MACRO_FORMAL))
+        continue;
+      repeat.kind = declaration.kind;
+      repeat.semantic_id = declaration.semantic_id;
+      if (declaration.semantic_id != LLG_SLANG_INVALID_ID) {
+        repeat.role = LLG_SLANG_LEXICAL_ROLE_REFERENCE;
+      }
+      else if (capture.editor) {
+        repeat.role = LLG_SLANG_LEXICAL_ROLE_REFERENCE;
+        const LlgSlangLexicalToken* tokens = capture.output.lexical_tokens.data();
+        addLexicalTarget(static_cast<uint64_t>(&repeat - tokens), LLG_SLANG_INVALID_ID,
+                         static_cast<uint64_t>(&declaration - tokens));
       }
     }
   }
@@ -9264,6 +10725,7 @@ private:
   }
 
   Capture& capture;
+  MacroCapture* macros;
   std::unordered_set<const syntax::SyntaxNode*> directives;
   // Open protected envelopes per file, innermost last.
   std::map<uint64_t, std::vector<LlgSlangProtectedEnvelope>> openEnvelopes;
@@ -9296,7 +10758,10 @@ private:
   // Written macro argument tokens by physical range, as indices into the
   // lexical token table; an expanded argument token replaces its record.
   std::map<std::tuple<uint64_t, uint64_t, uint64_t>, size_t> writtenArguments;
-  std::vector<BlockName> blockNames;
+  // Tokens in `define bodies by index, with the body name they refer to.
+  std::vector<std::pair<uint64_t, LlgSlangSourceRange>> bodyReferences;
+  // The targets of the `define body names whose expansions bind several.
+  std::map<std::tuple<uint64_t, uint64_t, uint64_t>, std::vector<uint64_t>> bodyTargets;
   // The control-flow keyword of the syntax node being visited.
   SourceLocation controlKeyword;
   // The macro name of the `define directive being visited.
@@ -9308,6 +10773,55 @@ private:
   // A directive operand that is a keyword although Slang lexes it as an
   // identifier (the `none` of `default_nettype none).
   SourceLocation directiveKeyword;
+
+  // Whether a token with these flags is a copy in a macro expansion that no
+  // written argument maps back to.
+  bool isExpansionCopy(uint32_t flags) const {
+    return (flags & LLG_SLANG_LEXICAL_MACRO_EXPANSION) != 0 &&
+           (flags & LLG_SLANG_LEXICAL_MACRO_ARGUMENT) == 0 && macroArgumentDepth == 0;
+  }
+
+  // What only editor capture makes of a token: a macro use refers to its
+  // macro, and a name in a `define body that spells a formal argument to the
+  // formal.
+  LLG_NOINLINE void addEditorToken(parsing::Token token, uint32_t extraFlags) {
+    auto& tokens = capture.output.lexical_tokens;
+    const size_t index = tokens.size();
+    addToken(token, extraFlags);
+    LlgSlangLexicalToken* record = index < tokens.size() ? &tokens[index] : nullptr;
+    if (MacroCapture::isUse(token)) {
+      // A use written in the actual arguments of another use.
+      if (macroArgumentDepth != 0)
+        macros->use(token);
+      // An undefined macro stays in the expansion of the use whose argument it
+      // is written in, and replaces the record of the argument.
+      if (!record)
+        record = writtenArgument(token);
+      if (record && !isExpansionCopy(record->flags)) {
+        record->kind = LLG_SLANG_LEXICAL_MACRO;
+        record->role = LLG_SLANG_LEXICAL_ROLE_REFERENCE;
+      }
+    }
+    else if (record && record->kind == LLG_SLANG_LEXICAL_MACRO_FORMAL &&
+             record->role != LLG_SLANG_LEXICAL_ROLE_DECLARATION) {
+      const auto formal = std::ranges::find(defineFormals, token.valueText(),
+                                            [](const auto& name) { return name.valueText(); });
+      if (formal != defineFormals.end())
+        capture.nameRepeat(capture.span(formal->range()), record->range);
+    }
+  }
+
+  // The record of the written macro argument that an expanded token copies.
+  LlgSlangLexicalToken* writtenArgument(parsing::Token token) {
+    if (!token.location().valid() || !capture.sourceManager.isMacroLoc(token.location()))
+      return nullptr;
+    const auto range = capture.macroArgumentSpan(token.location(), token.rawText());
+    if (!range)
+      return nullptr;
+    const auto it = writtenArguments.find({range->file_id, range->start, range->end});
+    return it == writtenArguments.end() ? nullptr
+                                        : &capture.output.lexical_tokens[it->second];
+  }
 
   void addToken(parsing::Token token, uint32_t extraFlags) {
     const std::string_view text = token.rawText();
@@ -9365,9 +10879,7 @@ private:
     // syntax and macro bodies. Only an expansion copy that no written
     // argument maps back to stays macro text, so nothing of a body is
     // painted over a use site.
-    const bool expansionCopy =
-        (flags & LLG_SLANG_LEXICAL_MACRO_EXPANSION) != 0 &&
-        (flags & LLG_SLANG_LEXICAL_MACRO_ARGUMENT) == 0 && macroArgumentDepth == 0;
+    const bool expansionCopy = isExpansionCopy(flags);
     if (token.kind == parsing::TokenKind::SystemIdentifier && !expansionCopy)
       kind = LLG_SLANG_LEXICAL_SYSTEM_SUBROUTINE;
     // Names in directives and expansion copies are macro text. Names written
@@ -10385,7 +11897,6 @@ ParameterOverridePlan planParameterOverrides(
 void captureNavigation(Compilation& compilation, Capture& capture) {
   SemanticCapture visitor(capture);
   compilation.getRoot().visit(visitor);
-  std::unordered_map<const Symbol*, const InstanceSymbol*> sourceInstances;
   for (const Symbol* definition : compilation.getDefinitions()) {
     definition->visit(visitor);
     if (definition->kind != SymbolKind::Definition)
@@ -10395,9 +11906,8 @@ void captureNavigation(Compilation& compilation, Capture& capture) {
     // Source instances live in the compilation arena but are not root members.
     instance.setParent(*definition->getParentScope());
     instance.visit(visitor);
-    sourceInstances.emplace(definition, &instance);
   }
-  visitor.bindSourceConnections(compilation, sourceInstances);
+  visitor.bindUninstantiatedConnections(compilation);
 }
 
 std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request) {
@@ -11043,6 +12553,8 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
     for (const Symbol* definition : compilation.getDefinitions())
       definition->visit(semanticCapture);
     semanticCapture.captureShadowedDefinitions(compilation, root);
+    semanticCapture.bindUninstantiatedConnections(compilation);
+    semanticCapture.captureLexicalTargets();
     semanticCapture.captureImports(compilation);
     semanticCapture.captureForwardDeclarations();
   }
@@ -11059,9 +12571,19 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
 
   finalizeStage.finish();
   ProfileStage lexicalStage("wrapper.lexical");
-  LexicalCapture lexicalCapture(capture);
-  for (const auto& tree : compilation.getSyntaxTrees())
+  std::optional<MacroCapture> macroCapture;
+  if (capture.editor)
+    macroCapture.emplace(capture, sourceManager, parseOptions, sourcePathIndex);
+  LexicalCapture lexicalCapture(capture, macroCapture ? &*macroCapture : nullptr);
+  for (const auto& tree : compilation.getSyntaxTrees()) {
     tree->root().visit(lexicalCapture);
+    if (macroCapture) {
+      lexicalCapture.finishTree();
+      macroCapture->finishTree();
+    }
+  }
+  if (macroCapture)
+    macroCapture->finish();
   lexicalCapture.bindSemanticTokens();
   lexicalCapture.finishProtectedEnvelopes();
   lexicalCapture.finishFsmPragmas(root);
@@ -11096,7 +12618,9 @@ bool sinkComplete(const LlgSlangSink& sink) {
          sink.semantic_nodes && sink.udp_rows && sink.udp_tables &&
          sink.lexical_tokens && sink.source_libraries &&
          sink.line_directives && sink.edition_findings &&
-         sink.protected_envelopes && sink.fsm_pragmas && sink.attributes && sink.end;
+         sink.protected_envelopes && sink.fsm_pragmas && sink.attributes &&
+         sink.lexical_targets && sink.macro_definitions && sink.macro_references &&
+         sink.includes && sink.end;
 }
 
 void checkSink(uint32_t status) {
@@ -11142,6 +12666,10 @@ void streamCapture(CaptureOutput& output, const LlgSlangSink& sink) {
       output.protected_envelopes.size(),
       output.fsm_pragmas.size(),
       output.attributes.size(),
+      output.lexical_targets.size(),
+      output.macro_definitions.size(),
+      output.macro_references.size(),
+      output.includes.size(),
   };
   checkSink(sink.begin(sink.context, &header));
   streamTable(sink, sink.files, output.files);
@@ -11169,6 +12697,10 @@ void streamCapture(CaptureOutput& output, const LlgSlangSink& sink) {
   streamTable(sink, sink.protected_envelopes, output.protected_envelopes);
   streamTable(sink, sink.fsm_pragmas, output.fsm_pragmas);
   streamTable(sink, sink.attributes, output.attributes);
+  streamTable(sink, sink.lexical_targets, output.lexical_targets);
+  streamTable(sink, sink.macro_definitions, output.macro_definitions);
+  streamTable(sink, sink.macro_references, output.macro_references);
+  streamTable(sink, sink.includes, output.includes);
   checkSink(sink.end(sink.context));
 }
 
