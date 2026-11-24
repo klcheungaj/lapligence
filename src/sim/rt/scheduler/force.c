@@ -617,8 +617,9 @@ static LLG_OUTLYING void redrive_index(void) {
 }
 
 // Wake the live process a PROCESS class names, like a change of a value it
-// waits on (llg_rt_thread_wake): one already due to run, or running, will
-// evaluate anyway. Releases are rare, so the registry is scanned.
+// waits on: one already due to run, or running, will evaluate anyway.
+// Releases are rare, so the registry is scanned; the wake is the VPI
+// bridge's (llg_rt_thread_wake), so no scheduling path gains a caller.
 static LLG_OUTLYING void redrive_wake(const llg_redrive_class_t* group, const void* record) {
     for (int32_t slot = 0; slot < g.n_procs; slot++) {
         llg_proc_t* proc = g.all_procs[slot];
@@ -630,7 +631,7 @@ static LLG_OUTLYING void redrive_wake(const llg_redrive_class_t* group, const vo
                    sizeof(held));
             if (held != record) continue;
         }
-        if (proc->wait.kind != W_NONE && !wait_held_by_suspension(&proc->wait)) wake_proc(proc);
+        (void)llg_rt_thread_wake(proc->registry_slot, proc->assertion_owner);
         return;
     }
 }
