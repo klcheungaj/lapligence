@@ -1548,6 +1548,17 @@ static void inertial_snapshot(llg_inertial_t* driver, const sv4_t* target) {
         sv4_copy(&driver->current, target);
 }
 
+// The bits a selected driver of a variable drives: one selection of a
+// continuous assignment, so one range. Noted once per record, for a release
+// (inertial_redrive); the mask itself lives only with a pending update.
+static LLG_OUTLYING void inertial_note_selection(llg_inertial_t* driver, const sv4_t* mask) {
+    uint32_t offset = 0, width = 0;
+    if (!nba_mask_contiguous(llg_sv4_width(*mask), *mask, *mask, &offset, &width)) return;
+    // A selection outside the variable drives no bit of it.
+    driver->selected_lsb = width ? offset : UINT32_MAX;
+    driver->selected_width = width;
+}
+
 // Schedule `value` for the driver behind `handle`. A part record (`part`)
 // drives only bits [part_lsb, part_lsb + width of value) of a net slot and
 // keeps only those bits, so a narrow contribution to a wide shared group
@@ -1569,6 +1580,7 @@ static void inertial_update(llg_inertial_t** handle, sv4_t* target,
         driver->part_lsb = part_lsb;
         driver->part_width = part_width;
         inertial_snapshot(driver, target);
+        if (mask && !net) inertial_note_selection(driver, mask);
         driver->region = region_is_reactive(g.current_region)
                              ? LLG_REGION_REACTIVE
                              : LLG_REGION_ACTIVE;
@@ -1587,6 +1599,8 @@ static void inertial_update(llg_inertial_t** handle, sv4_t* target,
         driver->part_lsb = part_lsb;
         driver->part_width = part_width;
         inertial_snapshot(driver, target);
+        driver->selected_lsb = driver->selected_width = 0;
+        if (mask && !net) inertial_note_selection(driver, mask);
     }
     driver->region = region_is_reactive(g.current_region)
                          ? LLG_REGION_REACTIVE
@@ -1638,12 +1652,23 @@ cleanup:
 
 // A released variable takes the value its delayed continuous drivers last
 // committed (the value they hold now); an update still pending matures at
-// its time. Records are few and a release is rare, so this walks them.
-static void inertial_redrive(sv4_t* target) {
+// its time. A driver of selected bits gives those bits only. Records are few
+// and a release is rare, so this walks them.
+static LLG_OUTLYING void inertial_redrive(sv4_t* target) {
     for (llg_inertial_t* driver = g.inertial_drivers; driver; driver = driver->next_all) {
-        if (driver->target == target && !driver->net && !driver->publication_net &&
-            !driver->part)
-            llg_ba(target, driver->current);
+        if (driver->target != target || driver->net || driver->publication_net || driver->part)
+            continue;
+        if (!driver->selected_width) {
+            if (!driver->selected_lsb) llg_ba(target, driver->current);
+            continue;
+        }
+        int64_t left = (int64_t)driver->selected_lsb + driver->selected_width - 1;
+        sv4_t bits = sv4_part_select(driver->current, left, driver->selected_lsb);
+        sv4_t merged = sv4_clone(target);
+        sv4_part_select_set(&merged, left, driver->selected_lsb, bits);
+        llg_ba(target, merged);
+        sv4_destroy(&merged);
+        sv4_destroy(&bits);
     }
 }
 

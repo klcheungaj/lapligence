@@ -1,9 +1,22 @@
 [1] driven: assigned=12 ported=11 row=13,14 both=15 stored=16 tied=77 pair=0a
+[1] driven: s.q=42,45,46
 [2] forced: assigned=101 ported=102 row=13,103 both=104 stored=105 tied=106 pair=5a
+[2] forced: s.q=111,114,46
 [3] forced, new operand: assigned=101 ported=102 row=23,103 both=104 stored=105 tied=106 pair=5a
-[3] at the releases: assigned=22 ported=21 row=23,24 both=25 stored=105 tied=77 pair=14
+[3] forced, new operand: s.q=111,114,66
+[3] at the releases: assigned=101 ported=21 row=23,103 both=25 stored=105 tied=77 pair=14
+[3] at the releases: s.q=111,114,66
+[3] end of the time step: s.q=111,65,66
+[3] end of the time step: assigned=22 ported=21 row=23,24 both=25 stored=105 tied=77 pair=14
 [4] released: assigned=22 ported=21 row=23,24 both=25 stored=105 tied=77 pair=14
+[4] released: s.q=111,65,66
 [5] forced again: assigned=22 ported=21 row=23,24 both=107 stored=105 tied=77 pair=14
-[5] at the release: assigned=22 ported=21 row=23,24 both=25 stored=105 tied=77 pair=14
+[5] forced again: s.q=111,65,66
+[5] at the release: assigned=22 ported=21 row=23,24 both=107 stored=105 tied=77 pair=14
+[5] at the release: s.q=111,65,66
+[5] end of the time step: s.q=62,65,66
+[5] end of the time step: assigned=22 ported=21 row=23,24 both=25 stored=105 tied=77 pair=14
 [6] released again: assigned=22 ported=21 row=23,24 both=25 stored=105 tied=77 pair=14
+[6] released again: s.q=62,65,66
 [7] next operand: assigned=32 ported=31 row=33,34 both=35 stored=36 tied=77 pair=1e
+[7] next operand: s.q=82,85,86

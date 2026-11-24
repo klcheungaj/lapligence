@@ -204,7 +204,7 @@ static struct llg_fixed_block* fixed_block_of(const sv4_t* target) {
 }
 
 // Whether `cell` is a cell of `array` (a release looks its array up, cold).
-static int32_t fixed_array_owns(const llg_fixed_array_t* array, const void* cell) {
+static LLG_OUTLYING int32_t fixed_array_owns(const llg_fixed_array_t* array, const void* cell) {
     uintptr_t address = (uintptr_t)cell;
     for (const struct llg_fixed_block* block = array->blocks; block; block = block->next) {
         uintptr_t start = (uintptr_t)block;

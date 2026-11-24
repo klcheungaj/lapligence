@@ -361,3 +361,187 @@ fn catalog_models_mark_procedure_roots_as_vpi_threads() {
         "{source}"
     );
 }
+
+fn redrive_model(count: usize) -> IrModel {
+    let mut model = instance_model(count);
+    for index in 0..count {
+        let source = model.signals.len();
+        let mut signal = model.signals[index].clone();
+        signal.c_name = format!("G_s{index}");
+        model.signals.push(signal);
+        model.redrives.push(crate::sim::ir::IrRedrive {
+            label: format!("tb.u{index}.assign"),
+            port_link: false,
+            targets: vec![crate::sim::ir::IrRedriveTarget::Signal(index)],
+            action: crate::sim::ir::IrRedriveAction::Evaluate(vec![IrStmt::Assign {
+                lhs: IrLhs::Whole(index),
+                rhs: IrExpr::new(
+                    IrExprKind::Un {
+                        op: IrUnOp::BitNeg,
+                        a: Box::new(IrExpr::new(IrExprKind::SigRead(source), 8, false, None)),
+                    },
+                    8,
+                    false,
+                    None,
+                ),
+                nba: false,
+            }]),
+        });
+    }
+    model
+}
+
+#[test]
+fn redrive_functions_of_one_module_share_one_body() {
+    let execution = ExecutionModel::lower(redrive_model(8)).unwrap();
+    let source = render_with_sharing_threshold(&execution, 4).unwrap();
+    // One cold body for the eight drivers; each row passes its record.
+    assert_eq!(
+        source.matches("LLG_COLD void llg_shared_body_").count(),
+        2,
+        "a prototype and a definition: {source}"
+    );
+    assert!(!source.contains("llg_redrive_0("), "{source}");
+    let table = |source: &str, name: &str| {
+        let start = source
+            .find(&format!("static const void* const {name}[8] = {{\n"))
+            .unwrap_or_else(|| panic!("{name}: {source}"));
+        let end = start + source[start..].find("};").unwrap();
+        source[start..end]
+            .lines()
+            .skip(1)
+            .flat_map(|line| line.split(','))
+            .map(|item| item.trim().to_owned())
+            .filter(|item| !item.is_empty())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        table(&source, "llg_redrive_storage"),
+        (0..8)
+            .map(|index| format!("&G_v{index}"))
+            .collect::<Vec<_>>()
+    );
+    let records = table(&source, "llg_redrive_operand");
+    assert_eq!(records.len(), 8);
+    assert!(
+        records
+            .iter()
+            .all(|record| record.starts_with("&llg_body_instances_")),
+        "{records:?}"
+    );
+    assert_eq!(
+        records
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        8
+    );
+    // One class for the eight rows of one shape.
+    assert!(source.contains("static const llg_redrive_class_t llg_redrive_classes[1] = {\n"));
+    assert!(source.contains(
+        "    { 0u, 1u, (uint32_t)sizeof(sv4_t), LLG_REDRIVE_EVALUATE, 0, llg_shared_body_"
+    ));
+    assert!(source.contains("static uint32_t llg_redrive_order[8];"));
+    assert!(source.contains("static uint8_t llg_redrive_busy[8];"));
+    assert!(source.contains("llg_redrives_register(&llg_redrives);"));
+    // Below the threshold every driver keeps its own function and class.
+    let own = render_with_sharing_threshold(&execution, 16).unwrap();
+    assert_eq!(own.matches("static LLG_COLD void llg_redrive_").count(), 8);
+    assert!(own.contains("static const llg_redrive_class_t llg_redrive_classes[8] = {\n"));
+    assert!(own.contains(
+        "    { 3u, 1u, (uint32_t)sizeof(sv4_t), LLG_REDRIVE_EVALUATE, 0, llg_redrive_3, NULL },\n"
+    ));
+    assert!(table(&own, "llg_redrive_operand")
+        .iter()
+        .all(|operand| operand == "NULL"));
+    // A model without rows registers nothing.
+    let plain = render_with_sharing_threshold(&instances(8), 4).unwrap();
+    assert!(!plain.contains("llg_redrive"));
+}
+
+/// Eight evaluate-then-wait drivers of one source process, `G_v{i} = ~G_s{i}`.
+fn driver_model(count: usize, catalog: bool) -> IrModel {
+    let mut model = IrModel::new("drivers".to_owned(), 1).unwrap();
+    model.vpi_catalog = catalog;
+    let packed = |name: String| {
+        IrSignal::new(
+            name,
+            None,
+            IrType::Packed {
+                width: 8,
+                signed: false,
+                two_state: false,
+            },
+            None,
+        )
+        .unwrap()
+    };
+    for index in 0..count {
+        model.signals.push(packed(format!("G_v{index}")));
+    }
+    for index in 0..count {
+        model.signals.push(packed(format!("G_s{index}")));
+    }
+    for index in 0..count {
+        let source = count + index;
+        let mut process = IrProcess::new(
+            format!("p_v{index}"),
+            format!("tb.u{index}.assign"),
+            IrShape::SensLoop {
+                reads: vec![IrDependency::scalar(format!("G_s{index}"))],
+            },
+            Vec::new(),
+            vec![IrStmt::Assign {
+                lhs: IrLhs::Whole(index),
+                rhs: IrExpr::new(
+                    IrExprKind::Un {
+                        op: IrUnOp::BitNeg,
+                        a: Box::new(IrExpr::new(IrExprKind::SigRead(source), 8, false, None)),
+                    },
+                    8,
+                    false,
+                    None,
+                ),
+                nba: false,
+            }],
+        );
+        process.origin = crate::sim::semantic::Origin::Synthetic {
+            reason: "one source process".to_owned(),
+        };
+        model.spawns.push(process.c_name.clone());
+        model.processes.push(process);
+    }
+    model
+}
+
+#[test]
+fn a_catalog_model_names_the_driver_process_of_each_variable() {
+    let execution = ExecutionModel::lower(driver_model(8, true)).unwrap();
+    let source = render_with_sharing_threshold(&execution, 4).unwrap();
+    // No function: one class of process rows with the shared descriptor,
+    // each row with the instance record its process holds.
+    assert!(!source.contains("LLG_COLD"), "{source}");
+    assert!(source.contains("static const llg_redrive_class_t llg_redrive_classes[1] = {\n"));
+    assert!(
+        source.contains(
+            "    { 0u, 1u, (uint32_t)sizeof(sv4_t), LLG_REDRIVE_PROCESS, \
+             (uint32_t)offsetof(llg_body_frame_0_t, _llg_instance), NULL, \
+             &llg_shared_body_0_desc },\n"
+        ),
+        "{source}"
+    );
+    for index in 0..8 {
+        assert!(source.contains(&format!("&G_v{index}")));
+        assert!(source.contains(&format!("&llg_body_instances_0[{index}]")));
+    }
+    assert!(source.contains("llg_redrives_register(&llg_redrives);"));
+    // Unshared, each process has its own descriptor and no record.
+    let own = render_with_sharing_threshold(&execution, 16).unwrap();
+    assert!(own.contains(
+        "    { 3u, 1u, (uint32_t)sizeof(sv4_t), LLG_REDRIVE_PROCESS, 0, NULL, &p_v3_desc },\n"
+    ));
+    // Without the catalog no VPI application can release anything.
+    let plain = ExecutionModel::lower(driver_model(8, false)).unwrap();
+    let plain = render_with_sharing_threshold(&plain, 4).unwrap();
+    assert!(!plain.contains("llg_redrive"), "{plain}");
+}

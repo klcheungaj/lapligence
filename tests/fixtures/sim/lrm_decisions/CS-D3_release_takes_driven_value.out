@@ -3,6 +3,3 @@ forced: ported=201 assigned=202 tied=203 parts=ee pair=dd row=70,204 stored=205 
 at the release: ported=68 assigned=69 tied=77 parts=53 pair=34 row=70,71 stored=205 net=73
 one unit later: ported=68 assigned=69 tied=77 parts=53 pair=34 row=70,71 stored=205 net=73
 after a blocking write: assigned=70
-delayed at the release: 73
-delayed two units later: 73
-delayed after its delay: 21

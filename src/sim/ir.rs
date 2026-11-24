@@ -157,6 +157,8 @@ pub use assertions::{
     IrSequenceLocal, IrSequenceRange, IrSequenceTransition, IrSeverityLevel, IrSeverityOrigin,
 };
 mod processes;
+#[cfg(test)]
+pub(in crate::sim) use processes::continuous_writes;
 pub use processes::{
     IrPreFn, IrProcess, IrProcessKind, IrRedrive, IrRedriveAction, IrRedriveTarget, IrShape,
 };

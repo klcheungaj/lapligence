@@ -59,10 +59,20 @@ object rows on first VPI use and the code rows on first access to them
 were most of a large catalog model's compile time; a string literal of the
 same data parses in a fraction of it. Only catalog models register the blob
 (`llg_vpi_model_packed`), so models without the catalog are unchanged.
-`IrModel::redrives` become the const `llg_redrives` table and one plain
-`llg_redrive_N` function per driver that is not a copy
-(`owned/model/redrive.rs`), registered by `llg_redrives_register`; a model
-without rows emits neither.
+`IrModel::redrives` become the const `llg_redrives` table (one row per
+released cell and driver, as flat pointer arrays plus one class per row
+shape), its two scratch arrays and one plain cold
+`llg_redrive_N(void* context)` function per driver whose statements a
+`release` statement repeats (`owned/model/redrive.rs`), registered by
+`llg_redrives_register`; a model without rows emits none of them. The
+functions go through sharing with the condition evaluators, so the
+instances of a module share one body and each row passes its instance
+record. A catalog model adds process rows: `redrive_driver_targets` reads
+what each final evaluate-then-wait driver assigns before rendering releases
+the bodies, and `redrive_process_rows` names the root descriptor and
+instance record the runtime finds the process by (`process_identity`, also
+used for UDP puts), so a release through VPI wakes it and no code is
+generated for it.
 Type, dynamic, UDP and call-site tables stay C initializers (small, or read
 at start-up).
 

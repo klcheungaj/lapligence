@@ -1058,9 +1058,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   only the named bits). Release recomputes a net from its current drivers
   immediately; a variable keeps the forced value until its next procedural
   write, except that a variable driven by a continuous assignment or an output
-  port (delayed or not) holds the driven value when the release returns: the
-  release repeats its continuous drivers in place (SV §10.6.2, CS-D3), also
-  when a VPI application releases it (CS-D4). A force
+  port holds the driven value when the `release` statement returns: the
+  release repeats its continuous drivers in place (SV §10.6.2, CS-D3; a
+  delayed assignment gives the value it last delivered to the bits it
+  drives, CS-D5). A release through VPI does the same for port copies,
+  constants and delayed assignments and schedules an expression driver,
+  which delivers its value in the same time step (CS-D4). A force
   outlives the process that applied it (kill, `disable`, task return), and the
   model closes cleanly with forces active
   ([sim_023](../tests/fixtures/sim/feature_completion/sim_023/readme.md),

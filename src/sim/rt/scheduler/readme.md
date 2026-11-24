@@ -257,18 +257,27 @@ sparse array merges them back into the new value
 (`fixed_publication_keep_forced`). These helpers are `LLG_OUTLYING`; a write
 pays only the `g.force_count` test unless something is forced.
 
-A release of a variable (`llg_release_parts`, `llg_release_real`, from a
-statement or from VPI) ends in `redrive`: the model's const `llg_redrive_t`
-rows (`llg_redrives_register`) name each continuous driver of a releasable
-variable, and the rows of the released cell are repeated in place with
-ordinary blocking writes (CS-D3): the row's function, a copy of its source,
-or for a delayed driver the committed value of its inertial records
-(`inertial_redrive`). The first release sorts row numbers by storage address
-(keyed arrays are asked through `fixed_array_owns`); a per-row busy flag
-makes a release from inside a driver's own evaluation leave the value to
-that driver. Nothing else reads the table: a run without a release pays the
-registration only, and the index is dropped at the end of the run while the
-table stays for final procedures.
+A release of a variable ends in `redrive`: the model's const
+`llg_redrive_table_t` (`llg_redrives_register`) names each continuous
+driver of a releasable variable, as flat per-row arrays and classes of rows
+of one shape (`llg_redrive_class_t`). The rows of the released cell that
+are data act in place with ordinary blocking writes for every release: a
+copy of the source, a constant from its limbs, or for a delayed driver the
+committed value of its inertial records (`inertial_redrive`, CS-D5; a
+record of a selected driver of a variable notes its bit range once, when it
+is created, in fields that fill alignment padding). A `release` statement
+(`llg_release_parts`, `llg_release_real`) also runs the row's function in
+place (CS-D3; with the instance record of a shared body). A release through
+VPI (`llg_release_parts_scheduled`, `llg_release_real_scheduled`) instead
+wakes the driver process a row names by root descriptor and instance record
+(`redrive_wake`, a registry scan), like a change of a value it waits on
+(CS-D4). The first release of a run sorts row numbers by storage address
+into the model's scratch array (keyed arrays are asked through
+`fixed_array_owns`); a per-row busy flag makes a release from inside a
+driver's own evaluation leave the value to that driver. Table and scratch
+are the model's static storage and nothing else reads them: a run without a
+release pays the registration only, nothing is freed or reset at the end of
+a run, and the table stays for final procedures.
 
 Future NBAs own values and retained destinations after issuers finish, and can
 advance time without a process waiter. Masked writes merge into current storage.

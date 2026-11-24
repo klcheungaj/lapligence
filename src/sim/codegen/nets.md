@@ -239,11 +239,16 @@ Force overlays visible storage while ordinary writes/driver slots remain live;
 release retains variable value or recomputes current net resolution. A release
 names its variables and arrays (`released_targets`); after all lowering
 `collect_redrives` gives the synthetic continuous drivers (assignments, port
-links) of those, and in a model a VPI application can reach of every
-continuously driven variable, one `IrRedrive` row each: a copied source, a
-copy of the driver's statements, or its committed value when it is delayed.
-The runtime repeats the rows of a released variable inside the release (SV
-10.6.2, CS-D3); nothing waits on them. Re-force replaces a matching entry per
+links) of those one `IrRedrive` row each: a copied source, a constant, a
+copy of the driver's statements, or its committed value when it is delayed
+(CS-D5; the runtime's record knows the bits a selected driver drives). The
+runtime repeats the rows of a released variable inside the release (SV
+10.6.2, CS-D3); nothing waits on them. In a model a VPI application can
+reach, every continuously driven variable gets the rows that are data only;
+its expression drivers are woken instead (CS-D4) through process rows the
+emitter derives from the final processes (`IrProcess::redrive_targets` is
+the one definition of what a driver assigns), so no pass carries them and
+such a model holds no statements for a release it may never see. Re-force replaces a matching entry per
 bit. Keep typed constant-selected/concat targets; constant indexed, member and
 element selects of nets become fixed parts (`normalize_force_lhs`). An element
 of a static variable array (`ArrayElem`), a member of a packed-image element

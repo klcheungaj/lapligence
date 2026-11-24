@@ -2600,6 +2600,8 @@ fn a_redrive_names_variables_and_a_copy_keeps_one_packed_type() {
     source.c_name = "source".to_string();
     model.signals.push(source);
     model.redrives.push(IrRedrive {
+        label: "tb.assign".to_string(),
+        port_link: false,
         targets: vec![IrRedriveTarget::Signal(0)],
         action: IrRedriveAction::Copy(1),
     });

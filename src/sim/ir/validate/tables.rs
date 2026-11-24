@@ -382,6 +382,26 @@ impl Validator<'_> {
                 crate::sim::ir::IrRedriveAction::Evaluate(body) => {
                     self.validate_stmts(body, &[], &format!("{path}.body"))?;
                 }
+                crate::sim::ir::IrRedriveAction::Constant(constant) => {
+                    let width = match redrive.targets.as_slice() {
+                        [crate::sim::ir::IrRedriveTarget::Signal(target)] => {
+                            match self.model.signals[*target].ty {
+                                crate::sim::ir::IrType::Packed { width, .. } => Some(width),
+                                crate::sim::ir::IrType::Real { .. } => None,
+                            }
+                        }
+                        _ => None,
+                    };
+                    if width != Some(constant.width)
+                        || constant.real.is_some()
+                        || constant.fill.is_some()
+                    {
+                        return self.fail(
+                            path,
+                            "a constant redrive needs one packed variable of the constant's width",
+                        );
+                    }
+                }
                 crate::sim::ir::IrRedriveAction::Committed => {}
             }
         }

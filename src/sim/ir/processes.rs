@@ -336,21 +336,113 @@ pub enum IrRedriveAction {
     /// variable of the same width and state (a plain port link).
     Copy(usize),
     /// The driver's assignment statements, run once in the releasing
-    /// process.
+    /// process: for `release` statements only.
     Evaluate(Vec<IrStmt>),
-    /// A delayed driver of the whole variable or of whole array elements:
-    /// the value it last committed is assigned again; a pending update
-    /// matures as scheduled.
+    /// `target = constant`: a packed constant of the variable's width.
+    Constant(IrConst),
+    /// A delayed driver: the value it last committed to the bits it drives
+    /// is assigned again; a pending update matures as scheduled.
     Committed,
 }
 
 /// One continuous driver of variables a release may name (IEEE 1800-2009
-/// 10.6.2): releasing one of `targets`, by a `release` statement or through
-/// `vpi_put_value`, performs `action` in place, so the variable has the
-/// driven value when the release returns. Nothing waits on or tracks a
-/// redrive; a model that executes no release never runs one.
+/// 10.6.2): releasing one of `targets` performs `action` in place, so the
+/// variable has the driven value when the release returns. `Evaluate` rows
+/// serve `release` statements; a release through `vpi_put_value` wakes the
+/// driver's process instead (the emitter's process rows) and uses the other
+/// actions as they are. Nothing waits on or tracks a redrive; a model that
+/// executes no release never runs one.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrRedrive {
+    /// The driver's `IrProcess::label` and `IrProcess::port_link`: they
+    /// decide how the instances of one module share an `Evaluate` function.
+    pub(in crate::sim) label: String,
+    pub(in crate::sim) port_link: bool,
     pub(in crate::sim) targets: Vec<IrRedriveTarget>,
     pub(in crate::sim) action: IrRedriveAction,
+}
+
+impl IrProcess {
+    /// The variables (not nets) and arrays this continuous driver assigns
+    /// in `statements` (its body, wherever that is kept): the storage whose
+    /// release re-establishes it. Continuous assignments and port links are
+    /// the synthetic evaluate-then-wait and run-once processes; any other
+    /// process has none.
+    pub(in crate::sim) fn redrive_targets<'a>(
+        &self,
+        model: &IrModel,
+        statements: impl IntoIterator<Item = &'a IrStmt>,
+    ) -> Vec<IrRedriveTarget> {
+        if self.kind != IrProcessKind::Synthetic
+            || !matches!(self.shape, IrShape::RunOnce | IrShape::SensLoop { .. })
+        {
+            return Vec::new();
+        }
+        let mut written = Vec::new();
+        let mut arrays = Vec::new();
+        for statement in statements {
+            continuous_writes(statement, &mut written, &mut arrays);
+        }
+        let mut targets: Vec<IrRedriveTarget> = written
+            .into_iter()
+            .map(|signal| model.signals[signal].alias.unwrap_or(signal))
+            .filter(|signal| model.signals[*signal].is_variable())
+            .map(IrRedriveTarget::Signal)
+            .chain(arrays.into_iter().map(IrRedriveTarget::Array))
+            .collect();
+        targets.sort_unstable();
+        targets.dedup();
+        targets
+    }
+}
+
+/// Whole persistent signals, and arrays, a continuous driver body assigns.
+pub(in crate::sim) fn continuous_writes(
+    statement: &IrStmt,
+    out: &mut Vec<usize>,
+    arrays: &mut Vec<usize>,
+) {
+    match statement {
+        IrStmt::Assign { lhs, .. } | IrStmt::InertialAssign { lhs, .. } => {
+            lhs_signals(lhs, out, arrays);
+        }
+        IrStmt::InertialEnable(enable) => {
+            lhs_signals(&enable.zero_lhs, out, arrays);
+            lhs_signals(&enable.one_lhs, out, arrays);
+        }
+        IrStmt::Located { statement, .. } => continuous_writes(statement, out, arrays),
+        IrStmt::Block(statements)
+        | IrStmt::While {
+            body: statements, ..
+        } => {
+            for statement in statements {
+                continuous_writes(statement, out, arrays);
+            }
+        }
+        IrStmt::If { then_, els, .. } => {
+            for statement in then_.iter().chain(els.iter().flatten()) {
+                continuous_writes(statement, out, arrays);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn lhs_signals(lhs: &IrLhs, out: &mut Vec<usize>, arrays: &mut Vec<usize>) {
+    match lhs {
+        IrLhs::Whole(index)
+        | IrLhs::Bit(index, ..)
+        | IrLhs::Part(index, ..)
+        | IrLhs::IdxPart(index, ..) => out.push(*index),
+        IrLhs::ArrayElem { arr, .. } => arrays.push(*arr),
+        IrLhs::PackedSelect { target, .. } | IrLhs::TaggedSelect { target, .. } => {
+            lhs_signals(target, out, arrays);
+        }
+        IrLhs::Stream { parts, .. } => {
+            for (part, _) in parts {
+                lhs_signals(part, out, arrays);
+            }
+        }
+        _ => {}
+    }
 }

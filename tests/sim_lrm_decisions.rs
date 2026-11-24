@@ -6534,6 +6534,14 @@ fn cs_d3_release_takes_driven_value() {
 }
 
 #[test]
+fn cs_d5_release_of_delayed_driver() {
+    run_decision(
+        "CS-D5_release_of_delayed_driver",
+        include_str!("fixtures/sim/lrm_decisions/CS-D5_release_of_delayed_driver.out"),
+    );
+}
+
+#[test]
 fn cs_d4_vpi_release_reestablishes_assignment() {
     run_vpi_decision(
         "CS-D4_vpi_release_reestablishes_assignment",

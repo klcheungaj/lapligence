@@ -536,15 +536,22 @@ Scenario 1 found that a release through VPI left a continuously driven
 variable at its forced value until an operand of the assignment changed
 (decision CS-D4, clauses 38.34 and 10.6.2 above). The fixture releases, one
 by one, a variable driven by a continuous assignment, by an output port, an
-array element, a constant assignment and a packed structure, one variable
-only a procedure writes, and one that a `release` statement and a VPI release
-both name, and reads them in the releasing process before it suspends
-(CS-D3) and one unit later.
+array element, a constant assignment and a packed structure, the output of
+one of six instances that share a generated driver body, one variable only
+a procedure writes, and one that a `release` statement and a VPI release
+both name. It reads them in the releasing process before it suspends and
+again when the time step ends (`$strobe`).
+
+The `end of the time step` lines and every later line are the
+industry-standard behaviour. The `at the release(s)` lines are llg's
+(*clause-derived*, 10.6.2 "schedule a reevaluation"): some simulators
+deliver every driver before `vpi_put_value` returns.
 
 | Lines | Why |
 | --- | --- |
-| `[3] at the releases: assigned=22 ported=21 row=23,24 both=25 stored=105 tied=77 pair=14` | The operand became 20 while the forces held; every continuously driven variable holds its driven value as soon as it is released, `stored` keeps the forced 105. |
-| `[5] at the release: ... both=25` | A VPI release after a statement release of the same variable. |
+| `[3] at the releases: assigned=101 ported=21 row=23,103 both=25 stored=105 tied=77 pair=14`, `s.q=111,114,66` | The operand became 20 while the forces held. The port copy, the constant and the structure copy are delivered inside the VPI release, `both` inside its `release` statement (CS-D3); the expression drivers of `assigned`, `row[1]` and `g[4].s.q` are scheduled and still show the forced value. `stored` keeps 105 and `g[1].s.q` its force. |
+| `[3] end of the time step: assigned=22 ... row=23,24 ...`, `s.q=111,65,66` | Every scheduled driver ran: `g[4].s.q` is `seed[4] + 1` of its own instance. |
+| `[5] at the release: ... both=107`, `[5] end of the time step: ... both=25`, `s.q=62,65,66` | A VPI release of the variable a `release` statement also names follows the VPI rule: scheduled, not in place. |
 | `[7] next operand: ... stored=36` | The procedure assigns `stored` again. |
 
 ## Release rule regression: `release_in_place.sv`
@@ -554,8 +561,8 @@ Decision CS-D3 rests on the 10.6.2 sentences quoted for scenario 1 and on
 simulator may suspend execution and place the partially completed event as a
 pending event in the event region." A released variable that a continuous
 assignment drives holds the driven value in the statement after the release. The portable decision case
-covers assignments, ports, parts, structures, small arrays and a delayed
-assignment; this fixture adds the remaining forms. The operand is 2 at the
+covers assignments, ports, parts, structures and small arrays (delayed
+assignments are decision CS-D5); this fixture adds the remaining forms. The operand is 2 at the
 releases (1 at the forces).
 
 | Lines | Why |
@@ -564,3 +571,19 @@ releases (1 at the forces).
 | `one element: 6,205`, `both elements: 6,7` | *Clause-derived*: elements 4000 and 7 of a 5000-cell array, which llg keeps in a keyed container; each takes `in + 4` and `in + 5` when it is released and the other keeps its force. Some simulators give 0 here. |
 | `real: 3.0` | *Clause-derived*: 10.6.2 makes no exception for a real variable. Some simulators keep 99.5 until the operand changes. |
 | `released by its driver: 9`, `next operand: 10` | The assignment's function releases its own target while the assignment is evaluated: the evaluation under way delivers the value, the release does not start it again. |
+
+## Release rule regression: `release_shared_instances.sv`
+
+The same rule (CS-D3) where llg shares one generated driver body between
+the six instances of `leaf` (parameter `K` 1 or 11), the six iterations of a
+generate loop (`direct[i] = in[i] + i`) and the six port connections
+(`out[i]`). The operands are `in[i] = 40 + 2i` at the releases. The expected
+output is the industry-standard behaviour.
+
+| Lines | Why |
+| --- | --- |
+| `g[4].u.q at its release: 59`, `g[1].u.twice at its release: 84` | `in[4] + 11` and `2 * in[1]`: the release repeats the driver of the named instance with its own operand and parameter. |
+| `direct[5] at its release: 55` | `in[5] + 5`: the iteration's index is the driver's own. |
+| `out[5] at its release: 205` | The port connection copies `g[5].u.q`, which is still forced. |
+| `four released: q=200,201,202,203,59,205 ...` | The other instances keep their forces. |
+| `at the releases: q=41,43,45,57,61 ...` | Every remaining instance, released one after the other, holds its own driven value at once. |

@@ -1,12 +1,11 @@
 // Decision CS-D3: a released variable that continuous assignments or output
 // ports drive holds the driven value when the release statement returns: a
 // read in the same process, before it suspends, already sees it. The value
-// is that of each driver at that moment: an assignment without a delay is
-// evaluated with the present values of its operands (a blocking write made
-// just before the release counts, a nonblocking one not yet), a delayed
-// assignment gives the value it last delivered and an update still under
-// way arrives at its time. A variable only procedures write keeps the
-// forced value until its next procedural assignment.
+// is that of each driver at that moment: an assignment is evaluated with
+// the present values of its operands (a blocking write made just before the
+// release counts, a nonblocking one not yet). A variable only procedures
+// write keeps the forced value until its next procedural assignment.
+// Delayed continuous assignments are decision CS-D5.
 //
 // IEEE 1800-2009 10.6.2 (SystemVerilog-1800-2009.txt L13390-13393): "When
 // released, then if the variable is not driven by a continuous assignment
@@ -33,7 +32,7 @@ module stage (
 endmodule
 
 module tb;
-  logic [7:0] in, ported, assigned, tied, parts, stored, delayed;
+  logic [7:0] in, ported, assigned, tied, parts, stored;
   logic [7:0] row[2];
   struct packed {
     logic [3:0] hi;
@@ -52,7 +51,6 @@ module tb;
   assign pair.lo = in[7:4];
   assign row[0] = in + 8'd3;
   assign row[1] = in + 8'd4;
-  assign #5 delayed = in + 8'd5;
   assign net = in + 8'd6;
   always @(in) stored = in + 8'd7;
 
@@ -98,13 +96,6 @@ module tb;
     #1 in = 8'h44;
     release assigned;
     $display("after a blocking write: assigned=%0d", assigned);
-    // A delayed assignment: the delivered value, then the update under way.
-    #10 force delayed = 8'd200;
-    #1 in = 8'h10;
-    #2 release delayed;
-    $display("delayed at the release: %0d", delayed);
-    #2 $display("delayed two units later: %0d", delayed);
-    #2 $display("delayed after its delay: %0d", delayed);
     $finish;
   end
 endmodule

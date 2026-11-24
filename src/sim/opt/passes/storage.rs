@@ -498,7 +498,8 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
                     }
                 });
             }
-            crate::sim::ir::IrRedriveAction::Committed => {}
+            crate::sim::ir::IrRedriveAction::Constant(_)
+            | crate::sim::ir::IrRedriveAction::Committed => {}
         }
         !dead
     });

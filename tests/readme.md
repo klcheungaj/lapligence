@@ -831,7 +831,7 @@ transcripts compared per time step; two of them are also dumped as VCD and
 FST. The gate-level features llg does not simulate reject with their
 diagnostics. Oracles and clauses are in the
 [fixture readme](fixtures/sim/feature_completion/fin_002/readme.md); its
-decisions are CS-D1 to CS-D4 in `sim_lrm_decisions`. Sanitizer and Clang
+decisions are CS-D1 to CS-D5 in `sim_lrm_decisions`. Sanitizer and Clang
 lanes use the settings of the sections below with the same filter.
 
 ### LRM decision cases

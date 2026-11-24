@@ -447,6 +447,21 @@ fn releases_repeat_continuous_drivers_in_place() {
     );
 }
 
+/// Releases where the instances of a module, the iterations of a generate
+/// loop and the port connections share one generated driver body: each
+/// release repeats the driver of its own instance with that instance's
+/// operands, parameter and index.
+#[test]
+fn releases_repeat_the_driver_of_their_own_instance() {
+    sim_cli::run_case_checked_matrix_with_files(
+        SUITE,
+        "release_shared_instances",
+        &[],
+        &[],
+        &scenario(fixture!("release_shared_instances.out"), &[]),
+    );
+}
+
 /// The value a `%v` strength display or a binary display stands for in a
 /// waveform: the logic value of each bit.
 fn logic_value(display: &str) -> String {

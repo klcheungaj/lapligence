@@ -11885,10 +11885,10 @@ vpiHandle vpi_put_value(vpiHandle handle, p_vpi_value input, p_vpi_time time,
             /* Not a release statement: no cbRelease (decision A20-D9). */
             ++g_vpi.quiet_force;
             if (object->is_real) {
-                llg_release_real(real_cell(&target));
+                llg_release_real_scheduled(real_cell(&target));
             } else {
                 llg_force_part_t part = force_part(&target);
-                llg_release_parts(&part, 1, 0, 0);
+                llg_release_parts_scheduled(&part, 1);
             }
             --g_vpi.quiet_force;
             /* 38.34: value_p receives the value after the release. */

@@ -419,7 +419,6 @@ void llg_rt_cleanup(void) {
     value_scopes_unwind(NULL);
     while (root_reference_top) llg_ref_scope_end(root_reference_top);
     for (int32_t i = 0; i < g.force_count; i++) force_free_entry(&g.force_table[i]);
-    redrives_release();
     module_paths_release();
     switches_release();
     timing_checks_release();
@@ -591,7 +590,6 @@ void llg_rt_init_with_args_and_precision(int32_t argc, char** argv,
     llg_assertion_event_order = 0;
     finals_release(); // a fresh run never inherits final registrations
     llg_n_finals = 0;
-    redrives_forget();
     if (precision_fs == 0) {
         llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "runtime precision must be non-zero");
         llg_last_failure = 1;

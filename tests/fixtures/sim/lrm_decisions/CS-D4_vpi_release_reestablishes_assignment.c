@@ -1,12 +1,12 @@
 /* Companion of CS-D4_vpi_release_reestablishes_assignment.sv: a VPI
  * application (vlog_startup_routines). $d4(1) forces and $d4(0) releases
- * the three variables. */
+ * the five variables. */
 #include "vpi_user.h"
 #include <string.h>
 
 static PLI_INT32 d4(PLI_BYTE8* data)
 {
-    static const char* names[] = {"tb.ported", "tb.assigned", "tb.stored"};
+    static const char* names[] = {"tb.ported", "tb.assigned", "tb.stored", "tb.tied", "tb.delayed"};
     vpiHandle call = vpi_handle(vpiSysTfCall, NULL);
     vpiHandle arguments = vpi_iterate(vpiArgument, call);
     s_vpi_value value;
@@ -16,7 +16,7 @@ static PLI_INT32 d4(PLI_BYTE8* data)
     vpi_get_value(vpi_scan(arguments), &value);
     vpi_free_object(arguments);
     force = value.value.integer;
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 5; ++i) {
         vpiHandle object = vpi_handle_by_name((PLI_BYTE8*)names[i], NULL);
         value.format = vpiIntVal;
         value.value.integer = 90 + i;

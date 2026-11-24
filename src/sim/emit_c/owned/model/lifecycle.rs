@@ -369,6 +369,7 @@ fn clocking_history_startup(model: &IrModel) -> Result<String, String> {
 pub(in crate::sim::emit_c) fn main(
     execution: &ExecutionModel,
     sharing: &SharedSpawns,
+    redrives: bool,
 ) -> Result<String, String> {
     let model = execution.ir();
     let mut tables = StartupTables::default();
@@ -435,8 +436,8 @@ pub(in crate::sim::emit_c) fn main(
     // access) stops the initializers and `llg_rt_run` returns before any
     // process runs, so the run ends through the normal end-of-run path;
     // any other reports and initialization goes on.
-    if let Some(registration) = super::redrive_registration(model) {
-        out.push_str(&format!("    {registration}\n"));
+    if redrives {
+        out.push_str("    llg_redrives_register(&llg_redrives);\n");
     }
     out.push_str("    llg_model_initializers();\n");
     out.push_str(&crate::sim::emit_c::owned::coverage::fsm_startup(model));
