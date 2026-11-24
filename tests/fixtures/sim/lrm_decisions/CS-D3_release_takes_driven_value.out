@@ -1,0 +1,5 @@
+driven: ported=34 assigned=35 tied=77 parts=31 pair=12 row=36,37 stored=40 net=39
+forced: ported=201 assigned=202 tied=203 parts=ee pair=dd row=70,204 stored=205 net=206
+at the release: ported=68 assigned=69 tied=77 parts=53 pair=34 row=70,71 stored=205 net=73
+one unit later: ported=68 assigned=69 tied=77 parts=53 pair=34 row=70,71 stored=205 net=73
+after a blocking write: assigned=70

@@ -923,7 +923,7 @@ fn walk_stream_selector_mut(selector: &mut IrStreamSelector, f: &mut impl FnMut(
     }
 }
 
-fn walk_stmts_mut(stmts: &mut [IrStmt], f: &mut impl FnMut(&mut IrExpr)) {
+pub(super) fn walk_stmts_mut(stmts: &mut [IrStmt], f: &mut impl FnMut(&mut IrExpr)) {
     for s in stmts {
         walk_stmt_mut(s, f);
     }
@@ -1007,6 +1007,11 @@ pub(super) fn walk_model_exprs_mut(model: &mut IrModel, f: &mut impl FnMut(&mut 
             walk_pre_fn_mut(pre, f);
         }
         walk_stmts_mut(&mut p.body, f);
+    }
+    for redrive in &mut model.redrives {
+        if let crate::sim::ir::IrRedriveAction::Evaluate(body) = &mut redrive.action {
+            walk_stmts_mut(body, f);
+        }
     }
     for step in &mut model.init_steps {
         match step {

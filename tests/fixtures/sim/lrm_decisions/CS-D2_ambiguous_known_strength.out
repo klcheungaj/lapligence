@@ -1,0 +1,4 @@
+low=630 high=651 one=Pu1
+tb.low: logic=0 s0=8 s1=64
+tb.high: logic=1 s0=32 s1=64
+tb.one: logic=1 s0=32 s1=32

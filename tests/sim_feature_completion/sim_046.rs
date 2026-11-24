@@ -32,6 +32,17 @@ fn options_names_and_two_argument_queries_follow_19_7_and_19_8() {
     });
 }
 
+/// A two-argument query whose result is discarded still stores the bin
+/// numbers (19.8): the call is not dropped with its value.
+#[test]
+fn discarded_two_argument_queries_store_their_counts() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_046/discarded_counts.out");
+    sim_cli::run_case_checked_matrix(SUITE, "discarded_counts", &[], &|label, output| {
+        assert_stdout(label, output, expected);
+        assert!(llg_messages(output).is_empty(), "{label}");
+    });
+}
+
 /// The coverage databases left in a run directory, sorted.
 fn database_files(directory: &Path) -> Vec<String> {
     let mut files = std::fs::read_dir(directory)

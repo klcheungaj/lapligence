@@ -2593,6 +2593,43 @@ fn dependency_names_resolve_like_a_signal_scan() {
 }
 
 #[test]
+fn a_redrive_names_variables_and_a_copy_keeps_one_packed_type() {
+    use crate::sim::ir::{IrRedrive, IrRedriveAction, IrRedriveTarget, IrType};
+    let mut model = valid_model();
+    let mut source = model.signals[0].clone();
+    source.c_name = "source".to_string();
+    model.signals.push(source);
+    model.redrives.push(IrRedrive {
+        label: "tb.assign".to_string(),
+        port_link: false,
+        targets: vec![IrRedriveTarget::Signal(0)],
+        action: IrRedriveAction::Copy(1),
+    });
+    if let Err(error) = model.validate() {
+        panic!("{}: {}", error.path(), error.detail());
+    }
+    model.redrives[0].action = IrRedriveAction::Committed;
+    assert!(
+        model.validate().is_ok(),
+        "a delayed driver needs no operand"
+    );
+    model.redrives[0].action = IrRedriveAction::Copy(2);
+    assert!(model.validate().is_err(), "the source must exist");
+    model.redrives[0].action = IrRedriveAction::Copy(1);
+    model.redrives[0].targets = vec![IrRedriveTarget::Signal(2)];
+    assert!(model.validate().is_err(), "the variable must exist");
+    model.redrives[0].targets = vec![IrRedriveTarget::Array(model.arrays.len())];
+    assert!(model.validate().is_err(), "the array must exist");
+    model.redrives[0].targets = Vec::new();
+    assert!(model.validate().is_err(), "a row names a variable");
+    model.redrives[0].targets = vec![IrRedriveTarget::Signal(0)];
+    if let IrType::Packed { width, .. } = &mut model.signals[1].ty {
+        *width = 2;
+    }
+    assert!(model.validate().is_err(), "a copy keeps the type");
+}
+
+#[test]
 fn a_member_cell_array_names_one_signal_per_cell_of_its_ranges() {
     let mut model = valid_model();
     let mut cell = model.signals[0].clone();

@@ -149,7 +149,10 @@ buffers valid until the next query/shutdown. Puts go through `llg_ba`/`llg_ba_d`
 (no delay), delayed calls (`llg_schedule_delayed_call`: delayed modes, one
 carrier process per pending `vpiSchedEvent` record, written in its Active
 turn, decision S42-D5) or the force table (`llg_force_value_parts`, `llg_force_real_value`, release through
-`llg_release_parts`/`llg_release_real`). Tear down VPI/runtime queues before
+`llg_release_parts_scheduled`/`llg_release_real_scheduled`, which
+re-establish the continuous drivers of a variable: copies, constants and
+delayed drivers in place, expression drivers by waking their process,
+decision CS-D4). Tear down VPI/runtime queues before
 model storage.
 `vpi_mcd_*` (38.24-38.29) run on the `$fopen` table through `llg_file_mcd_*`
 and `llg_file_name` (`llg_rt.h`): channels opened on either side work on both,

@@ -1036,7 +1036,7 @@ fn a_flushed_dump_is_readable_while_the_simulation_runs() {
 
 /// The text the reader probe prints for an FST file.
 #[derive(Debug, Default)]
-struct FstDump {
+pub(super) struct FstDump {
     /// (path, handle, length, alias)
     vars: Vec<(String, u32, u32, bool)>,
     end: u64,
@@ -1053,7 +1053,7 @@ impl FstDump {
             .1
     }
 
-    fn changes_of(&self, path: &str) -> Vec<(u64, String)> {
+    pub(super) fn changes_of(&self, path: &str) -> Vec<(u64, String)> {
         let handle = self.handle(path);
         self.changes
             .iter()
@@ -1111,7 +1111,7 @@ int main(int argc, char** argv) {
 
 /// Build GTKWave's reader (the bundled libfst and zlib, as generated models
 /// link them) into `dir` and dump `file` through it.
-fn fst_dump(dir: &Path, file: &str) -> Result<FstDump, String> {
+pub(super) fn fst_dump(dir: &Path, file: &str) -> Result<FstDump, String> {
     let reader = dir.join("fst_reader");
     std::fs::create_dir_all(reader.join("zlib")).map_err(|error| error.to_string())?;
     for (name, source) in llg::sim::rt::waveform_sources() {

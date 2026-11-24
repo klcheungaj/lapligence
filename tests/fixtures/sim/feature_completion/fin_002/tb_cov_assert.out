@@ -1,0 +1,22 @@
+[5] chk a_mutex failed
+[35] a_g0 passed
+[50] deferred a_req: both requested while idle
+[55] chk both requested
+[63] a_ack failed
+[65] a_g0 passed
+[75] a_g1 failed
+[91] a_ack passed
+[105] a_ack passed
+[107] assertions killed
+[118] assertions on
+[135] a_g1 passed
+[145] chk a_cause failed
+[145] chk a_mutex failed
+[161] a_ack passed
+[170] result cov=72.22 inst=72.22 pass=100.00 who=66.67 cross=50.00
+who bins 2/3
+cross bins 3/6
+ack cov=50.00 fsm cov=83.33 all=68.52
+a_ack: passes=3 fails=1
+a_g0: passes=2 fails=0
+a_g1: passes=1 fails=1

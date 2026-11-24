@@ -257,6 +257,28 @@ sparse array merges them back into the new value
 (`fixed_publication_keep_forced`). These helpers are `LLG_OUTLYING`; a write
 pays only the `g.force_count` test unless something is forced.
 
+A release of a variable ends in `redrive`: the model's const
+`llg_redrive_table_t` (`llg_redrives_register`) names each continuous
+driver of a releasable variable, as flat per-row arrays and classes of rows
+of one shape (`llg_redrive_class_t`). The rows of the released cell that
+are data act in place with ordinary blocking writes for every release: a
+copy of the source, a constant from its limbs, or for a delayed driver the
+committed value of its inertial records (`inertial_redrive`, CS-D5; a
+record of a selected driver of a variable notes its bit range once, when it
+is created, in fields that fill alignment padding). A `release` statement
+(`llg_release_parts`, `llg_release_real`) also runs the row's function in
+place (CS-D3; with the instance record of a shared body). A release through
+VPI (`llg_release_parts_scheduled`, `llg_release_real_scheduled`) instead
+wakes the driver process a row names by root descriptor and instance record
+(`redrive_wake`, a registry scan), like a change of a value it waits on
+(CS-D4). The first release of a run sorts row numbers by storage address
+into the model's scratch array (keyed arrays are asked through
+`fixed_array_owns`); a per-row busy flag makes a release from inside a
+driver's own evaluation leave the value to that driver. Table and scratch
+are the model's static storage and nothing else reads them: a run without a
+release pays the registration only, nothing is freed or reset at the end of
+a run, and the table stays for final procedures.
+
 Future NBAs own values and retained destinations after issuers finish, and can
 advance time without a process waiter. Masked writes merge into current storage.
 Tagged-member NBAs own a copy of their tag checks and re-check the target's tags
@@ -355,7 +377,9 @@ the enabled paths whose input time is latest (A7-D1, A8-D1): conditions come
 from the set's generated evaluator, read lazily once per publication; edge
 paths use per-bit rise/fall stamps (allocated only for sets with edge paths);
 an `ifnone` path yields to an active path of its group. `path_bit_schedule`
-then filters pulses (30.7): the record's pending event is the head and further
+then filters pulses (30.7): a transition is timed once, from the last
+scheduled value, and keeps that time when the update before it is cancelled
+or rejected (CS-D1); the record's pending event is the head and further
 events live in its `llg_path_queue_t` (allocated on the first passed or
 x-filtered overlap, freed at cleanup); reject/error limits come from the path's
 `limits` table or the `llg_module_paths_configure` percentages; styles from

@@ -3814,6 +3814,65 @@ void llg_force_expr_parts(const llg_force_part_t* parts, int32_t n_parts,
                           const llg_force_read_t* reads, int32_t n_reads);
 void llg_release_parts(const llg_force_part_t* parts, int32_t n_parts,
                        uint32_t stream_slice, int32_t stream_right_to_left);
+// The continuous drivers of the variables a release may name (IEEE 1800-2009
+// 10.6.2). One row per driver and released storage: a release of a cell in
+// [storage[row], storage[row] + cells) (`stride` bytes each; `cells` 0: any
+// cell of the keyed array `storage[row]`) re-establishes the driver. Rows of
+// one shape are a class, a run of rows starting at `first` (ascending; the
+// first class starts at row 0), with one action:
+// - LLG_REDRIVE_COPY: `operand[row]`, a packed variable, is copied to the cell;
+// - LLG_REDRIVE_LIMBS: `operand[row]` is the `uint64_t` value, X and Z limbs
+//   (in that order, each of the cell's width) of a constant assigned to it;
+// - LLG_REDRIVE_COMMITTED: a delayed driver; the value it last committed is
+//   assigned again and a pending update matures as scheduled;
+// - LLG_REDRIVE_EVALUATE: `evaluate(operand[row])` runs the driver's
+//   assignment once (`operand`: the instance record of a body shared between
+//   instances, else NULL);
+// - LLG_REDRIVE_PROCESS: the driver is the live process with root descriptor
+//   `process` and, for a body shared between instances, the instance record
+//   `operand[row]` at `instance_offset` of its root frame (else 0); it is
+//   woken as by a change of a value it waits on.
+// The first three act in place for every release, so the variable holds the
+// driven value when the release returns. A `release` statement
+// (llg_release_parts, llg_release_real) also runs the EVALUATE rows in place
+// and ignores PROCESS rows; a release through VPI (the `_scheduled` entries)
+// wakes the PROCESS rows instead, so an expression driver delivers its value
+// when it next runs in the same time step, and ignores EVALUATE rows: a
+// catalog model then needs no generated code per driver, only these tables.
+// The per-row data are flat arrays, which compile in a fraction of the time
+// of one structure per row. Table and scratch arrays (`order`, `busy`: one
+// entry per row) belong to the model. Nothing reads them outside a release,
+// so a model that releases nothing pays the registration only.
+enum {
+    LLG_REDRIVE_COPY = 0,
+    LLG_REDRIVE_LIMBS = 1,
+    LLG_REDRIVE_COMMITTED = 2,
+    LLG_REDRIVE_EVALUATE = 3,
+    LLG_REDRIVE_PROCESS = 4
+};
+typedef struct {
+    uint32_t first;
+    uint32_t cells;
+    uint32_t stride;
+    uint32_t action;
+    uint32_t instance_offset;
+    void (*evaluate)(void* context);
+    const llg_co_desc_t* process;
+} llg_redrive_class_t;
+typedef struct {
+    const void* const* storage;
+    const void* const* operand;
+    const llg_redrive_class_t* classes;
+    uint32_t* order;
+    uint8_t* busy;
+    uint32_t class_count;
+    uint32_t count;
+} llg_redrive_table_t;
+LLG_OUTLYING void llg_redrives_register(const llg_redrive_table_t* table);
+// Release through VPI (see the redrive rows above); otherwise like
+// llg_release_parts without a stream and llg_release_real.
+LLG_OUTLYING void llg_release_parts_scheduled(const llg_force_part_t* parts, int32_t n_parts);
+LLG_OUTLYING void llg_release_real_scheduled(double* target);
 void llg_force_real(double* target, llg_force_real_eval_fn eval,
                     const llg_force_read_t* reads, int32_t n_reads);
 // Whether a live force binding still reads `sig` (packed) or `real`. Exactly

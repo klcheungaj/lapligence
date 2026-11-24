@@ -8,6 +8,7 @@ static void llg_net_strength_publish(llg_net_t* net);
 static void llg_switch_net_changed(llg_net_t* net);
 
 static llg_force_watch_fn force_watch_hook;
+static LLG_OUTLYING void redrive(void* cell);
 
 void llg_force_watch_hook(llg_force_watch_fn hook) { force_watch_hook = hook; }
 
@@ -467,6 +468,9 @@ void llg_release_parts(const llg_force_part_t* parts, int32_t n_parts,
         if (seen) continue;
         force_recompute_target(target, nets[i]);
         if (nets[i] && nets[i]->switch_net) llg_switch_net_changed(nets[i]);
+        // A net took its drivers' value above; a variable takes that of its
+        // continuous drivers here.
+        if (!nets[i]) redrive(target);
     }
     free(nets);
     change_check();
@@ -485,6 +489,7 @@ void llg_release_real(double* target) {
             break;
         }
     }
+    redrive(target);
     if (LLG_CO_UNLIKELY(force_watch_hook != NULL)) force_watch_hook(1, NULL, 0, target);
 }
 
@@ -549,4 +554,162 @@ void llg_release(sv4_t* sig) {
         sig, NULL, (int64_t)llg_sv4_width(*sig) - 1, 0, llg_sv4_width(*sig), 0, 0
     };
     llg_release_parts(&part, 1, 0, 0);
+}
+
+// ── redrives: a released variable takes its continuous drivers' value ─────
+
+// Everything below runs in a release only and lies outside the unit's other
+// code, so that no function of a run without a release moves.
+static LLG_OUTLYING int32_t fixed_array_owns(const llg_fixed_array_t* array, const void* cell);
+static LLG_OUTLYING void inertial_redrive(sv4_t* target);
+
+// The model's table (llg_redrives_register). `order` holds row numbers once
+// the first release of a run indexed them: the rows with cells by storage
+// address, then the keyed-array rows. `busy` marks rows whose action is
+// running: a release made from inside a driver's own evaluation finds that
+// driver busy and leaves the value to it. All of it is the model's static
+// storage, so there is nothing to free at the end of a run and the table
+// stays for the releases of final procedures.
+static const llg_redrive_table_t* redrives;
+static uint32_t redrive_ranged;
+static int32_t redrive_indexed;
+// The release under way came through VPI (llg_release_parts_scheduled).
+static int32_t redrive_scheduled;
+
+LLG_OUTLYING void llg_redrives_register(const llg_redrive_table_t* table) {
+    redrives = table;
+    redrive_ranged = 0;
+    redrive_indexed = 0;
+}
+
+// The class of `row`: the last one that starts at or before it.
+static LLG_OUTLYING const llg_redrive_class_t* redrive_class(uint32_t row) {
+    uint32_t low = 0, high = redrives->class_count;
+    while (high - low > 1u) {
+        uint32_t middle = low + (high - low) / 2u;
+        if (redrives->classes[middle].first <= row) low = middle;
+        else high = middle;
+    }
+    return &redrives->classes[low];
+}
+
+static LLG_OUTLYING int32_t redrive_compare(const void* left, const void* right) {
+    uint32_t a = *(const uint32_t*)left, b = *(const uint32_t*)right;
+    uintptr_t at = (uintptr_t)redrives->storage[a], bt = (uintptr_t)redrives->storage[b];
+    if (at != bt) return at < bt ? -1 : 1;
+    return a < b ? -1 : a > b;
+}
+
+static LLG_OUTLYING void redrive_index(void) {
+    uint32_t keyed = redrives->count;
+    redrive_ranged = 0;
+    for (uint32_t index = 0; index < redrives->class_count; index++) {
+        const llg_redrive_class_t* group = &redrives->classes[index];
+        uint32_t end = index + 1u < redrives->class_count ? group[1].first : redrives->count;
+        for (uint32_t row = group->first; row < end; row++) {
+            if (group->cells) redrives->order[redrive_ranged++] = row;
+            else redrives->order[--keyed] = row;
+        }
+    }
+    qsort(redrives->order, redrive_ranged, sizeof(*redrives->order), redrive_compare);
+    memset(redrives->busy, 0, redrives->count);
+    redrive_indexed = 1;
+}
+
+// Wake the live process a PROCESS class names, like a change of a value it
+// waits on: one already due to run, or running, will evaluate anyway.
+// Releases are rare, so the registry is scanned; the wake is the VPI
+// bridge's (llg_rt_thread_wake), so no scheduling path gains a caller.
+static LLG_OUTLYING void redrive_wake(const llg_redrive_class_t* group, const void* record) {
+    for (int32_t slot = 0; slot < g.n_procs; slot++) {
+        llg_proc_t* proc = g.all_procs[slot];
+        if (!proc || proc->completed || proc->killed || proc->chain.root != group->process)
+            continue;
+        if (group->instance_offset) {
+            const void* held = NULL;
+            memcpy(&held, (const uint8_t*)LLG_CO_ROOT(&proc->chain) + group->instance_offset,
+                   sizeof(held));
+            if (held != record) continue;
+        }
+        (void)llg_rt_thread_wake(proc->registry_slot, proc->assertion_owner);
+        return;
+    }
+}
+
+static LLG_OUTLYING void redrive_run(uint32_t row, void* cell) {
+    if (redrives->busy[row]) return;
+    const llg_redrive_class_t* group = redrive_class(row);
+    const void* operand = redrives->operand[row];
+    redrives->busy[row] = 1;
+    switch (group->action) {
+    case LLG_REDRIVE_COPY:
+        llg_ba_from((sv4_t*)cell, (const sv4_t*)operand);
+        break;
+    case LLG_REDRIVE_LIMBS: {
+        const sv4_t* target = (const sv4_t*)cell;
+        const uint64_t* limbs = (const uint64_t*)operand;
+        size_t count = ((size_t)llg_sv4_width(*target) + 63u) / 64u;
+        sv4_t value = sv4_from_limbs(limbs, limbs + count, limbs + 2u * count,
+                                     llg_sv4_width(*target), llg_sv4_signed(*target));
+        llg_ba((sv4_t*)cell, value);
+        sv4_destroy(&value);
+        break;
+    }
+    case LLG_REDRIVE_COMMITTED:
+        inertial_redrive((sv4_t*)cell);
+        break;
+    case LLG_REDRIVE_EVALUATE:
+        if (!redrive_scheduled) group->evaluate((void*)(uintptr_t)operand);
+        break;
+    default:
+        if (redrive_scheduled) redrive_wake(group, operand);
+        break;
+    }
+    redrives->busy[row] = 0;
+}
+
+// The continuous drivers of the released variable at `cell` are
+// re-established (IEEE 1800-2009 10.6.2; llg_redrive_class_t): in place with
+// ordinary blocking writes, so bits another force still holds keep their
+// forced value, or by waking the driver. A variable without a row is written
+// by procedures only and keeps its value until the next of their
+// assignments.
+static LLG_OUTLYING void redrive(void* cell) {
+    if (!redrives || !redrives->count || !cell) return;
+    if (!redrive_indexed) redrive_index();
+    uintptr_t key = (uintptr_t)cell;
+    uint32_t low = 0, high = redrive_ranged;
+    while (low < high) {
+        uint32_t middle = low + (high - low) / 2u;
+        if ((uintptr_t)redrives->storage[redrives->order[middle]] <= key) low = middle + 1u;
+        else high = middle;
+    }
+    // Rows of one variable or array share their storage address and no two
+    // variables overlap, so the rows of this cell end at the first miss.
+    while (low) {
+        uint32_t row = redrives->order[--low];
+        const llg_redrive_class_t* group = redrive_class(row);
+        if (key - (uintptr_t)redrives->storage[row] >= (uintptr_t)group->cells * group->stride)
+            break;
+        redrive_run(row, cell);
+    }
+    for (uint32_t keyed = redrive_ranged; keyed < redrives->count; keyed++) {
+        uint32_t row = redrives->order[keyed];
+        if (fixed_array_owns((const llg_fixed_array_t*)redrives->storage[row], cell))
+            redrive_run(row, cell);
+    }
+}
+
+LLG_OUTLYING void llg_release_parts_scheduled(const llg_force_part_t* parts, int32_t n_parts) {
+    int32_t outer = redrive_scheduled;
+    redrive_scheduled = 1;
+    llg_release_parts(parts, n_parts, 0, 0);
+    redrive_scheduled = outer;
+}
+
+LLG_OUTLYING void llg_release_real_scheduled(double* target) {
+    int32_t outer = redrive_scheduled;
+    redrive_scheduled = 1;
+    llg_release_real(target);
+    redrive_scheduled = outer;
 }

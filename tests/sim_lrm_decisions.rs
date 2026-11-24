@@ -6531,6 +6531,50 @@ fn s07_d3_comb_reads_element_member() {
 }
 
 #[test]
+fn cs_d1_cancelled_leading_edge_keeps_trailing_time() {
+    run_decision(
+        "CS-D1_cancelled_leading_edge_keeps_trailing_time",
+        include_str!(
+            "fixtures/sim/lrm_decisions/CS-D1_cancelled_leading_edge_keeps_trailing_time.out"
+        ),
+    );
+}
+
+#[test]
+fn cs_d2_ambiguous_known_strength() {
+    run_vpi_decision(
+        "CS-D2_ambiguous_known_strength",
+        &["task $d2()"],
+        include_str!("fixtures/sim/lrm_decisions/CS-D2_ambiguous_known_strength.out"),
+    );
+}
+
+#[test]
+fn cs_d3_release_takes_driven_value() {
+    run_decision(
+        "CS-D3_release_takes_driven_value",
+        include_str!("fixtures/sim/lrm_decisions/CS-D3_release_takes_driven_value.out"),
+    );
+}
+
+#[test]
+fn cs_d5_release_of_delayed_driver() {
+    run_decision(
+        "CS-D5_release_of_delayed_driver",
+        include_str!("fixtures/sim/lrm_decisions/CS-D5_release_of_delayed_driver.out"),
+    );
+}
+
+#[test]
+fn cs_d4_vpi_release_reestablishes_assignment() {
+    run_vpi_decision(
+        "CS-D4_vpi_release_reestablishes_assignment",
+        &["task $d4(int enable)"],
+        include_str!("fixtures/sim/lrm_decisions/CS-D4_vpi_release_reestablishes_assignment.out"),
+    );
+}
+
+#[test]
 fn tn_d1_typename_spacing() {
     run_decision(
         "TN-D1_typename_spacing",

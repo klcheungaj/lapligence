@@ -151,7 +151,10 @@ fn split_name(name: &str) -> Vec<&str> {
 }
 
 /// Storage of one signal after alias resolution: `(packed, real, net)`.
-pub(super) fn signal_storage(model: &IrModel, index: usize) -> Option<(String, String, String)> {
+pub(in crate::sim::emit_c) fn signal_storage(
+    model: &IrModel,
+    index: usize,
+) -> Option<(String, String, String)> {
     let mut current = index;
     let mut visited = std::collections::HashSet::new();
     loop {
@@ -251,30 +254,19 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
                     "NULL".to_owned(),
                     Vec::new(),
                 )
-            } else if array.activation {
-                continue;
-            } else if array.sparse() {
-                sparse = Some(format!("&{}", array.c_name));
-                (
-                    "NULL".to_owned(),
-                    "NULL".to_owned(),
-                    "NULL".to_owned(),
-                    array.dims.clone(),
-                )
-            } else if array.real {
-                (
-                    "NULL".to_owned(),
-                    format!("&{}[0]", array.c_name),
-                    "NULL".to_owned(),
-                    array.dims.clone(),
-                )
             } else {
-                (
-                    format!("&{}[0]", array.c_name),
-                    "NULL".to_owned(),
-                    "NULL".to_owned(),
-                    array.dims.clone(),
-                )
+                let Some(storage) = array_storage(array) else {
+                    continue;
+                };
+                let null = || "NULL".to_owned();
+                if array.sparse() {
+                    sparse = Some(storage);
+                    (null(), null(), null(), array.dims.clone())
+                } else if array.real {
+                    (null(), storage, null(), array.dims.clone())
+                } else {
+                    (storage, null(), null(), array.dims.clone())
+                }
             }
         } else {
             (
@@ -739,6 +731,19 @@ pub(in crate::sim::emit_c) fn vpi_packed_registration(model: &IrModel) -> &'stat
         " || !llg_vpi_model_packed(llg_vpi_packed)"
     } else {
         ""
+    }
+}
+
+/// The address a catalog row of array `array` names: its first cell, or
+/// its keyed container when sparse; `None` for a lexical activation array,
+/// which has no static storage.
+pub(in crate::sim::emit_c) fn array_storage(array: &crate::sim::ir::IrArray) -> Option<String> {
+    if array.activation {
+        None
+    } else if array.sparse() {
+        Some(format!("&{}", array.c_name))
+    } else {
+        Some(format!("&{}[0]", array.c_name))
     }
 }
 

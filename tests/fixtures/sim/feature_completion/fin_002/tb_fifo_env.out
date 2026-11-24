@@ -1,0 +1,10 @@
+[65] vpi: full, stall requested
+[90] vpi: stall cleared
+[255] vpi: full, stall requested
+[280] vpi: stall cleared
+[365] pushes=11 pops=11 stalled=4 overflows=4
+checks: values=46 flags=28 mismatches=0 model count=0 fifo count=0
+note refused pop=2
+note refused push=4
+coverage level=100.00 ops=100.00 group=100.00
+vpi: count changes=17 fills=2 clears=2

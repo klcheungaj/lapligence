@@ -28,6 +28,11 @@ pub struct IrSignal {
 }
 
 impl IrSignal {
+    /// A variable, not a net: no resolved net stores or aliases it.
+    pub(in crate::sim) fn is_variable(&self) -> bool {
+        self.net_driver.is_none() && self.net_alias.is_empty()
+    }
+
     pub fn new(
         c_name: String,
         hdl_name: Option<String>,
