@@ -29,7 +29,8 @@ Components: [readme](readme.md), [handlers](handlers/readme.md). Server rules:
 - A position from `last_good` leaves the server only through the current-text
   checks of `identifiers.rs` ([handlers](handlers/readme.md)).
 - Watched-file registrations are serialized by their own gate and read the
-  watcher set only after taking their turn.
+  watcher set only after taking their turn. No notification handler waits for
+  a reply of the client: tower-lsp stops reading when its handlers are taken.
 
 ## Admission rules
 

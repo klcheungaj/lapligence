@@ -142,6 +142,7 @@ fn position(fuzz: &mut Fuzz, text: &str) -> Value {
     fuzz.pick(&words).clone()
 }
 
+#[derive(Debug)]
 struct Pending {
     method: &'static str,
     file: Option<usize>,
@@ -256,6 +257,8 @@ impl Storm {
             .collect();
         let named = |uri: &str, range: &Value, any_word: bool| {
             self.spells(pending, uri, &[range], |text| {
+                // A macro usage is marked with its back quote.
+                let text = text.strip_prefix('`').unwrap_or(text);
                 names.contains(text) || (any_word && text.bytes().all(is_word))
             });
         };
@@ -442,7 +445,7 @@ impl Storm {
         if fuzz.chance(1, 7) {
             thread::sleep(Duration::from_millis(fuzz.below(100)));
         }
-        self.drain(Duration::ZERO);
+        self.drain(Duration::from_millis(1));
     }
 
     fn cancel(&mut self, id: u64) {
@@ -524,8 +527,9 @@ impl Storm {
         while !self.pending.is_empty() {
             assert!(
                 Instant::now() < deadline,
-                "{}: unanswered requests",
-                self.label
+                "{}: unanswered {:?}",
+                self.label,
+                self.pending
             );
             self.drain(Duration::from_millis(50));
         }
@@ -680,5 +684,37 @@ fn a_document_whose_file_is_deleted_is_answered_from_its_text() {
     }
     storm.settle();
     storm.wait_until_clean();
+    storm.exit();
+}
+
+/// The server's own requests wait for the client while the client sends more:
+/// a handler that waited for the reply would keep the server from reading it.
+#[test]
+fn a_client_that_answers_late_gets_every_answer() {
+    let (_directory, mut storm) = Storm::start("late");
+    for (file, (_, text)) in FILES.iter().enumerate() {
+        storm.set_text(file, (*text).to_owned());
+    }
+    let config = storm.directory.join(CONFIG_FILE);
+    for step in 0..60 {
+        // Every reload changes the watched directories.
+        let text = format!("{CONFIG}[sources]\ndirectories = [\".\", \"sub{step}\"]\n");
+        fs::create_dir_all(storm.directory.join(format!("sub{step}"))).expect("directory");
+        fs::write(&config, text).expect("write the configuration");
+        storm.watched(&config, 2);
+        for method in ["textDocument/hover", "textDocument/documentSymbol"] {
+            storm.request(
+                method,
+                Some(1),
+                json!({
+                    "textDocument": { "uri": file_uri(&storm.path(1)) },
+                    "position": position_at(FILES[1].1, "leaf_in", 0),
+                }),
+            );
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    storm.answer_all();
+    storm.settle();
     storm.exit();
 }

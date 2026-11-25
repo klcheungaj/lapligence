@@ -320,7 +320,7 @@ impl LanguageServer for Backend {
         self.flush_logs().await;
         self.publish_config_diagnostics().await;
         if dynamic {
-            self.register_watchers().await;
+            scheduling::register_watchers_with(&self.client, &self.state).await;
         }
         self.schedule_all(Some(notification.id()));
         self.flush_logs().await;
@@ -418,7 +418,7 @@ impl LanguageServer for Backend {
         let schedule: Vec<_> = schedule.into_iter().collect();
         let schedule_count = schedule.len();
         self.schedule_roots_with_parent(schedule, Some(notification.id()));
-        self.register_watchers().await;
+        self.register_watchers();
         self.publish_config_diagnostics().await;
         self.flush_logs().await;
         notification.complete("ok", schedule_count);
@@ -530,7 +530,7 @@ impl LanguageServer for Backend {
             let schedule: Vec<_> = schedule.into_iter().collect();
             let schedule_count = schedule.len();
             self.schedule_roots_with_parent(schedule, Some(notification.id()));
-            self.register_watchers().await;
+            self.register_watchers();
             self.flush_logs().await;
             notification.complete("ok", schedule_count);
         } else if !dep_roots.is_empty() {
@@ -631,7 +631,7 @@ impl LanguageServer for Backend {
         // filesystem-only; job snapshotting below adds admitted unsaved units.
         if root_added {
             let _ = self.rescan().await;
-            self.register_watchers().await;
+            self.register_watchers();
             self.publish_config_diagnostics().await;
             self.flush_logs().await;
         }
