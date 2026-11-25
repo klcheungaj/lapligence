@@ -1,0 +1,252 @@
+diff --git a/source/parsing/Parser.cpp b/source/parsing/Parser.cpp
+index 4da47a2ce..668a15fe5 100644
+--- a/source/parsing/Parser.cpp
++++ b/source/parsing/Parser.cpp
+@@ -400,11 +400,15 @@ VariableDimensionSyntax* Parser::parseDimension() {
+ }
+ 
+ SyntaxList<VariableDimensionSyntax> Parser::parseDimensionList() {
++    auto dg = setDepthGuard();
++
+     SmallVector<VariableDimensionSyntax*> buffer;
+     while (true) {
+         auto dim = parseDimension();
+         if (!dim)
+             break;
++        // A list here, but each dimension is one level of the type.
++        deepen();
+         buffer.push_back(dim);
+     }
+     return SyntaxList<VariableDimensionSyntax>(alloc, buffer);
+@@ -532,6 +536,8 @@ EnumTypeSyntax& Parser::parseEnum() {
+ }
+ 
+ DataTypeSyntax& Parser::parseDataType(bitmask<TypeOptions> options) {
++    auto dg = setDepthGuard();
++
+     if (peek(TokenKind::WireKeyword))
+         skipToken(diag::WireDataType);
+ 
+@@ -1550,7 +1556,7 @@ void Parser::checkBlockNames(const NamedBlockClauseSyntax* beginBlock,
+ 
+ void Parser::handleTooDeep() {
+     addDiag(diag::ParseTreeTooDeep, peek().location());
+-    SLANG_THROW(RecursionException(""));
++    SLANG_THROW(RecursionException("language constructs are too deeply nested"));
+ }
+ 
+ } // namespace slang::parsing
+diff --git a/source/parsing/Parser_expressions.cpp b/source/parsing/Parser_expressions.cpp
+index 75f447a60..d61cf9010 100644
+--- a/source/parsing/Parser_expressions.cpp
++++ b/source/parsing/Parser_expressions.cpp
+@@ -152,6 +152,7 @@ ExpressionSyntax& Parser::parseBinaryExpression(ExpressionSyntax* left,
+             break;
+ 
+         // take the operator
++        deepen();
+         if (opKind == SyntaxKind::InsideExpression) {
+             left = &parseInsideExpression(*left);
+         }
+@@ -188,6 +189,7 @@ ExpressionSyntax& Parser::parseBinaryExpression(ExpressionSyntax* left,
+ 
+         if (takeConditional) {
+             Token question;
++            deepen();
+             auto& predicate = parseConditionalPredicate(*left, TokenKind::Question, question);
+             auto attributes = parseAttributes();
+             if (options.has(ExpressionOptions::DisallowAttrs))
+@@ -652,6 +654,7 @@ ExpressionSyntax& Parser::parsePostfixExpression(ExpressionSyntax& lhs,
+                 }
+ 
+                 const bool isValid = isSelectAllowed();
++                deepen();
+                 expr = &factory.elementSelectExpression(*expr, parseElementSelect());
+                 if (!isValid)
+                     addDiag(diag::InvalidSelectExpression, expr->sourceRange());
+@@ -674,6 +677,7 @@ ExpressionSyntax& Parser::parsePostfixExpression(ExpressionSyntax& lhs,
+                         break;
+                 }
+ 
++                deepen();
+                 expr = &factory.memberAccessExpression(*expr, dot, name);
+                 break;
+             }
+@@ -691,11 +695,13 @@ ExpressionSyntax& Parser::parsePostfixExpression(ExpressionSyntax& lhs,
+                                 getUnaryPostfixExpression(op.kind), *expr, attributes, op);
+                         }
+                         case TokenKind::OpenParenthesis:
++                            deepen();
+                             expr = &factory.invocationExpression(*expr, attributes,
+                                                                  &parseArgumentList());
+                             break;
+                         default:
+                             // otherwise, this has to be a function call without any arguments
++                            deepen();
+                             expr = &factory.invocationExpression(*expr, attributes, nullptr);
+                             break;
+                     }
+@@ -705,6 +711,7 @@ ExpressionSyntax& Parser::parsePostfixExpression(ExpressionSyntax& lhs,
+                         return *expr;
+ 
+                     auto& args = parseArgumentList();
++                    deepen();
+                     expr = &factory.invocationExpression(*expr, nullptr, &args);
+                 }
+                 break;
+@@ -722,6 +729,7 @@ ExpressionSyntax& Parser::parsePostfixExpression(ExpressionSyntax& lhs,
+                 auto& innerExpr = parseExpression();
+                 auto closeParen = expect(TokenKind::CloseParenthesis);
+                 auto& parenExpr = factory.parenthesizedExpression(openParen, innerExpr, closeParen);
++                deepen();
+                 expr = &factory.castExpression(*expr, apostrophe, parenExpr);
+                 break;
+             }
+@@ -734,6 +742,7 @@ ExpressionSyntax& Parser::parsePostfixExpression(ExpressionSyntax& lhs,
+                 if (options.has(ExpressionOptions::BinsSelectContext))
+                     return *expr;
+ 
++                deepen();
+                 expr = &parseArrayOrRandomizeMethod(*expr);
+                 break;
+ 
+@@ -750,6 +759,8 @@ NameSyntax& Parser::parseName() {
+ }
+ 
+ NameSyntax& Parser::parseName(bitmask<NameOptions> options) {
++    auto dg = setDepthGuard();
++
+     NameSyntax* name = &parseNamePart(options | NameOptions::IsFirst);
+     options &= ~NameOptions::ExpectingExpression;
+ 
+@@ -803,6 +814,7 @@ NameSyntax& Parser::parseName(bitmask<NameOptions> options) {
+         NameSyntax& rhs = parseNamePart(nextOptions);
+         previousKind = rhs.kind;
+ 
++        deepen();
+         name = &factory.scopedName(*name, separator, rhs);
+         kind = peek().kind;
+     }
+@@ -822,6 +834,7 @@ NameSyntax& Parser::parseName(bitmask<NameOptions> options) {
+ 
+     if (expectedKind != TokenKind::Unknown) {
+         auto separator = expect(expectedKind);
++        deepen();
+         name = &factory.scopedName(*name, separator, parseNamePart(options));
+     }
+ 
+@@ -829,6 +842,8 @@ NameSyntax& Parser::parseName(bitmask<NameOptions> options) {
+ }
+ 
+ ExpressionSyntax& Parser::parseForeachArrayExpression() {
++    auto dg = setDepthGuard();
++
+     // Parse the base name portion (handles ::, ., and intermediate [..] selectors).
+     // ForeachName stops before the final [loop_variables] bracket and before any
+     // function call argument list '('.
+@@ -841,12 +856,14 @@ ExpressionSyntax& Parser::parseForeachArrayExpression() {
+         switch (peek().kind) {
+             case TokenKind::OpenParenthesis: {
+                 auto& args = parseArgumentList();
++                deepen();
+                 expr = &factory.invocationExpression(*expr, nullptr, &args);
+                 break;
+             }
+             case TokenKind::Dot: {
+                 auto dot = consume();
+                 auto name = expect(TokenKind::Identifier);
++                deepen();
+                 expr = &factory.memberAccessExpression(*expr, dot, name);
+                 break;
+             }
+@@ -859,6 +876,7 @@ ExpressionSyntax& Parser::parseForeachArrayExpression() {
+                 auto next = peek(index).kind;
+                 if (next == TokenKind::OpenBracket || next == TokenKind::Dot ||
+                     next == TokenKind::OpenParenthesis) {
++                    deepen();
+                     expr = &factory.elementSelectExpression(*expr, parseElementSelect());
+                 }
+                 else {
+@@ -943,6 +961,8 @@ NameSyntax& Parser::parseNamePart(bitmask<NameOptions> options) {
+                         break;
+                     }
+ 
++                    // A list here, but each select is one level of the expression.
++                    deepen();
+                     buffer.push_back(&parseElementSelect());
+                 } while (peek(TokenKind::OpenBracket));
+ 
+@@ -963,6 +983,7 @@ NameSyntax& Parser::parseNamePart(bitmask<NameOptions> options) {
+                             return factory.identifierSelectName(identifier, {alloc, buffer});
+                     }
+ 
++                    deepen();
+                     buffer.push_back(&parseElementSelect());
+                 } while (peek(TokenKind::OpenBracket));
+ 
+@@ -1042,6 +1063,8 @@ ArgumentSyntax& Parser::parseArgument() {
+ }
+ 
+ PatternSyntax& Parser::parsePattern() {
++    auto dg = setDepthGuard();
++
+     switch (peek().kind) {
+         case TokenKind::OpenParenthesis: {
+             auto openParen = consume();
+@@ -1153,6 +1176,8 @@ EventExpressionSyntax& Parser::parseSignalEvent() {
+ }
+ 
+ EventExpressionSyntax& Parser::parseEventExpression() {
++    auto dg = setDepthGuard();
++
+     EventExpressionSyntax* left = nullptr;
+     auto kind = peek().kind;
+     if (kind == TokenKind::OpenParenthesis) {
+@@ -1338,6 +1363,7 @@ TimingControlSyntax* Parser::parseTimingControl(bool inAssertion) {
+             }
+         }
+         case TokenKind::RepeatKeyword: {
++            auto dg = setDepthGuard();
+             auto repeat = consume();
+             auto openParen = expect(TokenKind::OpenParenthesis);
+             auto& expr = parseExpression();
+@@ -1421,6 +1447,8 @@ SelectorSyntax* Parser::parseSequenceRange() {
+ }
+ 
+ SequenceExprSyntax& Parser::parseDelayedSequenceExpr(SequenceExprSyntax* first) {
++    auto dg = setDepthGuard();
++
+     SmallVector<DelayedSequenceElementSyntax*> elements;
+     do {
+         Token op, openBracket, closeBracket;
+@@ -1636,6 +1664,7 @@ SequenceExprSyntax& Parser::parseBinarySequenceExpr(SequenceExprSyntax* left, in
+             break;
+ 
+         // take the operator
++        deepen();
+         auto opToken = consume();
+         auto& right = parseSequenceExpr(newPrecedence, isInProperty);
+         left = &factory.binarySequenceExpr(opKind, *left, opToken, right);
+@@ -1759,12 +1788,14 @@ PropertyExprSyntax& Parser::parsePropertyPrimary() {
+             return factory.strongWeakPropertyExpr(keyword, openParen, expr, closeParen);
+         }
+         case TokenKind::NotKeyword: {
++            auto dg = setDepthGuard();
+             auto op = consume();
+             auto& expr = parsePropertyPrimary();
+             return factory.unaryPropertyExpr(op, expr);
+         }
+         case TokenKind::NextTimeKeyword:
+         case TokenKind::SNextTimeKeyword: {
++            auto dg = setDepthGuard();
+             auto op = consume();
+             if (peek(TokenKind::OpenBracket)) {
+                 auto openBracket = consume();
+@@ -1869,6 +1900,7 @@ PropertyExprSyntax& Parser::parsePropertyExpr(int precedence) {
+             break;
+ 
+         // take the operator
++        deepen();
+         auto opToken = consume();
+         auto& right = parsePropertyExpr(newPrecedence);
+ 

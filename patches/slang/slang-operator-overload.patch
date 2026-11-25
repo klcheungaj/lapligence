@@ -229,7 +229,7 @@ index 3aaf2bb3b..148f8d27a 100644
 +
  } // namespace slang::ast
 diff --git a/include/slang/parsing/Parser.h b/include/slang/parsing/Parser.h
-index e2f1ed2c4..b14e1374d 100644
+index e2f1ed2c4..26c9e852e 100644
 --- a/include/slang/parsing/Parser.h
 +++ b/include/slang/parsing/Parser.h
 @@ -357,6 +357,7 @@ private:
@@ -240,6 +240,59 @@ index e2f1ed2c4..b14e1374d 100644
      syntax::PathDeclarationSyntax& parsePathDeclaration();
      syntax::SystemTimingCheckSyntax& parseSystemTimingCheck();
      syntax::TimingCheckArgSyntax& parseTimingCheckArg();
+@@ -432,20 +433,40 @@ private:
+ 
+     // ---- Stack recursion error detection ----
+ 
++    // The guard also measures the tree a guarded function builds: on return,
++    // depthHigh is the depth of the function plus the height of its tree, so
++    // a loop that keeps wrapping what it has parsed in new nodes (an operator
++    // chain, a member or select chain) can count those nodes with deepen().
++    // Recursion alone does not see them: the loop returns to one depth, yet
++    // every later walk of the tree recurses once per node.
+     class DepthGuard {
+     public:
+         DepthGuard(Parser& _parser) : parser(_parser) {
+             if (++parser.recursionDepth > parser.parseOptions.maxRecursionDepth)
+                 parser.handleTooDeep();
++            outerHigh = parser.depthHigh;
++            parser.depthHigh = parser.recursionDepth;
++        }
++        ~DepthGuard() {
++            if (parser.depthHigh < outerHigh)
++                parser.depthHigh = outerHigh;
++            --parser.recursionDepth;
+         }
+-        ~DepthGuard() { --parser.recursionDepth; }
+ 
+     private:
+         Parser& parser;
++        size_t outerHigh;
+     };
+     DepthGuard setDepthGuard() { return DepthGuard(*this); }
+     void handleTooDeep();
+ 
++    // Counts one node that a loop puts above everything parsed so far in the
++    // enclosing guarded function.
++    void deepen() {
++        if (++depthHigh > parseOptions.maxRecursionDepth)
++            handleTooDeep();
++    }
++
+     class RecursionException : public std::runtime_error {
+         using std::runtime_error::runtime_error;
+     };
+@@ -505,6 +526,10 @@ private:
+     // The current depth of recursion in the parser.
+     size_t recursionDepth = 0;
+ 
++    // The depth of the innermost guarded function plus the height of the tree
++    // it has built so far (see DepthGuard).
++    size_t depthHigh = 0;
++
+     // The kind of definition currently being parsed, which could be a module,
+     // interface, program, etc.
+     syntax::SyntaxKind currentDefinitionKind = syntax::SyntaxKind::Unknown;
 diff --git a/include/slang/syntax/SyntaxFacts.h b/include/slang/syntax/SyntaxFacts.h
 index e283d6d2c..29f8a9b16 100644
 --- a/include/slang/syntax/SyntaxFacts.h
@@ -1268,10 +1321,20 @@ index c18d6b8ff..e04142131 100644
                  << *arrayRef.type;
              return nullptr;
 diff --git a/source/parsing/Parser_members.cpp b/source/parsing/Parser_members.cpp
-index 152b324a5..fa9af6482 100644
+index 152b324a5..7fecd6b4b 100644
 --- a/source/parsing/Parser_members.cpp
 +++ b/source/parsing/Parser_members.cpp
-@@ -223,6 +223,10 @@ MemberSyntax* Parser::parseMemberImpl(AttrList attributes, SyntaxKind parentKind
+@@ -162,6 +162,9 @@ static constexpr std::array MemberTypoKeywords = {
+ };
+ 
+ MemberSyntax* Parser::parseMember(SyntaxKind parentKind, bool& anyLocalModules) {
++    // Generate constructs and nested declarations recurse through here.
++    auto dg = setDepthGuard();
++
+     return parseMemberImpl(parseAttributes(), parentKind, anyLocalModules);
+ }
+ 
+@@ -223,6 +226,10 @@ MemberSyntax* Parser::parseMemberImpl(AttrList attributes, SyntaxKind parentKind
          case TokenKind::ModPortKeyword:
              return &parseModportDeclaration(attributes);
          case TokenKind::BindKeyword:
@@ -1282,7 +1345,55 @@ index 152b324a5..fa9af6482 100644
              return &parseBindDirective(attributes);
          case TokenKind::SpecParamKeyword:
              return &parseSpecparam(attributes, parentKind);
-@@ -3714,6 +3718,28 @@ NetAliasSyntax& Parser::parseNetAlias(AttrList attributes) {
+@@ -1305,6 +1312,8 @@ void Parser::checkClassQualifiers(std::span<const Token> qualifiers, bool isCons
+ }
+ 
+ MemberSyntax* Parser::parseClassMember(bool isIfaceClass, bool hasBaseClass) {
++    auto dg = setDepthGuard();
++
+     auto errorIfIface = [&](const SyntaxNode& syntax) {
+         if (isIfaceClass)
+             addDiag(diag::NotAllowedInIfaceClass, syntax.sourceRange());
+@@ -1649,6 +1658,8 @@ CoverageOptionSyntax* Parser::parseCoverageOption(AttrList attributes) {
+ }
+ 
+ MemberSyntax* Parser::parseCoverageMember() {
++    auto dg = setDepthGuard();
++
+     auto attributes = parseAttributes();
+ 
+     // check for coverage option
+@@ -1896,6 +1907,8 @@ TransListCoverageBinInitializerSyntax& Parser::parseTransListInitializer() {
+ }
+ 
+ BlockEventExpressionSyntax& Parser::parseBlockEventExpression() {
++    auto dg = setDepthGuard();
++
+     Token keyword;
+     switch (peek().kind) {
+         case TokenKind::BeginKeyword:
+@@ -2035,8 +2048,11 @@ BinsSelectExpressionSyntax& Parser::parseBinsSelectPrimary() {
+ }
+ 
+ BinsSelectExpressionSyntax& Parser::parseBinsSelectExpression() {
++    auto dg = setDepthGuard();
++
+     auto curr = &parseBinsSelectPrimary();
+     while (peek(TokenKind::DoubleAnd) || peek(TokenKind::DoubleOr)) {
++        deepen();
+         auto op = consume();
+         curr = &factory.binaryBinsSelectExpr(*curr, op, parseBinsSelectPrimary());
+     }
+@@ -2243,6 +2259,8 @@ ConstraintBlockSyntax& Parser::parseConstraintBlock(bool isTopLevel) {
+ }
+ 
+ ConstraintItemSyntax* Parser::parseConstraintItem(bool allowBlock, bool isTopLevel) {
++    auto dg = setDepthGuard();
++
+     switch (peek().kind) {
+         case TokenKind::SolveKeyword: {
+             auto solve = consume();
+@@ -3714,6 +3732,28 @@ NetAliasSyntax& Parser::parseNetAlias(AttrList attributes) {
      return factory.netAlias(attributes, keyword, {alloc, buffer}, semi);
  }
  
@@ -1312,7 +1423,7 @@ index 152b324a5..fa9af6482 100644
      uint32_t index = 1;
      if (!scanAttributes(index))
 diff --git a/source/parsing/Parser_statements.cpp b/source/parsing/Parser_statements.cpp
-index 82b1776e3..4a49c2f33 100644
+index 82b1776e3..123fa1251 100644
 --- a/source/parsing/Parser_statements.cpp
 +++ b/source/parsing/Parser_statements.cpp
 @@ -676,6 +676,10 @@ SyntaxList<SyntaxNode> Parser::parseBlockItems(TokenKind endKind, Token& end, bo
@@ -1326,6 +1437,15 @@ index 82b1776e3..4a49c2f33 100644
          else if (isPossibleStatement(kind)) {
              newNode = &parseStatement(/* allowEmpty */ true,
                                        /* allowSuperNew */ inConstructor && !sawStatement);
+@@ -898,6 +902,8 @@ RsCaseSyntax& Parser::parseRsCase() {
+ }
+ 
+ RsProdSyntax* Parser::parseRsProd() {
++    auto dg = setDepthGuard();
++
+     switch (peek().kind) {
+         case TokenKind::Identifier:
+             return &parseRsProdItem();
 diff --git a/source/syntax/SyntaxFacts.cpp b/source/syntax/SyntaxFacts.cpp
 index db0ac9770..18c54db04 100644
 --- a/source/syntax/SyntaxFacts.cpp

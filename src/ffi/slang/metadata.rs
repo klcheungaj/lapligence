@@ -51,6 +51,8 @@ pub(super) struct RawMetadataRequest {
     include_dirs: *const RawString,
     include_dir_count: u64,
     max_source_bytes: u64,
+    max_nesting_depth: u32,
+    reserved: u32,
 }
 
 /// Mirrors `LlgSlangMetadataSink`.
@@ -217,6 +219,8 @@ pub fn parse_metadata(request: &MetadataRequest<'_>) -> Result<Vec<DefinitionNam
         include_dirs: raw_include_dirs.as_ptr(),
         include_dir_count: raw_include_dirs.len() as u64,
         max_source_bytes: request.max_source_bytes,
+        max_nesting_depth: crate::stack::MAX_NESTING_DEPTH,
+        reserved: 0,
     };
     let mut receiver = Receiver {
         units: vec![DefinitionNames::default(); request.sources.len()],

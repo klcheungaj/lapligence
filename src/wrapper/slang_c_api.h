@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 84u
+#define LLG_SLANG_ABI_VERSION 85u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -161,7 +161,12 @@ typedef struct {
   uint64_t library_order_count;
   LlgSlangString default_library;
   uint32_t default_library_present;
-  uint32_t default_library_reserved;
+  /* (ABI v85) The nesting depth at which the parser refuses a source with
+   * ParseTreeTooDeep: recursive constructs and the nodes that operator,
+   * member and select chains put above one another. Nonzero. Parsing,
+   * elaboration and capture recurse as deep as a source nests on the stack
+   * of the caller, which sizes it for this depth. */
+  uint32_t max_nesting_depth;
   LlgSlangLimits limits;
   /* (ABI v76) The time scale of every design element that declares none
    * (IEEE 1800-2009 3.14.2.3: the default is implementation-specific). Units
@@ -2005,6 +2010,9 @@ typedef struct {
   const LlgSlangString* include_dirs;
   uint64_t include_dir_count;
   uint64_t max_source_bytes; /* 0 selects the native default */
+  /* (ABI v85) As LlgSlangCompileRequest::max_nesting_depth. Nonzero. */
+  uint32_t max_nesting_depth;
+  uint32_t reserved; /* zero */
 } LlgSlangMetadataRequest;
 
 enum {

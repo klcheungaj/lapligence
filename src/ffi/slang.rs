@@ -43,7 +43,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 84;
+const ABI_VERSION: u32 = 85;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -2240,7 +2240,7 @@ struct RawCompileRequest {
     library_order_count: u64,
     default_library: RawString,
     default_library_present: u32,
-    default_library_reserved: u32,
+    max_nesting_depth: u32,
     limits: RawLimits,
     default_time_scale: RawTimeScale,
 }
@@ -2831,7 +2831,7 @@ fn call_native(request: &CompileRequest<'_>, sink: &RawSink) -> (u32, ErrorOwner
         library_order_count: raw_library_order.len() as u64,
         default_library: raw_default_library,
         default_library_present: u32::from(request.options.default_library.is_some()),
-        default_library_reserved: 0,
+        max_nesting_depth: crate::stack::MAX_NESTING_DEPTH,
         limits: RawLimits {
             max_sources: limits.max_sources,
             max_source_bytes: limits.max_source_bytes,

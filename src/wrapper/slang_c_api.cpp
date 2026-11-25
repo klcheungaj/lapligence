@@ -12099,9 +12099,11 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
   if (request.library_order_count != 0 && request.library_order == nullptr)
     throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
                         "library_order has a null pointer");
-  if (request.default_library_present > 1 || request.default_library_reserved != 0)
+  if (request.default_library_present > 1)
     throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
                         "invalid default library flags");
+  if (request.max_nesting_depth == 0)
+    throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT, "invalid nesting depth");
   if (request.limits.max_semantic_edges > kHardMaxSemanticEdges)
     throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
                         "max_semantic_edges exceeds the native hard ceiling");
@@ -12440,6 +12442,7 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
   lexerOptions.enableLegacyProtect = true;
   parsing::ParserOptions parserOptions;
   parserOptions.languageVersion = edition.languageVersion;
+  parserOptions.maxRecursionDepth = request.max_nesting_depth;
   Bag parseOptions;
   parseOptions.set(std::move(preprocessorOptions));
   parseOptions.set(std::move(lexerOptions));
@@ -12939,6 +12942,8 @@ void metadataImpl(const LlgSlangMetadataRequest& request,
   if (request.include_dir_count > kHardMaxIncludeDirs)
     throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
                         "include directory count limit exceeded");
+  if (request.max_nesting_depth == 0 || request.reserved != 0)
+    throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT, "invalid nesting depth");
   const uint64_t maxSourceBytes = effectiveLimit(
       request.max_source_bytes, kDefaultMaxSourceBytes, kHardMaxSourceBytes);
 
@@ -13026,6 +13031,7 @@ void metadataImpl(const LlgSlangMetadataRequest& request,
   lexerOptions.enableLegacyProtect = true;
   parsing::ParserOptions parserOptions;
   parserOptions.languageVersion = edition.languageVersion;
+  parserOptions.maxRecursionDepth = request.max_nesting_depth;
   Bag parseOptions;
   parseOptions.set(std::move(preprocessorOptions));
   parseOptions.set(std::move(lexerOptions));

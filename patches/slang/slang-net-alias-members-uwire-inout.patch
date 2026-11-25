@@ -78,10 +78,18 @@ index 7f109183a..7069c377a 100644
              is->as<ValueSymbol>(), SourceRange{is->location, is->location + is->name.length()});
          addDrivers(context, driverAlloc, *nve, DriverKind::Continuous, flags, scope->asSymbol());
 diff --git a/source/ast/expressions/MiscExpressions.cpp b/source/ast/expressions/MiscExpressions.cpp
-index 1feab96e6..cc7efe1af 100644
+index 1feab96e6..85b7df835 100644
 --- a/source/ast/expressions/MiscExpressions.cpp
 +++ b/source/ast/expressions/MiscExpressions.cpp
-@@ -241,12 +241,10 @@ bool ValueExpressionBase::checkLValue(const ASTContext& context, const ValueSymb
+@@ -12,6 +12,7 @@
+ #include "slang/ast/Compilation.h"
+ #include "slang/ast/EvalContext.h"
+ #include "slang/diagnostics/AnalysisDiags.h"
++#include "slang/diagnostics/CompilationDiags.h"
+ #include "slang/diagnostics/ConstEvalDiags.h"
+ #include "slang/diagnostics/ExpressionsDiags.h"
+ #include "slang/diagnostics/LookupDiags.h"
+@@ -241,12 +242,10 @@ bool ValueExpressionBase::checkLValue(const ASTContext& context, const ValueSymb
              return false;
          }
  
@@ -98,6 +106,27 @@ index 1feab96e6..cc7efe1af 100644
      }
      else {
          // Nets can't be assigned in procedural contexts.
+@@ -860,8 +859,20 @@ Expression& AssertionInstanceExpression::fromLookup(const Symbol& symbol,
+ 
+     // Check for recursive instantiation. This is illegal for sequences, and allowed in
+     // some forms for properties.
++    uint32_t depth = 0;
+     auto currInst = context.assertionInstance;
+     while (currInst) {
++        // Every instance binds inside the one that holds it, so a chain of declarations is
++        // limited like a chain of design elements is.
++        if (++depth >= comp.getOptions().maxInstanceDepth) {
++            auto& diag = context.addDiag(diag::MaxInstanceDepthExceeded, range);
++            diag << (symbol.kind == SymbolKind::Sequence  ? "sequence"sv
++                     : symbol.kind == SymbolKind::LetDecl ? "let"sv
++                                                          : "property"sv);
++            diag << comp.getOptions().maxInstanceDepth;
++            return badExpr(comp, nullptr);
++        }
++
+         if (currInst->symbol == &symbol) {
+             if (symbol.kind == SymbolKind::Sequence) {
+                 context.addDiag(diag::RecursiveSequence, range) << symbol.name;
 diff --git a/source/ast/symbols/InstanceSymbols.cpp b/source/ast/symbols/InstanceSymbols.cpp
 index b6cf0f2f2..75395461a 100644
 --- a/source/ast/symbols/InstanceSymbols.cpp
