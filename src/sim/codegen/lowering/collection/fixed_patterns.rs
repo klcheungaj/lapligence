@@ -23,9 +23,20 @@ impl Codegen<'_> {
             NodeKind::Expr(ExprKind::ScopeRef { target }) => *target,
             _ => return None,
         };
-        (matches!(self.kind(array), NodeKind::InstanceArray)
-            && crate::sim::semantic::is_interface_instance(self.db, array))
-        .then(|| self.node(array).children.clone())
+        if !matches!(self.kind(array), NodeKind::InstanceArray)
+            || !crate::sim::semantic::is_interface_instance(self.db, array)
+        {
+            return None;
+        }
+        // Children are in index order, those of every dimension in one list.
+        let mut elements = self.node(array).children.clone();
+        if let Some((left, right)) = self.db.instance_array_range(array) {
+            let extent = (i64::from(left) - i64::from(right)).unsigned_abs() + 1;
+            if left > right && u64::try_from(elements.len()) == Ok(extent) {
+                elements.reverse();
+            }
+        }
+        Some(elements)
     }
 
     pub(in super::super) fn assignment_pattern_operands(

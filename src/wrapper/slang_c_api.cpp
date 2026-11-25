@@ -3581,8 +3581,7 @@ public:
       result.subkind = LLG_SLANG_INSTANCE_ARRAY;
       // The declared [left:right] of this array level (ABI v54), for the
       // VPI instance array objects (IEEE 1800-2009 37.11).
-      result.auxiliary = uint64_t(uint32_t(symbol.range.left)) |
-                         (uint64_t(uint32_t(symbol.range.right)) << 32);
+      result.auxiliary = instanceArrayRange(symbol);
     }
     if constexpr (std::same_as<T, InstanceBodySymbol> ||
                   std::same_as<T, CheckerInstanceBodySymbol>)
@@ -5198,11 +5197,43 @@ private:
     return targetId;
   }
 
+  // The node of `symbol`. An array of interface instances the frontend builds
+  // for an interface port (with the port's range) or for a slice belongs to no
+  // scope, so no traversal visits it: it is described here, with the instances
+  // as its children, whose parent stays the array that declares them (ABI
+  // v88).
+  uint64_t interfaceTarget(const Symbol& symbol) {
+    const uint64_t id = capture.ensureSemantic(&symbol);
+    if (symbol.kind != SymbolKind::InstanceArray || symbol.getParentScope())
+      return id;
+    auto& node = capture.output.semantic_nodes[static_cast<size_t>(id)];
+    if (node.subkind == LLG_SLANG_INSTANCE_ARRAY)
+      return id;
+    const auto& array = symbol.as<InstanceArraySymbol>();
+    node.kind = LLG_SLANG_SEMANTIC_INSTANCE;
+    node.subkind = LLG_SLANG_INSTANCE_ARRAY;
+    node.auxiliary = instanceArrayRange(array);
+    node.name = storeString(capture.output, array.name);
+    node.detail = storeString(capture.output, toString(array.kind));
+    node.range = array.location.valid()
+                     ? capture.span(array.location, array.name.size())
+                     : LlgSlangSourceRange{LLG_SLANG_INVALID_ID, 0, 0};
+    uint32_t index = 0;
+    for (const Symbol* element : array.elements)
+      capture.semanticEdge(id, LLG_SLANG_EDGE_CHILD, interfaceTarget(*element), index++);
+    return id;
+  }
+
+  static uint64_t instanceArrayRange(const InstanceArraySymbol& array) {
+    return uint64_t(uint32_t(array.range.left)) |
+           (uint64_t(uint32_t(array.range.right)) << 32);
+  }
+
   // The node of a symbol an expression references (getSymbolReference),
   // described from the symbol when nothing captured it yet: a struct member
   // is no scope member, so no traversal visits it.
   uint64_t describeReferenceTarget(const Symbol& target) {
-    const uint64_t targetId = capture.ensureSemantic(&target);
+    const uint64_t targetId = interfaceTarget(target);
     auto& targetNode = capture.output.semantic_nodes[static_cast<size_t>(targetId)];
     if (targetNode.name.len == 0) {
       targetNode.kind = semanticSymbolKind(target.kind);
@@ -8331,7 +8362,7 @@ private:
       const auto [connection, expression] = symbol.getConnectionAndExpr();
       if (connection.first) {
         const uint64_t connectionId = capture.newSyntheticSemantic();
-        const uint64_t targetId = capture.ensureSemantic(connection.first);
+        const uint64_t targetId = interfaceTarget(*connection.first);
         auto& node =
             capture.output.semantic_nodes[static_cast<size_t>(connectionId)];
         node.parent_id = id;

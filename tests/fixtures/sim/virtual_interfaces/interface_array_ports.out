@@ -1,0 +1,28 @@
+tb.a.show 1 2
+tb.a.show 1 2
+tb.a.show 2 1
+tb.a.show 1 1
+20
+tb.b 1 2 2 1
+tb.b 2 1
+tb.c 4 5
+tb.m.d 2 2
+tb.e 5 5
+tb.f 1 2
+tb.m.gg[0].k 1 1
+tb.m.gg[1].k 2 2
+7 6 6 7
+1 2 2 1
+tb.m.s.show 1 2
+tb.m.s.show 1 2
+tb.m.s.show 2 1
+tb.m.s.show 1 1
+20
+tb.h.show 4 5
+tb.h.show 4 5
+tb.h.show 5 4
+tb.h.show 4 4
+20
+tb.o 7 6 6 7
+tb.o 6 7
+7 6

@@ -900,6 +900,28 @@ pub(in crate::sim) fn is_interface_instance(db: &Db, id: NodeId) -> bool {
     }
 }
 
+/// Whether an interface port bound to `actual` connects what `target` names:
+/// the same instances, or one element's share of an array that an array of
+/// instances divides (SV 23.3.3.5).
+pub(in crate::sim) fn interface_connection(db: &Db, target: NodeId, actual: NodeId) -> bool {
+    fn instances(db: &Db, id: NodeId, found: &mut HashSet<NodeId>) {
+        if matches!(db.node_kind(id), NodeKind::InstanceArray) {
+            for element in db.node(id).children() {
+                instances(db, *element, found);
+            }
+        } else {
+            found.insert(id);
+        }
+    }
+    if target == actual {
+        return true;
+    }
+    let (mut named, mut bound) = (HashSet::new(), HashSet::new());
+    instances(db, target, &mut named);
+    instances(db, actual, &mut bound);
+    !bound.is_empty() && bound.is_subset(&named)
+}
+
 fn scope_reference_is_metadata(db: &Db, owner: NodeId, reference: NodeId, target: NodeId) -> bool {
     let owner_node = db.node(owner);
     match owner_node.kind() {
@@ -1010,15 +1032,10 @@ fn scope_reference_is_metadata(db: &Db, owner: NodeId, reference: NodeId, target
             let NodeKind::IfaceConn { actual, .. } = db.node_kind(*child) else {
                 return false;
             };
-            matches!(
-                db.node_kind(*actual),
-                NodeKind::ModuleInst {
-                    is_interface: true,
-                    ..
-                }
-            ) && (target == *actual
-                || (matches!(db.node_kind(target), NodeKind::ModPort)
-                    && db.node(target).parent() == Some(*actual)))
+            is_interface_instance(db, *actual)
+                && (interface_connection(db, target, *actual)
+                    || (matches!(db.node_kind(target), NodeKind::ModPort)
+                        && db.node(target).parent() == Some(*actual)))
         }),
         _ => false,
     }

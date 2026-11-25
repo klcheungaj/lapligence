@@ -2512,6 +2512,29 @@ reads per bound instance.
 
 `tests/fixtures/sim/feature_completion/sim_099/neg_vif_sensitivity_*.sv`.
 
+## Arrays of interface instances of several dimensions as values
+
+**Status:** open. Each form rejects with a located diagnostic.
+
+### Symptom
+
+An array of interface instances with two or more dimensions, or a port of such a
+type, as a value (`v = i` with `virtual ifc v[2][2]`), and a row of one
+(`v[0] = i[1]`). A pattern of the elements works.
+
+### Cause
+
+The owned database lists the instances of every dimension as one list, without
+the ranges of the inner dimensions.
+
+### Intended direction
+
+Keep one node per dimension with its range and its rows.
+
+### Reproduce
+
+`tests/fixtures/sim/virtual_interfaces/neg_interface_array_2d.sv`.
+
 ## Event forms through virtual interfaces
 
 **Status:** open. Each form rejects with a located diagnostic.

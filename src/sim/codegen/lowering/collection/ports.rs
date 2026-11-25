@@ -1757,7 +1757,9 @@ impl<'a> Codegen<'a> {
                         _ => None,
                     })
             {
-                if high != Some(actual) {
+                if !high.is_some_and(|high| {
+                    crate::sim::semantic::interface_connection(self.db, high, actual)
+                }) {
                     return Err(format!(
                         "interface port `{}` of `{child_path}` has inconsistent bound actual identities",
                         self.node(port).name
