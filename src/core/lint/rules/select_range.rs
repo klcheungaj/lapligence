@@ -11,7 +11,6 @@ use std::collections::HashSet;
 
 use crate::core::db::{Db, ExprKind, NodeId, NodeKind, Operation};
 use crate::core::elab::{Bit, Val, Value};
-use crate::core::lint::rules::analysis::all_nodes;
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 use crate::core::value::ValueData;
 
@@ -30,12 +29,12 @@ impl LintRule for OutOfRangeSelectRule {
 
     fn check(&self, ctx: &LintCtx<'_>) -> Vec<LintDiag> {
         let db = ctx.db;
-        let ids = all_nodes(db);
-        let nested_array_selects = nested_array_element_selects(db, &ids);
+        let ids = ctx.nodes();
+        let nested_array_selects = nested_array_element_selects(db, ids);
         let mut visited = HashSet::new();
         let mut out = Vec::new();
 
-        for id in ids {
+        for &id in ids {
             if !visited.insert(id) || nested_array_selects.contains(&id) {
                 continue;
             }
@@ -499,13 +498,7 @@ mod tests {
 
     fn rule_diags(sv: &str, top: &str) -> Vec<LintDiag> {
         let (db, model) = build_design(sv, top);
-        crate::core::lint::distinct_findings(
-            &OutOfRangeSelectRule,
-            &LintCtx {
-                db: &db,
-                model: &model,
-            },
-        )
+        crate::core::lint::distinct_findings(&OutOfRangeSelectRule, &LintCtx::new(&db, &model))
     }
 
     #[test]

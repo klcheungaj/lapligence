@@ -234,6 +234,7 @@ impl Frame<'_, '_> {
         }
         if crate::sim::execution::statements_have_effect(
             self.ctx.model,
+            self.ctx.effects,
             std::slice::from_ref(statement),
             crate::sim::execution::ExecutionEffect::Terminate,
         ) {

@@ -110,6 +110,30 @@ impl<'a> Codegen<'a> {
         })
     }
 
+    /// The members with a value of each enum type, in node order.
+    fn enum_constants(&self) -> &HashMap<TypeId, std::rc::Rc<[NodeId]>> {
+        self.enum_constants.get_or_init(|| {
+            let mut members = HashMap::<_, Vec<_>>::new();
+            for node in self.db.node_ids() {
+                if !matches!(
+                    self.kind(node),
+                    NodeKind::EnumConst {
+                        value: Some(Val::Bits(_))
+                    }
+                ) {
+                    continue;
+                }
+                if let Some(descriptor) = self.query_descriptor(node) {
+                    members.entry(descriptor.id).or_default().push(node);
+                }
+            }
+            members
+                .into_iter()
+                .map(|(ty, nodes)| (ty, nodes.into()))
+                .collect()
+        })
+    }
+
     pub(in super::super) fn class_node_for_type_expr(&self, node: NodeId) -> Option<NodeId> {
         let candidate = match self.kind(node) {
             NodeKind::Expr(ExprKind::Ref { target }) => target.unwrap_or(node),
@@ -417,28 +441,16 @@ impl<'a> Codegen<'a> {
                 // value is checked for membership (decision S11-D3).
                 rhs = ir_to_vector(rhs, 32, true)?;
             }
-            let target_id = target_descriptor.as_ref().map(|descriptor| descriptor.id);
-            let enum_nodes = self
-                .db
-                .node_ids()
-                .filter(|node| {
-                    matches!(
-                        self.kind(*node),
-                        NodeKind::EnumConst {
-                            value: Some(Val::Bits(_))
-                        }
-                    ) && target_id.is_some_and(|id| {
-                        self.query_descriptor(*node)
-                            .is_some_and(|descriptor| descriptor.id == id)
-                    })
-                })
-                .collect::<Vec<_>>();
-            if enum_nodes.is_empty() {
+            let enum_nodes = target_descriptor
+                .as_ref()
+                .and_then(|descriptor| self.enum_constants().get(&descriptor.id))
+                .cloned();
+            let Some(enum_nodes) = enum_nodes else {
                 return Err(format!(
                     "$cast enum destination has no captured members in `{path}`"
                 ));
-            }
-            for node in enum_nodes {
+            };
+            for &node in enum_nodes.iter() {
                 let value = self.lower_expr(path, node)?;
                 if value.is_real() {
                     return Err(format!(

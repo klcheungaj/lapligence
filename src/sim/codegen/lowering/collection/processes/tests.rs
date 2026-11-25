@@ -545,7 +545,8 @@ fn component_constant_rows_are_precise_writer_projections() {
 /// Statement of every always_comb process, in design order.
 fn comb_statements(cg: &Codegen<'_>) -> Vec<NodeId> {
     cg.design_nodes()
-        .into_iter()
+        .iter()
+        .copied()
         .filter(|node| {
             matches!(
                 cg.kind(*node),

@@ -39,6 +39,7 @@ fn packed_selection_owners_are_released_and_nba_captures_a_narrow_range() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -71,6 +72,7 @@ fn packed_selection_reads_default_the_parent_before_applying_inner_bounds() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -94,6 +96,7 @@ fn packed_selection_input_uses_a_synchronous_plan_descriptor() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,

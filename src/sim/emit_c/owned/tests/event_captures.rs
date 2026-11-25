@@ -15,6 +15,7 @@ fn fork_event_capture_copies_object_identity_and_binds_a_private_handle() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -65,6 +66,7 @@ fn event_capture_rejects_numeric_sources_and_invalid_borrowing() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -102,6 +104,7 @@ fn joined_event_capture_borrows_the_handle_for_sibling_rebinding() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,

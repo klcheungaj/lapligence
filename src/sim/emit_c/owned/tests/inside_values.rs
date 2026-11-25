@@ -49,6 +49,7 @@ fn captured_inside_elements_retag_native_values_before_comparison() {
             let ctx = RCtx {
                 value_backend: crate::sim::value_backend::ValueBackend::Legacy,
                 model: &model,
+                effects: &crate::sim::execution::EffectSummaries::new(&model),
                 func: None,
                 sampled: false,
                 activation_label: None,

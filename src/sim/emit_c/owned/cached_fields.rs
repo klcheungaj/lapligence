@@ -23,6 +23,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use super::super::names::{identifier_spans, FirstBytes};
+
 /// A field is cached only when it is read more often than it is reloaded,
 /// scaled by this factor: every reload costs one load per suspension point
 /// where the field is in scope, every cached read saves one.
@@ -202,57 +204,29 @@ struct Usage {
 /// a field bare; its initialization is a deferred declaration marker, so every
 /// occurrence counted here is a use.
 fn scan_uses<'n>(code: &str, names: &HashSet<&'n str>) -> HashMap<&'n str, Usage> {
-    let bytes = code.as_bytes();
+    let first = names.iter().copied().collect::<FirstBytes>();
     let mut uses: HashMap<&'n str, Usage> = HashMap::new();
-    let mut index = 0;
-    let mut quoted = None;
-    let mut escaped = false;
-    while index < bytes.len() {
-        if let Some(quote) = quoted {
-            let byte = bytes[index];
-            index += 1;
-            if escaped {
-                escaped = false;
-            } else if byte == b'\\' {
-                escaped = true;
-            } else if byte == quote {
-                quoted = None;
-            }
-        } else if bytes[index..].starts_with(b"/*") {
-            index = code[index + 2..]
-                .find("*/")
-                .map_or(bytes.len(), |offset| index + 2 + offset + 2);
-        } else if matches!(bytes[index], b'\'' | b'"') {
-            quoted = Some(bytes[index]);
-            index += 1;
-        } else if bytes[index] == b'_' || bytes[index].is_ascii_alphabetic() {
-            let start = index;
-            index += 1;
-            while index < bytes.len()
-                && (bytes[index] == b'_' || bytes[index].is_ascii_alphanumeric())
-            {
-                index += 1;
-            }
-            let ident = &code[start..index];
-            let Some(&name) = names.get(ident) else {
-                continue;
-            };
-            let usage = uses.entry(name).or_default();
-            let before = code[..start].trim_end().as_bytes();
-            let after = code[index..].trim_start().as_bytes();
-            let member = matches!(before.last(), Some(b'.' | b'>'));
-            let dereferenced = before.last() == Some(&b'*');
-            let address = before.last() == Some(&b'&')
-                && before.get(before.len().wrapping_sub(2)) != Some(&b'&')
-                && after.first() != Some(&b'[');
-            let stepped = before.ends_with(b"++") || before.ends_with(b"--");
-            if member || address || stepped || (!dereferenced && writes_through(after)) {
-                usage.unstable = true;
-            } else {
-                usage.reads += 1;
-            }
+    for span in identifier_spans(code) {
+        let identifier = &code[span.clone()];
+        if !first.may_hold(identifier) {
+            continue;
+        }
+        let Some(&name) = names.get(identifier) else {
+            continue;
+        };
+        let usage = uses.entry(name).or_default();
+        let before = code[..span.start].trim_end().as_bytes();
+        let after = code[span.end..].trim_start().as_bytes();
+        let member = matches!(before.last(), Some(b'.' | b'>'));
+        let dereferenced = before.last() == Some(&b'*');
+        let address = before.last() == Some(&b'&')
+            && before.get(before.len().wrapping_sub(2)) != Some(&b'&')
+            && after.first() != Some(&b'[');
+        let stepped = before.ends_with(b"++") || before.ends_with(b"--");
+        if member || address || stepped || (!dereferenced && writes_through(after)) {
+            usage.unstable = true;
         } else {
-            index += 1;
+            usage.reads += 1;
         }
     }
     uses

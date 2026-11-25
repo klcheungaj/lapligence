@@ -9,6 +9,7 @@ fn pure_callback_inlines_owned_formals_without_native_writes() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -47,6 +48,7 @@ fn persistent_local_functions_remain_rejected_in_read_only_callbacks() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -89,6 +91,7 @@ fn static_formal_copies_are_private_in_read_only_callbacks() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -121,6 +124,7 @@ fn static_callback_returns_require_a_lowering_proof() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -152,6 +156,7 @@ fn streaming_prepares_all_values_before_any_publication() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -186,6 +191,7 @@ fn inline_event_capture_keeps_identity_and_respects_lexical_scope() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -218,6 +224,7 @@ fn inline_expanded_templates_are_not_callable() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -248,6 +255,7 @@ fn input_event_formals_pass_the_object_identity_by_value() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -273,6 +281,7 @@ fn sampled_expression_uses_snapshot_reads_then_restores_live_reads() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -315,10 +324,16 @@ fn alias_lifecycle_initializes_visible_owners_and_resets_bindings() {
     });
     let mut source = String::new();
     model::storage_lifecycle(
-        &model,
+        &RCtx {
+            value_backend: crate::sim::value_backend::ValueBackend::Legacy,
+            constants: Some(&super::super::super::constants::PackedConstants::default()),
+            model: &model,
+            effects: &crate::sim::execution::EffectSummaries::new(&model),
+            func: None,
+            sampled: false,
+            activation_label: None,
+        },
         &crate::sim::ir::VirtualDispatch::new(&model),
-        &super::super::super::constants::PackedConstants::default(),
-        crate::sim::value_backend::ValueBackend::Legacy,
         &std::collections::HashMap::new(),
         &mut source,
     )
@@ -339,6 +354,7 @@ fn qualified_case_compares_candidates_before_running_selected_body() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -380,6 +396,7 @@ fn clocking_drive_passes_registered_payload_to_the_runtime() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -407,6 +424,7 @@ fn vpi_arguments_are_borrowed_from_registered_owners() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,

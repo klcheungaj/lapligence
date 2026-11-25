@@ -83,7 +83,7 @@ impl Codegen<'_> {
                 table: Vec::new(),
                 index: HashMap::new(),
             };
-            for node in self.design_nodes() {
+            for &node in self.design_nodes().iter() {
                 let NodeKind::ModuleInst { def_name, .. } = self.kind(node) else {
                     continue;
                 };

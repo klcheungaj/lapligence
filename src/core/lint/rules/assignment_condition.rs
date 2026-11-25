@@ -8,7 +8,6 @@
 //! then compared intentionally rather than consumed directly as truth.
 
 use crate::core::db::{Db, ExprKind, NodeId, NodeKind, Operation, StmtKind};
-use crate::core::lint::rules::analysis::all_design_nodes;
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
 /// Warns about assignment expressions consumed as truth predicates.
@@ -27,7 +26,7 @@ impl LintRule for AssignmentInConditionRule {
         let db = ctx.db;
         let mut assignments = Vec::new();
 
-        for id in all_design_nodes(db) {
+        for &id in ctx.design_nodes() {
             match db.node_kind(id) {
                 NodeKind::Stmt(StmtKind::IfElse { predicate, .. })
                 | NodeKind::Expr(ExprKind::Conditional { predicate, .. }) => {
@@ -191,7 +190,7 @@ mod tests {
             "module t(input logic b, output logic y); logic a; always_comb if ((a = b)) y = 1'b1; endmodule\n",
             "t",
         );
-        let cond = all_design_nodes(&db)
+        let cond = crate::core::lint::rules::analysis::all_design_nodes(&db)
             .into_iter()
             .find_map(|id| match db.node_kind(id) {
                 NodeKind::Stmt(StmtKind::IfElse { predicate, .. }) => {

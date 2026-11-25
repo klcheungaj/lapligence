@@ -7,6 +7,7 @@
 
 use super::*;
 use crate::core::db::ElementValue;
+use crate::sim::codegen::lowering::collection::native_values::{LeafReads, LeafValue};
 use crate::sim::codegen::lowering::collection::{
     element_descriptor, image_path_descriptor, image_width,
 };
@@ -154,28 +155,7 @@ impl<'a> Codegen<'a> {
             return Ok(None);
         };
         if rest.is_empty() {
-            return match (&descriptor.shape, &value) {
-                (TypeShape::Real { .. }, ConstantPart::Value(ElementValue::Singular(value))) => {
-                    Ok(match value {
-                        Val::Real(value) => Some(real_literal_expr(*value)),
-                        _ => None,
-                    })
-                }
-                (TypeShape::Real { .. }, ConstantPart::Nonexistent) => {
-                    Ok(Some(real_literal_expr(0.0)))
-                }
-                _ => {
-                    let Some(width) = image_width(&descriptor, None) else {
-                        return Ok(None);
-                    };
-                    let Some(bits) = part_image(&value, &descriptor) else {
-                        return Ok(None);
-                    };
-                    let value = constant_image(&elab::Value::from_bits(bits, false))?;
-                    ir_to_storage(value, width, descriptor.info.signed, descriptor.two_state)
-                        .map(Some)
-                }
-            };
+            return constant_part_value(&value, &descriptor);
         }
         if let (ConstantPart::Value(value), Some((SelectPart::Index(index), inner))) =
             (&value, rest.split_first())
@@ -363,33 +343,43 @@ impl<'a> Codegen<'a> {
         ))
     }
 
-    /// Whether `node` reads a string inside a parameter of a fixed unpacked
-    /// type.
-    pub(in super::super) fn is_parameter_string(&self, node: NodeId) -> bool {
-        let Some((parameter, parts)) = self.parameter_select(node) else {
-            return false;
-        };
-        let Some(mut descriptor) = self.query_descriptor(parameter).cloned() else {
-            return false;
-        };
-        for part in &parts {
-            let next = match (part, &descriptor.shape) {
+    /// The type of the part of `parameter` that `parts` select.
+    fn parameter_part_type(
+        &self,
+        parameter: NodeId,
+        parts: &[SelectPart],
+    ) -> Option<TypeDescriptor> {
+        let mut descriptor = self.query_descriptor(parameter)?.clone();
+        for part in parts {
+            descriptor = match (part, &descriptor.shape) {
                 (SelectPart::Index(_), TypeShape::FixedArray { .. }) => {
-                    element_descriptor(&descriptor)
+                    element_descriptor(&descriptor)?
                 }
                 (SelectPart::Member(name), TypeShape::Aggregate(layout)) => layout
                     .members
                     .iter()
-                    .find(|member| member.name == *name)
-                    .map(|member| member.descriptor.clone()),
-                _ => None,
+                    .find(|member| member.name == *name)?
+                    .descriptor
+                    .clone(),
+                _ => return None,
             };
-            match next {
-                Some(next) => descriptor = next,
-                None => return false,
-            }
         }
-        descriptor.shape == TypeShape::String
+        Some(descriptor)
+    }
+
+    /// The parameter of a fixed unpacked type and the selectors with which
+    /// `node` reads a string inside it.
+    fn parameter_string_select(&self, node: NodeId) -> Option<(NodeId, Vec<SelectPart>)> {
+        self.parameter_select(node).filter(|(parameter, parts)| {
+            self.parameter_part_type(*parameter, parts)
+                .is_some_and(|descriptor| descriptor.shape == TypeShape::String)
+        })
+    }
+
+    /// Whether `node` reads a string inside a parameter of a fixed unpacked
+    /// type.
+    pub(in super::super) fn is_parameter_string(&self, node: NodeId) -> bool {
+        self.parameter_string_select(node).is_some()
     }
 
     /// Lower a string inside a parameter of a fixed unpacked type.
@@ -398,54 +388,191 @@ impl<'a> Codegen<'a> {
         path: &str,
         node: NodeId,
     ) -> Result<Option<IrStringExpr>, String> {
-        if !self.is_parameter_string(node) {
+        let Some((parameter, parts)) = self.parameter_string_select(node) else {
+            return Ok(None);
+        };
+        self.parameter_string(path, parameter, &parts).map(Some)
+    }
+
+    /// Lower a character of a string inside a parameter of a fixed unpacked
+    /// type (SV 6.16).
+    pub(in super::super) fn lower_parameter_character(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrObjectQuery>, String> {
+        let Some((parameter, mut parts)) = self.parameter_select(node) else {
+            return Ok(None);
+        };
+        let Some(SelectPart::Index(character)) = parts.pop() else {
+            return Ok(None);
+        };
+        if self
+            .parameter_part_type(parameter, &parts)
+            .is_none_or(|descriptor| descriptor.shape != TypeShape::String)
+        {
             return Ok(None);
         }
+        let text = self.parameter_string(path, parameter, &parts)?;
+        let character = self.lower_container_index(path, character)?;
+        Ok(Some(IrObjectQuery::StringGetc(text, Box::new(character))))
+    }
+
+    /// The leaves of the part of a parameter of a fixed unpacked type that
+    /// constant selectors in `node` reach.
+    pub(in super::super) fn parameter_leaf_reads(
+        &self,
+        node: NodeId,
+    ) -> Result<Option<LeafReads>, String> {
         let Some((parameter, parts)) = self.parameter_select(node) else {
             return Ok(None);
         };
-        let Some((value, descriptor, rest)) = self.constant_parameter_part(parameter, &parts)
+        let Some((ConstantPart::Value(value), descriptor, [])) =
+            self.constant_parameter_part(parameter, &parts)
         else {
             return Ok(None);
         };
-        let ConstantPart::Value(value) = value else {
-            return Ok(Some(IrStringExpr::Literal(Vec::new())));
-        };
-        let Some((SelectPart::Index(index), inner)) = rest.split_first() else {
-            return string_bytes(value).map(|bytes| Some(IrStringExpr::Literal(bytes)));
-        };
-        // One run-time index: the strings its values select.
-        let Some((left, right, leaves, _)) = self.projected_elements(value, &descriptor, inner)
-        else {
-            return Err(format!(
-                "this selection of the strings of parameter `{}` in `{path}` is not supported",
-                self.node(parameter).name
-            ));
-        };
-        let step = if left >= right { -1 } else { 1 };
-        let members = leaves
-            .into_iter()
-            .zip(0i64..)
-            .map(|(leaf, offset)| {
-                let index = i128::from(i64::from(left) + step * offset);
-                Ok(crate::sim::ir::IrEnumMember {
-                    value: IrExpr::convert_to(lhs_integer_expr(index), i64::BITS, true),
-                    name: string_bytes(leaf)?,
-                })
-            })
-            .collect::<Result<_, String>>()?;
-        let index = self.lower_expr(path, *index)?;
-        if index.is_real() || index.width == 0 || index.width > i64::BITS {
-            return Err(format!(
-                "string parameter index must be integral and at most 64 bits wide in `{path}`"
-            ));
-        }
-        let receiver = IrExpr::convert_to(index, i64::BITS, true);
-        Ok(Some(IrStringExpr::EnumName {
-            receiver: Box::new(receiver),
-            members,
-        }))
+        let mut reads = Vec::new();
+        Ok(constant_leaves(value, &descriptor, &mut Vec::new(), &mut reads)?.map(|()| reads))
     }
+
+    /// The leaves of an unpacked structure with a string or real member that
+    /// constant selectors in `node` reach in a parameter. One without them is
+    /// read as one packed value.
+    pub(in super::super) fn parameter_record_reads(
+        &self,
+        node: NodeId,
+    ) -> Result<Option<LeafReads>, String> {
+        if self.query_descriptor(node).is_none_or(|descriptor| {
+            !matches!(
+                &descriptor.shape,
+                TypeShape::Aggregate(layout) if layout.kind == AggregateKind::UnpackedStruct
+            ) || image_width(descriptor, None).is_some()
+        }) {
+            return Ok(None);
+        }
+        self.parameter_leaf_reads(node)
+    }
+
+    /// The string that `parts` select in `parameter`.
+    fn parameter_string(
+        &mut self,
+        path: &str,
+        parameter: NodeId,
+        parts: &[SelectPart],
+    ) -> Result<IrStringExpr, String> {
+        let unsupported = |cg: &Self| {
+            format!(
+                "this selection of the strings of parameter `{}` in `{path}` is not supported",
+                cg.node(parameter).name
+            )
+        };
+        let Some((value, descriptor, rest)) = self.constant_parameter_part(parameter, parts) else {
+            return Err(unsupported(self));
+        };
+        let ConstantPart::Value(value) = value else {
+            return Ok(IrStringExpr::Literal(Vec::new()));
+        };
+        if rest.is_empty() {
+            return string_bytes(value).map(IrStringExpr::Literal);
+        }
+        let mut choices = Vec::new();
+        self.string_choices(value, &descriptor, rest, &mut Vec::new(), &mut choices)
+            .ok_or_else(|| unsupported(self))?;
+        let index_constant =
+            |index: i64| IrExpr::convert_to(lhs_integer_expr(i128::from(index)), i64::BITS, true);
+        // A string that no element holds is the default.
+        let members = choices
+            .into_iter()
+            .filter(|(_, text)| !text.is_empty())
+            .map(|(indices, name)| crate::sim::ir::IrEnumMember {
+                value: joined_indices(indices.into_iter().map(index_constant).collect()),
+                name,
+            })
+            .collect::<Vec<_>>();
+        let mut indices = Vec::new();
+        for part in rest {
+            let SelectPart::Index(index) = part else {
+                continue;
+            };
+            if self.eval_bound_i128(*index).is_ok() {
+                continue;
+            }
+            let index = self.lower_expr(path, *index)?;
+            if index.is_real() || index.width == 0 || index.width > i64::BITS {
+                return Err(format!(
+                    "string parameter index must be integral and at most 64 bits wide in `{path}`"
+                ));
+            }
+            indices.push(IrExpr::convert_to(index, i64::BITS, true));
+        }
+        if members.is_empty() {
+            return Ok(IrStringExpr::Literal(Vec::new()));
+        }
+        Ok(IrStringExpr::EnumName {
+            receiver: Box::new(joined_indices(indices)),
+            members,
+        })
+    }
+
+    /// The strings that `parts` select in `value`, with the values that the
+    /// run-time indices among them then have. `None` for a part that is no
+    /// element or member of a value.
+    fn string_choices(
+        &self,
+        value: &ElementValue,
+        descriptor: &TypeDescriptor,
+        parts: &[SelectPart],
+        indices: &mut Vec<i64>,
+        choices: &mut Vec<(Vec<i64>, Vec<u8>)>,
+    ) -> Option<()> {
+        let Some((part, rest)) = parts.split_first() else {
+            choices.push((indices.clone(), string_bytes(value).ok()?));
+            return Some(());
+        };
+        let ElementValue::Elements(elements) = value else {
+            return None;
+        };
+        match (part, &descriptor.shape) {
+            (SelectPart::Index(index), TypeShape::FixedArray { dimensions, .. }) => {
+                let bounds = *dimensions.first()?;
+                let element = element_descriptor(descriptor)?;
+                if let Ok(index) = self.eval_bound_i128(*index) {
+                    let Some(position) = element_position(index, bounds) else {
+                        return Some(());
+                    };
+                    let value = elements.get(position)?;
+                    return self.string_choices(value, &element, rest, indices, choices);
+                }
+                let (left, right) = (i64::from(bounds.0), i64::from(bounds.1));
+                let step = if left >= right { -1 } else { 1 };
+                for (value, offset) in elements.iter().zip(0i64..) {
+                    indices.push(left + step * offset);
+                    self.string_choices(value, &element, rest, indices, choices)?;
+                    indices.pop();
+                }
+                Some(())
+            }
+            (SelectPart::Member(name), TypeShape::Aggregate(layout)) => {
+                let position = layout
+                    .members
+                    .iter()
+                    .position(|member| member.name == *name)?;
+                let member = &layout.members[position].descriptor;
+                self.string_choices(elements.get(position)?, member, rest, indices, choices)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// The run-time indices of a selection as one value.
+fn joined_indices(mut indices: Vec<IrExpr>) -> IrExpr {
+    if indices.len() == 1 {
+        return indices.remove(0);
+    }
+    let width = indices.iter().map(|index| index.width).sum();
+    IrExpr::new(IrExprKind::Concat { parts: indices }, width, false, None)
 }
 
 /// The position from the left bound of element `index`, if it exists.
@@ -498,6 +625,101 @@ fn part_select(base: IrExpr, offset: u32, width: u32) -> IrExpr {
         false,
         None,
     )
+}
+
+/// The packed or real value of a parameter part, if it has one.
+fn constant_part_value(
+    part: &ConstantPart<'_>,
+    descriptor: &TypeDescriptor,
+) -> Result<Option<IrExpr>, String> {
+    match (&descriptor.shape, part) {
+        (TypeShape::Real { .. }, ConstantPart::Value(ElementValue::Singular(value))) => {
+            Ok(match value {
+                Val::Real(value) => Some(real_literal_expr(*value)),
+                _ => None,
+            })
+        }
+        (TypeShape::Real { .. }, ConstantPart::Nonexistent) => Ok(Some(real_literal_expr(0.0))),
+        _ => {
+            let Some(width) = image_width(descriptor, None) else {
+                return Ok(None);
+            };
+            let Some(bits) = part_image(part, descriptor) else {
+                return Ok(None);
+            };
+            let value = constant_image(&elab::Value::from_bits(bits, false))?;
+            ir_to_storage(value, width, descriptor.info.signed, descriptor.two_state).map(Some)
+        }
+    }
+}
+
+/// The leaves of `value`, a part of a parameter with type `descriptor`, at
+/// their paths below `path`. `None` for a value of another type.
+fn constant_leaves(
+    value: &ElementValue,
+    descriptor: &TypeDescriptor,
+    path: &mut Vec<AggregatePathPart>,
+    reads: &mut LeafReads,
+) -> Result<Option<()>, String> {
+    let mut below = |part, value, descriptor: &TypeDescriptor| {
+        path.push(part);
+        let found = constant_leaves(value, descriptor, path, reads);
+        path.pop();
+        found
+    };
+    match (value, &descriptor.shape) {
+        (ElementValue::Elements(elements), TypeShape::FixedArray { dimensions, .. }) => {
+            let (Some((left, right)), Some(element)) =
+                (dimensions.first(), element_descriptor(descriptor))
+            else {
+                return Ok(None);
+            };
+            let step = if left <= right { 1 } else { -1 };
+            for (value, offset) in elements.iter().zip(0i32..) {
+                let index = AggregatePathPart::Index(left + step * offset);
+                if below(index, value, &element)?.is_none() {
+                    return Ok(None);
+                }
+            }
+            Ok(Some(()))
+        }
+        (
+            ElementValue::Elements(members),
+            TypeShape::Aggregate(crate::core::db::AggregateLayout {
+                kind: AggregateKind::UnpackedStruct,
+                members: layout,
+                ..
+            }),
+        ) => {
+            for (value, member) in members.iter().zip(layout) {
+                let part = AggregatePathPart::Member(member.name.clone());
+                if below(part, value, &member.descriptor)?.is_none() {
+                    return Ok(None);
+                }
+            }
+            Ok(Some(()))
+        }
+        (ElementValue::Singular(_), TypeShape::String) => {
+            let text = IrStringExpr::Literal(string_bytes(value)?);
+            reads.push((path.clone(), LeafValue::String(text)));
+            Ok(Some(()))
+        }
+        (ElementValue::Singular(_), shape) => {
+            let leaf = constant_part_value(&ConstantPart::Value(value), descriptor)?;
+            let Some(leaf) = leaf else {
+                return Ok(None);
+            };
+            reads.push((
+                path.clone(),
+                match shape {
+                    TypeShape::Real { .. } => LeafValue::Real(leaf),
+                    _ => LeafValue::Packed(leaf),
+                },
+            ));
+            Ok(Some(()))
+        }
+        _ => Ok(None),
+    }
 }
 
 /// The packed image of a parameter part, most significant bit first, in the

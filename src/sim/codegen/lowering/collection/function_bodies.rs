@@ -1605,111 +1605,118 @@ impl<'a> Codegen<'a> {
         automatics
     }
 
+    /// Whether a target outside the function's own body names the result
+    /// `return_variable`: the target of a continuous assignment, or a
+    /// hierarchical name that an assignment or a `ref` actual gives it.
     fn static_return_requires_signal(&self, return_variable: NodeId) -> bool {
-        self.design_nodes()
-            .into_iter()
-            .any(|node| match self.kind(node) {
+        self.outside_targets
+            .get_or_init(|| self.find_outside_targets())
+            .contains(&return_variable)
+    }
+
+    fn find_outside_targets(&self) -> HashSet<NodeId> {
+        #[cfg(test)]
+        tests::OUTSIDE_TARGET_WALKS.with(|walks| walks.set(walks.get() + 1));
+        let mut targets = HashSet::new();
+        for &node in self.design_nodes().iter() {
+            match self.kind(node) {
                 NodeKind::ContAssign { .. } => {
-                    self.node(node).children.first().is_some_and(|lhs| {
-                        self.lhs_references_return_variable(*lhs, return_variable)
-                    })
+                    if let Some(lhs) = self.node(node).children.first() {
+                        self.add_named_variables(*lhs, &mut targets);
+                    }
                 }
                 NodeKind::Stmt(StmtKind::Assign { .. }) => {
-                    self.node(node).children.first().is_some_and(|lhs| {
-                        self.hierarchical_lhs_references_return_variable(*lhs, return_variable)
-                    })
+                    if let Some(lhs) = self.node(node).children.first() {
+                        self.add_hierarchical_variables(*lhs, &mut targets);
+                    }
                 }
                 NodeKind::FuncCall {
                     name,
                     is_task,
                     callee,
                     ..
-                } => self.call_passes_hierarchical_return_by_ref(
-                    node,
-                    name,
-                    *is_task,
-                    *callee,
-                    return_variable,
-                ),
-                _ => false,
-            })
+                } => self.add_hierarchical_ref_actuals(node, name, *is_task, *callee, &mut targets),
+                _ => {}
+            }
+        }
+        targets
     }
 
-    fn call_passes_hierarchical_return_by_ref(
+    fn add_hierarchical_ref_actuals(
         &self,
         call: NodeId,
         name: &str,
         is_task: bool,
         callee: Option<NodeId>,
-        return_variable: NodeId,
-    ) -> bool {
+        targets: &mut HashSet<NodeId>,
+    ) {
         let Some(caller_inst) = self.owning_inst(call) else {
-            return false;
+            return;
         };
         let Ok((callee, _)) = self.resolve_callee_env(caller_inst, name, is_task, callee) else {
-            return false;
+            return;
         };
         let arguments = self.call_argument_nodes(call);
-        self.func_formals(callee)
-            .iter()
-            .zip(arguments)
-            .any(|((formal, _), actual)| {
-                matches!(
-                    self.kind(*formal),
-                    NodeKind::FuncArg {
-                        direction: DbDirection::Ref,
-                        ..
-                    }
-                ) && self.hierarchical_lhs_references_return_variable(actual, return_variable)
-            })
+        for ((formal, _), actual) in self.func_formals(callee).iter().zip(arguments) {
+            if matches!(
+                self.kind(*formal),
+                NodeKind::FuncArg {
+                    direction: DbDirection::Ref,
+                    ..
+                }
+            ) {
+                self.add_hierarchical_variables(actual, targets);
+            }
+        }
     }
 
-    fn hierarchical_lhs_references_return_variable(
+    /// Add the variables that hierarchical names below `node` refer to.
+    fn add_hierarchical_variables(&self, node: NodeId, targets: &mut HashSet<NodeId>) {
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+                self.add_variables(refs.iter().flatten(), targets);
+            }
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) if self.db.semantic_detail(node) == Some("HierarchicalValue") => {
+                self.add_variables([target], targets);
+            }
+            _ => {}
+        }
+        for child in &self.node(node).children {
+            self.add_hierarchical_variables(*child, targets);
+        }
+    }
+
+    /// Add the variables that names below `node` refer to.
+    fn add_named_variables(&self, node: NodeId, targets: &mut HashSet<NodeId>) {
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => {
+                self.add_variables([target], targets);
+                return;
+            }
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+                self.add_variables(refs.iter().flatten(), targets);
+            }
+            _ => {}
+        }
+        for child in &self.node(node).children {
+            self.add_named_variables(*child, targets);
+        }
+    }
+
+    fn add_variables<'n>(
         &self,
-        node: NodeId,
-        return_variable: NodeId,
-    ) -> bool {
-        match self.kind(node) {
-            NodeKind::Expr(ExprKind::HierPath { refs, .. })
-                if refs
-                    .iter()
-                    .flatten()
-                    .any(|target| *target == return_variable) =>
-            {
-                true
-            }
-            NodeKind::Expr(ExprKind::Ref {
-                target: Some(target),
-            }) if *target == return_variable
-                && self.db.semantic_detail(node) == Some("HierarchicalValue") =>
-            {
-                true
-            }
-            _ => self.node(node).children.iter().any(|child| {
-                self.hierarchical_lhs_references_return_variable(*child, return_variable)
-            }),
-        }
-    }
-
-    fn lhs_references_return_variable(&self, node: NodeId, return_variable: NodeId) -> bool {
-        match self.kind(node) {
-            NodeKind::Expr(ExprKind::Ref {
-                target: Some(target),
-            }) => *target == return_variable,
-            NodeKind::Expr(ExprKind::HierPath { refs, .. })
-                if refs
-                    .iter()
-                    .flatten()
-                    .any(|target| *target == return_variable) =>
-            {
-                true
-            }
-            _ => self
-                .node(node)
-                .children
-                .iter()
-                .any(|child| self.lhs_references_return_variable(*child, return_variable)),
-        }
+        named: impl IntoIterator<Item = &'n NodeId>,
+        targets: &mut HashSet<NodeId>,
+    ) {
+        targets.extend(
+            named
+                .into_iter()
+                .filter(|target| matches!(self.kind(**target), NodeKind::Var { .. })),
+        );
     }
 
     /// Collect the local variables declared by a function/task body's begin
@@ -1883,5 +1890,86 @@ impl<'a> Codegen<'a> {
                 self.node(node).name
             )),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::compile::{compile_sources_checked, CompileOpts, OwnedSource};
+
+    thread_local! {
+        pub(super) static OUTSIDE_TARGET_WALKS: std::cell::Cell<usize> =
+            const { std::cell::Cell::new(0) };
+    }
+
+    /// The written results by function name, and the walks of the design
+    /// that found them.
+    fn results_written_outside(source: &str) -> (Vec<(String, bool)>, usize) {
+        let output = compile_sources_checked(
+            &[OwnedSource::compilation_unit("results.sv", source)],
+            &CompileOpts {
+                top: Some("tb".to_owned()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let db = Db::from_slang(&output.snapshot).unwrap();
+        let semantic = crate::sim::semantic::SemanticModel::from_db(&db);
+        let cg = Codegen::new(&semantic);
+        OUTSIDE_TARGET_WALKS.with(|walks| walks.set(0));
+        let mut results = Vec::new();
+        for &node in cg.design_nodes().iter() {
+            if !matches!(cg.kind(node), NodeKind::FuncTask { .. }) {
+                continue;
+            }
+            let variable = cg
+                .node(node)
+                .children
+                .iter()
+                .copied()
+                .find(|child| matches!(cg.kind(*child), NodeKind::Var { .. }));
+            if let Some(variable) = variable {
+                results.push((
+                    cg.node(node).name.clone(),
+                    cg.static_return_requires_signal(variable),
+                ));
+            }
+        }
+        (results, OUTSIDE_TARGET_WALKS.with(std::cell::Cell::get))
+    }
+
+    #[test]
+    fn results_named_by_outside_targets_are_found() {
+        let (results, _) = results_written_outside(
+            "module tb; \
+             function int plain(input int x); plain = x; endfunction \
+             function int named(input int x); named = x; endfunction \
+             function int actual(input int x); actual = x; endfunction \
+             function int read(input int x); read = x; endfunction \
+             task automatic set(ref int r); r = 3; endtask \
+             int v; \
+             initial begin tb.named.named = 2; set(tb.actual.actual); v = tb.read.read; \
+             v = plain(1) + named(1) + actual(1) + read(1); end endmodule",
+        );
+        let written = results
+            .iter()
+            .filter(|(_, written)| *written)
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(written, ["named", "actual"], "{results:?}");
+    }
+
+    /// Every static function once walked the whole design.
+    #[test]
+    fn the_design_is_walked_once_for_all_static_functions() {
+        let (results, walks) = results_written_outside(
+            "module m(output int o); function int f(input int x); f = x; endfunction \
+             assign o = f(1); endmodule \
+             module tb; int o[20]; \
+             for (genvar g = 0; g < 20; g++) begin : gen m u(o[g]); end endmodule",
+        );
+        assert_eq!(results.len(), 20);
+        assert_eq!(walks, 1);
     }
 }

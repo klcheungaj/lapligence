@@ -514,10 +514,12 @@ fn sparse_array_reads_fail_closed_in_legacy_fragments() {
         false,
         None,
     );
+    let effects = crate::sim::execution::EffectSummaries::new(&model);
     let context = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         constants: None,
         model: &model,
+        effects: &effects,
         func: None,
         sampled: false,
         activation_label: None,

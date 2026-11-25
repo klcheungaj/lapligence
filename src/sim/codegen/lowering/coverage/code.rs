@@ -50,7 +50,8 @@ impl Codegen<'_> {
         };
         let roots = self
             .design_nodes()
-            .into_iter()
+            .iter()
+            .copied()
             .chain(self.db.packages().iter().copied())
             .collect::<Vec<_>>();
         let mut stack = roots;

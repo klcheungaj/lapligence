@@ -351,8 +351,7 @@ and wrapper capture scale much closer to the exported record count.
 Project changes remove redundant dense-ID hashing and geometric growth of
 fallibly decoded vectors, release intermediate owned representations, avoid an
 unchanged execution-model clone, and stream exact body-sharing groups. Source
-positions now index files once and use lazy UTF-8-aligned byte checkpoints
-and a bounded offset cache. This removes repeated whole-prefix scans when both
+positions index the lines of each queried file once. This removes repeated whole-prefix scans when both
 source bytes and node count grow. Startup spawn filtering indexes final names
 once instead of scanning them for each process. Work/capacity/retention
 regressions cover these paths. The corpus has few finals; its measured quadratic

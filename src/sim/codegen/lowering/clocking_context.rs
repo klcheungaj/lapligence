@@ -587,10 +587,11 @@ impl<'a> Codegen<'a> {
     /// `emit_clocking_processes` keeps current; the sample has the clockvar's
     /// own type (SV §14.5).
     pub(super) fn collect_clocking_storage(&mut self) -> Result<(), String> {
-        let design: HashSet<NodeId> = self.design_nodes().into_iter().collect();
+        let design: HashSet<NodeId> = self.design_nodes().iter().copied().collect();
         let blocks: Vec<NodeId> = self
             .design_nodes()
-            .into_iter()
+            .iter()
+            .copied()
             .filter(|id| self.db.clocking_block(*id).is_some())
             .collect();
         for block in blocks {
@@ -1020,7 +1021,8 @@ impl<'a> Codegen<'a> {
         self.emit_clocking_expression_sources()?;
         let blocks: Vec<NodeId> = self
             .design_nodes()
-            .into_iter()
+            .iter()
+            .copied()
             .filter(|id| self.db.clocking_block(*id).is_some())
             .collect();
         for block in blocks {

@@ -885,6 +885,7 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                         let sampled_ctx = RCtx {
                             value_backend: ctx.value_backend,
                             model: ctx.model,
+                            effects: ctx.effects,
                             func: ctx.func,
                             sampled: true,
                             activation_label: ctx.activation_label.clone(),

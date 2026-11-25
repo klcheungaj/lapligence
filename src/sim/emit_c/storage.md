@@ -215,7 +215,7 @@ a model has any context import or export, every import thunk brackets the
 call with `llg_dpi_import_enter/leave`; every import call site sets
 `llg_dpi_next_site` just before the call (decision S41-D3), and an
 uninstrumented thunk clears it after the call. Context imports carry the effects of
-every exported body (`execution::effects_for_function`), so cancellation
+every exported body (`EffectSummaries::of_running`), so cancellation
 checks follow them. When an exported task can consume time, a context
 imported task is a coroutine shim (ADV-018, `model/dpi.rs`
 `render_dpi_context_shim`): its renamed thunk (`<fn>_fcb`) runs on a foreign

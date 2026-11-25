@@ -11,9 +11,7 @@
 //! whose target is no signal or packed select of one (an element or a member).
 
 use crate::core::db::{Db, Direction, NodeId, NodeKind, StmtKind};
-use crate::core::lint::rules::analysis::{
-    all_nodes, expr_width, object_width, signal_of_ref, ElementWidths,
-};
+use crate::core::lint::rules::analysis::{expr_width, object_width, signal_of_ref, ElementWidths};
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
 /// Warns when an assignment's LHS and RHS widths differ.
@@ -31,7 +29,7 @@ impl LintRule for WidthMismatchRule {
     fn check(&self, ctx: &LintCtx<'_>) -> Vec<LintDiag> {
         let db = ctx.db;
         let mut out = Vec::new();
-        for id in all_nodes(db) {
+        for &id in ctx.nodes() {
             match db.node_kind(id) {
                 NodeKind::Stmt(StmtKind::Assign { .. }) | NodeKind::ContAssign { .. } => {
                     let node = db.node(id);

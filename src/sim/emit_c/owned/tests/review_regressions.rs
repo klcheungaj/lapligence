@@ -22,6 +22,7 @@ fn forwarded_reference_resolution_uses_the_formal_descriptor() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: Some(&model.funcs[0]),
         sampled: false,
         activation_label: None,
@@ -39,6 +40,7 @@ fn reference_bit_write_passes_one_captured_native_index() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: Some(&model.funcs[0]),
         sampled: false,
         activation_label: None,
@@ -75,6 +77,7 @@ fn addressable_real_local_is_heap_backed_and_lexically_owned() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -121,6 +124,7 @@ fn owned_memory_emitter_brackets_a_string_sourced_load_with_its_text() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,

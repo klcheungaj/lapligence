@@ -28,7 +28,7 @@
 //! invalid (it changes nothing or returns the default), like the select form.
 
 use crate::core::db::{ArrayKind, Db, ExprKind, NodeId, NodeKind, TypeShape};
-use crate::core::lint::rules::analysis::{all_nodes, expr_width, ElementWidths};
+use crate::core::lint::rules::analysis::{expr_width, ElementWidths};
 use crate::core::lint::rules::select_range::eval_integer;
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
@@ -95,7 +95,7 @@ impl LintRule for WideIndexRule {
                 message,
             });
         };
-        for id in all_nodes(db) {
+        for &id in ctx.nodes() {
             match db.node_kind(id) {
                 NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
                     for (index, target) in array_select_targets(db, *base, indices) {

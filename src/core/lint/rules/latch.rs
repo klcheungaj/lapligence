@@ -7,7 +7,7 @@
 //! v1 flags the conservative, easy-to-detect form.
 
 use crate::core::db::{CaseKind, Db, NodeId, NodeKind, StmtKind};
-use crate::core::lint::rules::analysis::{all_nodes, is_comb_or_latch_process};
+use crate::core::lint::rules::analysis::is_comb_or_latch_process;
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
 /// Warns about `case` statements without a `default` in comb processes.
@@ -25,7 +25,7 @@ impl LintRule for IncompleteCaseRule {
     fn check(&self, ctx: &LintCtx<'_>) -> Vec<LintDiag> {
         let db = ctx.db;
         let mut out = Vec::new();
-        for id in all_nodes(db) {
+        for &id in ctx.nodes() {
             if !matches!(db.node_kind(id), NodeKind::Process { .. }) {
                 continue;
             }

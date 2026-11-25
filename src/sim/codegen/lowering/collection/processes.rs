@@ -1,6 +1,7 @@
 //! Processes.
 
 use super::super::containers::PatternAssignmentKind;
+use super::writer_index::WriterIndex;
 use super::*;
 use crate::sim::codegen::error::located;
 
@@ -1168,7 +1169,8 @@ impl<'a> Codegen<'a> {
     pub(in super::super) fn validate_program_constructs(&self) -> Result<(), String> {
         for program in self
             .design_nodes()
-            .into_iter()
+            .iter()
+            .copied()
             .filter(|id| self.db.is_program_instance(*id))
         {
             let path = self.instance_path_of(program);
@@ -1206,9 +1208,10 @@ impl<'a> Codegen<'a> {
     /// than in lint: disabling lint must not turn an invalid process into a
     /// generated model with different scheduling semantics.
     pub(in super::super) fn validate_process_semantics(&mut self) -> Result<(), String> {
-        let process_ids: Vec<NodeId> = self
-            .design_nodes()
-            .into_iter()
+        let nodes = self.design_nodes();
+        let process_ids: Vec<NodeId> = nodes
+            .iter()
+            .copied()
             .filter(|id| matches!(self.kind(*id), NodeKind::Process { .. }))
             .collect();
         let mut writers = Vec::new();
@@ -1254,7 +1257,7 @@ impl<'a> Codegen<'a> {
         // are not executable drivers in this elaborated instance tree.  Walk
         // the active design tree so mutually exclusive generate assignments
         // do not appear as concurrent writers to the same variable.
-        for id in self.design_nodes() {
+        for &id in nodes.iter() {
             if !matches!(self.kind(id), NodeKind::ContAssign { .. })
                 || !self.is_runtime_continuous_driver(id)
             {
@@ -1303,7 +1306,7 @@ impl<'a> Codegen<'a> {
         // actual, and an inout link writes both. Treat links as writers here
         // so an always-family process cannot share storage with a port path.
         // A collapsed input port is no driver: its formal is the actual.
-        for id in self.design_nodes() {
+        for &id in nodes.iter() {
             if self.port_aliases.contains(&id) {
                 continue;
             }
@@ -1413,8 +1416,14 @@ impl<'a> Codegen<'a> {
             }
         }
         let continuous = continuous_drivers.iter().collect::<Vec<_>>();
+        let continuous_index =
+            WriterIndex::new(self, continuous.iter().map(|writer| &writer.writes));
         for (index, writer) in continuous.iter().enumerate() {
-            for other in continuous.iter().skip(index + 1) {
+            for other in continuous_index.overlapping(self, &writer.writes) {
+                if other <= index {
+                    continue;
+                }
+                let other = continuous[other];
                 if let Some(storage) = writer.writes.iter().find(|write| {
                     other
                         .writes
@@ -1463,7 +1472,7 @@ impl<'a> Codegen<'a> {
             // A declared initializer is also a procedural assignment for this
             // rule. Keep it out of sensitivity writer analysis, but do not let an
             // initialized variable silently acquire another continuous writer.
-            for node in self.design_nodes() {
+            for &node in nodes.iter() {
                 if !matches!(
                     self.kind(node),
                     NodeKind::Var { .. } | NodeKind::Array { .. }
@@ -1494,8 +1503,11 @@ impl<'a> Codegen<'a> {
                 });
             }
         }
+        let procedural_index =
+            WriterIndex::new(self, procedural_writers.iter().map(|writer| &writer.writes));
         for driver in &continuous {
-            for writer in &procedural_writers {
+            for writer in procedural_index.overlapping(self, &driver.writes) {
+                let writer = &procedural_writers[writer];
                 if let Some(storage) = driver.writes.iter().find(|write| {
                     writer
                         .writes
@@ -1519,7 +1531,7 @@ impl<'a> Codegen<'a> {
         // function result as a warning. The result is a variable with one
         // legal continuous driver, so keep the simulator fail-closed when a
         // function body also writes that same result slot.
-        for function in self.design_nodes() {
+        for &function in nodes.iter() {
             let NodeKind::FuncTask {
                 is_task: false,
                 automatic: false,
@@ -1545,12 +1557,17 @@ impl<'a> Codegen<'a> {
                 continue;
             };
             let target = self.signal_dependency(storage);
-            let Some(driver) = continuous.iter().find(|writer| {
-                writer
-                    .writes
-                    .iter()
-                    .any(|write| self.same_storage(&target, write))
-            }) else {
+            let Some(driver) = continuous_index
+                .overlapping(self, [&target])
+                .into_iter()
+                .map(|writer| continuous[writer])
+                .find(|writer| {
+                    writer
+                        .writes
+                        .iter()
+                        .any(|write| self.same_storage(&target, write))
+                })
+            else {
                 continue;
             };
             let Some(body) = self.func_body(function) else {
@@ -1573,9 +1590,10 @@ impl<'a> Codegen<'a> {
         }
 
         if !continuous.is_empty() {
-            self.validate_called_subroutine_writes(&continuous)?;
+            self.validate_called_subroutine_writes(&continuous, &continuous_index)?;
         }
 
+        let writer_index = WriterIndex::new(self, writers.iter().map(|writer| &writer.writes));
         for restricted in writers.iter().filter(|writer| {
             matches!(
                 self.kind(writer.node),
@@ -1586,7 +1604,8 @@ impl<'a> Codegen<'a> {
                 }
             )
         }) {
-            for other in &writers {
+            for other in writer_index.overlapping(self, &restricted.writes) {
+                let other = &writers[other];
                 if restricted.node == other.node {
                     continue;
                 }
@@ -1835,10 +1854,12 @@ impl<'a> Codegen<'a> {
     fn validate_called_subroutine_writes(
         &mut self,
         continuous: &[&ProcessWriter],
+        index: &WriterIndex<'_>,
     ) -> Result<(), String> {
         for &(subroutine, body) in self.called_subroutines(None).iter() {
             for (target, writes) in self.subroutine_body_writes(subroutine, body) {
-                for driver in continuous {
+                for driver in index.overlapping(self, &writes) {
+                    let driver = continuous[driver];
                     let Some(storage) = writes.iter().find(|write| {
                         driver
                             .writes

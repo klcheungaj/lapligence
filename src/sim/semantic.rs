@@ -5,6 +5,8 @@
 //! operations mean; runtime scheduling, coroutine state, and C spelling are
 //! absent from this layer.
 
+use std::collections::HashSet;
+
 use crate::core::db::{
     AlwaysKind, ArrayKind, CapturedSemanticKind, CaseKind, ConditionalPatternKind, ConstantType,
     Db, Direction, EventSpec, ExprKind, NetType, NodeId, NodeKind, Operation, PrimClass,
@@ -225,37 +227,40 @@ impl<'db> SemanticModel<'db> {
     /// visible in the ledger as intentionally unreachable rather than becoming
     /// false unsupported diagnostics.
     pub fn simulation_coverage(&self) -> Vec<SimulationCoverageEntry> {
-        let reachable = self.simulation_reachability();
-        let elaboration_placeholders = self.simulation_elaboration_placeholders();
-        self.db
-            .node_ids()
-            .map(|node| {
-                let class = if reachable[node.index()] {
-                    classify_simulation_node(self.db, node, elaboration_placeholders[node.index()])
-                } else {
-                    SimulationNodeClass::IntentionallyUnreachable
-                };
-                SimulationCoverageEntry {
-                    node,
-                    class,
-                    origin: OriginId(node.index() as u32),
-                    detail: simulation_node_detail(self.db, node),
-                }
+        self.simulation_classes()
+            .map(|(node, class)| SimulationCoverageEntry {
+                node,
+                class,
+                origin: OriginId(node.index() as u32),
+                detail: simulation_node_detail(self.db, node),
             })
             .collect()
+    }
+
+    /// The simulation class of every node.
+    fn simulation_classes(&self) -> impl Iterator<Item = (NodeId, SimulationNodeClass)> + '_ {
+        let reachable = self.simulation_reachability();
+        let elaboration_placeholders = self.simulation_elaboration_placeholders();
+        self.db.node_ids().map(move |node| {
+            let class = if reachable[node.index()] {
+                classify_simulation_node(self.db, node, elaboration_placeholders[node.index()])
+            } else {
+                SimulationNodeClass::IntentionallyUnreachable
+            };
+            (node, class)
+        })
     }
 
     /// Reject every reachable executable node that has no simulation
     /// lowering contract before IR construction starts.
     pub fn validate_simulation(&self) -> Result<(), Vec<SimulationIssue>> {
         let issues = self
-            .simulation_coverage()
-            .into_iter()
-            .filter(|entry| entry.class == SimulationNodeClass::Unsupported)
-            .map(|entry| SimulationIssue {
-                node: entry.node,
-                origin: entry.origin,
-                detail: entry.detail,
+            .simulation_classes()
+            .filter(|(_, class)| *class == SimulationNodeClass::Unsupported)
+            .map(|(node, _)| SimulationIssue {
+                node,
+                origin: OriginId(node.index() as u32),
+                detail: simulation_node_detail(self.db, node),
             })
             .collect::<Vec<_>>();
         if issues.is_empty() {
@@ -288,8 +293,9 @@ impl<'db> SemanticModel<'db> {
                 }
             }
         }
+        let tagged_keys = tagged_pattern_keys(self.db);
         for id in self.db.node_ids() {
-            if assignment_pattern_metadata_node(self.db, id) {
+            if assignment_pattern_metadata_node(self.db, id, &tagged_keys) {
                 placeholders[id.index()] = true;
             }
         }
@@ -694,7 +700,7 @@ fn synthesis_output_port_placeholder(db: &Db, id: NodeId) -> bool {
     })
 }
 
-fn assignment_pattern_metadata_node(db: &Db, id: NodeId) -> bool {
+fn assignment_pattern_metadata_node(db: &Db, id: NodeId, tagged_keys: &HashSet<NodeId>) -> bool {
     let node = db.node(id);
     if node.file().is_some()
         || db.semantic_kind(id) != Some(CapturedSemanticKind::Unsupported)
@@ -716,18 +722,30 @@ fn assignment_pattern_metadata_node(db: &Db, id: NodeId) -> bool {
         current = db.node(parent).parent();
     }
 
-    // Slang's assignment-pattern key metadata is sometimes captured as an
-    // anonymous `Other` node with no parent.  It is still retained in the
-    // tagged-pattern node's child list beside the value node.  Treat only
-    // that non-value child as elaboration metadata; an anonymous node used as
-    // the tagged value must continue to fail closed as an unsupported
-    // executable construct.
-    db.node_ids().any(|owner| {
-        let NodeKind::Expr(ExprKind::TaggedPattern { value, .. }) = db.node_kind(owner) else {
-            return false;
-        };
-        value != &Some(id) && db.node(owner).children().contains(&id)
-    })
+    tagged_keys.contains(&id)
+}
+
+/// The children of tagged patterns other than their values.
+///
+/// Slang's assignment-pattern key metadata is sometimes captured as an
+/// anonymous `Other` node with no parent. It is still retained in the
+/// tagged-pattern node's child list beside the value node. Only that
+/// non-value child is elaboration metadata; an anonymous node used as the
+/// tagged value must continue to fail closed as an unsupported executable
+/// construct.
+fn tagged_pattern_keys(db: &Db) -> HashSet<NodeId> {
+    let mut keys = HashSet::new();
+    for owner in db.node_ids() {
+        if let NodeKind::Expr(ExprKind::TaggedPattern { value, .. }) = db.node_kind(owner) {
+            keys.extend(
+                db.node(owner)
+                    .children()
+                    .iter()
+                    .filter(|child| value.as_ref() != Some(*child)),
+            );
+        }
+    }
+    keys
 }
 
 fn process_reference(db: &Db, id: NodeId) -> bool {

@@ -682,11 +682,14 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   unpacked array parameters are read whole, by member and by constant or
   run-time index, with their elaborated value
   ([ki_unpacked_parameters](../tests/fixtures/sim/feature_completion/ki_unpacked_parameters/readme.md));
-  one that holds strings or reals is read by element or member only, with at
-  most one run-time index into strings; override expressions retain their parent scope.
+  one that holds strings or reals is read by element or member, printed by
+  `%p`, and, as a structure that constant selectors reach, copied, passed and
+  compared whole; a whole array of strings or reals is not copied. Override
+  expressions retain their parent scope.
   Parameters declared in procedural blocks, subroutines and methods are read
   like module parameters; a `parameter` of a block, task or function of an
-  instance can be a `defparam` target (23.10.2)
+  instance can be a `defparam` target (23.10.2). The final value, also one of a
+  `defparam`, gives a parameter without a type and a range its type (6.20.2)
   ([ki_block_parameters](../tests/fixtures/sim/feature_completion/ki_block_parameters/readme.md)).
   A `string` parameter is an argument of a user system task like any other
   parameter

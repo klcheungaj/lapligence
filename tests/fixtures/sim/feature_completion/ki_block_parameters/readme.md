@@ -24,6 +24,16 @@ Clauses used by every case:
 - 6.20.4 L6768-6776 (a `localparam` is no defparam target; a generate block,
   package, class body and compilation unit take `parameter` as its synonym, a
   procedural block does not).
+- 6.20.2 L6569-6572: "A parameter declaration with no type or range specification
+  shall default to the type and range of the final value assigned to the
+  parameter, after any value overrides have been applied. If the expression is
+  real, the parameter is real. If the expression is integral, the parameter is a
+  logic vector of the same size with range [size-1:0]."; L6573-6587 (a range or a
+  type stays, `signed` alone takes the final range, an unsized value gives at
+  least 32 bits).
+- 23.10 L42466-42468: "Parameter B is not a typed and/or ranged parameter; when its
+  value is redefined, the parameter type and range take on the type and range of
+  the new value."
 
 | Case | Covers |
 | --- | --- |
@@ -37,6 +47,7 @@ Clauses used by every case:
 | `vpi.sv` + `vpi.c` | `vpiParameter` iteration of block, fork and function scopes, `vpi_handle_by_name`, `vpiScope`, `vpiLocalParam`, a `defparam`, a system task argument (37.26) |
 | `verilog.v` | the 2001 edition (1364-2001 A.2.8) |
 | `defparam.sv` | `defparam` of block, nested block, task, function and `final` parameters: one instance of several, generate iterations, dependent parameters, range and value conversion; from outside and from the same generate block |
+| `defparam_types.sv` | the type and range that a defparam gives a parameter declared without them (6.20.2): module, block and function parameters, real, string and unknown values, `signed` alone, dependent parameters and types, generate conditions |
 | `neg_defparam_localparam.sv`, `neg_defparam_generate.sv`, `neg_defparam_package.sv` | a block `localparam`, a `parameter` of a generate block and one of a package function are no defparam targets |
 | `neg_out_of_scope.sv` | a simple name outside the block is undeclared |
 | `neg_assigned.sv` | a parameter is not assignable |

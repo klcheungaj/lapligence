@@ -13,7 +13,7 @@ use std::collections::HashSet;
 
 use crate::core::db::{ConstraintKind, Db, NodeId, NodeKind, RandQualifier};
 use crate::core::lint::rules::analysis::{
-    all_nodes, black_box_connection_signals, collect_driver_writes, collect_reads,
+    black_box_connection_signals, collect_driver_writes, collect_reads,
     connected_port_link_drivers, declaration_initializers, extend_virtual_interface_members,
     gate_terminal_drivers, gate_terminal_reads, is_signal, port_link_reads, signal_scope_path,
     subroutine_body, timing_check_activity, top_external_port_signals, unconnected_port_signals,
@@ -35,7 +35,7 @@ impl LintRule for UndrivenSignalRule {
 
     fn check(&self, ctx: &LintCtx<'_>) -> Vec<LintDiag> {
         let db = ctx.db;
-        let (reads, drivers) = design_activity(db);
+        let (reads, drivers) = design_activity(ctx);
         let mut exempt = top_external_port_signals(db);
         exempt.extend(unconnected_port_signals(db));
         // A black-box (unknown module) connection may drive the signal.
@@ -76,7 +76,7 @@ impl LintRule for UndrivenSignalRule {
         let mut seen = HashSet::new();
         let mut emitted = HashSet::new();
         let mut out = Vec::new();
-        for id in all_nodes(db) {
+        for &id in ctx.nodes() {
             if !seen.insert(id) || !is_signal(db, id) {
                 continue;
             }
@@ -122,11 +122,12 @@ impl LintRule for UndrivenSignalRule {
 }
 
 /// Gather all activity represented by the owned database.
-fn design_activity(db: &Db) -> (HashSet<NodeId>, HashSet<NodeId>) {
+fn design_activity(ctx: &LintCtx<'_>) -> (HashSet<NodeId>, HashSet<NodeId>) {
+    let db = ctx.db;
     let mut reads = HashSet::new();
     let mut drivers = HashSet::new();
 
-    for id in all_nodes(db) {
+    for &id in ctx.nodes() {
         match db.node_kind(id) {
             NodeKind::Process { .. } | NodeKind::ContAssign { .. } => {
                 reads.extend(collect_reads(db, id));
@@ -144,8 +145,8 @@ fn design_activity(db: &Db) -> (HashSet<NodeId>, HashSet<NodeId>) {
         }
     }
 
-    reads.extend(gate_terminal_reads(db));
-    drivers.extend(gate_terminal_drivers(db));
+    reads.extend(gate_terminal_reads(db, ctx.nodes()));
+    drivers.extend(gate_terminal_drivers(db, ctx.nodes()));
     reads.extend(port_link_reads(db));
     drivers.extend(connected_port_link_drivers(db));
     // A timing check toggles its notifier like a procedural write.
@@ -195,10 +196,7 @@ mod tests {
 
     fn run_rule(sv: &str, top: &str) -> Vec<LintDiag> {
         let (db, model) = build_design(sv, top);
-        UndrivenSignalRule.check(&LintCtx {
-            db: &db,
-            model: &model,
-        })
+        UndrivenSignalRule.check(&LintCtx::new(&db, &model))
     }
 
     #[test]

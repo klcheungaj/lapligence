@@ -30,7 +30,7 @@ use std::collections::HashSet;
 
 use crate::core::db::{AlwaysKind, Db, NodeId, NodeKind, ProcessKind, StmtKind};
 use crate::core::lint::rules::analysis::{
-    all_nodes, has_implicit_event, has_timing_control, scope_path, signal_of_ref,
+    has_implicit_event, has_timing_control, scope_path, signal_of_ref,
 };
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
@@ -50,7 +50,7 @@ impl LintRule for IfLatchRule {
     fn check(&self, ctx: &LintCtx<'_>) -> Vec<LintDiag> {
         let db = ctx.db;
         let mut out = Vec::new();
-        for id in all_nodes(db) {
+        for &id in ctx.nodes() {
             if !matches!(db.node_kind(id), NodeKind::Process { .. }) {
                 continue;
             }

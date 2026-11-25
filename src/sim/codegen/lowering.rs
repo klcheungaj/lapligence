@@ -1818,6 +1818,13 @@ struct Codegen<'a> {
     /// statically known calls, built on first use: port collapse and the
     /// process checks both read them (`collection/processes.rs`).
     called_subroutines: std::cell::OnceCell<std::rc::Rc<[(NodeId, NodeId)]>>,
+    design_nodes: std::cell::OnceCell<std::rc::Rc<[NodeId]>>,
+    global_clocking_blocks: std::cell::OnceCell<HashMap<NodeId, Vec<NodeId>>>,
+    /// The members of each enum type (`expressions/casts.rs`).
+    enum_constants: std::cell::OnceCell<HashMap<TypeId, std::rc::Rc<[NodeId]>>>,
+    /// The variables that targets outside a function's own body name
+    /// (`static_return_requires_signal`), collected on first use.
+    outside_targets: std::cell::OnceCell<HashSet<NodeId>>,
     /// The member paths written through a virtual-interface handle, built
     /// on first use: port collapse and the virtual-interface checks both
     /// read them (`collection/virtual_interfaces.rs`).
@@ -1942,6 +1949,9 @@ struct Codegen<'a> {
     coverage_ref_actuals: HashMap<NodeId, NodeId>,
     /// Top-level unpacked aggregate variables lowered to member storage.
     unpacked_aggregates: HashMap<NodeId, UnpackedAggregateInfo>,
+    /// The same aggregates by scope path and declared name
+    /// (`aggregate_declared_in`).
+    aggregates_by_scope: HashMap<String, HashMap<&'a str, Vec<NodeId>>>,
     /// Synthetic owned string objects for recursive aggregate leaves. The
     /// key uses declaration identity and canonical member/index path, never a
     /// display spelling or frontend pointer.
@@ -2654,6 +2664,10 @@ impl<'a> Codegen<'a> {
             shared_run_slot_bits: collection::MAX_SHARED_RUN_SLOT_BITS,
             port_collapse_exclusions: HashSet::new(),
             called_subroutines: std::cell::OnceCell::new(),
+            design_nodes: std::cell::OnceCell::new(),
+            global_clocking_blocks: std::cell::OnceCell::new(),
+            enum_constants: std::cell::OnceCell::new(),
+            outside_targets: std::cell::OnceCell::new(),
             virtual_interface_write_paths: std::cell::OnceCell::new(),
             strength_links: Default::default(),
             record_column_types: HashSet::new(),
@@ -2701,6 +2715,7 @@ impl<'a> Codegen<'a> {
             coverage_scope: None,
             coverage_ref_actuals: HashMap::new(),
             unpacked_aggregates: HashMap::new(),
+            aggregates_by_scope: HashMap::new(),
             aggregate_objects: HashMap::new(),
             record_columns: false,
             activation_records: HashMap::new(),
@@ -4575,6 +4590,9 @@ mod ir_mutation_tests;
 
 #[cfg(test)]
 mod operand_context_tests;
+
+#[cfg(test)]
+mod scaling_tests;
 
 #[cfg(test)]
 mod operation_arity_tests {

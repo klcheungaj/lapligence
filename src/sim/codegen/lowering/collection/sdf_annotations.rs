@@ -768,7 +768,7 @@ impl Codegen<'_> {
     pub(in super::super) fn reserve_vpi_delays(&mut self) {
         let design = self.design_nodes();
         let mut gates = Vec::new();
-        for id in &design {
+        for id in design.iter() {
             if let NodeKind::Gate {
                 delay: Some(_),
                 prim_type,

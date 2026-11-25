@@ -15,7 +15,6 @@
 //! where either side is not a literal are skipped.
 
 use crate::core::db::{CaseKind, Db, ExprKind, NodeId, NodeKind, StmtKind};
-use crate::core::lint::rules::analysis::all_nodes;
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 use crate::core::value::ValueData;
 
@@ -35,7 +34,7 @@ impl LintRule for CasezMisuseRule {
     fn check(&self, ctx: &LintCtx<'_>) -> Vec<LintDiag> {
         let db = ctx.db;
         let mut out = Vec::new();
-        for id in all_nodes(db) {
+        for &id in ctx.nodes() {
             if !matches!(db.node_kind(id), NodeKind::Process { .. }) {
                 continue;
             }

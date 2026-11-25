@@ -18,6 +18,7 @@ pub(super) fn render<'a, 'm>(
             value_backend: ctx.value_backend,
             constants: ctx.constants,
             model: ctx.model,
+            effects: ctx.effects,
             func: function,
             sampled: false,
             activation_label: None,

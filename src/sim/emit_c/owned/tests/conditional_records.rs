@@ -66,6 +66,7 @@ fn cross_limb_structure_merge_owns_its_leaf_layout_and_default() {
         let ctx = RCtx {
             value_backend: crate::sim::value_backend::ValueBackend::Legacy,
             model: &model,
+            effects: &crate::sim::execution::EffectSummaries::new(&model),
             func: None,
             sampled: false,
             activation_label: None,

@@ -5,7 +5,6 @@
 //! signedness, casts, widths, or extensions.
 
 use crate::core::db::{CaseKind, ConstantSource, Db, ExprKind, NodeId, NodeKind, StmtKind};
-use crate::core::lint::rules::analysis::all_nodes;
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
 /// Warns about every later literal expression repeated in an exact `case`.
@@ -24,7 +23,7 @@ impl LintRule for DuplicateCaseItemRule {
         let db = ctx.db;
         let mut out = Vec::new();
 
-        for case in all_nodes(db) {
+        for &case in ctx.nodes() {
             let NodeKind::Stmt(StmtKind::Case {
                 case_type, items, ..
             }) = db.node_kind(case)
@@ -150,13 +149,7 @@ mod tests {
 
     fn check(sv: &str) -> Vec<LintDiag> {
         let (db, model) = build_design(sv, "t");
-        crate::core::lint::distinct_findings(
-            &DuplicateCaseItemRule,
-            &LintCtx {
-                db: &db,
-                model: &model,
-            },
-        )
+        crate::core::lint::distinct_findings(&DuplicateCaseItemRule, &LintCtx::new(&db, &model))
     }
 
     #[test]

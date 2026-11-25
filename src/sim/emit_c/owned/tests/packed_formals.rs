@@ -74,6 +74,7 @@ fn callback_member_writes_and_nested_reads_use_private_owners() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -99,6 +100,7 @@ fn input_member_plan_resolves_the_materialized_input_cell() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -134,6 +136,7 @@ fn packed_ref_member_updates_via_the_original_reference_descriptor() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: Some(&model.funcs[0]),
         sampled: false,
         activation_label: None,
@@ -168,6 +171,7 @@ fn two_state_member_conversion_follows_read_modify_write_selection() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -192,6 +196,7 @@ fn whole_signed_member_reads_restore_the_descriptor_sign() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,

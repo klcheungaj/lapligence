@@ -14,7 +14,7 @@
 //! level-sensitive/implicit event controls (`@*`) are not checked.
 
 use crate::core::db::{AlwaysKind, Db, EventSpec, NodeId, NodeKind, ProcessKind, StmtKind};
-use crate::core::lint::rules::analysis::{all_nodes, scope_path};
+use crate::core::lint::rules::analysis::scope_path;
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
 /// Warns about blocking assignments in always_ff / edge-sensitive always.
@@ -32,7 +32,7 @@ impl LintRule for BlockingInFFRule {
     fn check(&self, ctx: &LintCtx<'_>) -> Vec<LintDiag> {
         let db = ctx.db;
         let mut out = Vec::new();
-        for id in all_nodes(db) {
+        for &id in ctx.nodes() {
             let Some(label) = ff_label(db, id) else {
                 continue;
             };

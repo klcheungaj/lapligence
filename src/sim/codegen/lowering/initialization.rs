@@ -152,7 +152,7 @@ impl<'a> Codegen<'a> {
         // Ungrouped nets include ordinary ports, interface members and gate
         // outputs. Their initial Z value must not inherit a variable's X. A
         // collapsed port sink has its source's storage and start.
-        for node in self.design_nodes() {
+        for &node in self.design_nodes().iter() {
             let Some(info) = self.sig_globals.get(&node) else {
                 continue;
             };

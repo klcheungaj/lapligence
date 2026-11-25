@@ -22,8 +22,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::core::db::{Db, NodeId, NodeKind, StmtKind};
 use crate::core::lint::rules::analysis::{
-    all_nodes, collect_reads, collect_writes, has_timing_control, is_comb_process,
-    process_local_vars,
+    collect_reads, collect_writes, has_timing_control, is_comb_process, process_local_vars,
 };
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
@@ -42,7 +41,7 @@ impl LintRule for CombinationalLoopRule {
     fn check(&self, ctx: &LintCtx<'_>) -> Vec<LintDiag> {
         let db = ctx.db;
         let mut edges: Vec<(NodeId, NodeId)> = Vec::new();
-        for id in all_nodes(db) {
+        for &id in ctx.nodes() {
             let comb = match db.node_kind(id) {
                 NodeKind::Process { .. } => is_comb_process(db, id) && !has_timing_control(db, id),
                 NodeKind::ContAssign { .. } => true,

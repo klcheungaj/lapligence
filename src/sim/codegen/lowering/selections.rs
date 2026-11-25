@@ -609,16 +609,9 @@ impl<'a> Codegen<'a> {
                             scope.push('.');
                             scope.push_str(&parts[..base_index].join("."));
                         }
-                        found = sorted_node_ids(&self.unpacked_aggregates)
-                            .into_iter()
-                            .find_map(|target| {
-                                // A scope path never names a procedural block's
-                                // declaration.
-                                (!self.block_records.contains_key(&target)
-                                    && self.node(target).name == parts[base_index]
-                                    && self.instance_path_of(target) == scope)
-                                    .then_some((target, base_index))
-                            });
+                        found = self
+                            .aggregate_declared_in(&scope, &parts[base_index])
+                            .map(|target| (target, base_index));
                         if found.is_some() {
                             break;
                         }

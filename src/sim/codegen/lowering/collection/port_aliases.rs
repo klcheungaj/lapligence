@@ -107,7 +107,7 @@ impl Codegen<'_> {
             .collect::<HashSet<_>>();
         let mut candidates = Vec::new();
         let mut outputs = Vec::new();
-        for port in &nodes {
+        for port in nodes.iter() {
             let Some((candidate, output)) = self.variable_port_candidate(*port) else {
                 continue;
             };
@@ -159,7 +159,7 @@ impl Codegen<'_> {
             .map(|candidate| candidate.formal)
             .collect::<HashSet<_>>();
         let mut forced = HashSet::new();
-        for id in &nodes {
+        for id in nodes.iter() {
             let lhs = match self.kind(*id) {
                 NodeKind::Stmt(StmtKind::Force { lhs, .. } | StmtKind::Release { lhs }) => *lhs,
                 _ => continue,

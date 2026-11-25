@@ -28,20 +28,15 @@ fn current_abort_atoms(property: &IrProperty) -> Vec<(usize, u32)> {
 }
 
 fn atom_callback(
-    model: &IrModel,
-    constants: &super::super::super::constants::PackedConstants,
-    backend: crate::sim::value_backend::ValueBackend,
+    base: &RCtx<'_>,
     name: &str,
     property: &IrProperty,
     current: &[(usize, u32)],
 ) -> Result<String, String> {
     let ctx = RCtx {
-        value_backend: backend,
-        model,
-        func: None,
         sampled: true,
         activation_label: None,
-        constants: Some(constants),
+        ..*base
     };
     let mut frame = callback_frame(&ctx);
     frame.line("switch (atom) {");
@@ -279,9 +274,7 @@ fn node_row(node: &IrPropertyNode, clock: Option<u32>, current: Option<u32>) -> 
 }
 
 pub(super) fn render(
-    model: &IrModel,
-    constants: &super::super::super::constants::PackedConstants,
-    backend: crate::sim::value_backend::ValueBackend,
+    base: &RCtx<'_>,
     index: usize,
     property: &IrProperty,
 ) -> Result<String, String> {
@@ -289,9 +282,7 @@ pub(super) fn render(
     let mut graphs = Vec::new();
     for (sequence_index, sequence) in property.sequences().iter().enumerate() {
         let role = format!("prop{sequence_index}");
-        out.push_str(&sequence::render(
-            model, constants, backend, index, &role, sequence,
-        )?);
+        out.push_str(&sequence::render(base, index, &role, sequence)?);
         graphs.push(format!("&{}", assertion_sequence_name(index, &role)));
     }
     let name = program_name(index);
@@ -301,9 +292,7 @@ pub(super) fn render(
     let atom = if property.atoms().is_empty() {
         "NULL".to_owned()
     } else {
-        out.push_str(&atom_callback(
-            model, constants, backend, &atom_name, property, &current,
-        )?);
+        out.push_str(&atom_callback(base, &atom_name, property, &current)?);
         atom_name
     };
     let graphs_name = format!("{name}_sequences");
@@ -346,7 +335,7 @@ pub(super) fn render(
             .map(|clock| {
                 format!(
                     "{{&{}, {}}}",
-                    registration::signal_name(model, clock.signal()),
+                    registration::signal_name(base.model, clock.signal()),
                     if clock.posedge() {
                         "LLG_EV_POSEDGE"
                     } else {

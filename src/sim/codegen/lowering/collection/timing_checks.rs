@@ -119,7 +119,7 @@ impl Codegen<'_> {
         if db.timing_checks().is_empty() {
             return Ok(());
         }
-        let design = self.design_nodes().into_iter().collect::<HashSet<_>>();
+        let design = self.design_nodes().iter().copied().collect::<HashSet<_>>();
         let mut instances: Vec<(NodeId, Vec<&TimingCheck>)> = Vec::new();
         let mut instance_index = HashMap::new();
         for check in db.timing_checks() {

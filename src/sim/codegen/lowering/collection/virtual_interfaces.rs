@@ -308,7 +308,8 @@ impl<'a> Codegen<'a> {
         }
         let interfaces = self
             .design_nodes()
-            .into_iter()
+            .iter()
+            .copied()
             .filter(|node| {
                 matches!(
                     self.kind(*node),

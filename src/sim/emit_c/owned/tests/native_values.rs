@@ -25,6 +25,7 @@ fn native_return_slot_precedes_argument_cleanup_mark() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -70,6 +71,7 @@ fn string_formals_are_copied_into_registered_callee_owners() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: Some(function),
         sampled: false,
         activation_label: None,
@@ -106,10 +108,16 @@ fn native_model_lifecycle_uses_typed_notification_and_release() {
     });
     let mut source = String::new();
     super::super::model::storage_lifecycle(
-        &model,
+        &RCtx {
+            value_backend: crate::sim::value_backend::ValueBackend::Legacy,
+            constants: Some(&super::super::super::constants::PackedConstants::default()),
+            model: &model,
+            effects: &crate::sim::execution::EffectSummaries::new(&model),
+            func: None,
+            sampled: false,
+            activation_label: None,
+        },
         &crate::sim::ir::VirtualDispatch::new(&model),
-        &super::super::super::constants::PackedConstants::default(),
-        crate::sim::value_backend::ValueBackend::Legacy,
         &std::collections::HashMap::new(),
         &mut source,
     )
@@ -130,6 +138,7 @@ fn container_read_keeps_index_owner_until_after_runtime_call() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -171,6 +180,7 @@ fn file_scan_uses_registered_source_and_typed_borrowed_target() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -212,6 +222,7 @@ fn enum_navigation_releases_receiver_members_step_and_result() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -251,6 +262,7 @@ fn native_read_only_callbacks_reject_random_state_mutation() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -274,6 +286,7 @@ fn generic_queue_queries_use_the_generic_runtime_layout() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -303,6 +316,7 @@ fn unnamed_native_locals_get_one_use_and_named_ones_none() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,

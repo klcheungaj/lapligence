@@ -427,13 +427,12 @@ fn alias_visible_lifecycle(table: &str, initialize: &mut String, destroy: &mut S
 }
 
 pub(in crate::sim::emit_c) fn storage_lifecycle(
-    model: &IrModel,
+    ctx: &RCtx<'_>,
     dispatch: &VirtualDispatch,
-    constants: &super::super::super::constants::PackedConstants,
-    backend: crate::sim::value_backend::ValueBackend,
     evaluators: &HashMap<String, (String, String)>,
     out: &mut String,
 ) -> Result<(), String> {
+    let model = ctx.model;
     let mut initialize = String::from("    llg_model_constants_init();\n");
     let mut destroy = String::new();
     let mut tables = StorageTables::default();
@@ -809,15 +808,7 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
     }
     out.push_str(&tables.source);
     out.push_str(&format!("static void llg_model_storage_defaults(void) {{\n{initialize}}}\n\nstatic void llg_model_storage_destroy(void) {{\n{destroy}    llg_model_constants_destroy();\n}}\n\n"));
-    let ctx = RCtx {
-        value_backend: backend,
-        model,
-        func: None,
-        sampled: false,
-        activation_label: None,
-        constants: Some(constants),
-    };
-    let mut frame = Frame::new(&ctx);
+    let mut frame = Frame::new(ctx);
     frame.static_initialization = true;
     // SV static initialization may call legal zero-time user functions. The
     // runtime is already initialized and the frame is not a coroutine:

@@ -52,6 +52,7 @@ fn callback_expansions_rename_all_internal_labels_and_gotos() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -117,6 +118,7 @@ fn real_callback_results_are_declared_in_the_callers_scope() {
         let ctx = RCtx {
             value_backend: crate::sim::value_backend::ValueBackend::Legacy,
             model: &model,
+            effects: &crate::sim::execution::EffectSummaries::new(&model),
             func: None,
             sampled: false,
             activation_label: None,
@@ -156,6 +158,7 @@ fn fixed_stream_index_owners_use_registered_slots_and_are_destroyed() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -216,6 +219,7 @@ fn stream_checks_each_component_before_publication_using_the_actual_source_width
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,

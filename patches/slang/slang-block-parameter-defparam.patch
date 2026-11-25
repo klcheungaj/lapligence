@@ -29,12 +29,17 @@ index 282c70b9f..391753519 100644
  class SLANG_EXPORT InstanceSymbolBase : public Symbol {
  public:
 diff --git a/include/slang/ast/symbols/ParameterSymbols.h b/include/slang/ast/symbols/ParameterSymbols.h
-index c438539ee..0dca89f21 100644
+index c438539ee..8adb01841 100644
 --- a/include/slang/ast/symbols/ParameterSymbols.h
 +++ b/include/slang/ast/symbols/ParameterSymbols.h
-@@ -70,6 +70,9 @@ public:
+@@ -69,7 +69,14 @@ public:
+ 
      void serializeTo(ASTSerializer& serializer) const;
  
++    /// The type that the value of a defparam gives this parameter if its declaration has
++    /// no type and no range [6.20.2], or null if the default value decides the type.
++    const Type* getDefparamType() const;
++
  private:
 +    /// The value a defparam gives this parameter of a block, task or function, if any.
 +    const ConstantValue* findBlockOverride() const;
@@ -43,10 +48,28 @@ index c438539ee..0dca89f21 100644
      mutable bool fromStringLit = false;
      mutable bool needsCoercion = false;
 diff --git a/source/ast/DefParamResolver.cpp b/source/ast/DefParamResolver.cpp
-index e057f6fea..3ade7510c 100644
+index e057f6fea..a96159eb6 100644
 --- a/source/ast/DefParamResolver.cpp
 +++ b/source/ast/DefParamResolver.cpp
-@@ -636,9 +636,9 @@ void Compilation::resolveDefParamsAndBinds() {
+@@ -547,6 +547,7 @@ void Compilation::resolveDefParamsAndBinds() {
+         const SyntaxNode* defparamSyntax = nullptr;
+         ConstantValue value;
+         std::string pathStr;
++        bool isStringLit = false;
+     };
+     SmallVector<OverrideEntry, 4> overrides;
+ 
+@@ -585,7 +586,8 @@ void Compilation::resolveDefParamsAndBinds() {
+             auto node = getNodeFor(entry.path, c);
+             auto [it, inserted] = node->paramOverrides.emplace(
+                 entry.targetSyntax,
+-                HierarchyOverrideNode::ParamOverride{entry.value, nullptr, entry.defparamSyntax});
++                HierarchyOverrideNode::ParamOverride{entry.value, nullptr, entry.defparamSyntax,
++                                                     entry.isStringLit});
+ 
+             if (!inserted && isFinal) {
+                 SLANG_ASSERT(it->second.defparam);
+@@ -636,9 +638,10 @@ void Compilation::resolveDefParamsAndBinds() {
                  overrides.emplace_back();
              }
              else {
@@ -55,10 +78,26 @@ index e057f6fea..3ade7510c 100644
 -                                     target->getHierarchicalPath()});
 +                overrides.push_back({OpaqueInstancePath::toParameterScope(*target),
 +                                     target->getSyntax(), defparam->getSyntax(),
-+                                     defparam->getValue(), target->getHierarchicalPath()});
++                                     defparam->getValue(), target->getHierarchicalPath(),
++                                     defparam->getInitializer().isImplicitString()});
              }
          }
  
+@@ -813,7 +816,13 @@ void Compilation::resolveDefParamsAndBinds() {
+                     return;
+                 }
+ 
+-                if (prevEntry.value != v.found[j]->getValue()) {
++                // The value also gives an untyped parameter its size and sign.
++                auto& newValue = v.found[j]->getValue();
++                const bool typeChanged =
++                    prevEntry.value.isInteger() && newValue.isInteger() &&
++                    (prevEntry.value.integer().getBitWidth() != newValue.integer().getBitWidth() ||
++                     prevEntry.value.integer().isSigned() != newValue.integer().isSigned());
++                if (typeChanged || prevEntry.value != newValue) {
+                     allSame = false;
+                     if (i == options.maxDefParamSteps - 1)
+                         root->addDiag(diag::DefParamCycle, getRange());
 diff --git a/source/ast/OpaqueInstancePath.cpp b/source/ast/OpaqueInstancePath.cpp
 index 4e718a5c5..f15a3b2b6 100644
 --- a/source/ast/OpaqueInstancePath.cpp
@@ -86,7 +125,7 @@ index 4e718a5c5..f15a3b2b6 100644
      auto scope = symbol.getHierarchicalParent();
      const Symbol* current;
 diff --git a/source/ast/symbols/ParameterSymbols.cpp b/source/ast/symbols/ParameterSymbols.cpp
-index 9860ee446..7924b26ef 100644
+index 9860ee446..afbd8bffa 100644
 --- a/source/ast/symbols/ParameterSymbols.cpp
 +++ b/source/ast/symbols/ParameterSymbols.cpp
 @@ -30,10 +30,19 @@ void ParameterSymbolBase::fromLocalSyntax(const Scope& scope,
@@ -131,7 +170,22 @@ index 9860ee446..7924b26ef 100644
          evaluating = true;
          auto guard = ScopeGuard([this] { evaluating = false; });
  
-@@ -182,7 +196,44 @@ bool ParameterSymbol::isImplicitString(SourceRange referencingRange) const {
+@@ -173,7 +187,14 @@ const ConstantValue& ParameterSymbol::getValue(SourceRange referencingRange) con
+     return *value;
+ }
+ 
++static const HierarchyOverrideNode::ParamOverride* findDefparam(const ParameterSymbol& param);
++
+ bool ParameterSymbol::isImplicitString(SourceRange referencingRange) const {
++    if (getDefparamType()) {
++        auto& its = getDeclaredType()->getTypeSyntax()->as<ImplicitTypeSyntax>();
++        return !its.signing && findDefparam(*this)->isStringLit;
++    }
++
+     if (!value) {
+         getValue(referencingRange);
+         SLANG_ASSERT(value);
+@@ -182,7 +203,89 @@ bool ParameterSymbol::isImplicitString(SourceRange referencingRange) const {
  }
  
  bool ParameterSymbol::isOverridden() const {
@@ -159,25 +213,70 @@ index 9860ee446..7924b26ef 100644
 +    return false;
 +}
 +
-+const ConstantValue* ParameterSymbol::findBlockOverride() const {
-+    // The parameters of an instance itself take their overrides when they are built.
-+    auto scope = getParentScope();
-+    auto syntax = getSyntax();
-+    if (isLocalParam() || !scope || !syntax ||
-+        scope->asSymbol().kind == SymbolKind::InstanceBody || !isInstanceProcedure(scope)) {
++// The override that a defparam gives the parameter, if any. Config overrides take precedence.
++static const HierarchyOverrideNode::ParamOverride* findDefparam(const ParameterSymbol& param) {
++    auto scope = param.getParentScope();
++    auto syntax = param.getSyntax();
++    if (param.isLocalParam() || param.isFromConfig() || !scope || !syntax || !isInstanceProcedure(scope))
 +        return nullptr;
-+    }
 +
 +    auto node = findParentOverrideNode(*scope);
 +    if (!node)
 +        return nullptr;
 +
 +    auto it = node->paramOverrides.find(syntax);
-+    return it == node->paramOverrides.end() ? nullptr : &it->second.cv;
++    if (it == node->paramOverrides.end() || !it->second.defparam)
++        return nullptr;
++
++    return &it->second;
++}
++
++const ConstantValue* ParameterSymbol::findBlockOverride() const {
++    // The parameters of an instance itself take their overrides when they are built.
++    auto scope = getParentScope();
++    if (!scope || scope->asSymbol().kind == SymbolKind::InstanceBody)
++        return nullptr;
++
++    auto defparam = findDefparam(*this);
++    return defparam ? &defparam->cv : nullptr;
++}
++
++const Type* ParameterSymbol::getDefparamType() const {
++    auto typeSyntax = getDeclaredType()->getTypeSyntax();
++    if (!typeSyntax || typeSyntax->kind != SyntaxKind::ImplicitType ||
++        !typeSyntax->as<ImplicitTypeSyntax>().dimensions.empty()) {
++        return nullptr;
++    }
++
++    auto defparam = findDefparam(*this);
++    if (!defparam)
++        return nullptr;
++
++    // The value was converted to its final type where the defparam was bound.
++    auto& comp = getParentScope()->getCompilation();
++    auto& cv = defparam->cv;
++    if (cv.isInteger()) {
++        bitmask<IntegralFlags> flags = IntegralFlags::FourState;
++        if (cv.integer().isSigned())
++            flags |= IntegralFlags::Signed;
++
++        return &comp.getType(cv.integer().getBitWidth(), flags);
++    }
++
++    if (cv.isReal())
++        return &comp.getRealType();
++
++    if (cv.isShortReal())
++        return &comp.getShortRealType();
++
++    if (cv.isString())
++        return &comp.getStringType();
++
++    return nullptr;
  }
  
  void ParameterSymbol::setValue(Compilation& compilation, ConstantValue newValue,
-@@ -414,7 +465,7 @@ void DefParamSymbol::resolve() const {
+@@ -414,7 +517,7 @@ void DefParamSymbol::resolve() const {
      }
  
      auto& param = target->as<ParameterSymbol>();
@@ -186,3 +285,19 @@ index 9860ee446..7924b26ef 100644
          context.addDiag(diag::DefParamLocal, assignment.name->sourceRange()) << param.name;
          makeInvalid();
          return;
+diff --git a/source/ast/types/DeclaredType.cpp b/source/ast/types/DeclaredType.cpp
+index 8e5d1b02e..1a3b6e8b1 100644
+--- a/source/ast/types/DeclaredType.cpp
++++ b/source/ast/types/DeclaredType.cpp
+@@ -114,6 +114,11 @@ void DeclaredType::resolveType(const ASTContext& typeContext,
+                 *syntax, *initializerSyntax, {initializerLocation, initializerLocation + 1},
+                 initializerContext, typeContext, extraFlags);
+             SLANG_ASSERT(initializer);
++
++            if (parent.kind == SymbolKind::Parameter) {
++                if (auto defparamType = parent.as<ParameterSymbol>().getDefparamType())
++                    type = defparamType;
++            }
+         }
+     }
+     else if (flags.has(DeclaredTypeFlags::InterconnectNet)) {

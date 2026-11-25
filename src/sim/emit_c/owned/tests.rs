@@ -21,9 +21,55 @@ use crate::sim::execution::ExecutionModel;
 
 #[test]
 fn identifier_use_count_ignores_string_contents() {
-    let counts = identifier_counts("int local = 0; use(local); \"local\"");
+    let names = std::collections::HashSet::from(["local", "use", "other"]);
+    let counts = identifier_counts("int local = 0; use(local); \"local other\"", &names);
     assert_eq!(counts.get("local"), Some(&2));
     assert_eq!(counts.get("use"), Some(&1));
+    assert_eq!(counts.get("other"), None);
+}
+
+#[test]
+fn call_paths_are_rewritten_as_whole_members() {
+    let flattened = std::collections::HashMap::from([
+        ("u0.b1.calls.c1".to_owned(), "calls1.c1".to_owned()),
+        ("u0.b1.calls.c10".to_owned(), "calls1.c10".to_owned()),
+    ]);
+    assert_eq!(
+        rewrite_call_paths(
+            "f(&F->u0.b1.calls.c1.field, &F->u0.b1.calls.c10, F->u0.b1.calls.c11, G->u0.b1.calls.c1);",
+            &flattened,
+        ),
+        "f(&F->calls1.c1.field, &F->calls1.c10, F->u0.b1.calls.c11, G->u0.b1.calls.c1);"
+    );
+}
+
+#[test]
+fn native_use_checks_look_only_after_the_declaration() {
+    let marker = |name: &str| format!("{NATIVE_USE_MARKER}{name}{NATIVE_USE_MARKER_END}");
+    let code = format!(
+        "int a;\n{}int b;\n{}use(a);\nint c;\n{}puts(\"c\");\n",
+        marker("a"),
+        marker("b"),
+        marker("c")
+    );
+    assert_eq!(
+        resolve_native_uses(&code),
+        "int a;\nint b;\n    (void)sizeof(b);\nuse(a);\nint c;\n    (void)sizeof(c);\nputs(\"c\");\n"
+    );
+}
+
+#[test]
+fn a_suspension_is_found_by_the_name_before_its_parenthesis() {
+    for text in [
+        "LLG_CO_AWAIT(co, ch, 3, x);",
+        "if (x) LLG_CO_CALL_ARENA(co, ch, 1, y);",
+        "llg_join(a);",
+    ] {
+        assert!(is_runtime_suspension(text), "{text}");
+    }
+    for text in ["llg_join = 1;", "llg_join_any(a);", "LLG_CO_CALLS(x);", ""] {
+        assert!(!is_runtime_suspension(text), "{text}");
+    }
 }
 
 mod group1_repairs;
@@ -160,6 +206,7 @@ fn expressions_sequence_owners_and_reuse_slots() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -185,6 +232,7 @@ fn conditional_fill_arms_are_owned_and_context_sized() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -215,6 +263,7 @@ fn case_equality_conditional_has_no_ambiguous_arm() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -342,6 +391,7 @@ fn declaration_calls_remain_rejected_outside_coroutine_context() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -460,6 +510,7 @@ fn evaluator_callbacks_reject_side_effect_capable_calls() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,
@@ -501,6 +552,7 @@ fn event_array_indices_are_owned_and_invalid_handles_are_inert() {
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &crate::sim::execution::EffectSummaries::new(&model),
         func: None,
         sampled: false,
         activation_label: None,

@@ -2697,7 +2697,7 @@ impl Codegen<'_> {
             // Declarations first, so the instances of assertions link to
             // them (37.12: a scope holds its sequence and property
             // declarations).
-            for node in self.design_nodes() {
+            for &node in self.design_nodes().iter() {
                 if !matches!(self.kind(node), NodeKind::Other)
                     || !matches!(self.db.semantic_detail(node), Some("Sequence" | "Property"))
                 {
@@ -2936,7 +2936,7 @@ impl Codegen<'_> {
     fn vpi_udp_definitions(&self) -> Vec<IrVpiUdp> {
         let mut seen = HashSet::new();
         let mut udps = Vec::new();
-        for node in self.design_nodes() {
+        for &node in self.design_nodes().iter() {
             let NodeKind::Gate {
                 udp: Some(table), ..
             } = self.kind(node)

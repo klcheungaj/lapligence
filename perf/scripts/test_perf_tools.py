@@ -43,6 +43,21 @@ class ProfileParserTests(unittest.TestCase):
         self.assertEqual(result, [["first", "second"], ["second"]])
         run.assert_called_once()
 
+    def test_locates_code_by_segment_address_not_file_offset(self):
+        header = bytearray(64)
+        header[:6] = b"\x7fELF\x02\x01"
+        struct.pack_into("<Q", header, 32, 64)
+        struct.pack_into("<HH", header, 54, 56, 2)
+        programs = struct.pack("<IIQQQQQQ", 6, 4, 64, 64, 64, 112, 112, 8)
+        programs += struct.pack("<IIQQQQQQ", 1, 5, 0x1000, 0x3000, 0x3000, 0x800, 0x800, 4096)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "image"
+            path.write_bytes(bytes(header) + programs)
+            mappings = [(0x7000000, 0x7001000, 0x1000, str(path))]
+            self.assertEqual(profile.locate(0x7000123, mappings), (str(path), 0x3123))
+            self.assertEqual(profile.locate(0x7000900, mappings), (str(path), 0x1900))
+            self.assertEqual(profile.locate(0x10, mappings), (None, 0x10))
+
 
 class RssClassifierTests(unittest.TestCase):
     def test_classifies_sparse_large_anonymous_mapping_as_save_stacks(self):

@@ -121,6 +121,18 @@ fn defparams_of_block_parameters() {
     );
 }
 
+/// The final value decides the type of a parameter declared without one.
+#[test]
+fn defparam_values_give_untyped_parameters_their_types() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "defparam_types",
+        include_str!("../fixtures/sim/feature_completion/ki_block_parameters/defparam_types.out"),
+        &[],
+        &[],
+    );
+}
+
 #[test]
 fn illegal_defparams_of_local_parameters_are_rejected() {
     sim_cli::reject_case(

@@ -515,22 +515,14 @@ fn block_statement_for_symbol(
     ids: &SemanticIds,
     symbol: u64,
 ) -> Result<Option<NodeId>, DbError> {
-    let mut statements = snapshot.semantic_nodes.iter().filter(|candidate| {
-        candidate.kind == SemanticKind::Statement
-            && matches!(candidate.subkind, 32 | 56..=58)
-            && candidate.target_id() == Some(symbol)
-    });
-    let result = statements
-        .next()
-        .map(|statement| semantic_id(ids, statement.id))
-        .transpose()?;
-    if statements.next().is_some() {
-        return Err(DbError::InvalidSnapshot(
-            "block symbol is owned by multiple statements".into(),
-        ));
-    }
-    if result.is_some() {
-        return Ok(result);
+    match ids.block_statements.get(&symbol) {
+        Some(None) => {
+            return Err(DbError::InvalidSnapshot(
+                "block symbol is owned by multiple statements".into(),
+            ))
+        }
+        Some(statement) => return Ok(*statement),
+        None => {}
     }
     let symbol = semantic_id(ids, symbol)?;
     Ok(matches!(

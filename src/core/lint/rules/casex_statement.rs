@@ -1,7 +1,6 @@
 //! `casex-statement` — every `casex` in executable procedural bodies.
 
 use crate::core::db::{CaseKind, Db, NodeId, NodeKind, StmtKind};
-use crate::core::lint::rules::analysis::all_design_nodes;
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
 /// Warns for each source-level `casex` statement in a process, function, or
@@ -21,7 +20,7 @@ impl LintRule for CasexStatementRule {
         let db = ctx.db;
         let mut out = Vec::new();
 
-        for case in all_design_nodes(db) {
+        for &case in ctx.design_nodes() {
             let NodeKind::Stmt(StmtKind::Case { case_type, .. }) = db.node_kind(case) else {
                 continue;
             };
@@ -97,7 +96,7 @@ mod tests {
              end endmodule\n",
             "t",
         );
-        let flavors = all_design_nodes(&db)
+        let flavors = crate::core::lint::rules::analysis::all_design_nodes(&db)
             .into_iter()
             .filter_map(|id| match db.node_kind(id) {
                 NodeKind::Stmt(StmtKind::Case { case_type, .. }) => Some(*case_type),

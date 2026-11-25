@@ -189,47 +189,132 @@ pub(crate) fn event_global_name(path: &str, name: &str) -> String {
 
 /// Identifier spans in emitter-produced C, excluding literals and comments.
 pub(super) fn identifier_spans(text: &str) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
+    spans::<true>(text)
+}
+
+/// Identifier spans in emitter-produced C, excluding literals only: emission
+/// keeps deferred text in comments.
+pub(super) fn identifier_spans_in_comments(
+    text: &str,
+) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
+    spans::<false>(text)
+}
+
+fn spans<const SKIP_COMMENTS: bool>(
+    text: &str,
+) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
     let bytes = text.as_bytes();
     let mut index = 0;
-    std::iter::from_fn(move || next_identifier(bytes, &mut index))
+    std::iter::from_fn(move || next_identifier::<SKIP_COMMENTS>(bytes, &mut index))
 }
+
+/// The first bytes of a set of identifiers. Most identifiers of a generated
+/// body are not in the set, and their first byte tells it without hashing.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct FirstBytes(u128);
+
+impl FirstBytes {
+    pub(super) fn insert(&mut self, name: &str) {
+        if let Some(&first) = name.as_bytes().first() {
+            self.0 |= 1 << (first & 0x7f);
+        }
+    }
+
+    /// Whether the set may hold `name`.
+    pub(super) fn may_hold(self, name: &str) -> bool {
+        name.as_bytes()
+            .first()
+            .is_some_and(|first| self.0 >> (first & 0x7f) & 1 != 0)
+    }
+}
+
+impl<'n> FromIterator<&'n str> for FirstBytes {
+    fn from_iter<I: IntoIterator<Item = &'n str>>(names: I) -> Self {
+        let mut first = Self::default();
+        for name in names {
+            first.insert(name);
+        }
+        first
+    }
+}
+
+/// What a byte outside literals and comments begins.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ByteClass {
+    Other,
+    Name,
+    Digit,
+    Quote,
+    Slash,
+}
+
+const BYTE_CLASSES: [ByteClass; 256] = {
+    let mut classes = [ByteClass::Other; 256];
+    let mut byte = 0;
+    while byte < classes.len() {
+        classes[byte] = match byte as u8 {
+            b'_' | b'a'..=b'z' | b'A'..=b'Z' => ByteClass::Name,
+            b'0'..=b'9' => ByteClass::Digit,
+            b'"' | b'\'' => ByteClass::Quote,
+            b'/' => ByteClass::Slash,
+            _ => ByteClass::Other,
+        };
+        byte += 1;
+    }
+    classes
+};
 
 /// Advance `index` past the next identifier of `bytes` and return its span.
 /// The scan reads only bytes at or after `index`, so a caller may rewrite the
 /// bytes before it between calls.
-fn next_identifier(bytes: &[u8], index: &mut usize) -> Option<std::ops::Range<usize>> {
-    while *index < bytes.len() {
-        let byte = bytes[*index];
-        if matches!(byte, b'"' | b'\'') {
-            *index += 1;
-            while *index < bytes.len() && bytes[*index] != byte {
-                *index += if bytes[*index] == b'\\' { 2 } else { 1 };
+fn next_identifier<const SKIP_COMMENTS: bool>(
+    bytes: &[u8],
+    index: &mut usize,
+) -> Option<std::ops::Range<usize>> {
+    let mut at = *index;
+    while let Some(&byte) = bytes.get(at) {
+        match BYTE_CLASSES[usize::from(byte)] {
+            ByteClass::Other => at += 1,
+            class @ (ByteClass::Name | ByteClass::Digit) => {
+                let start = at;
+                at += 1;
+                while bytes.get(at).is_some_and(|byte| {
+                    matches!(
+                        BYTE_CLASSES[usize::from(*byte)],
+                        ByteClass::Name | ByteClass::Digit
+                    )
+                }) {
+                    at += 1;
+                }
+                if class == ByteClass::Name {
+                    *index = at;
+                    return Some(start..at);
+                }
             }
-            *index = (*index + 1).min(bytes.len());
-        } else if byte == b'/' && bytes.get(*index + 1) == Some(&b'*') {
-            *index = bytes[*index + 2..]
-                .windows(2)
-                .position(|window| window == b"*/")
-                .map_or(bytes.len(), |offset| *index + 2 + offset + 2);
-        } else if byte == b'/' && bytes.get(*index + 1) == Some(&b'/') {
-            *index = bytes[*index..]
-                .iter()
-                .position(|byte| *byte == b'\n')
-                .map_or(bytes.len(), |offset| *index + offset);
-        } else if byte == b'_' || byte.is_ascii_alphanumeric() {
-            let start = *index;
-            while *index < bytes.len()
-                && (bytes[*index] == b'_' || bytes[*index].is_ascii_alphanumeric())
-            {
-                *index += 1;
+            ByteClass::Quote => {
+                at += 1;
+                while bytes.get(at).is_some_and(|next| *next != byte) {
+                    at += if bytes[at] == b'\\' { 2 } else { 1 };
+                }
+                at = (at + 1).min(bytes.len());
             }
-            if !byte.is_ascii_digit() {
-                return Some(start..*index);
+            ByteClass::Slash => {
+                let comment = bytes.get(at + 1).filter(|_| SKIP_COMMENTS);
+                at = match comment {
+                    Some(b'*') => bytes[at + 2..]
+                        .windows(2)
+                        .position(|window| window == b"*/")
+                        .map_or(bytes.len(), |offset| at + 2 + offset + 2),
+                    Some(b'/') => bytes[at..]
+                        .iter()
+                        .position(|byte| *byte == b'\n')
+                        .map_or(bytes.len(), |offset| at + offset),
+                    _ => at + 1,
+                };
             }
-        } else {
-            *index += 1;
         }
     }
+    *index = bytes.len();
     None
 }
 
@@ -266,9 +351,13 @@ pub(super) fn rewrite_identifiers_in_place(
     {
         return rewrite_identifiers(&text, |name| renamed.get(name).map(String::as_str));
     }
+    let shortest = renamed.keys().map(String::len).min().unwrap_or(0);
     let mut bytes = text.into_bytes();
     let (mut read, mut write, mut copied) = (0, 0, 0);
-    while let Some(span) = next_identifier(&bytes, &mut read) {
+    while let Some(span) = next_identifier::<true>(&bytes, &mut read) {
+        if span.len() < shortest {
+            continue;
+        }
         // Identifiers are ASCII, so every span is valid UTF-8.
         let replacement = std::str::from_utf8(&bytes[span.clone()])
             .ok()
@@ -367,14 +456,6 @@ pub(super) fn bound_identifiers(
 ) -> BoundedIdentifiers {
     let runtime = runtime_identifiers();
     let is_external = |name: &str| external.contains(name) || runtime.contains(name);
-    if !identifier_spans(&source)
-        .any(|span| span.len() > MAX_C_IDENTIFIER_LEN && !is_external(&source[span]))
-    {
-        return BoundedIdentifiers {
-            source,
-            symbols_tsv: String::new(),
-        };
-    }
     // Every replacement is exactly `MAX_C_IDENTIFIER_LEN` long (see
     // `bounded_name`), so only occupied identifiers of that length can
     // collide with one.
@@ -387,6 +468,13 @@ pub(super) fn bound_identifiers(
         } else if name.len() > MAX_C_IDENTIFIER_LEN && !is_external(name) {
             oversized.insert(name);
         }
+    }
+    if oversized.is_empty() {
+        drop(occupied);
+        return BoundedIdentifiers {
+            source,
+            symbols_tsv: String::new(),
+        };
     }
     let mut oversized = oversized.into_iter().collect::<Vec<_>>();
     oversized.sort_unstable();

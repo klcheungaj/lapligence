@@ -953,7 +953,7 @@ impl Codegen<'_> {
             }
             let view = self.record_ref_view(binding)?;
             self.native_roots.remove(&binding.formal);
-            self.unpacked_aggregates.insert(binding.formal, view);
+            self.insert_aggregate(binding.formal, view);
             self.record_ref_aliases
                 .insert(binding.formal, binding.clone());
         }
@@ -972,7 +972,7 @@ impl Codegen<'_> {
                 self.native_layouts.remove(&binding.formal);
                 continue;
             }
-            self.unpacked_aggregates.remove(&binding.formal);
+            self.remove_aggregate(binding.formal);
             self.record_ref_aliases.remove(&binding.formal);
         }
     }

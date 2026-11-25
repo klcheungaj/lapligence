@@ -68,7 +68,6 @@ pub(super) struct OutlineSink {
     depth: bool,
     next: usize,
     helpers: String,
-    may_disable: HashMap<usize, bool>,
 }
 
 /// How a statement sequence is emitted.
@@ -205,7 +204,6 @@ fn collect_labels(statement: &IrStmt, labels: &mut HashSet<String>) {
 struct Check<'c, 'a, 'm> {
     frame: &'c Frame<'a, 'm>,
     depth: bool,
-    may_disable: &'c mut HashMap<usize, bool>,
     sequence_locals: &'c HashSet<String>,
     scopes: Vec<Vec<String>>,
     labels: HashSet<String>,
@@ -409,6 +407,7 @@ impl Check<'_, '_, '_> {
         let Some(callee) = model.funcs.get(function) else {
             return self.reject();
         };
+        let effects = self.frame.ctx.effects.of_running(function);
         // Calls in a subprogram pass its `depth` on; a helper takes it from
         // its caller.
         if dynamic
@@ -417,14 +416,12 @@ impl Check<'_, '_, '_> {
             || callee.receiver_class.is_some()
             || callee.is_inline_expanded()
             || self.frame.coroutine_functions.contains(&function)
-            || *self.may_disable.entry(function).or_insert_with(|| {
-                [
-                    crate::sim::execution::ExecutionEffect::Disable,
-                    crate::sim::execution::ExecutionEffect::Suspend,
-                ]
-                .into_iter()
-                .any(|effect| crate::sim::execution::function_has_effect(model, function, effect))
-            })
+            || [
+                crate::sim::execution::ExecutionEffect::Disable,
+                crate::sim::execution::ExecutionEffect::Suspend,
+            ]
+            .into_iter()
+            .any(|effect| effects.contains(effect))
         {
             self.reject();
         }
@@ -662,7 +659,6 @@ impl OutlineSink {
             depth,
             next: 0,
             helpers: String::new(),
-            may_disable: HashMap::new(),
         }
     }
 }
@@ -708,11 +704,10 @@ impl Frame<'_, '_> {
         if !self.outline_applies() || (self.outline_light && !self.outline_pressure) {
             return OutlinePlan::Off;
         }
-        let Some(mut sink) = self.outline.take() else {
+        let Some(sink) = &self.outline else {
             return OutlinePlan::Off;
         };
-        let weights = self.statement_weights(statements, sink.depth, &mut sink.may_disable);
-        self.outline = Some(sink);
+        let weights = self.statement_weights(statements, sink.depth);
         let total = weights.iter().map(|(weight, _)| weight).sum::<usize>();
         if !self.outline_pressure && total <= LLG_OUTLINE_RUN_WEIGHT {
             return OutlinePlan::Light;
@@ -721,12 +716,7 @@ impl Frame<'_, '_> {
     }
 
     /// Weight of each statement and whether a run may hold it.
-    fn statement_weights(
-        &self,
-        statements: &[IrStmt],
-        depth: bool,
-        may_disable: &mut HashMap<usize, bool>,
-    ) -> Vec<(usize, bool)> {
+    fn statement_weights(&self, statements: &[IrStmt], depth: bool) -> Vec<(usize, bool)> {
         let mut sequence_locals = HashSet::new();
         let mut weights = Vec::with_capacity(statements.len());
         for statement in statements {
@@ -735,7 +725,6 @@ impl Frame<'_, '_> {
             let mut check = Check {
                 frame: self,
                 depth,
-                may_disable: &mut *may_disable,
                 sequence_locals: &sequence_locals,
                 scopes: vec![Vec::new()],
                 labels,
@@ -787,16 +776,12 @@ impl Frame<'_, '_> {
     /// One of those may have bound a name the run reads (only a top-level
     /// declaration is recognized in advance), so check the run again against
     /// the bindings now in scope.
-    fn run_still_outlines(&mut self, run: &[IrStmt]) -> bool {
-        let Some(mut sink) = self.outline.take() else {
-            return false;
-        };
-        let ok = self
-            .statement_weights(run, sink.depth, &mut sink.may_disable)
-            .iter()
-            .all(|(_, ok)| *ok);
-        self.outline = Some(sink);
-        ok
+    fn run_still_outlines(&self, run: &[IrStmt]) -> bool {
+        self.outline.as_ref().is_some_and(|sink| {
+            self.statement_weights(run, sink.depth)
+                .iter()
+                .all(|(_, ok)| *ok)
+        })
     }
 
     /// Render `run` as a helper and call it here.
@@ -910,13 +895,14 @@ mod tests {
         let ctx = RCtx {
             value_backend: crate::sim::value_backend::ValueBackend::Legacy,
             model: &model,
+            effects: &crate::sim::execution::EffectSummaries::new(&model),
             func: None,
             sampled: false,
             activation_label: None,
             constants: None,
         };
         let frame = Frame::new(&ctx);
-        frame.statement_weights(statements, false, &mut HashMap::new())
+        frame.statement_weights(statements, false)
     }
 
     #[test]

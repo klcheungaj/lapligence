@@ -152,6 +152,10 @@ Precollect hierarchical actual dependencies per instance.
 
 Variable-continuous conflict analysis follows canonical intervals and counts
 ordinary assignments/declaration initialization, not force/release/deassign.
+The single-writer checks compare only the writers that an interval index by
+storage returns (`collection/writer_index.rs`). A check that needs every design
+node takes `Codegen::design_nodes`, walked once; facts that need a walk of all
+nodes are collected once, never once per construct (`scaling_tests.rs`).
 Record and hierarchical member selects keep their declaration's storage class.
 Constant-row write precision: `PRECISE_ROW_WRITE_CELLS` and
 `array_row_write` docs (`collection/dependencies.rs`); `ir_process_writes`

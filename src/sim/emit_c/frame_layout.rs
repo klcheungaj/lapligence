@@ -1,8 +1,10 @@
 //! Explicit storage layouts for generated coroutine functions.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::sim::execution::CallMechanism;
+
+use super::names::FirstBytes;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FrameStorage {
@@ -83,6 +85,16 @@ struct Block {
     contains_resume: bool,
 }
 
+/// Where a field is registered and how the body names it.
+#[derive(Clone, Debug)]
+struct FieldEntry {
+    block: usize,
+    index: usize,
+    /// The path under the frame object, the field's own name before the
+    /// paths are final. `None` for a field that became a C local.
+    access: Option<String>,
+}
+
 /// Builder for one generated function's stack or explicit coroutine storage.
 ///
 /// Coroutine storage follows the emitted C block tree. Parent storage remains
@@ -95,8 +107,11 @@ pub(super) struct FrameLayout {
     value_backend: crate::sim::value_backend::ValueBackend,
     blocks: Vec<Block>,
     current: usize,
-    names: BTreeSet<String>,
-    accesses: BTreeMap<String, String>,
+    /// The declared fields by name.
+    fields: HashMap<String, FieldEntry>,
+    field_first_bytes: FirstBytes,
+    /// The paths of the call slots.
+    call_paths: BTreeSet<String>,
     calls: Vec<CallSlot>,
     paths_finalized: bool,
     next_seq: usize,
@@ -111,8 +126,9 @@ impl FrameLayout {
             value_backend: crate::sim::value_backend::ValueBackend::Legacy,
             blocks: vec![Block::default()],
             current: 0,
-            names: BTreeSet::new(),
-            accesses: BTreeMap::new(),
+            fields: HashMap::new(),
+            field_first_bytes: FirstBytes::default(),
+            call_paths: BTreeSet::new(),
             calls: Vec::new(),
             paths_finalized: false,
             next_seq: 0,
@@ -261,14 +277,23 @@ impl FrameLayout {
         if self.storage == FrameStorage::CStack {
             return Ok(name.to_owned());
         }
-        if !self.names.insert(name.to_owned()) {
+        if self.fields.contains_key(name) {
             return Err(format!("duplicate coroutine frame field `{name}`"));
         }
         let (size, align) = lp64_layout(ty, self.value_backend)?;
         // The final path depends on whether sibling blocks retain any frame
         // storage. Defer constructing it until the whole block tree is known.
-        self.accesses.insert(name.to_owned(), name.to_owned());
-        self.blocks[self.current].fields.push(Field {
+        self.field_first_bytes.insert(name);
+        let fields = &mut self.blocks[self.current].fields;
+        self.fields.insert(
+            name.to_owned(),
+            FieldEntry {
+                block: self.current,
+                index: fields.len(),
+                access: Some(name.to_owned()),
+            },
+        );
+        fields.push(Field {
             ty: ty.to_owned(),
             name: name.to_owned(),
             size,
@@ -282,15 +307,19 @@ impl FrameLayout {
     }
 
     pub(super) fn field_access(&self, name: &str) -> Option<&str> {
-        self.accesses.get(name).map(String::as_str)
+        self.field_entry(name)?.access.as_deref()
+    }
+
+    fn field_entry(&self, name: &str) -> Option<&FieldEntry> {
+        self.field_first_bytes
+            .may_hold(name)
+            .then(|| self.fields.get(name))
+            .flatten()
     }
 
     pub(super) fn mark_hot(&mut self, name: &str) {
-        for block in &mut self.blocks {
-            if let Some(field) = block.fields.iter_mut().find(|field| field.name == name) {
-                field.hot = true;
-                return;
-            }
+        if let Some(&FieldEntry { block, index, .. }) = self.field_entry(name) {
+            self.blocks[block].fields[index].hot = true;
         }
     }
 
@@ -308,7 +337,7 @@ impl FrameLayout {
         };
         let member = format!("{prefix}{}", self.calls.len());
         let path = self.path_to(self.current, &format!("calls.{member}"));
-        if mechanism != CallMechanism::Arena && !self.names.insert(path.clone()) {
+        if mechanism != CallMechanism::Arena && !self.call_paths.insert(path.clone()) {
             return Err(format!("duplicate coroutine call frame member `{path}`"));
         }
         let slot = CallSlot {
@@ -333,37 +362,31 @@ impl FrameLayout {
     /// Finalize member paths after the complete sibling set is known.
     ///
     /// Emission initially uses the uncompressed structural path so declarations
-    /// can be referenced immediately. This returns the changed paths for the
-    /// function body rewrite and publishes the same flattened paths to metadata.
-    pub(super) fn finalize_paths(&mut self) -> Result<Vec<(String, String)>, String> {
+    /// can be referenced immediately. This returns the changed call paths for
+    /// the function body rewrite and publishes the same flattened paths to metadata.
+    pub(super) fn finalize_paths(&mut self) -> Result<HashMap<String, String>, String> {
         self.finish_blocks()?;
         if self.paths_finalized {
-            return Ok(Vec::new());
+            return Ok(HashMap::new());
         }
         let storage = self.storage_map();
         let mut field_paths = BTreeMap::new();
         let mut call_paths = BTreeMap::new();
         self.assign_flat_paths(0, "", &storage, &mut field_paths, &mut call_paths);
 
-        let mut changed = Vec::new();
-        let names = self.accesses.keys().cloned().collect::<Vec<_>>();
-        for name in names {
-            if let Some(flattened) = field_paths.remove(&name) {
-                self.accesses.insert(name, flattened);
-            } else {
-                self.accesses.remove(&name);
-            }
+        let mut changed = HashMap::new();
+        for (name, entry) in &mut self.fields {
+            entry.access = field_paths.remove(name);
         }
         for (index, call) in self.calls.iter_mut().enumerate() {
             let flattened = call_paths
                 .remove(&index)
                 .ok_or_else(|| format!("missing flattened path for call slot {index}"))?;
             if call.path != flattened {
-                changed.push((call.path.clone(), flattened.clone()));
-                call.path = flattened;
+                let original = std::mem::replace(&mut call.path, flattened.clone());
+                changed.insert(original, flattened);
             }
         }
-        changed.sort_by_key(|(original, _)| std::cmp::Reverse(original.len()));
         self.paths_finalized = true;
         Ok(changed)
     }
@@ -391,12 +414,12 @@ impl FrameLayout {
                         continue;
                     }
                     let (Some(kind), Some(path)) =
-                        (gc_slot_kind(&field.ty), self.accesses.get(&field.name))
+                        (gc_slot_kind(&field.ty), self.field_access(&field.name))
                     else {
                         continue;
                     };
                     slots.push(GcFrameSlot {
-                        path: path.clone(),
+                        path: path.to_owned(),
                         kind,
                     });
                 }
@@ -421,8 +444,8 @@ impl FrameLayout {
     /// read only the block tree, fields and call slots, and every rendered
     /// coroutine keeps its layout until model assembly.
     pub(super) fn release_emission_state(&mut self) {
-        self.names = BTreeSet::new();
-        self.accesses = BTreeMap::new();
+        self.fields = HashMap::new();
+        self.call_paths = BTreeSet::new();
         self.blocks.shrink_to_fit();
         for block in &mut self.blocks {
             block.fields.shrink_to_fit();

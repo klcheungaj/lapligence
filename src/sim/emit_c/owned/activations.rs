@@ -75,18 +75,11 @@ impl Frame<'_, '_> {
     }
 
     /// Whether calling `function` may disable an activation synchronously.
-    pub(super) fn callee_may_disable(&mut self, function: usize) -> bool {
-        if let Some(known) = self.may_disable.get(&function) {
-            return *known;
-        }
-        let model = self.ctx.model;
-        let result = crate::sim::execution::function_has_effect(
-            model,
-            function,
-            crate::sim::execution::ExecutionEffect::Disable,
-        );
-        self.may_disable.insert(function, result);
-        result
+    pub(super) fn callee_may_disable(&self, function: usize) -> bool {
+        self.ctx
+            .effects
+            .of_running(function)
+            .contains(crate::sim::execution::ExecutionEffect::Disable)
     }
 
     /// Emit a cancellation check when a cancellation point was emitted since
