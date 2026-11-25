@@ -183,6 +183,7 @@ void llg_rt_finish_with_level(int32_t verbosity, const char* location) {
     deferred_assertions_finish();
     report_finish(verbosity, location);
     g.finish = 1;
+    if (g.static_init_phase) g.init_finish_called = 1;
     if (current) current->chain.exiting = LLG_EXIT_COMPLETE;
 }
 

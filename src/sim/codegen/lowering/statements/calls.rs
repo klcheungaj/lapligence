@@ -100,7 +100,7 @@ impl EmitCtx<'_, '_> {
                     .lower_virtual_interface_receiver(&self.path, h, receiver)?,
                 site: self
                     .cg
-                    .source_site("virtual interface method call", &self.path, h),
+                    .required_site("virtual interface method call", &self.path, h),
             })
         } else {
             None

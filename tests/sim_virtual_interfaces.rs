@@ -81,7 +81,7 @@ fn null_virtual_interface_access_fails_at_runtime() {
     sim_cli::reject_case(
         "virtual_interfaces",
         "null_access",
-        "ERROR: [SIM-010] virtual interface access failed: virtual interface member access at tb:12:9",
+        "null_access.sv:12:9 virtual interface access failed: virtual interface member access",
     );
 }
 
@@ -159,8 +159,8 @@ fn nested_instance_of_a_null_handle_fails_at_runtime() {
             &[],
             "before\n",
             &format!(
-                "ERROR: [SIM-010] virtual interface access failed: virtual interface nested \
-                 instance `l` at tb:{line}:12"
+                "{fixture}.sv:{line}:12 virtual interface access failed: virtual interface nested \
+                 instance `l`"
             ),
         );
     }
@@ -237,7 +237,7 @@ fn named_event_through_a_null_handle_stops_at_once() {
     ends_at_null_handle(
         "null_event",
         "start\n",
-        "virtual interface access failed: virtual interface event at drv:11:10",
+        "null_event.sv:11:10 virtual interface access failed: virtual interface event",
     );
 }
 
@@ -246,7 +246,7 @@ fn event_controlled_update_through_a_null_handle_stops_at_the_event() {
     ends_at_null_handle(
         "null_event_nba",
         "issued\n",
-        "virtual interface access failed: virtual interface member access at tb:11:5",
+        "null_event_nba.sv:11:5 virtual interface access failed: virtual interface member access",
     );
 }
 
@@ -266,7 +266,7 @@ fn event_array_element_through_a_null_handle_stops_at_once() {
     ends_at_null_handle(
         "null_event_array",
         "",
-        "virtual interface access failed: virtual interface event at tb:10:8",
+        "null_event_array.sv:10:8 virtual interface access failed: virtual interface event",
     );
 }
 
@@ -276,5 +276,27 @@ fn event_array_element_as_a_reference_actual_is_located() {
         "virtual_interfaces",
         "neg_event_array_actual",
         "neg_event_array_actual.sv:11:18: [CODEGEN-002] an element of an event array of a class object or a virtual interface",
+    );
+}
+
+#[test]
+fn interface_array_ports_connect_and_are_values() {
+    for (fixture, expected) in [
+        (
+            "interface_array_ports",
+            include_str!("fixtures/sim/virtual_interfaces/interface_array_ports.out"),
+        ),
+        (
+            "interface_array_ports_2d",
+            include_str!("fixtures/sim/virtual_interfaces/interface_array_ports_2d.out"),
+        ),
+    ] {
+        sim_cli::run_case_backend_parity("virtual_interfaces", fixture, expected, &[], &[]);
+        sim_cli::run_case_after_db_drop("virtual_interfaces", fixture, expected);
+    }
+    sim_cli::reject_case(
+        "virtual_interfaces",
+        "neg_interface_array_2d",
+        "neg_interface_array_2d.sv:10:9 a multidimensional fixed array in `tb` takes only nested assignment patterns",
     );
 }

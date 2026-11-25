@@ -22,8 +22,9 @@ module tb;
   endclass
 
   C o = new;
+  C n = new;
   D d = new;
-  int x;
+  int x, nb;
   bit z;
   logic [3:0] l;
   bit [7:0] loc;
@@ -45,6 +46,8 @@ module tb;
   task t(int k);
     $display("task %0d", k);
   endtask
+
+  initial nb <= n.randomize() + 1;
 
   initial begin
     // operators
@@ -109,8 +112,7 @@ module tb;
     $display("%0d", dyn.size());
     foreach (q[i]) if (q[i] == o.randomize()) $display("match %0d", i);
     #(o.randomize()) $display("%0t", $time);
-    x <= o.randomize() + 1;
-    #1 $display("%0d", x);
+    #1 $display("%0d", nb);
     fork
       x = o.randomize() + 5;
     join

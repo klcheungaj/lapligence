@@ -17,13 +17,17 @@ fn event_formals_keep_identity_through_interface_dispatch() {
     sim_cli::run_case_backend_parity(SUITE, "event_formals", expected, &[], &[]);
 }
 
-fn null_interface_check(stdout: &'static str, site: &'static str) -> impl Fn(&str, &Output) {
+fn null_interface_check(
+    stdout: &'static str,
+    access: &'static str,
+    position: &'static str,
+) -> impl Fn(&str, &Output) {
     move |label, output| {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(output.status.code(), Some(1), "{label}: {stderr}");
         assert_eq!(String::from_utf8_lossy(&output.stdout), stdout, "{label}");
-        // The run-time error, then the run-time failure framed by the site
-        // and the time, then the end-of-run summary.
+        // The run-time error and the run-time failure, both framed by the
+        // position, the scope and the time, then the end-of-run summary.
         let runtime: Vec<_> = stderr
             .lines()
             .filter_map(llg::core::report::parse)
@@ -33,17 +37,26 @@ fn null_interface_check(stdout: &'static str, site: &'static str) -> impl Fn(&st
         assert_eq!(runtime[0].id, "SIM-010", "{label}: {stderr}");
         assert_eq!(
             runtime[0].text,
-            format!("virtual interface access failed: {site}"),
+            format!("virtual interface access failed: {access}"),
             "{label}"
         );
+        for message in &runtime[..2] {
+            assert!(
+                message
+                    .location
+                    .as_deref()
+                    .is_some_and(|location| location.ends_with(position)),
+                "{label}: {stderr}"
+            );
+            assert!(
+                message
+                    .context
+                    .as_deref()
+                    .is_some_and(|context| context.starts_with("tb @ ")),
+                "{label}: {stderr}"
+            );
+        }
         assert_eq!(runtime[1].id, "SIM-009", "{label}: {stderr}");
-        assert!(
-            runtime[1]
-                .context
-                .as_deref()
-                .is_some_and(|context| context.starts_with(&format!("{site} @ "))),
-            "{label}: {stderr}"
-        );
         assert_eq!(
             runtime[1].text, "virtual interface access failed",
             "{label}"
@@ -58,13 +71,13 @@ fn null_interface_calls_and_accesses_fail_at_their_source_site() {
         SUITE,
         "null_call",
         &[],
-        &null_interface_check("a.x=1 b.x=0\n", "virtual interface method call at tb:20:5"),
+        &null_interface_check("a.x=1 b.x=0\n", "virtual interface method call", ":20:5"),
     );
     sim_cli::run_case_checked_matrix(
         SUITE,
         "null_member",
         &[],
-        &null_interface_check("x=3\n", "virtual interface member access at tb:15:5"),
+        &null_interface_check("x=3\n", "virtual interface member access", ":15:5"),
     );
 }
 

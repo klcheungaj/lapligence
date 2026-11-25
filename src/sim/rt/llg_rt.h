@@ -2051,11 +2051,24 @@ uint64_t llg_rt_severity_count(int32_t severity);
 typedef void (*llg_rt_error_fn)(int32_t fatal, const char* message, const char* location);
 void llg_rt_error_hook(llg_rt_error_fn hook);
 void llg_rt_note_error(int32_t fatal, const char* message, const char* location);
-// A null class handle access (SV 8.4) at `site`: what the check guards, then
-// optionally the unit separator and the framed site (scope, separator,
-// `file:line:col`) the error and the fatal end are located at. Reports the
-// error, marks the run failed and ends it like $fatal.
-void llg_rt_null_handle(const char* site);
+// A failed handle access (`failure`: a null class handle, SV 8.4) at `site`:
+// what the check guards, then optionally the unit separator and the framed
+// site (scope, separator, `file:line:col`) the error and the fatal end are
+// located at. Reports the error, marks the run failed and ends it like
+// $fatal. Quiet while the process is exiting.
+LLG_COLD void llg_rt_failed_access(const char* failure, const char* site);
+/* `handle`, reported as `failure` at `site` when it is null. */
+static inline void* llg_rt_require(void* handle, const char* failure, const char* site) {
+    if (LLG_CO_UNLIKELY(!handle)) llg_rt_failed_access(failure, site);
+    return handle;
+}
+/* The outcome `arm` of a wait at `location`: a wait on a null event reports
+ * there (S14-D8). */
+LLG_COLD void llg_rt_null_wait(const char* location);
+static inline llg_co_arm_t llg_arm_at(llg_co_arm_t arm, const char* location) {
+    if (LLG_CO_UNLIKELY(arm == LLG_CO_ARM_EXIT)) llg_rt_null_wait(location);
+    return arm;
+}
 // Immediate assertion default-failure and successful-cover callbacks. The
 // identity is retained at the call boundary for future per-assertion APIs.
 void llg_assertion_failure(int32_t kind, uint64_t identity, const char* label,

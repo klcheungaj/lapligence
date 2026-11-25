@@ -29,7 +29,7 @@ static llg_co_arm_t arm_valid_waiter(llg_proc_t* self) {
     llg_value_scope_end(scope);  /* no index payload is retained by the wait */
     llg_event_t empty = {NULL};
     llg_expr_event_spec_t spec = {.kind = LLG_EV_ANY, .event = address ? address : &empty};
-    return llg_arm_expressions(self, &spec, 1);
+    return llg_arm_at(llg_arm_expressions(self, &spec, 1), "probe.sv:1:1");
 }
 
 LLG_PROBE_SIMPLE_PROCESS(valid_waiter, 1) {
@@ -49,7 +49,7 @@ static llg_co_arm_t arm_invalid_waiter(llg_proc_t* self) {
     CHECK(address == NULL);
     llg_event_t empty = {NULL};
     llg_expr_event_spec_t spec = {.kind = LLG_EV_ANY, .event = address ? address : &empty};
-    return llg_arm_expressions(self, &spec, 1);
+    return llg_arm_at(llg_arm_expressions(self, &spec, 1), "probe.sv:1:1");
 }
 
 LLG_PROBE_SIMPLE_PROCESS(invalid_waiter, 1) {

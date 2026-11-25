@@ -54,7 +54,7 @@ fn event_list_wait_passes_a_compound_literal() {
     }]);
     let line = arm_line(&source, "llg_arm_events(");
     assert!(
-        line.contains("LLG_CO_AWAIT(co, ch, 1, llg_arm_events(self, (const llg_event_t*[]){ &E_first, &E_second }, 2));"),
+        line.contains("LLG_CO_AWAIT(co, ch, 1, llg_arm_at(llg_arm_events(self, (const llg_event_t*[]){ &E_first, &E_second }, 2), NULL));"),
         "{line}"
     );
     assert_no_array_copy(&source);

@@ -98,6 +98,29 @@ impl Frame<'_, '_> {
                 self.exit_on_failed_access(&format!("!{required}"));
                 return Ok(required);
             }
+            IrChandleExpr::RequiredSynchronization {
+                handle,
+                object,
+                site,
+            } => {
+                let handle = self.chandle(handle)?;
+                if self.quiet_receivers {
+                    return Ok(handle);
+                }
+                let failure = match object {
+                    IrSynchronization::Mailbox => "null mailbox handle access",
+                    IrSynchronization::Semaphore => "null semaphore handle access",
+                };
+                let required = self.scalar(
+                    "void*",
+                    format!(
+                        "llg_rt_require({handle}, \"{failure}\", {})",
+                        c_string_literal(site)
+                    ),
+                );
+                self.exit_on_failed_access(&format!("!{required}"));
+                return Ok(required);
+            }
             IrChandleExpr::InterfaceInstance {
                 interface,
                 instance,
@@ -362,6 +385,21 @@ impl Frame<'_, '_> {
                     return Ok(result);
                 }
                 format!("(llg_process_handle_t*){}", self.chandle(handle)?)
+            }
+            IrProcessExpr::Required { handle, site } => {
+                let value = self.process_value(handle)?;
+                if !self.quiet_receivers {
+                    let required = self.scalar(
+                        "void*",
+                        format!(
+                            "llg_rt_require({}, \"null process handle access\", {})",
+                            value.code(),
+                            c_string_literal(site)
+                        ),
+                    );
+                    self.exit_on_failed_access(&format!("!{required}"));
+                }
+                return Ok(value);
             }
         };
         let result = self.native_reserve(NativeKind::Process);

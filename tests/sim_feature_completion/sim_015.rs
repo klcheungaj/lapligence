@@ -145,8 +145,10 @@ fn null_handle_method_ends_the_simulation() {
             "{label}"
         );
         assert!(
-            super::sim_harness::strip_lint_reports(&output.stderr)
-                .starts_with("ERROR: [SIM-010] null process handle access: process::await\n"),
+            super::sim_harness::mentions(
+                &String::from_utf8_lossy(&output.stderr),
+                "neg_null_await.sv:8:5 null process handle access: process::await"
+            ),
             "{label}: {output:?}"
         );
     });
@@ -162,8 +164,10 @@ fn null_handle_status_ends_the_statement() {
             "{label}"
         );
         assert!(
-            super::sim_harness::strip_lint_reports(&output.stderr)
-                .starts_with("ERROR: [SIM-010] null process handle access: process::status\n"),
+            super::sim_harness::mentions(
+                &String::from_utf8_lossy(&output.stderr),
+                "neg_null_status.sv:10:28 null process handle access: process::status"
+            ),
             "{label}: {output:?}"
         );
     });

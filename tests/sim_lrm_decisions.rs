@@ -620,6 +620,25 @@ fn sd10_d3_ambiguous_event_conditional() {
 }
 
 #[test]
+fn sd10_d4_initializer_error_runs_no_finals() {
+    let expected =
+        include_str!("fixtures/sim/lrm_decisions/SD10-D4_initializer_error_runs_no_finals.out");
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "SD10-D4_initializer_error_runs_no_finals",
+        &[],
+        &|label, output| {
+            runtime_error(
+                label,
+                output,
+                expected,
+                "SD10-D4_initializer_error_runs_no_finals.sv:18:12 null class handle access: property access",
+            );
+        },
+    );
+}
+
+#[test]
 fn s28_d10_state_methods_on_null() {
     run_decision(
         "S28-D10_state_methods_on_null",
@@ -5484,7 +5503,7 @@ fn s99_d8_null_access_stops() {
             label,
             output,
             expected,
-            "virtual interface access failed: virtual interface member access at tb:28:45",
+            "S99-D8_null_access_stops.sv:28:45 virtual interface access failed: virtual interface member access",
         );
     });
 }

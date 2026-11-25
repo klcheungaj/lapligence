@@ -89,7 +89,7 @@ pub(super) fn recursive_result_field(function: &IrFunc) -> Option<(String, Strin
 }
 /// The site a subroutine-level null-handle check reports at
 /// (`llg_class_require`): `what`, then the framed site the runtime reports
-/// (`llg_rt_null_handle`): the subroutine's name and its declaration.
+/// (`llg_rt_failed_access`): the subroutine's name and its declaration.
 /// Callers check their receivers at the use (codegen's `required_site`), so
 /// these checks of a method entry or a virtual dispatcher only report a
 /// receiver that no use checked; the declaration is the position the

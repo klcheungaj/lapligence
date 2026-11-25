@@ -349,7 +349,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   run-time error, `$finish` or `$fatal` under a static initializer is the
   same event as in a process: one that ends the run stops initialization at
   once, no procedure starts, and the run ends as from a process (final
-  procedures included, S22-D9); any other reports and the run goes on
+  procedures included after a `$finish` or `$fatal`, S22-D9, and not after an
+  error, SD10-D4); any other reports and the run goes on
   ([ki_static_init_errors](../tests/fixtures/sim/feature_completion/ki_static_init_errors/readme.md)). Modifying built-in methods on `const`
   variables and properties are located errors (S22-D4); an initialized block
   variable without `static`/`automatic` is accepted with a warning as static
@@ -2695,7 +2696,9 @@ These are bounded implementations, not full verification-infrastructure support.
   position that ends the run before the rest of the statement runs, without
   the final procedures (S99-D8)
   ([sim_012](../tests/fixtures/sim/feature_completion/sim_012/readme.md)).
-  An array of interface instances assigns and passes as an array of handles.
+  An array of interface instances, an interface-array port or a slice of one
+  assigns and passes as an array of handles, leftmost element first (one
+  dimension; [known issue](known_issues.md#arrays-of-interface-instances-of-several-dimensions-as-values)).
   Named events of the bound instance and elements of its event arrays trigger,
   wait, read `.triggered` and are assigned through a handle
   ([virtual_interfaces](../tests/fixtures/sim/virtual_interfaces/readme.md),

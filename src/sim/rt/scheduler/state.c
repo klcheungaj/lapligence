@@ -763,6 +763,8 @@ typedef struct {
     // Set from init until llg_rt_run starts: the static schedule, where no
     // process exists, so a fork there has no parent (SV 13.4.4).
     int32_t static_init_phase;
+    // A $finish or $fatal a static initializer executed.
+    int32_t init_finish_called;
     int32_t static_spawn_reported;
     // simulator.index_checks (LLG_INDEX_CHECKS), on unless set to `off`.
     int32_t index_checks;
@@ -917,6 +919,8 @@ typedef struct {
     int32_t suspended;
     int32_t stop_policy;
     llg_proc_t* stop_proc;
+    // What met a null event in the wait being armed (llg_rt_null_wait).
+    const char* null_wait;
     llg_region_t stop_region;
     int32_t config_error;
     uint64_t zero_loop_limit;

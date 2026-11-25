@@ -515,6 +515,8 @@ void llg_mailbox_trace(llg_value_visit_fn visit, void* context) {
 static llg_mailbox_t* mailbox_require(llg_mailbox_t* mailbox,
                                       const char* operation) {
     if (LLG_CO_LIKELY(mailbox)) return mailbox;
+    // The model reported it at the call (llg_rt_require).
+    if (llg_rt_exiting()) return NULL;
     llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "mailbox %s on a null handle", operation);
     llg_last_failure = 1;
     llg_rt_request_finish();

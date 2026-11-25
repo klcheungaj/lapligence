@@ -273,7 +273,7 @@ impl Frame<'_, '_> {
             IrStmt::WaitEventTriggered { event, body } => {
                 let event = self.event_address(event)?;
                 let await_mark = self.cancellation_mark();
-                self.await_arm(
+                self.await_event_arm(
                     SuspensionOperation::EventTriggeredWait,
                     format!("llg_arm_event_triggered(self, {event})"),
                 )?;
@@ -1360,7 +1360,7 @@ impl Frame<'_, '_> {
         };
         let success_flag = self.scalar("int", "0".to_owned());
         let await_mark = self.cancellation_mark();
-        self.await_arm(
+        self.await_event_arm(
             SuspensionOperation::WaitOrder,
             format!(
                 "llg_arm_order(self, {list}, {}, &{success_flag})",

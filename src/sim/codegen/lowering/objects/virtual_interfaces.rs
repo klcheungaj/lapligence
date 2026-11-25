@@ -239,7 +239,7 @@ impl Codegen<'_> {
     ) -> IrChandleExpr {
         for (interface, slot) in nested {
             let name = &self.model.virtual_interfaces[*interface].nested[*slot].name;
-            let site = self.source_site(
+            let site = self.required_site(
                 &format!("virtual interface nested instance `{name}`"),
                 path,
                 node,
@@ -410,7 +410,7 @@ impl Codegen<'_> {
         else {
             return Ok(None);
         };
-        let site = self.source_site("virtual interface member access", path, node);
+        let site = self.required_site("virtual interface member access", path, node);
         let name = self.native_access_symbol_at(
             handle,
             crate::sim::ir::IrNativeAccessKind::InterfaceMember {
@@ -437,7 +437,7 @@ impl Codegen<'_> {
         else {
             return Ok(None);
         };
-        let site = self.source_site("virtual interface member access", path, node);
+        let site = self.required_site("virtual interface member access", path, node);
         let name = self.native_access_symbol_at(
             handle,
             crate::sim::ir::IrNativeAccessKind::InterfaceMember {
@@ -681,7 +681,7 @@ impl Codegen<'_> {
             ));
         }
         let handle = self.virtual_interface_handle(path, base, &target)?;
-        let site = self.source_site("virtual interface member access", path, node);
+        let site = self.required_site("virtual interface member access", path, node);
         let key = (target.handle, self.virtual_interface_key_member(&target));
         Ok(Some(VirtualInterfaceArrayElement {
             handle,
@@ -885,7 +885,7 @@ impl Codegen<'_> {
         array: &VirtualEventArray,
     ) -> Result<Vec<(IrExpr, EventTarget)>, String> {
         let handle = self.virtual_interface_handle(path, array.member_path, &array.target)?;
-        let site = self.source_site("virtual interface event", path, node);
+        let site = self.required_site("virtual interface event", path, node);
         Ok(array
             .arrays
             .iter()
@@ -1013,7 +1013,7 @@ impl Codegen<'_> {
         } else {
             "virtual interface event"
         };
-        let site = self.source_site(kind, path, node);
+        let site = self.required_site(kind, path, node);
         let name = self.native_access_symbol_at(
             handle,
             crate::sim::ir::IrNativeAccessKind::InterfaceEvent {
@@ -1180,7 +1180,7 @@ impl Codegen<'_> {
                 })?;
             instances.push(concrete);
         }
-        let site = self.source_site("virtual interface clocking drive", path, lhs);
+        let site = self.required_site("virtual interface clocking drive", path, lhs);
         Ok(Some(VirtualClockingTarget {
             handle,
             descriptor,

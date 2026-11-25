@@ -3079,6 +3079,7 @@ fn collect_chandle_effects(
             effects.push(ExecutionEffect::ImmediateStore)
         }
         IrChandleExpr::Required { handle, .. }
+        | IrChandleExpr::RequiredSynchronization { handle, .. }
         | IrChandleExpr::VirtualInterfaceNested { handle, .. } => {
             // A null handle is a fatal run-time error: the process stops
             // after the statement instead of running on.

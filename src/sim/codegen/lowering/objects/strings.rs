@@ -152,7 +152,7 @@ impl Codegen<'_> {
             {
                 self.model.random.threads = true;
                 return Ok(IrStringExpr::ProcessRandState(Box::new(
-                    self.lower_process(path, *receiver)?,
+                    self.process_receiver(path, node, *receiver, name)?,
                 )));
             }
         }

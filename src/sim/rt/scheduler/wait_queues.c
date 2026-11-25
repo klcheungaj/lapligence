@@ -602,6 +602,8 @@ static int32_t semaphore_key_count(sv4_t value, uint64_t* result) {
 
 static int32_t semaphore_valid(llg_semaphore_t* semaphore, const char* action) {
     if (LLG_CO_LIKELY(semaphore)) return 1;
+    // The model reported it at the call (llg_rt_require).
+    if (llg_rt_exiting()) return 0;
     llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "semaphore %s requires a live semaphore handle", action);
     llg_last_failure = 1;
     llg_rt_request_finish();

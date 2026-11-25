@@ -104,10 +104,10 @@ handle null
 === 1 SIM-010 SIM-009
 ### +ctx=29
 [0] final
-=== 1 SIM-010
+=== 1 SIM-010 SIM-009
 ### +ctx=30
 [0] final
-=== 1 SIM-010
+=== 1 SIM-010 SIM-009
 ### +ctx=31
 [0] final
 === 1 SIM-010 SIM-009
@@ -197,28 +197,28 @@ vif2 4
 === 1 SIM-010 SIM-009
 ### +ctx=60
 [0] final
-=== 1 SIM-010
+=== 1 SIM-010 SIM-009
 ### +ctx=61
 [0] final
-=== 1 SIM-010
+=== 1 SIM-010 SIM-009
 ### +ctx=62
 [0] final
-=== 1 SIM-010
+=== 1 SIM-010 SIM-009
 ### +ctx=63
 [0] final
-=== 1 SIM-010
+=== 1 SIM-010 SIM-009
 ### +ctx=64
 [0] final
-=== 1 SIM-010
+=== 1 SIM-010 SIM-009
 ### +ctx=65
 [0] final
-=== 1 SIM-010
+=== 1 SIM-010 SIM-009
 ### +ctx=66
 [0] final
-=== 1 SIM-010
+=== 1 SIM-010 SIM-009
 ### +ctx=67
 [0] final
-=== 1 SIM-010
+=== 1 SIM-010 SIM-009
 ### +ctx=68
 [0] final
 === 1 SIM-010 SIM-009
@@ -412,22 +412,22 @@ chandle 1
 === 0
 ### +ctx=121
 [0] final
-=== 1 SIM-010
+=== 1 SIM-010 SIM-009
 ### +ctx=122
 [0] final
-=== 1 SIM-010
+=== 1 SIM-010 SIM-009
 ### +ctx=123
 [0] final
-=== 1 SIM-010
+=== 1 SIM-010 SIM-009
 ### +ctx=124
 [0] final
-=== 1 SIM-010
+=== 1 SIM-010 SIM-009
 ### +ctx=125
 [0] final
-=== 1 SIM-010
+=== 1 SIM-010 SIM-009
 ### +ctx=126
 [0] final
-=== 1 SIM-010
+=== 1 SIM-010 SIM-009
 ### +ctx=127
 [0] final
 === 1 SIM-010 SIM-009
@@ -442,10 +442,10 @@ chandle 1
 ### +ctx=130
 [0] ctx 130 went on x=0
 [0] final
-=== 1 SIM-010
+=== 1 SIM-010 SIM-009
 ### +ctx=131
 [0] final
-=== 1 SIM-010
+=== 1 SIM-010 SIM-009
 ### +ctx=132
 [0] final
 === 1 SIM-010 SIM-009

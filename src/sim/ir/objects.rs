@@ -507,6 +507,20 @@ pub enum IrChandleExpr {
         handle: Box<IrChandleExpr>,
         site: String,
     },
+    /// A mailbox or semaphore handle (`object`) whose method is called: null
+    /// is a run-time error reported at `site`, as of [`Self::Required`].
+    RequiredSynchronization {
+        handle: Box<IrChandleExpr>,
+        object: IrSynchronization,
+        site: String,
+    },
+}
+
+/// The built-in class of a checked synchronization handle (SV 15.3, 15.4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrSynchronization {
+    Mailbox,
+    Semaphore,
 }
 
 /// A process-class handle expression. Process identities are deliberately
@@ -523,6 +537,12 @@ pub enum IrProcessExpr {
     /// expression reads (or pops) that element. A read result is retained
     /// like any other process value.
     Handle(Box<IrChandleExpr>),
+    /// A handle whose method is called: null is a run-time error reported at
+    /// `site`, as of [`IrChandleExpr::Required`].
+    Required {
+        handle: Box<IrProcessExpr>,
+        site: String,
+    },
 }
 
 /// Element type retained by a mailbox constructor.  Mailbox messages carry
@@ -1371,6 +1391,7 @@ impl IrProcessExpr {
                 "formal index is out of bounds",
             )),
             Self::Handle(handle) => handle.validate(model, formals, None),
+            Self::Required { handle, .. } => handle.validate(model, formals),
         }
     }
 
@@ -1383,19 +1404,24 @@ impl IrProcessExpr {
         match self {
             Self::FormalRead(_) => Ok(()),
             Self::Handle(handle) if matches!(**handle, IrChandleExpr::FormalRead(_)) => Ok(()),
+            Self::Required { handle, .. } => handle.validate_shape(model),
             _ => self.validate(model, &[]),
         }
     }
 
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
-        if let Self::Handle(handle) = self {
-            handle.expressions(visit);
+        match self {
+            Self::Handle(handle) => handle.expressions(visit),
+            Self::Required { handle, .. } => handle.expressions(visit),
+            _ => {}
         }
     }
 
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
-        if let Self::Handle(handle) = self {
-            handle.expressions_mut(visit);
+        match self {
+            Self::Handle(handle) => handle.expressions_mut(visit),
+            Self::Required { handle, .. } => handle.expressions_mut(visit),
+            _ => {}
         }
     }
 }
@@ -2261,7 +2287,9 @@ impl IrChandleExpr {
     ) -> Result<(), super::IrValidationError> {
         match self {
             Self::FormalRead(_) => Ok(()),
-            Self::Required { handle, .. } => handle.validate_shape(model, chandle_return),
+            Self::Required { handle, .. } | Self::RequiredSynchronization { handle, .. } => {
+                handle.validate_shape(model, chandle_return)
+            }
             Self::VirtualInterfaceNested {
                 handle,
                 interface,
@@ -2377,7 +2405,9 @@ impl IrChandleExpr {
     pub(in crate::sim) fn is_plain_receiver(&self) -> bool {
         match self {
             Self::Read(_) | Self::LocalRead(_) | Self::FormalRead(_) => true,
-            Self::Required { handle, .. } => handle.is_plain_receiver(),
+            Self::Required { handle, .. } | Self::RequiredSynchronization { handle, .. } => {
+                handle.is_plain_receiver()
+            }
             _ => false,
         }
     }
@@ -2464,7 +2494,9 @@ impl IrChandleExpr {
                 }
                 Ok(())
             }
-            Self::Required { handle, .. } => handle.validate(model, formals, chandle_return),
+            Self::Required { handle, .. } | Self::RequiredSynchronization { handle, .. } => {
+                handle.validate(model, formals, chandle_return)
+            }
             Self::ClassFromKey(key) => {
                 if (key.width, key.signed) != (super::CLASS_KEY_WIDTH, false) {
                     return Err(super::IrValidationError::new(
@@ -2832,6 +2864,7 @@ impl IrChandleExpr {
             Self::EventObject(event) => event.expressions(visit),
             Self::ClassFromKey(key) => visit(key),
             Self::Required { handle, .. }
+            | Self::RequiredSynchronization { handle, .. }
             | Self::CopyClass { source: handle, .. }
             | Self::VirtualInterfaceNested { handle, .. } => handle.expressions(visit),
             Self::Mailbox(mailbox) => mailbox.expressions(visit),
@@ -2894,6 +2927,7 @@ impl IrChandleExpr {
             Self::EventObject(event) => event.expressions_mut(visit),
             Self::ClassFromKey(key) => visit(key),
             Self::Required { handle, .. }
+            | Self::RequiredSynchronization { handle, .. }
             | Self::CopyClass { source: handle, .. }
             | Self::VirtualInterfaceNested { handle, .. } => handle.expressions_mut(visit),
             Self::Mailbox(mailbox) => mailbox.expressions_mut(visit),

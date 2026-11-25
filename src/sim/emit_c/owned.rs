@@ -145,8 +145,9 @@ struct Activation {
 }
 
 #[derive(Clone)]
-struct PendingSite {
+struct PendingSite<'a> {
     resume: u32,
+    origin: Option<&'a crate::sim::semantic::Origin>,
     operation: SuspensionOperation,
     mechanism: Option<CallMechanism>,
 }
@@ -263,7 +264,7 @@ pub(super) struct Frame<'a, 'm> {
     in_block_comment: bool,
     structural_error: Option<String>,
     resume_probe: bool,
-    pending_sites: VecDeque<PendingSite>,
+    pending_sites: VecDeque<PendingSite<'a>>,
     resume_numbers: Vec<u32>,
     frame_upper_bounds: &'a BTreeMap<usize, usize>,
     coroutine_functions: &'a BTreeSet<usize>,
@@ -393,6 +394,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             .flat_map(|sites| sites.values())
             .map(|site| PendingSite {
                 resume: site.resume(),
+                origin: site.origin(),
                 operation: site.operation().clone(),
                 mechanism: site.mechanism(),
             })
@@ -880,6 +882,25 @@ impl<'a, 'm> Frame<'a, 'm> {
         let resume = self.take_resume(operation)?;
         self.line(format!("LLG_CO_AWAIT(co, ch, {resume}, {});", arm.as_ref()));
         Ok(())
+    }
+    /// [`Self::await_arm`] of a wait on events, which a null one fails.
+    fn await_event_arm(
+        &mut self,
+        operation: SuspensionOperation,
+        arm: impl AsRef<str>,
+    ) -> Result<(), String> {
+        let location = self
+            .pending_sites
+            .front()
+            .and_then(|site| site.origin)
+            .map_or_else(
+                || "NULL".to_owned(),
+                |origin| c_string_literal(&origin.location()),
+            );
+        self.await_arm(
+            operation,
+            format!("llg_arm_at({}, {location})", arm.as_ref()),
+        )
     }
     fn dispatch(&self) -> String {
         let mut dispatch = String::from("    LLG_CO_DISPATCH_BEGIN(co)\n");
