@@ -5,7 +5,9 @@ use super::constants::{
 };
 use super::context::RCtx;
 use super::expressions::{coerce_two_state, packed_default};
-use super::names::{bound_identifiers, rewrite_identifiers, BoundedIdentifiers};
+use super::names::{
+    bound_identifiers, identifiers_anywhere, rewrite_identifiers, BoundedIdentifiers, FirstBytes,
+};
 use super::statements::{render_stmt_impl as render_stmt, wait_any_text_in_region};
 use super::EmitError;
 use crate::sim::execution::{
@@ -1870,17 +1872,22 @@ fn render_model(
 /// The descriptor tables in `tables` (each with the identifier prefix of its
 /// names) that `rendered` references. `rendered` excludes the tables, so any
 /// occurrence of one of a table's names is a use.
-fn referenced_descriptor_tables(rendered: &str, tables: &[(String, String)]) -> String {
+fn referenced_descriptor_tables<'a>(rendered: &str, tables: &'a [(String, String)]) -> String {
     if tables.is_empty() {
         return String::new();
     }
-    let identifiers = c_identifiers(rendered).collect::<std::collections::HashSet<_>>();
+    let names = |table: &'a (String, String)| {
+        let (prefix, declaration) = table;
+        identifiers_anywhere(declaration).filter(|name| name.starts_with(prefix.as_str()))
+    };
+    let declared = tables.iter().flat_map(names).collect::<HashSet<_>>();
+    let first = declared.iter().copied().collect::<FirstBytes>();
+    let used = identifiers_anywhere(rendered)
+        .filter(|name| first.may_hold(name) && declared.contains(name))
+        .collect::<HashSet<_>>();
     tables
         .iter()
-        .filter(|(prefix, declaration)| {
-            c_identifiers(declaration)
-                .any(|name| name.starts_with(prefix.as_str()) && identifiers.contains(name))
-        })
+        .filter(|table| names(table).any(|name| used.contains(name)))
         .map(|(_, declaration)| declaration.as_str())
         .collect()
 }
@@ -1903,7 +1910,7 @@ fn unobserved_contents(model: &IrModel, rendered: &str, start: &str) -> String {
         return String::new();
     }
     let mut mentions = HashMap::<&str, usize>::new();
-    for name in c_identifiers(rendered).chain(c_identifiers(start)) {
+    for name in identifiers_anywhere(rendered).chain(identifiers_anywhere(start)) {
         if let Some(array) = name.strip_suffix("_llg_contents_dep") {
             *mentions.entry(array).or_default() += 1;
         }
@@ -1943,7 +1950,7 @@ fn unobserved_real_columns(model: &IrModel, rendered: &mut String, start: &str) 
         return;
     }
     let mut mentions = HashMap::<String, usize>::new();
-    for name in c_identifiers(rendered).chain(c_identifiers(start)) {
+    for name in identifiers_anywhere(rendered).chain(identifiers_anywhere(start)) {
         if name.ends_with("_llg_contents_dep") || name.ends_with("_llg_element_deps") {
             *mentions.entry(name.to_owned()).or_default() += 1;
         }
@@ -1980,11 +1987,6 @@ fn unobserved_real_columns(model: &IrModel, rendered: &mut String, start: &str) 
 
 /// Declaration, default, dependency binding and destruction.
 const REAL_COLUMN_MARKER_MENTIONS: usize = 4;
-
-fn c_identifiers(text: &str) -> impl Iterator<Item = &str> {
-    text.split(|ch: char| !(ch == '_' || ch.is_ascii_alphanumeric()))
-        .filter(|token| token.starts_with(|ch: char| ch == '_' || ch.is_ascii_alphabetic()))
-}
 
 #[cfg(test)]
 mod tests;

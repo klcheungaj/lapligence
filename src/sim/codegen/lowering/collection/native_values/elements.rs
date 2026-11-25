@@ -148,6 +148,9 @@ fn record_element(element: &IrContainerElement) -> bool {
 impl Codegen<'_> {
     /// `q[i]`, `q[i][j]` or `a["k"]` naming a whole record element.
     pub(super) fn record_element_of(&self, node: NodeId) -> Option<ElementSelection> {
+        if self.model.containers.is_empty() {
+            return None;
+        }
         let node = self.p30_unwrap_cast(node);
         if let Some((container, key)) = self.associative_string_element(node) {
             return record_element(&self.model.containers[container].element).then_some(

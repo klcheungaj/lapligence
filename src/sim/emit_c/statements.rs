@@ -7,6 +7,7 @@ use super::context::RCtx;
 use super::expressions::{
     arg_resize, bool_code, render_assign, render_expr_impl as render_expr, render_lhs_address,
 };
+use super::names::is_c_identifier_byte;
 use super::EmitError;
 use crate::sim::execution::ScheduleRegion;
 use crate::sim::ir::{

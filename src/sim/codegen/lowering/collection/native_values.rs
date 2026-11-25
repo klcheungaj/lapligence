@@ -1054,12 +1054,18 @@ impl Codegen<'_> {
         if let Some(leaf) = self.record_native_leaf(node) {
             return Ok(Some(leaf));
         }
+        // Most nodes select nothing of a native value, which is the cheaper
+        // question.
+        let path = self.native_path_of(node);
+        if matches!(path, Ok(None)) {
+            return Ok(None);
+        }
         // A cell selected at run time is no single leaf; the member select
         // locates it.
         if self.selects_at_run_time(node) {
             return Ok(None);
         }
-        let Some((value, path)) = self.native_path_of(node)? else {
+        let Some((value, path)) = path? else {
             return Ok(None);
         };
         let layout = self.native_layout_of_value(value)?;

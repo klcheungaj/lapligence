@@ -347,10 +347,6 @@ fn replace_c_identifier(code: &str, identifier: &str, replacement: &str) -> Stri
     out
 }
 
-fn is_c_identifier_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'_'
-}
-
 /// Render one atomic multi-source wait.  The call shape follows the source
 /// mix: all signals keep the historical `llg_wait_any_events` text, a single
 /// event uses `llg_wait_event`, an event-only list uses `llg_wait_events`,

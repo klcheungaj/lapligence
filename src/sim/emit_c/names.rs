@@ -208,6 +208,34 @@ fn spans<const SKIP_COMMENTS: bool>(
     std::iter::from_fn(move || next_identifier::<SKIP_COMMENTS>(bytes, &mut index))
 }
 
+/// The identifiers of `text` wherever they stand, literals and comments
+/// included.
+pub(super) fn identifiers_anywhere(text: &str) -> impl Iterator<Item = &str> {
+    let bytes = text.as_bytes();
+    let mut at = 0;
+    std::iter::from_fn(move || loop {
+        let start = at
+            + bytes[at..]
+                .iter()
+                .position(|byte| is_c_identifier_byte(*byte))?;
+        at = bytes[start..]
+            .iter()
+            .position(|byte| !is_c_identifier_byte(*byte))
+            .map_or(bytes.len(), |length| start + length);
+        if BYTE_CLASSES[usize::from(bytes[start])] == ByteClass::Name {
+            return Some(&text[start..at]);
+        }
+    })
+}
+
+/// Whether a C identifier may hold `byte` after its first character.
+pub(super) fn is_c_identifier_byte(byte: u8) -> bool {
+    matches!(
+        BYTE_CLASSES[usize::from(byte)],
+        ByteClass::Name | ByteClass::Digit
+    )
+}
+
 /// The first bytes of a set of identifiers. Most identifiers of a generated
 /// body are not in the set, and their first byte tells it without hashing.
 #[derive(Clone, Copy, Debug, Default)]
@@ -386,6 +414,8 @@ pub(crate) struct BoundedIdentifiers {
     pub symbols_tsv: String,
 }
 
+/// The identifiers of the runtime headers that a bounded name may meet: those
+/// of at least [`MAX_C_IDENTIFIER_LEN`] characters, few of several thousand.
 pub(super) fn runtime_identifiers() -> &'static std::collections::BTreeSet<&'static str> {
     static NAMES: std::sync::OnceLock<std::collections::BTreeSet<&'static str>> =
         std::sync::OnceLock::new();
@@ -408,7 +438,11 @@ pub(super) fn runtime_identifiers() -> &'static std::collections::BTreeSet<&'sta
             include_str!("../rt/llg_wave.h"),
         ]
         .into_iter()
-        .flat_map(|header| identifier_spans(header).map(move |span| &header[span]))
+        .flat_map(|header| {
+            identifier_spans(header)
+                .filter(|span| span.len() >= MAX_C_IDENTIFIER_LEN)
+                .map(move |span| &header[span])
+        })
         .collect()
     })
 }
@@ -454,8 +488,7 @@ pub(super) fn bound_identifiers(
     source: String,
     external: &std::collections::BTreeSet<&str>,
 ) -> BoundedIdentifiers {
-    let runtime = runtime_identifiers();
-    let is_external = |name: &str| external.contains(name) || runtime.contains(name);
+    let is_external = |name: &str| external.contains(name) || runtime_identifiers().contains(name);
     // Every replacement is exactly `MAX_C_IDENTIFIER_LEN` long (see
     // `bounded_name`), so only occupied identifiers of that length can
     // collide with one.
@@ -808,6 +841,17 @@ mod tests {
         assert_eq!(registry_index(35), "z");
         assert_eq!(registry_index(36), "10");
         assert_eq!(registry_index(1296), "100");
+    }
+
+    #[test]
+    fn identifiers_anywhere_reads_literals_and_comments_and_drops_numbers() {
+        let text = "a_1(\"in literal\", 0x1F_b); // é_c\n/* _d */e";
+        assert_eq!(
+            identifiers_anywhere(text).collect::<Vec<_>>(),
+            ["a_1", "in", "literal", "_c", "_d", "e"]
+        );
+        assert_eq!(identifiers_anywhere("12 é ").count(), 0);
+        assert_eq!(identifiers_anywhere("").count(), 0);
     }
 
     #[test]
