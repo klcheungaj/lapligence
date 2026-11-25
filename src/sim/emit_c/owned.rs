@@ -174,6 +174,8 @@ pub(super) struct Frame<'a, 'm> {
     next_name: usize,
     bindings: Vec<HashMap<String, Binding>>,
     event_bindings: Vec<HashMap<String, String>>,
+    /// The C variables of the jump states declared so far.
+    jump_states: HashMap<String, String>,
     /// Locals that live in a shared activation frame (`IrStmt::SharedLocal`,
     /// `StorageOwnership::Shared` captures): name -> (frame expression, slot).
     shared_cells: HashMap<String, (String, u32)>,
@@ -522,6 +524,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             next_name: 0,
             bindings: vec![HashMap::new()],
             event_bindings: vec![HashMap::new()],
+            jump_states: HashMap::new(),
             shared_cells: HashMap::new(),
             native_bindings: vec![HashMap::new()],
             formal_overrides: Vec::new(),

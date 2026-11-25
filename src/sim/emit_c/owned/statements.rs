@@ -102,6 +102,37 @@ impl Frame<'_, '_> {
         Ok(())
     }
 
+    fn jump_state(&mut self, state: &IrJumpState) -> Result<(), String> {
+        let IrJumpState { name, operation } = state;
+        if matches!(operation, IrJumpStateOp::Declare) {
+            let variable = self.scalar("uint32_t", "0".to_owned());
+            self.jump_states.insert(name.clone(), variable);
+            return Ok(());
+        }
+        let variable = self
+            .jump_states
+            .get(name)
+            .ok_or_else(|| format!("jump state `{name}` is used before its declaration"))?;
+        match operation {
+            IrJumpStateOp::Declare => {}
+            IrJumpStateOp::Set(value) => {
+                let line = format!("{variable} = {value}u;");
+                self.line(line);
+            }
+            IrJumpStateOp::GotoIf { first, last, label } => {
+                let line = if first == last {
+                    format!("if ({variable} == {first}u) {{")
+                } else {
+                    format!("if ({variable} >= {first}u && {variable} <= {last}u) {{")
+                };
+                self.line(line);
+                self.goto(label)?;
+                self.line("}");
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn statement(&mut self, statement: &IrStmt) -> Result<(), String> {
         self.check_stack()?;
         let touches = self.pending_touches.len();
@@ -1083,6 +1114,7 @@ impl Frame<'_, '_> {
                 self.line(format!("{label}: ;"));
             }
             IrStmt::Goto(label) => self.goto(label)?,
+            IrStmt::JumpState(state) => self.jump_state(state)?,
             IrStmt::WaveFile(_)
             | IrStmt::WaveFileValue(_)
             | IrStmt::WaveDumpVars(_)

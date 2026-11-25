@@ -16,6 +16,31 @@ pub enum IrCaseKind {
     Inside,
 }
 
+/// Operation on the jump state `name`: an unsigned integer that only decides
+/// which forward jump a body takes. It holds no value of the design, exists
+/// in no scope and is a plain C integer, so it costs neither an allocation
+/// nor a four-state operation. Names are unique per body, and the
+/// declaration precedes every other use in every path.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IrJumpState {
+    pub(in crate::sim) name: String,
+    pub(in crate::sim) operation: IrJumpStateOp,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum IrJumpStateOp {
+    /// Declare the state, 0.
+    Declare,
+    Set(u32),
+    /// Jump to [`IrStmt::Label`] `label` when the state is in
+    /// `first..=last`.
+    GotoIf {
+        first: u32,
+        last: u32,
+        label: String,
+    },
+}
+
 /// Runtime diagnostic qualifier attached to an `if` or `case` statement.
 ///
 /// The source origin is kept with the check so optimized IR cannot lose the
@@ -1109,6 +1134,8 @@ pub enum IrStmt {
     Label(String),
     /// Jump to a [`IrStmt::Label`] of the same body.
     Goto(String),
+    /// A small integer that steers the jumps of one body.
+    JumpState(Box<IrJumpState>),
     /// Placeholder (source-level `;` or an empty construct).
     Nop,
 }
