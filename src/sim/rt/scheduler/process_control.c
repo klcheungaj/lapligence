@@ -63,6 +63,7 @@ static void held_group_link(llg_fork_group_t* grp) {
     grp->next_g = grp->parent->held_groups;
     if (grp->next_g) grp->next_g->prev_g = grp;
     grp->parent->held_groups = grp;
+    g.held_group_count++;
 }
 
 static void held_group_unlink(llg_fork_group_t* grp) {
@@ -70,6 +71,7 @@ static void held_group_unlink(llg_fork_group_t* grp) {
     else grp->parent->held_groups = grp->next_g;
     if (grp->next_g) grp->next_g->prev_g = grp->prev_g;
     grp->prev_g = NULL;
+    g.held_group_count--;
 }
 
 static void process_handle_shutdown(llg_proc_t* proc) {
@@ -251,11 +253,13 @@ static void llg_kill_group_list(llg_fork_group_t* grp) {
 
 // Kill every descendant of `p` (SV 9.6.3, 9.7): the children of its live
 // groups and of the ended groups it holds for finished children with live
-// descendants, and its bound updates. `p` itself is untouched — used by disable_fork, which kills
-// only descendants. A killed `p` has none left, and its held-list slot may
-// already link the retired list.
+// descendants, and its bound updates. `p` itself is untouched — used by
+// disable_fork, which kills only descendants. A killed `p` has none left, and
+// its held-list slot may already link the retired list.
 static void llg_kill_proc_groups(llg_proc_t* p) {
     if (p->killed) return;
+    for (const llg_fork_group_t* grp = p->held_groups; grp; grp = grp->next_g)
+        g.held_group_count--;
     llg_kill_group_list(p->fork_groups);
     llg_kill_group_list(p->held_groups);
     p->fork_groups = NULL;

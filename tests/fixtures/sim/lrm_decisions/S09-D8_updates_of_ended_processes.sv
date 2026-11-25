@@ -91,7 +91,7 @@ module tb;
     item::set_count();
     named.wide <= '1;
     item::ratio <= 2.5;
-    sized#(2)::last <= 9;
+    sized#(2)::last <= #0 9;
     pkg::counter::total <= 8;
   endtask
 

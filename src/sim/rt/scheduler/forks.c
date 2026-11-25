@@ -330,12 +330,22 @@ static int32_t fork_group_under_target(const llg_fork_group_t* grp,
     return 0;
 }
 
-static llg_fork_group_t* fork_group_of_target(llg_fork_group_t* grp,
-                                              uint32_t declaration,
-                                              uint32_t instance) {
-    while (grp && !fork_group_under_target(grp, declaration, instance))
-        grp = grp->next_g;
-    return grp;
+// A live or held group the disable of the target ends, or NULL. The processes
+// are read again for held groups only when there are any.
+static llg_fork_group_t* fork_group_of_target(uint32_t declaration, uint32_t instance) {
+    for (int32_t i = 0; i < g.n_procs; i++) {
+        const llg_proc_t* proc = g.all_procs[i];
+        if (!proc) continue;
+        for (llg_fork_group_t* grp = proc->fork_groups; grp; grp = grp->next_g)
+            if (fork_group_under_target(grp, declaration, instance)) return grp;
+    }
+    for (int32_t i = 0; g.held_group_count && i < g.n_procs; i++) {
+        const llg_proc_t* proc = g.all_procs[i];
+        if (!proc) continue;
+        for (llg_fork_group_t* grp = proc->held_groups; grp; grp = grp->next_g)
+            if (fork_group_under_target(grp, declaration, instance)) return grp;
+    }
+    return NULL;
 }
 
 static void llg_kill_named_group(llg_fork_group_t* grp) {
@@ -397,16 +407,8 @@ void llg_disable_target(llg_proc_t* self, uint32_t declaration,
 
     // Restart after each removal: cancelling a tree can remove other groups
     // and processes from the registry, including the caller's ancestors.
-    for (;;) {
-        llg_fork_group_t* target = NULL;
-        for (int32_t i = 0; i < g.n_procs && !target; i++) {
-            llg_proc_t* proc = g.all_procs[i];
-            if (!proc) continue;
-            target = fork_group_of_target(proc->fork_groups, declaration, instance);
-            if (!target)
-                target = fork_group_of_target(proc->held_groups, declaration, instance);
-        }
-        if (!target) break;
+    for (llg_fork_group_t* target = fork_group_of_target(declaration, instance); target;
+         target = fork_group_of_target(declaration, instance)) {
         matched = 1;
         llg_kill_named_group(target);
     }

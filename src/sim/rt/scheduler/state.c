@@ -924,6 +924,7 @@ typedef struct {
     uint64_t region_passes;    // zero-delay guard units in the current time step (region passes + coroutine resumes)
     const char* last_process_name; // survives completed-process reclamation
     llg_proc_t** all_procs;   // checked-growable slot table; NULL holes are free
+    uint64_t held_group_count; // groups in all held_groups lists
     int32_t n_procs;
     int32_t all_procs_capacity;
     // Six radix-64 levels cover the entire int-indexed registry.
