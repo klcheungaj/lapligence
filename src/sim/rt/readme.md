@@ -329,8 +329,8 @@ returns an owned one-bit result, preserving Z-as-X, source-order matching and
 unmatched X. Value ABI 4 stays unchanged; source hashing changes the runtime cache.
 
 Fork groups append and unlink in constant time through a parent tail and group
-predecessor. A pending cursor visits newly created groups once at each blocking
-boundary, preserving source order. Child lists append through a tail, and each
+predecessor. A pending cursor visits newly created `join_none` groups once at each
+blocking boundary, preserving source order. Child lists append through a tail, and each
 child process points to its owning list node for cancellation. On 64-bit hosts
 these links add 24 bytes per process and 16 bytes per group (72 → 88 bytes).
 `wait fork` completion tests only the group's parent rather than all waiters.

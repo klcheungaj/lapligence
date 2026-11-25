@@ -735,7 +735,7 @@ struct llg_proc {
     };
     llg_fork_group_t* fork_groups; // live groups spawned by this proc
     llg_fork_group_t* fork_groups_tail; // source-order O(1) append
-    llg_fork_group_t* pending_fork_groups; // first group not yet checked for start
+    llg_fork_group_t* pending_fork_groups; // first join_none group not yet started
     llg_fork_group_t* grp;         // group this proc belongs to (NULL top-level)
     llg_fork_child_t* fork_child;   // owning group node for O(1) cancellation
     llg_frame_t* frame;            // retained activation storage, when captured

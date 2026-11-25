@@ -98,7 +98,8 @@ registration order, then strobes, the last issued first (S25-D6); a slot with
 neither pays nothing. Preponed/Observed/Postponed views are immutable;
 illegal writes or read-only scheduling fail controllably.
 
-Active coroutines are FIFO. Each initial/always/link/continuous process owns a
+Active coroutines are FIFO. A blocking fork starts the pending `join_none`
+children of its parent before its own (decision S09-D10). Each initial/always/link/continuous process owns a
 coroutine; ordinary forks use `llg_fork`, captured forks `llg_fork_with_frame`.
 Every spawn/fork call supplies an immutable `llg_co_desc_t`. The runtime
 co-allocates and initializes its root frame after the process record and owns one
