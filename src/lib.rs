@@ -18,6 +18,7 @@ pub mod memory_limit;
 pub mod profile;
 pub mod sim;
 pub mod stack;
+pub(crate) mod work;
 
 /// Seeded input generation shared with the integration-test groups
 /// (`tests/support/fuzz.rs` is its one definition).

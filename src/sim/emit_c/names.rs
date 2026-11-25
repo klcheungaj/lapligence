@@ -236,33 +236,50 @@ pub(super) fn is_c_identifier_byte(byte: u8) -> bool {
     )
 }
 
-/// The first bytes of a set of identifiers. Most identifiers of a generated
-/// body are not in the set, and their first byte tells it without hashing.
+/// The first bytes, last bytes and lengths of a set of identifiers. Most
+/// identifiers of a generated body are not in the set, and these tell it
+/// without hashing.
 #[derive(Clone, Copy, Debug, Default)]
-pub(super) struct FirstBytes(u128);
+pub(super) struct NameFilter {
+    first: u128,
+    last: u128,
+    lengths: u64,
+}
 
-impl FirstBytes {
+impl NameFilter {
+    fn bits(name: &str) -> Option<(u128, u128, u64)> {
+        let bytes = name.as_bytes();
+        let bit = |byte: u8| 1 << (byte & 0x7f);
+        Some((
+            bit(*bytes.first()?),
+            bit(*bytes.last()?),
+            1 << (bytes.len() & 0x3f),
+        ))
+    }
+
     pub(super) fn insert(&mut self, name: &str) {
-        if let Some(&first) = name.as_bytes().first() {
-            self.0 |= 1 << (first & 0x7f);
+        if let Some((first, last, length)) = Self::bits(name) {
+            self.first |= first;
+            self.last |= last;
+            self.lengths |= length;
         }
     }
 
     /// Whether the set may hold `name`.
-    pub(super) fn may_hold(self, name: &str) -> bool {
-        name.as_bytes()
-            .first()
-            .is_some_and(|first| self.0 >> (first & 0x7f) & 1 != 0)
+    pub(super) fn may_hold(&self, name: &str) -> bool {
+        Self::bits(name).is_some_and(|(first, last, length)| {
+            self.first & first != 0 && self.last & last != 0 && self.lengths & length != 0
+        })
     }
 }
 
-impl<'n> FromIterator<&'n str> for FirstBytes {
+impl<'n> FromIterator<&'n str> for NameFilter {
     fn from_iter<I: IntoIterator<Item = &'n str>>(names: I) -> Self {
-        let mut first = Self::default();
+        let mut filter = Self::default();
         for name in names {
-            first.insert(name);
+            filter.insert(name);
         }
-        first
+        filter
     }
 }
 

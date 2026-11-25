@@ -3,6 +3,7 @@ use super::super::owned::model::{SharedSpawns, SpawnClass};
 use super::*;
 use crate::sim::ir::*;
 use std::collections::HashSet;
+use std::fmt::Write;
 use std::rc::Rc;
 
 pub(super) const DEFAULT_SHARE_MIN_INSTANCES: usize = 4;
@@ -309,7 +310,7 @@ fn registry(
                 &artifact.desc_name,
             ),
         );
-        let name = artifact.desc_name.strip_suffix("_desc").unwrap();
+        let name = artifact.body_name();
         if !registry.contains_key(name) {
             registry.insert(
                 name.to_owned(),
@@ -343,6 +344,100 @@ fn is_port_link(execution: &ExecutionModel, artifact: &CoroutineArtifact) -> boo
             .and_then(|process| execution.ir().processes.get(process.semantic_process))
             .is_some_and(|process| process.port_link()),
         _ => false,
+    }
+}
+
+/// What two bodies of one sharing class agree on besides their normalized
+/// text; it is part of the class key.
+#[derive(PartialEq, Eq, Hash)]
+enum Site<'a> {
+    Coroutine(std::mem::Discriminant<CoroutineId>, &'a str),
+    Evaluator,
+    Plain(&'a crate::sim::semantic::Origin),
+}
+
+/// A body that may join a sharing class.
+#[derive(Clone, Copy)]
+enum Body<'a> {
+    Coroutine(&'a CoroutineArtifact),
+    Evaluator(&'a str, &'a str),
+    Plain(usize, &'a str),
+}
+
+impl<'a> Body<'a> {
+    fn source(self) -> &'a str {
+        match self {
+            Body::Coroutine(artifact) => &artifact.source,
+            Body::Evaluator(_, source) | Body::Plain(_, source) => source,
+        }
+    }
+
+    fn site(self, model: &'a IrModel) -> Site<'a> {
+        match self {
+            Body::Coroutine(artifact) => {
+                Site::Coroutine(std::mem::discriminant(&artifact.owner), &artifact.location)
+            }
+            Body::Evaluator(..) => Site::Evaluator,
+            Body::Plain(index, _) => Site::Plain(model.funcs[index].origin()),
+        }
+    }
+
+    /// Normalization replaces words and one-line literals only, so bodies
+    /// whose line counts differ never share a text.
+    fn lines(self) -> usize {
+        self.source().bytes().filter(|byte| *byte == b'\n').count()
+    }
+}
+
+/// The bodies, in order, whose `key` is that of at least `min_instances` of
+/// them: no other body can be in a class of that size.
+fn repeated<'a, K: std::hash::Hash + Eq>(
+    bodies: Vec<Body<'a>>,
+    min_instances: usize,
+    key: impl Fn(Body<'a>) -> K,
+) -> Vec<Body<'a>> {
+    let mut counts = HashMap::new();
+    for body in &bodies {
+        *counts.entry(key(*body)).or_insert(0usize) += 1;
+    }
+    bodies
+        .into_iter()
+        .filter(|body| counts[&key(*body)] >= min_instances)
+        .collect()
+}
+
+/// The names that are operands wherever a body spells them.
+struct Operands {
+    registry: HashMap<String, Operand>,
+    /// Packed constants, operands of the bodies whose literals vary.
+    constants: HashMap<String, Operand>,
+    filter: NameFilter,
+}
+
+impl Operands {
+    fn new(registry: HashMap<String, Operand>, constants: HashMap<String, Operand>) -> Self {
+        let filter = registry
+            .keys()
+            .chain(constants.keys())
+            .map(String::as_str)
+            .collect();
+        Self {
+            registry,
+            constants,
+            filter,
+        }
+    }
+
+    /// The operand a body names `word`, and whether it is a constant.
+    fn get(&self, word: &str, generated: bool) -> Option<(&Operand, bool)> {
+        if !self.filter.may_hold(word) {
+            return None;
+        }
+        match self.registry.get(word) {
+            Some(operand) => Some((operand, false)),
+            None if generated => Some((self.constants.get(word)?, true)),
+            None => None,
+        }
     }
 }
 
@@ -407,10 +502,10 @@ fn normalize(
     source: &str,
     name: &str,
     generated: bool,
-    registry: &HashMap<String, Operand>,
-    constants: &HashMap<String, Operand>,
+    named: &Operands,
     scalars: &mut ScalarOperands,
 ) -> Option<Normalized> {
+    crate::work::count(crate::work::Work::NormalizedBytes, source.len());
     if source
         .lines()
         .skip(1)
@@ -422,27 +517,31 @@ fn normalize(
     let bytes = source.as_bytes();
     let mut labels = HashMap::new();
     for line in source.lines() {
-        if let Some(label) = line.trim().strip_suffix(": ;") {
+        if let Some(label) = line.trim_end().strip_suffix(": ;").map(str::trim_start) {
             if label
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
             {
                 let next = labels.len();
                 labels
-                    .entry(label.to_owned())
+                    .entry(label)
                     .or_insert_with(|| format!("_llg_body_label_{next}"));
             }
         }
     }
     let mut out = String::with_capacity(source.len());
+    let mut copied = 0;
     let mut operands = Vec::<Operand>::new();
-    let mut pointer_slots = HashMap::<String, usize>::new();
+    let mut pointer_slots = HashMap::<&str, usize>::new();
     let mut index = 0;
-    let mut arguments: Vec<(String, usize)> = Vec::new();
-    let mut last_word = String::new();
+    let mut arguments: Vec<(&str, usize)> = Vec::new();
+    let mut last_word = "";
     let counters = super::super::owned::coverage::statement_counters();
-    let counter_base = statement_counter_base(&source, counters);
+    let mut counter_base = None;
     let mut counter_slot = None;
+    let operand_at = |out: &mut String, slot: usize| {
+        let _ = write!(out, "llg_body_operand_{slot}");
+    };
     while index < bytes.len() {
         let start = index;
         let mut operand = None;
@@ -462,53 +561,55 @@ fn normalize(
         } else if bytes[index].is_ascii_alphabetic() || bytes[index] == b'_' {
             index = word_end(bytes, index);
             let word = &source[start..index];
-            last_word = word.to_owned();
-            if let (true, Some(base), Some((entity, end))) = (
-                word == counters,
-                counter_base,
-                statement_counter_at(bytes, index),
-            ) {
-                // Statement coverage (40.2.2): one base per body, so a
-                // shared record carries one integer, not a counter
-                // pointer per statement.
-                let slot = *counter_slot.get_or_insert_with(|| {
-                    operands.push(scalars.operand("uint32_t", &format!("{base}u")));
-                    operands.len() - 1
-                });
-                match entity - base {
-                    0 => out.push_str(&format!("{word}[llg_body_operand_{slot}]")),
-                    // Size arithmetic: the offset folds into the address
-                    // displacement (a 32-bit sum would have to wrap).
-                    offset => out.push_str(&format!(
-                        "{word}[(size_t)llg_body_operand_{slot} + {offset}u]"
-                    )),
+            last_word = word;
+            if word == counters {
+                let base =
+                    *counter_base.get_or_insert_with(|| statement_counter_base(&source, counters));
+                if let (Some(base), Some((entity, end))) =
+                    (base, statement_counter_at(bytes, index))
+                {
+                    // Statement coverage (40.2.2): one base per body, so a
+                    // shared record carries one integer, not a counter
+                    // pointer per statement.
+                    let slot = *counter_slot.get_or_insert_with(|| {
+                        operands.push(scalars.operand("uint32_t", &format!("{base}u")));
+                        operands.len() - 1
+                    });
+                    out.push_str(&source[copied..start]);
+                    let _ = match entity - base {
+                        0 => write!(out, "{word}[llg_body_operand_{slot}]"),
+                        // Size arithmetic: the offset folds into the address
+                        // displacement (a 32-bit sum would have to wrap).
+                        offset => {
+                            write!(out, "{word}[(size_t)llg_body_operand_{slot} + {offset}u]")
+                        }
+                    };
+                    index = end;
+                    copied = index;
+                    continue;
                 }
-                index = end;
-                continue;
             }
             if let Some(label) = labels.get(word) {
+                out.push_str(&source[copied..start]);
                 out.push_str(label);
+                copied = index;
                 continue;
             }
-            if let Some(candidate) = registry
-                .get(word)
-                .or_else(|| generated.then(|| constants.get(word)).flatten())
-            {
-                let slot = if generated && !registry.contains_key(word) {
+            if let Some((candidate, constant)) = named.get(word, generated) {
+                let slot = if constant {
                     // Immutable constant identity does not constrain sharing;
                     // each occurrence can vary independently, like a literal.
-                    let slot = operands.len();
                     operands.push(candidate.clone());
-                    slot
-                } else if let Some(slot) = pointer_slots.get(word) {
-                    *slot
+                    operands.len() - 1
                 } else {
-                    let slot = operands.len();
-                    operands.push(candidate.clone());
-                    pointer_slots.insert(word.to_owned(), slot);
-                    slot
+                    *pointer_slots.entry(word).or_insert_with(|| {
+                        operands.push(candidate.clone());
+                        operands.len() - 1
+                    })
                 };
-                out.push_str(&format!("llg_body_operand_{slot}"));
+                out.push_str(&source[copied..start]);
+                operand_at(&mut out, slot);
+                copied = index;
                 continue;
             }
         } else if bytes[index].is_ascii_digit() {
@@ -524,21 +625,19 @@ fn normalize(
             let identity = preceding.ends_with(".drivers[")
                 || preceding.trim_end().ends_with("llg_vpi_next_origin =")
                 || preceding.ends_with("llg_sdf_gate_delays[")
-                || arguments
-                    .last()
-                    .is_some_and(|(call, arg)| match call.as_str() {
-                        "llg_net_write"
-                        | "llg_net_write_selected"
-                        | "llg_nba_net_after"
-                        | "llg_nba_net_selected_after" => *arg == 1,
-                        "llg_inertial_net"
-                        | "llg_inertial_selected_net"
-                        | "llg_inertial_part_net" => *arg == 2,
-                        "llg_inertial_enable_net" => (2..=3).contains(arg),
-                        "llg_activation_enter" => *arg < 2,
-                        "llg_disable_target" | "llg_fork_group_new_target" => (1..=2).contains(arg),
-                        _ => false,
-                    });
+                || arguments.last().is_some_and(|(call, arg)| match *call {
+                    "llg_net_write"
+                    | "llg_net_write_selected"
+                    | "llg_nba_net_after"
+                    | "llg_nba_net_selected_after" => *arg == 1,
+                    "llg_inertial_net" | "llg_inertial_selected_net" | "llg_inertial_part_net" => {
+                        *arg == 2
+                    }
+                    "llg_inertial_enable_net" => (2..=3).contains(arg),
+                    "llg_activation_enter" => *arg < 2,
+                    "llg_disable_target" | "llg_fork_group_new_target" => (1..=2).contains(arg),
+                    _ => false,
+                });
             if identity {
                 operand = Some(scalars.operand(
                     if value.ends_with("ULL") {
@@ -563,16 +662,14 @@ fn normalize(
                 && !value.ends_with('u')
                 && source[..start].trim_end().ends_with(['(', ','])
                 && source[index..].trim_start().starts_with([',', ')'])
-                && arguments
-                    .last()
-                    .is_some_and(|(call, arg)| match call.as_str() {
-                        "sv4_part_select" => (1..=2).contains(arg),
-                        "sv4_part_select_to" => (2..=3).contains(arg),
-                        // The bits of a shared net group an instance's
-                        // narrow contribution writes.
-                        "sv4_select_plan_part" => (1..=2).contains(arg),
-                        _ => false,
-                    })
+                && arguments.last().is_some_and(|(call, arg)| match *call {
+                    "sv4_part_select" => (1..=2).contains(arg),
+                    "sv4_part_select_to" => (2..=3).contains(arg),
+                    // The bits of a shared net group an instance's
+                    // narrow contribution writes.
+                    "sv4_select_plan_part" => (1..=2).contains(arg),
+                    _ => false,
+                })
             {
                 // A constant part-select bound that depends on the iteration
                 // (`v[i % 28 +: 4]` once its index is folded), a payload like
@@ -594,18 +691,18 @@ fn normalize(
                         *arg += 1;
                     }
                 }
-                byte if !byte.is_ascii_whitespace() => last_word.clear(),
+                byte if !byte.is_ascii_whitespace() => last_word = "",
                 _ => {}
             }
         }
         if let Some(operand) = operand {
-            let slot = operands.len();
-            out.push_str(&format!("llg_body_operand_{slot}"));
+            out.push_str(&source[copied..start]);
+            operand_at(&mut out, operands.len());
+            copied = index;
             operands.push(operand);
-        } else {
-            out.push_str(&source[start..index]);
         }
     }
+    out.push_str(&source[copied..]);
     Some(Normalized {
         source: out,
         operands,
@@ -653,15 +750,13 @@ fn push_candidate(
     groups: &mut Vec<Vec<Candidate>>,
     by_key: &mut HashMap<String, usize>,
 ) {
-    let shapes = candidate
-        .normalized
-        .operands
-        .iter()
-        .map(|operand| format!("{}:{}", operand.declaration(), operand.shape()))
-        .collect::<Vec<_>>()
-        .join(";");
     candidate.key.push(':');
-    candidate.key.push_str(&shapes);
+    for operand in &candidate.normalized.operands {
+        candidate.key.push_str(operand.declaration());
+        candidate.key.push(':');
+        candidate.key.push_str(operand.shape());
+        candidate.key.push(';');
+    }
     candidate.normalized.operands.shrink_to_fit();
     let key = std::mem::take(&mut candidate.key);
     let next = groups.len();
@@ -684,16 +779,56 @@ pub(super) fn share(
     min_instances: usize,
     additional: AdditionalOperands<'_>,
 ) -> Result<Sharing, String> {
+    let mut result = Sharing {
+        declarations: String::new(),
+        bodies: String::new(),
+        prototypes: String::new(),
+        spawns: SharedSpawns::default(),
+        evaluators: HashMap::new(),
+    };
     if min_instances == usize::MAX {
-        return Ok(Sharing {
-            declarations: String::new(),
-            bodies: String::new(),
-            prototypes: String::new(),
-            spawns: SharedSpawns::default(),
-            evaluators: HashMap::new(),
-        });
+        return Ok(result);
     }
     let model = execution.ir();
+    let spawn_names = model
+        .spawn_list()
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect::<BTreeSet<_>>();
+    let coroutines = functions
+        .values()
+        .chain(processes.iter().flatten())
+        .chain(branches.values())
+        // Assertion-action roots are spawned outside the model startup tables.
+        .filter(|artifact| {
+            !matches!(artifact.owner, CoroutineId::Process(_))
+                || spawn_names.contains(artifact.body_name())
+        })
+        .map(Body::Coroutine);
+    // Module path and timing check conditions come from specify blocks,
+    // which are module items and never inside a generate scope (1800-2009
+    // A.1.4 `non_port_module_item`): their payloads are the module's parameters and stay structural.
+    // A redrive function may belong to a generate iteration or a port link.
+    let evaluators = additional
+        .evaluators
+        .iter()
+        .map(|(name, source)| Body::Evaluator(name, source));
+    let plain_bodies = plain
+        .iter()
+        .filter(|(index, _)| model.funcs[**index].dpi.is_none())
+        .map(|(index, source)| Body::Plain(*index, source));
+    // Few bodies have a counterpart at all; only theirs are read.
+    let bodies = repeated(
+        coroutines.chain(evaluators).chain(plain_bodies).collect(),
+        min_instances,
+        |body| body.site(model),
+    );
+    let bodies = repeated(bodies, min_instances, |body| {
+        (body.site(model), body.lines())
+    });
+    if bodies.is_empty() {
+        return Ok(result);
+    }
     let mut registry = registry(model, functions, branches);
     let constants = additional
         .constants
@@ -733,133 +868,75 @@ pub(super) fn share(
         .values()
         .map(|artifact| {
             (
-                format!(
-                    "{}_frame_t",
-                    artifact.desc_name.strip_suffix("_desc").unwrap()
-                ),
+                format!("{}_frame_t", artifact.body_name()),
                 artifact.frame_type.clone(),
             )
         })
         .collect::<HashMap<_, _>>();
-    let spawn_names = model
-        .spawn_list()
-        .into_iter()
-        .map(|(name, _)| name)
-        .collect::<BTreeSet<_>>();
+    let operands = Operands::new(registry, constants);
     let mut scalars = ScalarOperands::default();
     let mut groups = Vec::<Vec<Candidate>>::new();
     let mut by_key = HashMap::new();
-    for artifact in functions
-        .values()
-        .chain(processes.iter().flatten())
-        .chain(branches.values())
-    {
-        let name = artifact.desc_name.strip_suffix("_desc").unwrap();
-        // Assertion-action roots are spawned outside the model startup tables.
-        if matches!(artifact.owner, CoroutineId::Process(_)) && !spawn_names.contains(name) {
+    for body in bodies {
+        let (name, generated) = match body {
+            // Literal payloads may vary per instance in generate-scope bodies
+            // and in port links, whose selected actual bits are the instance's
+            // connection rather than its module's code.
+            Body::Coroutine(artifact) => (
+                artifact.body_name(),
+                generate_iteration(&artifact.display_name) || is_port_link(execution, artifact),
+            ),
+            Body::Evaluator(name, _) => (name, additional.generated_evaluators.contains(name)),
+            Body::Plain(index, _) => {
+                let function = &model.funcs[index];
+                (
+                    function.c_name.as_str(),
+                    generate_iteration(function.diagnostic_name()),
+                )
+            }
+        };
+        let Some(normalized) = normalize(body.source(), name, generated, &operands, &mut scalars)
+        else {
             continue;
-        }
-        // Literal payloads may vary per instance in generate-scope bodies
-        // and in port links, whose selected actual bits are the instance's
-        // connection rather than its module's code.
-        let generated =
-            generate_iteration(&artifact.display_name) || is_port_link(execution, artifact);
-        if let Some(normalized) = normalize(
-            &artifact.source,
-            name,
-            generated,
-            &registry,
-            &constants,
-            &mut scalars,
-        ) {
-            let shape = artifact.layout.render_typedef("llg_key_frame")?;
-            let shape = rewrite_identifiers(&shape, |name| frame_names.get(name).cloned());
-            let provenance = &artifact.location;
-            let key = format!(
-                "{:?}:{provenance}:{shape}:{}",
-                std::mem::discriminant(&artifact.owner),
-                normalized.source
-            );
-            push_candidate(
-                Candidate {
-                    owner: artifact.owner,
-                    name: name.to_owned(),
-                    normalized,
-                    key,
-                    plain: None,
-                    evaluator: false,
-                },
-                &mut groups,
-                &mut by_key,
-            );
-        }
+        };
+        let key = match body {
+            Body::Coroutine(artifact) => {
+                let shape = artifact.layout.render_typedef("llg_key_frame")?;
+                let shape = rewrite_identifiers(&shape, |name| frame_names.get(name));
+                format!(
+                    "{:?}:{}:{shape}:{}",
+                    std::mem::discriminant(&artifact.owner),
+                    artifact.location,
+                    normalized.source
+                )
+            }
+            Body::Evaluator(..) => format!("evaluator:{}", normalized.source),
+            Body::Plain(index, _) => {
+                let function = &model.funcs[index];
+                format!(
+                    "plain:{:?}:{:?}:{:?}:{}",
+                    function.origin, function.formals, function.ret, normalized.source
+                )
+            }
+        };
+        let (owner, plain, evaluator) = match body {
+            Body::Coroutine(artifact) => (artifact.owner, None, false),
+            Body::Evaluator(..) => (CoroutineId::Function(usize::MAX), None, true),
+            Body::Plain(index, _) => (CoroutineId::Function(index), Some(index), false),
+        };
+        push_candidate(
+            Candidate {
+                owner,
+                name: name.to_owned(),
+                normalized,
+                key,
+                plain,
+                evaluator,
+            },
+            &mut groups,
+            &mut by_key,
+        );
     }
-    // Module path and timing check conditions come from specify blocks,
-    // which are module items and never inside a generate scope (1800-2009
-    // A.1.4 `non_port_module_item`): their payloads are the module's parameters and stay structural.
-    // A redrive function may belong to a generate iteration or a port link.
-    for (name, source) in additional.evaluators.iter() {
-        if let Some(normalized) = normalize(
-            source,
-            name,
-            additional.generated_evaluators.contains(name),
-            &registry,
-            &constants,
-            &mut scalars,
-        ) {
-            let key = format!("evaluator:{}", normalized.source);
-            push_candidate(
-                Candidate {
-                    owner: CoroutineId::Function(usize::MAX),
-                    name: name.clone(),
-                    normalized,
-                    key,
-                    plain: None,
-                    evaluator: true,
-                },
-                &mut groups,
-                &mut by_key,
-            );
-        }
-    }
-    for (index, source) in plain.iter() {
-        let function = &model.funcs[*index];
-        if function.dpi.is_some() {
-            continue;
-        }
-        if let Some(normalized) = normalize(
-            source,
-            &function.c_name,
-            generate_iteration(function.diagnostic_name()),
-            &registry,
-            &constants,
-            &mut scalars,
-        ) {
-            let key = format!(
-                "plain:{:?}:{:?}:{:?}:{}",
-                function.origin, function.formals, function.ret, normalized.source
-            );
-            push_candidate(
-                Candidate {
-                    owner: CoroutineId::Function(*index),
-                    name: function.c_name.clone(),
-                    normalized,
-                    key,
-                    plain: Some(*index),
-                    evaluator: false,
-                },
-                &mut groups,
-                &mut by_key,
-            );
-        }
-    }
-    let mut result = Sharing {
-        declarations: String::new(),
-        bodies: String::new(),
-        prototypes: String::new(),
-        spawns: SharedSpawns::default(),
-        evaluators: HashMap::new(),
-    };
     let mut sequence = 0;
     for group in groups
         .into_iter()
@@ -870,7 +947,7 @@ pub(super) fn share(
         let record_type = format!("llg_body_record_{sequence}_t");
         sequence += 1;
         let mut varying = Vec::new();
-        let mut replacements = HashMap::new();
+        let mut replacements = vec![None; first.normalized.operands.len()];
         for (slot, operand) in first.normalized.operands.iter().enumerate() {
             if group
                 .iter()
@@ -885,7 +962,7 @@ pub(super) fn share(
                 } else {
                     operand.value.to_string()
                 };
-                replacements.insert(format!("v{slot}"), expression);
+                replacements[slot] = Some(expression);
             } else {
                 varying.push(slot);
             }
@@ -896,11 +973,10 @@ pub(super) fn share(
                 .strip_prefix("llg_body_operand_")?
                 .parse::<usize>()
                 .ok()?;
-            let field = format!("v{slot}");
-            Some(replacements.get(&field).cloned().unwrap_or_else(|| {
+            Some(replacements[slot].clone().unwrap_or_else(|| {
                 first.normalized.operands[slot]
                     .access()
-                    .replace('@', &field)
+                    .replace('@', &format!("v{slot}"))
             }))
         });
         result.declarations.push_str("typedef struct {\n");
@@ -928,7 +1004,7 @@ pub(super) fn share(
             let frame_name = format!("llg_body_frame_{}_t", sequence - 1);
             let mut typedef = artifact.layout.render_typedef(&frame_name)?;
             // Embedded callee types have already been canonicalized in the body.
-            typedef = rewrite_identifiers(&typedef, |name| frame_names.get(name).cloned());
+            typedef = rewrite_identifiers(&typedef, |name| frame_names.get(name));
             typedef = typedef.replacen(
                 "    llg_co_frame_t co;\n",
                 "    llg_co_frame_t co;\n    const void* _llg_instance;\n",
@@ -1101,7 +1177,7 @@ mod tests {
             )
         })
         .collect();
-        let registry = HashMap::new();
+        let named = Operands::new(HashMap::new(), constants);
         let mut scalars = ScalarOperands::default();
         let mut groups = Vec::new();
         let mut by_key = HashMap::new();
@@ -1116,11 +1192,9 @@ mod tests {
         {
             let name = format!("p_{index}");
             let source = format!("static void {name}(void) {{ sv4_add(constant_a, {second}); }}");
-            let ordinary =
-                normalize(&source, &name, false, &registry, &constants, &mut scalars).unwrap();
+            let ordinary = normalize(&source, &name, false, &named, &mut scalars).unwrap();
             assert!(ordinary.operands.is_empty());
-            let normalized =
-                normalize(&source, &name, true, &registry, &constants, &mut scalars).unwrap();
+            let normalized = normalize(&source, &name, true, &named, &mut scalars).unwrap();
             assert_eq!(normalized.operands.len(), 2);
             let key = normalized.source.clone();
             push_candidate(
@@ -1191,13 +1265,12 @@ mod tests {
 
     #[test]
     fn scalar_operands_share_kinds_and_literal_values() {
-        let registry = HashMap::new();
-        let constants = HashMap::new();
+        let named = Operands::new(HashMap::new(), HashMap::new());
         let mut scalars = ScalarOperands::default();
         let normalized = ["p_0", "p_1"].map(|name| {
             let source =
                 format!("static void {name}(void) {{ f(7ULL, \"text\"); g(7ULL, 9ULL); }}");
-            normalize(&source, name, true, &registry, &constants, &mut scalars).unwrap()
+            normalize(&source, name, true, &named, &mut scalars).unwrap()
         });
         let [first, second] = &normalized;
         assert_eq!(first.source, second.source);
@@ -1234,8 +1307,7 @@ mod tests {
 
     #[test]
     fn statement_counters_share_one_base_per_body() {
-        let registry = HashMap::new();
-        let constants = HashMap::new();
+        let named = Operands::new(HashMap::new(), HashMap::new());
         let mut scalars = ScalarOperands::default();
         let body = |name: &str, entities: [u32; 3]| {
             format!(
@@ -1244,15 +1316,7 @@ mod tests {
             )
         };
         let mut normalize_body = |name: &str, entities| {
-            normalize(
-                &body(name, entities),
-                name,
-                false,
-                &registry,
-                &constants,
-                &mut scalars,
-            )
-            .unwrap()
+            normalize(&body(name, entities), name, false, &named, &mut scalars).unwrap()
         };
         // Bodies of two instances: the same statements at a different base.
         let first = normalize_body("p_0", [12, 10, 13]);

@@ -26,7 +26,7 @@ impl OriginId {
 
 /// Physical source identity, or a truthful synthetic identity when the
 /// frontend did not provide a source location.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Origin {
     Source {
         /// Shared with the owned DB node; many origins name the same file.
@@ -45,7 +45,7 @@ pub enum Origin {
 }
 
 /// Logical file and line that a `` `line`` directive assigns to a source.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct LogicalLine {
     pub path: String,
     pub line: u64,

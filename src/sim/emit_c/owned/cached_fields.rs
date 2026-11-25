@@ -23,7 +23,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::super::names::{identifier_spans, FirstBytes};
+use super::super::names::{identifier_spans, NameFilter};
 
 /// A field is cached only when it is read more often than it is reloaded,
 /// scaled by this factor: every reload costs one load per suspension point
@@ -204,11 +204,11 @@ struct Usage {
 /// a field bare; its initialization is a deferred declaration marker, so every
 /// occurrence counted here is a use.
 fn scan_uses<'n>(code: &str, names: &HashSet<&'n str>) -> HashMap<&'n str, Usage> {
-    let first = names.iter().copied().collect::<FirstBytes>();
+    let filter = names.iter().copied().collect::<NameFilter>();
     let mut uses: HashMap<&'n str, Usage> = HashMap::new();
     for span in identifier_spans(code) {
         let identifier = &code[span.clone()];
-        if !first.may_hold(identifier) {
+        if !filter.may_hold(identifier) {
             continue;
         }
         let Some(&name) = names.get(identifier) else {

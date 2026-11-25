@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::sim::execution::CallMechanism;
 
-use super::names::FirstBytes;
+use super::names::NameFilter;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FrameStorage {
@@ -109,7 +109,7 @@ pub(super) struct FrameLayout {
     current: usize,
     /// The declared fields by name.
     fields: HashMap<String, FieldEntry>,
-    field_first_bytes: FirstBytes,
+    field_filter: NameFilter,
     /// The paths of the call slots.
     call_paths: BTreeSet<String>,
     calls: Vec<CallSlot>,
@@ -127,7 +127,7 @@ impl FrameLayout {
             blocks: vec![Block::default()],
             current: 0,
             fields: HashMap::new(),
-            field_first_bytes: FirstBytes::default(),
+            field_filter: NameFilter::default(),
             call_paths: BTreeSet::new(),
             calls: Vec::new(),
             paths_finalized: false,
@@ -283,7 +283,7 @@ impl FrameLayout {
         let (size, align) = lp64_layout(ty, self.value_backend)?;
         // The final path depends on whether sibling blocks retain any frame
         // storage. Defer constructing it until the whole block tree is known.
-        self.field_first_bytes.insert(name);
+        self.field_filter.insert(name);
         let fields = &mut self.blocks[self.current].fields;
         self.fields.insert(
             name.to_owned(),
@@ -311,7 +311,7 @@ impl FrameLayout {
     }
 
     fn field_entry(&self, name: &str) -> Option<&FieldEntry> {
-        self.field_first_bytes
+        self.field_filter
             .may_hold(name)
             .then(|| self.fields.get(name))
             .flatten()

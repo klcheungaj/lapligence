@@ -8,7 +8,7 @@
 use super::constants::{c_string_literal, emit_const, periodic_constant, round_shortreal};
 use super::context::RCtx;
 use super::frame_layout::{declaration, FrameLayout, FrameStorage};
-use super::names::{identifier_spans, identifier_spans_in_comments, FirstBytes};
+use super::names::{identifier_spans, identifier_spans_in_comments, NameFilter};
 use crate::sim::execution::{CallMechanism, CoroutineId, ExecutionAnalysis, SuspensionOperation};
 use crate::sim::ir::*;
 use std::borrow::Cow;
@@ -1624,10 +1624,10 @@ fn resolve_native_uses(code: &str) -> String {
 fn identifier_counts<'n>(code: &str, names: &HashSet<&'n str>) -> HashMap<&'n str, usize> {
     let mut counts = HashMap::new();
     if !names.is_empty() {
-        let first = names.iter().copied().collect::<FirstBytes>();
+        let filter = names.iter().copied().collect::<NameFilter>();
         for span in identifier_spans_in_comments(code) {
             let identifier = &code[span];
-            if !first.may_hold(identifier) {
+            if !filter.may_hold(identifier) {
                 continue;
             }
             if let Some(name) = names.get(identifier) {

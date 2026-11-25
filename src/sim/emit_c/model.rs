@@ -6,7 +6,7 @@ use super::constants::{
 use super::context::RCtx;
 use super::expressions::{coerce_two_state, packed_default};
 use super::names::{
-    bound_identifiers, identifiers_anywhere, rewrite_identifiers, BoundedIdentifiers, FirstBytes,
+    bound_identifiers, identifiers_anywhere, rewrite_identifiers, BoundedIdentifiers, NameFilter,
 };
 use super::statements::{render_stmt_impl as render_stmt, wait_any_text_in_region};
 use super::EmitError;
@@ -248,6 +248,13 @@ struct CoroutineArtifact {
 }
 
 impl CoroutineArtifact {
+    /// The name of the body's C function.
+    fn body_name(&self) -> &str {
+        self.desc_name
+            .strip_suffix("_desc")
+            .unwrap_or(&self.desc_name)
+    }
+
     fn host_flags(&self) -> &'static str {
         match (self.blockable, self.procedural) {
             (true, true) => "LLG_DESC_BLOCKABLE | LLG_DESC_PROCEDURAL",
@@ -1100,6 +1107,7 @@ fn share_frame_types(
         .filter(|(original, group)| **original != names[**group])
         .map(|(original, group)| (original.clone(), names[*group].clone()))
         .collect::<HashMap<_, _>>();
+    let filter = renamed.keys().map(String::as_str).collect::<NameFilter>();
     for (artifact, group) in ordered.into_iter().zip(member_groups) {
         if artifact.root {
             frame_types[group].root = true;
@@ -1109,7 +1117,10 @@ fn share_frame_types(
         artifact.frame_type = names[group].clone();
         if !renamed.is_empty() {
             artifact.source = rewrite_identifiers(&artifact.source, |identifier| {
-                renamed.get(identifier).cloned()
+                filter
+                    .may_hold(identifier)
+                    .then(|| renamed.get(identifier))
+                    .flatten()
             });
         }
     }
@@ -1881,9 +1892,9 @@ fn referenced_descriptor_tables<'a>(rendered: &str, tables: &'a [(String, String
         identifiers_anywhere(declaration).filter(|name| name.starts_with(prefix.as_str()))
     };
     let declared = tables.iter().flat_map(names).collect::<HashSet<_>>();
-    let first = declared.iter().copied().collect::<FirstBytes>();
+    let filter = declared.iter().copied().collect::<NameFilter>();
     let used = identifiers_anywhere(rendered)
-        .filter(|name| first.may_hold(name) && declared.contains(name))
+        .filter(|name| filter.may_hold(name) && declared.contains(name))
         .collect::<HashSet<_>>();
     tables
         .iter()
