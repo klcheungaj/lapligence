@@ -446,15 +446,6 @@ impl Backend {
         hover
     }
 
-    /// Shadow→real URI mapping for a batch of memoized or fresh locations.
-    pub(super) fn map_locations(&self, locations: &[Location]) -> Vec<Location> {
-        let state = self.lock_state();
-        locations
-            .iter()
-            .map(|value| Self::map_location(&state, value.clone()))
-            .collect()
-    }
-
     pub(super) fn lock_state(&self) -> std::sync::MutexGuard<'_, BackendState> {
         self.state.lock().unwrap_or_else(|error| error.into_inner())
     }

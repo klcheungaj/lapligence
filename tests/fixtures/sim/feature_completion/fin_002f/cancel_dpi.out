@@ -1,0 +1,771 @@
+### +act=none +ctx=task
+[1] sv_task take none
+[1] sv_task after take
+c_task: sv_task returned 0 disabled=0
+task o=8
+[1] victim ends
+[30] status=FINISHED seen=1 out=0
+[30] final seen=1
+last final
+=== 0
+### +act=none +ctx=nested
+[1] sv_task take none
+[1] sv_task after take
+c_task: sv_task returned 0 disabled=0
+c_task: sv_task returned 0 disabled=0
+c_task: sv_task returned 0 disabled=0
+task o=10
+[1] victim ends
+[30] status=FINISHED seen=1 out=0
+[30] final seen=1
+last final
+=== 0
+### +act=none +ctx=fork
+[1] sv_task take none
+[1] sv_task after take
+c_task: sv_task returned 0 disabled=0
+branch o=8
+[3] sibling
+[3] victim ends
+[30] status=FINISHED seen=1 out=0
+[30] final seen=1
+last final
+=== 0
+### +act=none +ctx=func
+[1] sv_func take none
+[1] sv_func after take
+c_func: sv_func returned 5 disabled=0
+func o=5
+[1] victim ends
+[30] status=FINISHED seen=1 out=0
+[30] final seen=1
+last final
+=== 0
+### +act=none +ctx=funcn
+[1] sv_func take none
+[1] sv_func after take
+c_func: sv_func returned 5 disabled=0
+c_func: sv_func returned 6 disabled=0
+c_func: sv_func returned 7 disabled=0
+func o=7
+[1] victim ends
+[30] status=FINISHED seen=1 out=0
+[30] final seen=1
+last final
+=== 0
+### +act=none +ctx=method
+[1] sv_task take none
+[1] sv_task after take
+c_task: sv_task returned 0 disabled=0
+c_task: sv_task returned 0 disabled=0
+method o=9
+[1] victim ends
+[30] status=FINISHED seen=1 out=0
+[30] final seen=1
+last final
+=== 0
+### +act=none +ctx=pre
+[1] sv_func take none
+[1] sv_func after take
+c_func: sv_func returned 5 disabled=0
+pre r=5
+rand=1 a=3
+[1] victim ends
+[30] status=FINISHED seen=1 out=0
+[30] final seen=1
+last final
+=== 0
+### +act=none +ctx=post
+[1] sv_func take none
+[1] sv_func after take
+c_func: sv_func returned 5 disabled=0
+post r=5
+rand=1 a=3
+[1] victim ends
+[30] status=FINISHED seen=1 out=0
+[30] final seen=1
+last final
+=== 0
+### +act=none +ctx=sample
+[1] sv_func take none
+[1] sv_func after take
+c_func: sv_func returned 5 disabled=0
+sampled
+[1] victim ends
+[30] status=FINISHED seen=1 out=0
+[30] final seen=1
+last final
+=== 0
+### +act=none +ctx=expr
+[1] sv_func take none
+[1] sv_func after take
+c_func: sv_func returned 5 disabled=0
+[1] sv_func take none
+[1] sv_func after take
+c_func: sv_func returned 5 disabled=0
+out=11
+[1] victim ends
+[30] status=FINISHED seen=2 out=11
+[30] final seen=2
+last final
+=== 0
+### +act=none +ctx=nba
+[5] sv_func take none
+[5] sv_func after take
+c_func: sv_func returned 5 disabled=0
+out=5
+[15] victim ends
+[30] status=FINISHED seen=1 out=5
+[30] final seen=1
+last final
+=== 0
+### +act=disable +ctx=task
+[1] sv_task take disable
+c_task: sv_task returned 1 disabled=1
+[30] status=FINISHED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=disable +ctx=nested
+[1] sv_task take disable
+c_task: sv_task returned 1 disabled=1
+c_task: sv_task returned 1 disabled=1
+c_task: sv_task returned 1 disabled=1
+[30] status=FINISHED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=disable +ctx=fork
+[1] sv_task take disable
+c_task: sv_task returned 1 disabled=1
+[30] status=FINISHED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=disable +ctx=func
+[1] sv_func take disable
+c_func: sv_func returned 0 disabled=1
+[30] status=FINISHED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=disable +ctx=funcn
+[1] sv_func take disable
+c_func: sv_func returned 0 disabled=1
+c_func: sv_func returned 0 disabled=1
+c_func: sv_func returned 0 disabled=1
+[30] status=FINISHED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=disable +ctx=method
+[1] sv_task take disable
+c_task: sv_task returned 1 disabled=1
+c_task: sv_task returned 1 disabled=1
+[30] status=FINISHED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=disable +ctx=pre
+[1] sv_func take disable
+c_func: sv_func returned 0 disabled=1
+[30] status=FINISHED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=disable +ctx=post
+[1] sv_func take disable
+c_func: sv_func returned 0 disabled=1
+[30] status=FINISHED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=disable +ctx=sample
+[1] sv_func take disable
+c_func: sv_func returned 0 disabled=1
+[30] status=FINISHED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=disable +ctx=expr
+[1] sv_func take disable
+c_func: sv_func returned 0 disabled=1
+[30] status=FINISHED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=disable +ctx=nba
+[5] sv_func take disable
+c_func: sv_func returned 0 disabled=1
+[30] status=FINISHED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=kill +ctx=task
+[1] sv_task take kill
+c_task: sv_task returned 1 disabled=1
+[30] status=KILLED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=kill +ctx=nested
+[1] sv_task take kill
+c_task: sv_task returned 1 disabled=1
+c_task: sv_task returned 1 disabled=1
+c_task: sv_task returned 1 disabled=1
+[30] status=KILLED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=kill +ctx=fork
+[1] sv_task take kill
+c_task: sv_task returned 1 disabled=1
+[3] sibling
+[3] victim ends
+[30] status=FINISHED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=kill +ctx=func
+[1] sv_func take kill
+c_func: sv_func returned 0 disabled=0
+[30] status=KILLED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=kill +ctx=funcn
+[1] sv_func take kill
+c_func: sv_func returned 0 disabled=0
+c_func: sv_func returned 0 disabled=0
+c_func: sv_func returned 0 disabled=0
+[30] status=KILLED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=kill +ctx=method
+[1] sv_task take kill
+c_task: sv_task returned 1 disabled=1
+c_task: sv_task returned 1 disabled=1
+[30] status=KILLED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=kill +ctx=pre
+[1] sv_func take kill
+c_func: sv_func returned 0 disabled=0
+[30] status=KILLED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=kill +ctx=post
+[1] sv_func take kill
+c_func: sv_func returned 0 disabled=0
+[30] status=KILLED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=kill +ctx=sample
+[1] sv_func take kill
+c_func: sv_func returned 0 disabled=0
+[30] status=KILLED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=kill +ctx=expr
+[1] sv_func take kill
+c_func: sv_func returned 0 disabled=0
+[30] status=KILLED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=kill +ctx=nba
+[5] sv_func take kill
+c_func: sv_func returned 0 disabled=0
+[30] status=KILLED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=killv +ctx=task
+[1] sv_task take killv
+c_task: sv_task returned 1 disabled=1
+[30] status=KILLED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=killv +ctx=nested
+[1] sv_task take killv
+c_task: sv_task returned 1 disabled=1
+c_task: sv_task returned 1 disabled=1
+c_task: sv_task returned 1 disabled=1
+[30] status=KILLED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=killv +ctx=fork
+[1] sv_task take killv
+c_task: sv_task returned 1 disabled=1
+[30] status=KILLED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=killv +ctx=func
+[1] sv_func take killv
+c_func: sv_func returned 0 disabled=0
+[30] status=KILLED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=killv +ctx=funcn
+[1] sv_func take killv
+c_func: sv_func returned 0 disabled=0
+c_func: sv_func returned 0 disabled=0
+c_func: sv_func returned 0 disabled=0
+[30] status=KILLED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=killv +ctx=method
+[1] sv_task take killv
+c_task: sv_task returned 1 disabled=1
+c_task: sv_task returned 1 disabled=1
+[30] status=KILLED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=killv +ctx=pre
+[1] sv_func take killv
+c_func: sv_func returned 0 disabled=0
+[30] status=KILLED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=killv +ctx=post
+[1] sv_func take killv
+c_func: sv_func returned 0 disabled=0
+[30] status=KILLED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=killv +ctx=sample
+[1] sv_func take killv
+c_func: sv_func returned 0 disabled=0
+[30] status=KILLED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=killv +ctx=expr
+[1] sv_func take killv
+c_func: sv_func returned 0 disabled=0
+[30] status=KILLED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=killv +ctx=nba
+[5] sv_func take killv
+c_func: sv_func returned 0 disabled=0
+[30] status=KILLED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=finish +ctx=task
+[1] sv_task take finish
+[1] final seen=0
+last final
+=== 0
+### +act=finish +ctx=nested
+[1] sv_task take finish
+[1] final seen=0
+last final
+=== 0
+### +act=finish +ctx=fork
+[1] sv_task take finish
+[1] final seen=0
+last final
+=== 0
+### +act=finish +ctx=func
+[1] sv_func take finish
+c_func: sv_func returned 0 disabled=0
+[1] final seen=0
+last final
+=== 0
+### +act=finish +ctx=funcn
+[1] sv_func take finish
+c_func: sv_func returned 0 disabled=0
+c_func: sv_func returned 0 disabled=0
+c_func: sv_func returned 0 disabled=0
+[1] final seen=0
+last final
+=== 0
+### +act=finish +ctx=method
+[1] sv_task take finish
+[1] final seen=0
+last final
+=== 0
+### +act=finish +ctx=pre
+[1] sv_func take finish
+c_func: sv_func returned 0 disabled=0
+[1] final seen=0
+last final
+=== 0
+### +act=finish +ctx=post
+[1] sv_func take finish
+c_func: sv_func returned 0 disabled=0
+[1] final seen=0
+last final
+=== 0
+### +act=finish +ctx=sample
+[1] sv_func take finish
+c_func: sv_func returned 0 disabled=0
+[1] final seen=0
+last final
+=== 0
+### +act=finish +ctx=expr
+[1] sv_func take finish
+c_func: sv_func returned 0 disabled=0
+[1] final seen=0
+last final
+=== 0
+### +act=finish +ctx=nba
+[5] sv_func take finish
+c_func: sv_func returned 0 disabled=0
+[5] final seen=0
+last final
+=== 0
+### +act=fatal +ctx=task
+[1] sv_task take fatal
+[1] final seen=0
+last final
+=== 1 SIM-006
+### +act=fatal +ctx=nested
+[1] sv_task take fatal
+[1] final seen=0
+last final
+=== 1 SIM-006
+### +act=fatal +ctx=fork
+[1] sv_task take fatal
+[1] final seen=0
+last final
+=== 1 SIM-006
+### +act=fatal +ctx=func
+[1] sv_func take fatal
+c_func: sv_func returned 0 disabled=0
+[1] final seen=0
+last final
+=== 1 SIM-006
+### +act=fatal +ctx=funcn
+[1] sv_func take fatal
+c_func: sv_func returned 0 disabled=0
+c_func: sv_func returned 0 disabled=0
+c_func: sv_func returned 0 disabled=0
+[1] final seen=0
+last final
+=== 1 SIM-006
+### +act=fatal +ctx=method
+[1] sv_task take fatal
+[1] final seen=0
+last final
+=== 1 SIM-006
+### +act=fatal +ctx=pre
+[1] sv_func take fatal
+c_func: sv_func returned 0 disabled=0
+[1] final seen=0
+last final
+=== 1 SIM-006
+### +act=fatal +ctx=post
+[1] sv_func take fatal
+c_func: sv_func returned 0 disabled=0
+[1] final seen=0
+last final
+=== 1 SIM-006
+### +act=fatal +ctx=sample
+[1] sv_func take fatal
+c_func: sv_func returned 0 disabled=0
+[1] final seen=0
+last final
+=== 1 SIM-006
+### +act=fatal +ctx=expr
+[1] sv_func take fatal
+c_func: sv_func returned 0 disabled=0
+[1] final seen=0
+last final
+=== 1 SIM-006
+### +act=fatal +ctx=nba
+[5] sv_func take fatal
+c_func: sv_func returned 0 disabled=0
+[5] final seen=0
+last final
+=== 1 SIM-006
+### +act=wait +ctx=task
+[1] sv_task take wait
+[4] sv_task after take
+c_task: sv_task returned 0 disabled=0
+task o=9
+[4] victim ends
+[30] status=FINISHED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=wait +ctx=nested
+[1] sv_task take wait
+[4] sv_task after take
+c_task: sv_task returned 0 disabled=0
+c_task: sv_task returned 0 disabled=0
+c_task: sv_task returned 0 disabled=0
+task o=11
+[4] victim ends
+[30] status=FINISHED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=wait +ctx=fork
+[1] sv_task take wait
+[3] sibling
+[4] sv_task after take
+c_task: sv_task returned 0 disabled=0
+branch o=9
+[4] victim ends
+[30] status=FINISHED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=wait +ctx=method
+[1] sv_task take wait
+[4] sv_task after take
+c_task: sv_task returned 0 disabled=0
+c_task: sv_task returned 0 disabled=0
+method o=10
+[4] victim ends
+[30] status=FINISHED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=waitkill +ctx=task
+[1] sv_task take waitkill
+c_task: sv_task returned 1 disabled=1
+[30] status=KILLED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=waitkill +ctx=nested
+[1] sv_task take waitkill
+c_task: sv_task returned 1 disabled=1
+c_task: sv_task returned 1 disabled=1
+c_task: sv_task returned 1 disabled=1
+[30] status=KILLED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=waitkill +ctx=fork
+[1] sv_task take waitkill
+[3] sibling
+c_task: sv_task returned 1 disabled=1
+[30] status=KILLED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=waitkill +ctx=method
+[1] sv_task take waitkill
+c_task: sv_task returned 1 disabled=1
+c_task: sv_task returned 1 disabled=1
+[30] status=KILLED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=dfork +ctx=task
+[1] sv_task take dfork
+[1] sv_task after take
+c_task: sv_task returned 0 disabled=0
+task o=8
+[1] victim ends
+[30] status=FINISHED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=dfork +ctx=nested
+[1] sv_task take dfork
+[1] sv_task after take
+c_task: sv_task returned 0 disabled=0
+c_task: sv_task returned 0 disabled=0
+c_task: sv_task returned 0 disabled=0
+task o=10
+[1] victim ends
+[30] status=FINISHED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=dfork +ctx=fork
+[1] sv_task take dfork
+[1] sv_task after take
+c_task: sv_task returned 0 disabled=0
+branch o=8
+[3] sibling
+[3] victim ends
+[30] status=FINISHED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=dfork +ctx=method
+[1] sv_task take dfork
+[1] sv_task after take
+c_task: sv_task returned 0 disabled=0
+c_task: sv_task returned 0 disabled=0
+method o=9
+[1] victim ends
+[30] status=FINISHED seen=0 out=0
+[30] final seen=0
+last final
+=== 0
+### +act=none +ctx=final
+[1] victim ends
+[30] status=FINISHED seen=0 out=0
+[30] sv_func take none
+[30] sv_func after take
+c_func: sv_func returned 5 disabled=0
+c_func: sv_func returned 6 disabled=0
+final r=6
+[30] final seen=1
+last final
+=== 0
+### +act=finish +ctx=final
+[1] victim ends
+[30] status=FINISHED seen=0 out=0
+[30] sv_func take finish
+c_func: sv_func returned 0 disabled=0
+c_func: sv_func returned 0 disabled=0
+=== 0
+### +act=fatal +ctx=final
+[1] victim ends
+[30] status=FINISHED seen=0 out=0
+[30] sv_func take fatal
+c_func: sv_func returned 0 disabled=0
+c_func: sv_func returned 0 disabled=0
+=== 1 SIM-006
+### +act=kill +ctx=final
+[1] victim ends
+[30] status=FINISHED seen=0 out=0
+[30] sv_func take kill
+c_func: sv_func returned 0 disabled=0
+c_func: sv_func returned 0 disabled=0
+last final
+=== 0
+### +act=stop +ctx=task
+[1] sv_task take stop
+[1] sv_task after take
+c_task: sv_task returned 0 disabled=0
+task o=8
+[1] victim ends
+[30] status=FINISHED seen=1 out=0
+[30] final seen=1
+last final
+=== 0
+### +act=stop +ctx=nested
+[1] sv_task take stop
+[1] sv_task after take
+c_task: sv_task returned 0 disabled=0
+c_task: sv_task returned 0 disabled=0
+c_task: sv_task returned 0 disabled=0
+task o=10
+[1] victim ends
+[30] status=FINISHED seen=1 out=0
+[30] final seen=1
+last final
+=== 0
+### +act=stop +ctx=fork
+[1] sv_task take stop
+[1] sv_task after take
+c_task: sv_task returned 0 disabled=0
+branch o=8
+[3] sibling
+[3] victim ends
+[30] status=FINISHED seen=1 out=0
+[30] final seen=1
+last final
+=== 0
+### +act=stop +ctx=func
+[1] sv_func take stop
+[1] sv_func after take
+c_func: sv_func returned 5 disabled=0
+func o=5
+[1] victim ends
+[30] status=FINISHED seen=1 out=0
+[30] final seen=1
+last final
+=== 0
+### +act=stop +ctx=funcn
+[1] sv_func take stop
+[1] sv_func after take
+c_func: sv_func returned 5 disabled=0
+c_func: sv_func returned 6 disabled=0
+c_func: sv_func returned 7 disabled=0
+func o=7
+[1] victim ends
+[30] status=FINISHED seen=1 out=0
+[30] final seen=1
+last final
+=== 0
+### +act=stop +ctx=method
+[1] sv_task take stop
+[1] sv_task after take
+c_task: sv_task returned 0 disabled=0
+c_task: sv_task returned 0 disabled=0
+method o=9
+[1] victim ends
+[30] status=FINISHED seen=1 out=0
+[30] final seen=1
+last final
+=== 0
+### +act=stop +ctx=pre
+[1] sv_func take stop
+[1] sv_func after take
+c_func: sv_func returned 5 disabled=0
+pre r=5
+rand=1 a=3
+[1] victim ends
+[30] status=FINISHED seen=1 out=0
+[30] final seen=1
+last final
+=== 0
+### +act=stop +ctx=post
+[1] sv_func take stop
+[1] sv_func after take
+c_func: sv_func returned 5 disabled=0
+post r=5
+rand=1 a=3
+[1] victim ends
+[30] status=FINISHED seen=1 out=0
+[30] final seen=1
+last final
+=== 0
+### +act=stop +ctx=sample
+[1] sv_func take stop
+[1] sv_func after take
+c_func: sv_func returned 5 disabled=0
+sampled
+[1] victim ends
+[30] status=FINISHED seen=1 out=0
+[30] final seen=1
+last final
+=== 0
+### +act=stop +ctx=expr
+[1] sv_func take stop
+[1] sv_func after take
+c_func: sv_func returned 5 disabled=0
+[1] sv_func take none
+[1] sv_func after take
+c_func: sv_func returned 5 disabled=0
+out=11
+[1] victim ends
+[30] status=FINISHED seen=2 out=11
+[30] final seen=2
+last final
+=== 0
+### +act=stop +ctx=nba
+[5] sv_func take stop
+[5] sv_func after take
+c_func: sv_func returned 5 disabled=0
+out=5
+[15] victim ends
+[30] status=FINISHED seen=1 out=5
+[30] final seen=1
+last final
+=== 0

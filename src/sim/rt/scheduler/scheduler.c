@@ -404,29 +404,33 @@ void llg_rt_run_finals(void) {
     llg_in_finals = 1;
     end_process_waits();
     for (int32_t i = 0; i < llg_n_finals; i++) {
-        llg_proc_t process;
-        memset(&process, 0, sizeof(process));
-        process.name = llg_finals[i].name;
-        process.handle = process_handle_new(&process);
-        process.status = LLG_PROCESS_RUNNING;
-        process.budget_time = g.now;
-        process.region = LLG_REGION_POSTPONED;
-        process.chain.owner = &process;
-        register_proc(&process);
-        g.current = &process;
+        llg_proc_t* process = llg_checked_calloc(1, sizeof(*process), "final procedure");
+        process->name = llg_finals[i].name;
+        process->handle = process_handle_new(process);
+        process->status = LLG_PROCESS_RUNNING;
+        process->budget_time = g.now;
+        process->region = LLG_REGION_POSTPONED;
+        process->chain.owner = process;
+        register_proc(process);
+        g.current = process;
         llg_finals[i].fn();
         // A final procedure is never suspended and no Observed region
         // follows it; its deferred reports execute when it returns (llg
         // policy S36-D4).
         run_deferred_assertions_now();
         g.current = NULL;
-        if (process.wait.kind != W_NONE) {
-            llg_msg(LLG_MSG_INTERNAL, NULL, "final block `%s` suspended on a wait (timing controls are rejected by codegen)", process.name ? process.name : "final");
+        if (process->wait.kind != W_NONE) {
+            llg_msg(LLG_MSG_INTERNAL, NULL, "final block `%s` suspended on a wait (timing controls are rejected by codegen)", process->name ? process->name : "final");
             abort();
         }
-        proc_complete(&process);
-        unregister_proc(&process);
-        llg_co_arena_release(&process.chain.arena);
+        if (process->killed) {
+            // It ended its own process (9.7); the kill retired the record.
+            reap_retired_procs();
+        } else {
+            proc_complete(process);
+            unregister_proc(process);
+            free_proc_record(process);
+        }
         // Finals permit function statements only. Codegen rejects NBAs,
         // deferred output tasks, waits, and forks, so no scheduler region is
         // run between these sequential zero-time calls.

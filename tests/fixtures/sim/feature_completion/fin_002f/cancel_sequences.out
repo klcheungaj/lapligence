@@ -1,0 +1,216 @@
+### +act=none +ctx=expect
+[35] waiter saw s_ab
+[55] take none expect
+[55] expect passed
+[55] waiter done
+[100] end hits=1 wait=FINISHED
+[100] final
+=== 0
+### +act=none +ctx=outside
+[35] waiter saw s_ab
+[55] expect passed
+[55] waiter done
+[100] end hits=0 wait=FINISHED
+[100] final
+=== 0
+### +act=none +ctx=outside2
+[35] waiter saw s_ab
+[55] expect passed
+[55] waiter done
+[120] end hits=0 wait=FINISHED
+[120] final
+=== 0
+### +act=none +ctx=fail
+[35] waiter saw s_ab
+[55] expect passed
+[55] waiter done
+[100] end hits=0 wait=FINISHED
+[100] final
+=== 0
+### +act=none +ctx=cover
+[35] waiter saw s_ab
+[35] take none cover
+[45] take none cover
+[55] expect passed
+[55] waiter done
+[55] take none cover
+[65] take none cover
+[75] take none cover
+[85] take none cover
+[95] take none cover
+[100] end hits=7 wait=FINISHED
+[100] final
+=== 0
+### +act=kill +ctx=expect
+[35] waiter saw s_ab
+[55] take kill expect
+[100] end hits=1 wait=KILLED
+[100] final
+=== 0
+### +act=kill +ctx=outside
+[100] end hits=0 wait=KILLED
+[100] final
+=== 0
+### +act=kill +ctx=outside2
+[35] waiter saw s_ab
+[120] end hits=0 wait=KILLED
+[120] final
+=== 0
+### +act=kill +ctx=fail
+[35] waiter saw s_ab
+[55] expect passed
+[55] waiter done
+[100] end hits=0 wait=FINISHED
+[100] final
+=== 0
+### +act=kill +ctx=cover
+[35] waiter saw s_ab
+[35] take kill cover
+[45] take kill cover
+[55] take kill cover
+[65] take kill cover
+[75] take kill cover
+[85] take kill cover
+[95] take kill cover
+[100] end hits=7 wait=KILLED
+[100] final
+=== 0
+### +act=disable +ctx=expect
+[35] waiter saw s_ab
+[55] take disable expect
+[100] end hits=1 wait=FINISHED
+[100] final
+=== 0
+### +act=disable +ctx=outside
+[100] end hits=0 wait=FINISHED
+[100] final
+=== 0
+### +act=disable +ctx=outside2
+[35] waiter saw s_ab
+[120] end hits=0 wait=FINISHED
+[120] final
+=== 0
+### +act=disable +ctx=fail
+[35] waiter saw s_ab
+[55] expect passed
+[55] waiter done
+[100] end hits=0 wait=FINISHED
+[100] final
+=== 0
+### +act=disable +ctx=cover
+[35] waiter saw s_ab
+[35] take disable cover
+[45] take disable cover
+[55] take disable cover
+[65] take disable cover
+[75] take disable cover
+[85] take disable cover
+[95] take disable cover
+[100] end hits=7 wait=FINISHED
+[100] final
+=== 0
+### +act=finish +ctx=expect
+[35] waiter saw s_ab
+[55] take finish expect
+[55] final
+=== 0
+### +act=finish +ctx=outside
+[35] waiter saw s_ab
+[55] expect passed
+[55] waiter done
+[100] end hits=0 wait=FINISHED
+[100] final
+=== 0
+### +act=finish +ctx=outside2
+[35] waiter saw s_ab
+[55] expect passed
+[55] waiter done
+[120] end hits=0 wait=FINISHED
+[120] final
+=== 0
+### +act=finish +ctx=fail
+[35] waiter saw s_ab
+[55] expect passed
+[55] waiter done
+[100] end hits=0 wait=FINISHED
+[100] final
+=== 0
+### +act=finish +ctx=cover
+[35] waiter saw s_ab
+[35] take finish cover
+[35] final
+=== 0
+### +act=fatal +ctx=expect
+[35] waiter saw s_ab
+[55] take fatal expect
+[55] final
+=== 1 SIM-006
+### +act=fatal +ctx=outside
+[35] waiter saw s_ab
+[55] expect passed
+[55] waiter done
+[100] end hits=0 wait=FINISHED
+[100] final
+=== 0
+### +act=fatal +ctx=outside2
+[35] waiter saw s_ab
+[55] expect passed
+[55] waiter done
+[120] end hits=0 wait=FINISHED
+[120] final
+=== 0
+### +act=fatal +ctx=fail
+[35] waiter saw s_ab
+[55] expect passed
+[55] waiter done
+[100] end hits=0 wait=FINISHED
+[100] final
+=== 0
+### +act=fatal +ctx=cover
+[35] waiter saw s_ab
+[35] take fatal cover
+[35] final
+=== 1 SIM-006
+### +act=stop +ctx=expect
+[35] waiter saw s_ab
+[55] take stop expect
+[55] expect passed
+[55] waiter done
+[100] end hits=1 wait=FINISHED
+[100] final
+=== 0
+### +act=stop +ctx=outside
+[35] waiter saw s_ab
+[55] expect passed
+[55] waiter done
+[100] end hits=0 wait=FINISHED
+[100] final
+=== 0
+### +act=stop +ctx=outside2
+[35] waiter saw s_ab
+[55] expect passed
+[55] waiter done
+[120] end hits=0 wait=FINISHED
+[120] final
+=== 0
+### +act=stop +ctx=fail
+[35] waiter saw s_ab
+[55] expect passed
+[55] waiter done
+[100] end hits=0 wait=FINISHED
+[100] final
+=== 0
+### +act=stop +ctx=cover
+[35] waiter saw s_ab
+[35] take stop cover
+[45] take stop cover
+[55] expect passed
+[55] waiter done
+[55] take stop cover
+[65] take stop cover
+[75] take stop cover
+[85] take stop cover
+[95] take stop cover
+[100] end hits=7 wait=FINISHED
+[100] final
+=== 0

@@ -1,0 +1,178 @@
+### +do=finish +reason=force +stmt=force
+reason 3
+callback: finish done
+[2] final steps=0
+=== 0
+### +do=remove +reason=force +stmt=force
+reason 3
+removed 1
+callback: remove done
+after force
+statements go on steps=1
+waits go on
+[7] final steps=1
+=== 0
+### +do=finish +reason=release +stmt=release
+reason 4
+callback: finish done
+[2] final steps=0
+=== 0
+### +do=finish +reason=thread +stmt=fork
+reason 600
+callback: finish done
+reason 600
+callback: finish done
+[2] final steps=0
+=== 0
+### +do=finish +reason=error +stmt=error
+reason 13
+callback: finish done
+[2] final steps=0
+=== 0 SIM-005
+### +do=finish +reason=assertion +stmt=assert
+assertion 608
+assertion: finish done
+[2] final steps=0
+=== 0 SIM-007
+### +do=finish +reason=value +stmt=forkj
+after fork
+statements go on steps=1
+waits go on
+[8] final steps=3
+=== 0
+### +do=finish +reason=value +stmt=forkany
+after fork
+statements go on steps=1
+waits go on
+[8] final steps=3
+=== 0
+### +do=finish +reason=value +stmt=event
+reason 1
+callback: finish done
+[2] final steps=0
+=== 0
+### +do=finish +reason=value +stmt=null
+reason 1
+callback: finish done
+[2] final steps=0
+=== 0
+### +do=remove +reason=value +stmt=forkj
+after fork
+statements go on steps=1
+waits go on
+[8] final steps=3
+=== 0
+### +do=remove +reason=value +stmt=forkany
+after fork
+statements go on steps=1
+waits go on
+[8] final steps=3
+=== 0
+### +do=remove +reason=value +stmt=event
+reason 1
+removed 1
+callback: remove done
+after event
+statements go on steps=0
+waits go on
+[7] final steps=0
+=== 0
+### +do=remove +reason=value +stmt=null
+reason 1
+removed 1
+callback: remove done
+after null
+statements go on steps=0
+waits go on
+[7] final steps=0
+=== 0
+### +do=remove +reason=value +stmt=write
+reason 1
+removed 1
+callback: remove done
+after write
+statements go on steps=1
+waits go on
+[7] final steps=1
+=== 0
+### +do=remove +reason=value +stmt=func
+reason 1
+removed 1
+callback: remove done
+after func
+statements go on steps=5
+waits go on
+[7] final steps=5
+=== 0
+### +do=finish +reason=valueq +stmt=nba
+after nba
+statements go on steps=1
+reason 1
+callback: finish done
+[2] final steps=1
+=== 0
+### +do=finish +reason=size +stmt=dyn
+registration failed
+after dyn
+statements go on steps=1
+waits go on
+[7] final steps=1
+=== 0
+### +do=finish +reason=after +stmt=write
+after write
+statements go on steps=1
+reason 9
+callback: finish done
+[3] final steps=1
+=== 0
+### +do=finish +reason=after +stmt=nba
+after nba
+statements go on steps=1
+reason 9
+callback: finish done
+[3] final steps=101
+=== 0
+### +do=finish +reason=readwrite +stmt=write
+after write
+statements go on steps=1
+reason 6
+callback: finish done
+[3] final steps=1
+=== 0
+### +do=finish +reason=readwrite +stmt=nba
+after nba
+statements go on steps=1
+reason 6
+callback: finish done
+[3] final steps=101
+=== 0
+### +do=finish +reason=readonly +stmt=write
+after write
+statements go on steps=1
+reason 7
+callback: finish done
+[3] final steps=1
+=== 0
+### +do=finish +reason=readonly +stmt=nba
+after nba
+statements go on steps=1
+reason 7
+callback: finish done
+[3] final steps=101
+=== 0
+### +do=finish +reason=nba +stmt=write
+after write
+statements go on steps=1
+waits go on
+reason 30
+callback: finish done
+[5] final steps=1
+=== 0
+### +do=finish +reason=nba +stmt=nba
+after nba
+statements go on steps=1
+waits go on
+reason 30
+callback: finish done
+[5] final steps=101
+=== 0

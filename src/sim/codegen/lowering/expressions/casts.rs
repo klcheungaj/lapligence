@@ -322,10 +322,9 @@ impl<'a> Codegen<'a> {
                     ..
                 })
             );
-            if !source_is_null && !self.is_chandle_expr(path, *source) {
-                return Err(format!(
-                    "$cast class source is not a class handle in `{path}`"
-                ));
+            if !source_is_null && self.cast_source_class(*source).is_none() {
+                self.check_singular_cast_source(path, *source)?;
+                return self.lower_failing_cast(path, *source, failure_location);
             }
             let expected = self
                 .class_nodes
@@ -365,6 +364,7 @@ impl<'a> Codegen<'a> {
                         AggregateKind::PackedStruct | AggregateKind::PackedUnion
                     ) => {}
                 TypeShape::String => {
+                    self.check_singular_cast_source(path, *source)?;
                     return self.lower_string_cast(
                         path,
                         destination,
@@ -386,6 +386,7 @@ impl<'a> Codegen<'a> {
                 }
             }
         }
+        self.check_singular_cast_source(path, *source)?;
         let lhs = if self.cast_destination_has_lhs(destination) {
             Some(self.lower_lhs(path, destination)?)
         } else {
@@ -395,26 +396,14 @@ impl<'a> Codegen<'a> {
             Some(lhs) => self.dynamic_cast_lhs_shape(lhs)?,
             None => self.cast_value_shape(path, destination, target_descriptor.as_ref())?,
         };
-        let source_descriptor = self.query_descriptor(*source).cloned();
         let source_is_string =
             self.is_string_expr(path, *source) && !self.is_string_literal(*source);
-        if let Some(descriptor) = &source_descriptor {
-            let unsupported = matches!(
-                descriptor.shape,
-                TypeShape::FixedArray { .. }
-                    | TypeShape::Container { .. }
-                    | TypeShape::Opaque { .. }
-            ) || matches!(
-                &descriptor.shape,
-                TypeShape::Aggregate(layout)
-                    if !matches!(
-                        layout.kind,
-                        AggregateKind::PackedStruct | AggregateKind::PackedUnion
-                    )
-            );
-            if unsupported {
-                return Err(format!("$cast source must be a singular value in `{path}`"));
-            }
+        // A handle converts to no other kind of value.
+        if self
+            .query_descriptor(*source)
+            .is_some_and(|descriptor| matches!(descriptor.shape, TypeShape::Opaque { .. }))
+        {
+            return self.lower_failing_cast(path, *source, failure_location);
         }
         // A string converts to a packed value and never to a real one.
         if source_is_string && target_width == 0 {
@@ -961,12 +950,38 @@ impl<'a> Codegen<'a> {
         ))
     }
 
+    /// The one check `$cast` makes of the types themselves (SV 6.24.2); the
+    /// destination is checked where its kind is known.
+    fn check_singular_cast_source(&self, path: &str, source: NodeId) -> Result<(), String> {
+        let aggregate =
+            self.query_descriptor(source)
+                .is_some_and(|descriptor| match &descriptor.shape {
+                    TypeShape::FixedArray { .. } | TypeShape::Container { .. } => true,
+                    TypeShape::Aggregate(layout) => !matches!(
+                        layout.kind,
+                        AggregateKind::PackedStruct | AggregateKind::PackedUnion
+                    ),
+                    _ => false,
+                });
+        if aggregate {
+            return Err(format!("$cast source must be a singular value in `{path}`"));
+        }
+        Ok(())
+    }
+
+    /// The class a `$cast` source's object is an instance of, as declared.
+    /// Other handles (a chandle, a virtual interface, a process) have none: a
+    /// run-time check must not look at what they refer to.
+    fn cast_source_class(&self, source: NodeId) -> Option<NodeId> {
+        self.query_descriptor(source)
+            .filter(|descriptor| descriptor.info.kind == "class")
+            .and_then(|descriptor| self.db.class_for_type(descriptor.id))
+            .or_else(|| self.class_node_for_type_expr(source))
+    }
+
     /// Whether the static class of `source` is `target` or derives from it.
     fn cast_is_upcast(&self, source: NodeId, target: NodeId) -> bool {
-        let mut class = self
-            .query_descriptor(source)
-            .filter(|descriptor| descriptor.info.kind == "class")
-            .and_then(|descriptor| self.db.class_for_type(descriptor.id));
+        let mut class = self.cast_source_class(source);
         while let Some(current) = class {
             if current == target {
                 return true;

@@ -1321,8 +1321,14 @@ impl Backend {
         })
     }
 
-    pub(super) async fn register_watchers(&self) {
-        register_watchers_with(&self.client, &self.state).await;
+    /// [`register_watchers_with`] beside the current message. A notification
+    /// handler must not wait for the exchange: the client's reply comes on the
+    /// input that tower-lsp stops reading once the few handlers it runs at a
+    /// time are taken and its queue is full.
+    pub(super) fn register_watchers(&self) {
+        let client = self.client.clone();
+        let state = Arc::clone(&self.state);
+        tokio::spawn(async move { register_watchers_with(&client, &state).await });
     }
 
     // ── config reload ───────────────────────────────────────────────────────

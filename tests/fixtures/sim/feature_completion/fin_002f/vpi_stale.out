@@ -1,0 +1,47 @@
+take
+  tb.v:           7
+  tb.dyn[1]:          11
+  tb.dyn[3]:          13
+  tb.que[2]:          22
+  tb.words["k"]: 119
+  tb.n.x:           3
+  tb.n.next.x:           3
+  null: error
+gone
+  tb.v:           7
+  tb.dyn[1]:          11
+  tb.dyn[3]: error
+  tb.que[2]: error
+  tb.words["k"]: error
+  tb.n.x:           3
+  tb.n.next.x:           3
+back
+  tb.v:           7
+  tb.dyn[1]:           1
+  tb.dyn[3]:           0
+  tb.que[2]:          32
+  tb.words["k"]:  418346264942
+  tb.n.x:           1
+  tb.n.next.x:           1
+frame
+  local:           5
+  short name none
+left
+  local: error
+thread
+ended
+grow
+  written ok
+  members 15000
+pending
+  event 1 scheduled 1
+final
+  tb.v:           7
+  tb.dyn[1]:           1
+  tb.dyn[3]:           0
+  tb.que[2]:          32
+  tb.words["k"]:  418346264942
+  tb.n.x:           1
+  tb.n.next.x:           1
+end of simulation
+  tb.v:           7

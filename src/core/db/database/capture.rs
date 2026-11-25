@@ -542,6 +542,7 @@ impl Db {
         let mut method_calls_with_clause = HashSet::new();
         let mut const_casts = HashSet::new();
         let mut parenthesized_assertions = HashSet::new();
+        let mut void_cast_statements = IdSet::new();
         let mut method_call_iterators = HashMap::new();
         let mut packed_members = IdMap::new();
         let mut aggregate_layouts = IdMap::new();
@@ -837,6 +838,12 @@ impl Db {
                 && semantic.auxiliary & crate::ffi::slang::SEMANTIC_ASSERTION_PARENTHESIZED != 0
             {
                 parenthesized_assertions.insert(id);
+            }
+            if semantic.kind == SemanticKind::Statement
+                && semantic.subkind == crate::ffi::slang::SEMANTIC_STMT_EXPRESSION
+                && semantic.auxiliary & crate::ffi::slang::EXPRESSION_STMT_VOID_CAST != 0
+            {
+                void_cast_statements.insert(id);
             }
             if semantic.kind == SemanticKind::MethodCall && semantic.method_with_clause() {
                 method_calls_with_clause.insert(id);
@@ -1762,6 +1769,7 @@ impl Db {
             method_calls_with_clause,
             const_casts,
             parenthesized_assertions,
+            void_cast_statements,
             method_call_iterators,
             packed_members,
             aggregate_layouts,

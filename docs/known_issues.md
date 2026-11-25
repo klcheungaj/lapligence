@@ -1295,6 +1295,38 @@ long-running turns, which needs frame maps for the running frame.
 ends; `repeat (100000) begin c = new; end` with no delay reaches its full
 peak before the first collection (`LLG_GC_STATS=1` reports `peak`).
 
+## Statements that go on to the next wait after the run ended in them
+
+**Status:** found by FIN-002 step 4 (failure matrix); not fixed. The report, the
+exit status and the state the run ends in are right; statements of the same
+process up to its next wait or exit check may still run.
+
+### Symptom
+
+- `num`, `try_get` and `try_put` of a null mailbox and `get`, `put` and `try_get`
+  of a null semaphore report the error and end the run, but the statements after
+  the call run up to the next wait. Every other null handle stops the process at
+  the access.
+- A value change callback of a plain assignment that calls
+  `vpi_control(vpiFinish)`: the statements after the assignment run up to the
+  next one that checks for the end of the run.
+
+### Cause
+
+The calls and plain assignments have no `ExecutionEffect::Terminate`
+(`src/sim/execution.rs`), so no exit check follows them.
+
+### Intended direction
+
+Give both the effect. It adds an exit check after each `put`/`get` of a testbench
+loop and after each assignment of a model with a VPI catalog, and `wait (mb.num())`
+needs an exit check inside its condition, so it needs instruction counts of the
+testbench performance rows first.
+
+### Reproduce
+
+`semaphore s; initial begin s.put(); $display("went on"); end`.
+
 ## Mailbox message forms without a nested value
 
 **Status:** open (SIM-017); the two message types below are kept as explicit
@@ -4095,3 +4127,31 @@ definition.
 Two files that both define `module dup_top;` with
 `assign done = undeclared_x;` in the first one: `llg_ls` reports only the
 `DuplicateDefinition` warning in the second file.
+
+## Symbol lists of the last analysis (llg_ls)
+
+**Status:** found by FIN-002 step 4 (failure matrix); not fixed. Requests by
+position answer for the current text only.
+
+### Symptom
+
+`textDocument/documentSymbol` and `workspace/symbol` that follow an edit at once
+list the symbols and ranges of the analysis before the edit. An editor asks for
+the outline after each change, so it can show the old one until the next change.
+
+### Cause
+
+Both answer from `last_good` at once. Dropping the symbols whose text moved would
+leave the outline empty while an edit is analysed, and nothing asks the editor to
+read it again.
+
+### Intended direction
+
+Let the two requests wait until the analysis of the current texts is committed or
+refused (a notification of the root's commits, with the request's cancellation and
+a bound), then answer from it.
+
+### Reproduce
+
+Open a file with a module, send `textDocument/didChange` with a line inserted above
+it and `textDocument/documentSymbol` right behind it.

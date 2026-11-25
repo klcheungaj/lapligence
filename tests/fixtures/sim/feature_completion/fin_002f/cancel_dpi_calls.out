@@ -1,0 +1,173 @@
+### +act=none +ctx=task
+sv_task take
+sv_task after
+c_task status=0 disabled=0
+note 100 204
+c_task note -> 100
+task o=7
+victim ends
+status=FINISHED seen=1 notes=100
+final seen=1 notes=100
+=== 0
+### +act=none +ctx=func
+sv_func take
+sv_func after
+c_func r=5 disabled=0
+note 10 24
+c_func note -> 10
+func o=5
+victim ends
+status=FINISHED seen=1 notes=10
+final seen=1 notes=10
+=== 0
+### +act=none +ctx=expr
+sv_func take
+sv_func after
+c_func r=5 disabled=0
+note 10 24
+c_func note -> 10
+sv_func take
+sv_func after
+c_func r=5 disabled=0
+note 10 24
+c_func note -> 20
+expr o=11
+victim ends
+status=FINISHED seen=2 notes=20
+final seen=2 notes=20
+=== 0
+### +act=disable +ctx=task
+sv_task take
+c_task status=1 disabled=1
+status=FINISHED seen=0 notes=0
+final seen=0 notes=0
+=== 0
+### +act=disable +ctx=func
+sv_func take
+c_func r=0 disabled=1
+status=FINISHED seen=0 notes=0
+final seen=0 notes=0
+=== 0
+### +act=disable +ctx=expr
+sv_func take
+c_func r=0 disabled=1
+status=FINISHED seen=0 notes=0
+final seen=0 notes=0
+=== 0
+### +act=kill +ctx=task
+sv_task take
+c_task status=0 disabled=0
+note 100 204
+c_task note -> 100
+status=KILLED seen=0 notes=100
+final seen=0 notes=100
+=== 0
+### +act=kill +ctx=func
+sv_func take
+c_func r=0 disabled=0
+note 10 24
+c_func note -> 10
+status=KILLED seen=0 notes=10
+final seen=0 notes=10
+=== 0
+### +act=kill +ctx=expr
+sv_func take
+c_func r=0 disabled=0
+note 10 24
+c_func note -> 10
+status=KILLED seen=0 notes=10
+final seen=0 notes=10
+=== 0
+### +act=killv +ctx=task
+sv_task take
+c_task status=0 disabled=0
+note 100 204
+c_task note -> 100
+status=KILLED seen=0 notes=100
+final seen=0 notes=100
+=== 0
+### +act=killv +ctx=func
+sv_func take
+c_func r=0 disabled=0
+note 10 24
+c_func note -> 10
+status=KILLED seen=0 notes=10
+final seen=0 notes=10
+=== 0
+### +act=killv +ctx=expr
+sv_func take
+c_func r=0 disabled=0
+note 10 24
+c_func note -> 10
+status=KILLED seen=0 notes=10
+final seen=0 notes=10
+=== 0
+### +act=finish +ctx=task
+sv_task take
+c_task status=0 disabled=0
+note 100 204
+c_task note -> 100
+final seen=0 notes=100
+=== 0
+### +act=finish +ctx=func
+sv_func take
+c_func r=0 disabled=0
+note 10 24
+c_func note -> 10
+final seen=0 notes=10
+=== 0
+### +act=finish +ctx=expr
+sv_func take
+c_func r=0 disabled=0
+note 10 24
+c_func note -> 10
+final seen=0 notes=10
+=== 0
+### +act=fatal +ctx=task
+sv_task take
+c_task status=0 disabled=0
+note 100 204
+c_task note -> 100
+final seen=0 notes=100
+=== 1 SIM-006
+### +act=fatal +ctx=func
+sv_func take
+c_func r=0 disabled=0
+note 10 24
+c_func note -> 10
+final seen=0 notes=10
+=== 1 SIM-006
+### +act=fatal +ctx=expr
+sv_func take
+c_func r=0 disabled=0
+note 10 24
+c_func note -> 10
+final seen=0 notes=10
+=== 1 SIM-006
+### +act=none +ctx=final
+victim ends
+status=FINISHED seen=0 notes=0
+sv_func take
+sv_func after
+c_func r=5 disabled=0
+note 10 24
+c_func note -> 10
+final r=5
+final seen=1 notes=10
+=== 0
+### +act=finish +ctx=final
+victim ends
+status=FINISHED seen=0 notes=0
+sv_func take
+c_func r=0 disabled=0
+note 10 24
+c_func note -> 10
+=== 0
+### +act=fatal +ctx=final
+victim ends
+status=FINISHED seen=0 notes=0
+sv_func take
+c_func r=0 disabled=0
+note 10 24
+c_func note -> 10
+=== 1 SIM-006

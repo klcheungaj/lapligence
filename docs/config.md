@@ -169,7 +169,7 @@ server, accepted and ignored by `llg`.
 | `lint.json` | bool | llg | `--lint-json` (stdout); implies `only` |
 | `lint.json_file` | string | llg | `--lint-json <path>`; implies `json` |
 | `analysis.max_file_bytes`, `analysis.max_total_input_bytes` | integers | ls | input budgets |
-| `analysis.max_semantic_nodes` | integer | ls | size of a full analysis |
+| `analysis.max_semantic_nodes` | integer | ls | size of a full analysis; default `1000000` |
 | `simulator.stop_policy` | `"resume"` \| `"exit"` | llg | `--stop-policy` |
 | `simulator.optimize` | bool | llg | `--no-opt` is `optimize = false` |
 | `simulator.pulse_reject`, `simulator.pulse_error` | integers 0 to 100 | llg | `--pulse-reject`, `--pulse-error` |
@@ -539,13 +539,17 @@ optional process-wide guard.
   bounded macro-expanded filenames.
   Canonicalized paths are counted once, including include cycles. Default
   `8388608` (8 MiB).
-- `max_semantic_nodes` (integer, 1 to 4294967295) — maximum semantic nodes one
-  full analysis may hold: every elaborated declaration, statement and
-  expression, counted per module instance, generate block and class
-  specialization. A larger design gets the
-  [reduced analysis](#lsp-analysis-snapshots). Default `1000000`. Larger values
-  raise the frontend's other record limits in proportion; the limits of
-  exported bytes and diagnostics follow the value throughout.
+- `max_semantic_nodes` (integer, 1 to 4294967295; default in the
+  [key reference](#key-reference)) — maximum semantic nodes one full analysis
+  may hold: every elaborated declaration, statement and expression. A larger
+  design gets the [reduced analysis](#lsp-analysis-snapshots). The limit exists
+  because elaboration multiplies: one definition counts once per module
+  instance, generate iteration and class specialization, so a short source can
+  need millions of nodes, and the memory and time of an analysis grow with
+  them. Choose a value by the memory and time one analysis may take, from the
+  [measurements](#lsp-analysis-snapshots). Larger values raise the frontend's
+  other record limits in proportion; the limits of exported bytes and
+  diagnostics follow the value throughout.
 
 Open UTF-8 buffer text is measured in preference to disk metadata. Discovery
 is unchanged, so files over either limit remain watched; the root analysis is
@@ -619,6 +623,16 @@ top of the memory for the sources and their tokens. Measured on x86-64 Linux:
 The default budget therefore keeps that part of an analysis near 600 MiB. A
 design above the budget fails after one budget of nodes is captured, before the
 reduced analysis starts.
+
+An analysis also takes longer the more nodes and tokens it has: about 2 s for
+the UVM 1.2 package and 5 s for the 996,900 nodes of the third row (optimized
+build, x86-64 Linux, single runs on one host). The server keeps answering
+meanwhile. The analysis runs in the background, one per root. It starts 300 ms
+after a change and takes in every change made until then; changes during an
+analysis lead to one more. Navigation is answered from the last valid analysis,
+where the edited text still has the identifier. The tokens and definitions of
+an edited file come from an isolated parse of its current text, or from the
+last valid analysis when that parse is refused or fails.
 
 ## LSP duplicate definitions
 

@@ -5517,6 +5517,19 @@ fn s26_d25_open_error_status() {
 }
 
 #[test]
+fn s26_d26_plusarg_conversions() {
+    sim_cli::run_case_with_runtime_args(
+        SUITE,
+        "S26-D26_plusarg_conversions",
+        include_str!("fixtures/sim/lrm_decisions/S26-D26_plusarg_conversions.out"),
+        "INFO: S26-D26_plusarg_conversions.sv:35:5: [SIM-001] (tb @ 0 ps) $finish called\n",
+        &[
+            "+h=0x1f", "+d=x", "+q=?", "+m=1x", "+n=12", "+t=ab", "+r=2.5", "+s=1.5x",
+        ],
+    );
+}
+
+#[test]
 fn s24_d7_integral_time_suffix() {
     run_decision(
         "S24-D7_integral_time_suffix",

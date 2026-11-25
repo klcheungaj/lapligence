@@ -591,6 +591,9 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
         (18, super::SEMANTIC_STMT_BLOCK | 56..=58 | super::SEMANTIC_STMT_LIST, _) => {
             node.auxiliary <= u64::from(u32::MAX)
         }
+        (18, super::SEMANTIC_STMT_EXPRESSION, _) => {
+            node.auxiliary & !super::EXPRESSION_STMT_VOID_CAST == 0
+        }
         // Immediate assertions reserve two bits to preserve deferred/final
         // syntax until the simulator can either execute or reject it.
         (18, 61..=63, _) => node.auxiliary <= 3,

@@ -1,0 +1,12 @@
+h 0x1f
+d xxxx
+b xxxx
+x xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+z zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz
+mixed xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+characters 24930.0
+string kept
+string kept
+real 3
+string kept
+bad real 0.0

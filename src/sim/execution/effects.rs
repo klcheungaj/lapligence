@@ -384,6 +384,8 @@ mod tests {
 
     fn model(bodies: Vec<Vec<IrStmt>>) -> IrModel {
         let mut ir = IrModel::new("effects".into(), 1).unwrap();
+        // No VPI application can reach these models.
+        ir.vpi_catalog = false;
         ir.funcs = bodies
             .into_iter()
             .enumerate()

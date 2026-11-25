@@ -919,6 +919,25 @@ impl<'a> CallVisits<'a> {
     }
 }
 
+/// Whether a statement may run a callback of a VPI application before its
+/// process continues (`cbForce` and `cbRelease`, an error or assertion
+/// callback, the thread callbacks of a fork). The callback may end the run
+/// with `vpi_control(vpiFinish)`, and the process must not go on then
+/// (38.4, S43-D8). The value change callbacks of a plain assignment are not
+/// included: see `docs/known_issues.md`.
+fn runs_application_callbacks(statement: &IrStmt) -> bool {
+    matches!(
+        statement,
+        IrStmt::Force { .. }
+            | IrStmt::Release { .. }
+            | IrStmt::Severity { .. }
+            | IrStmt::ImmediateAssertion { .. }
+            | IrStmt::Fork { .. }
+            | IrStmt::CapturedFork { .. }
+            | IrStmt::DisableFork
+    )
+}
+
 fn collect_effects(
     ir: &IrModel,
     statements: &[IrStmt],
@@ -1223,6 +1242,9 @@ fn collect_effects(
             | IrStmt::For { .. }
             | IrStmt::Forever { .. } => effects.push(ExecutionEffect::Terminate),
             _ => {}
+        }
+        if ir.vpi_catalog && runs_application_callbacks(statement) {
+            effects.push(ExecutionEffect::Terminate);
         }
         collect_statement_expression_effects(ir, statement, effects, visited_calls);
         match statement {
@@ -3109,7 +3131,12 @@ mod tests {
     use super::*;
     use crate::sim::ir::{IrDependency, IrModelParts, IrProcess, IrSignal, IrType};
 
+    /// The execution model of one process that no VPI application can reach.
     fn execution(shape: IrShape, body: Vec<IrStmt>) -> ExecutionModel {
+        execution_of(shape, body, false)
+    }
+
+    fn execution_of(shape: IrShape, body: Vec<IrStmt>, vpi_catalog: bool) -> ExecutionModel {
         let signals = match &shape {
             IrShape::SensLoop { reads } => reads
                 .iter()
@@ -3129,7 +3156,7 @@ mod tests {
             _ => Vec::new(),
         };
         let process = IrProcess::new("p0".into(), "top.p".into(), shape, vec![], body);
-        let ir = IrModel::from_parts(
+        let mut ir = IrModel::from_parts(
             "top".into(),
             1,
             IrModelParts {
@@ -3140,6 +3167,7 @@ mod tests {
             },
         )
         .unwrap();
+        ir.vpi_catalog = vpi_catalog;
         ExecutionModel::lower(ir).unwrap()
     }
 
@@ -3328,6 +3356,26 @@ mod tests {
         )));
         assert!(effects.contains(&ExecutionEffect::EnqueueUpdate(ScheduleRegion::Active)));
         assert!(!effects.contains(&ExecutionEffect::Suspend));
+    }
+
+    #[test]
+    fn a_callback_of_an_application_may_end_the_run_in_a_forking_process() {
+        use crate::sim::ir::IrJoinKind;
+
+        let terminates = |statement: IrStmt, vpi_catalog| {
+            execution_of(IrShape::RunOnce, vec![statement], vpi_catalog).processes()[0]
+                .effects
+                .contains(&ExecutionEffect::Terminate)
+        };
+        let fork = || IrStmt::Fork {
+            join_kind: IrJoinKind::None,
+            branches: vec![("branch".into(), "top.branch".into())],
+            target: None,
+        };
+        assert!(terminates(fork(), true));
+        assert!(!terminates(fork(), false));
+        assert!(terminates(IrStmt::DisableFork, true));
+        assert!(!terminates(IrStmt::DisableFork, false));
     }
 
     #[test]

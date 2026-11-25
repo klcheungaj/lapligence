@@ -521,6 +521,14 @@ impl Validator<'_> {
             }
         }
 
+        for statement in self.db.void_cast_statement_nodes().unordered() {
+            let path = format_args!("void_cast_statements[{}]", statement.0);
+            let node = self.node(*statement, path)?;
+            if !matches!(node.kind, NodeKind::Stmt(super::StmtKind::Begin)) {
+                return self.fail(path, "void-cast metadata key is not a call statement");
+            }
+        }
+
         for (call, iterator) in self.db.method_call_iterator_nodes() {
             let node = self.node(*call, format_args!("method_call_iterators[{}]", call.0))?;
             if !matches!(node.kind, NodeKind::MethodCall { .. }) {
