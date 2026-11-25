@@ -454,6 +454,11 @@ impl Frame<'_, '_> {
                     self.native_discard(item);
                     hit
                 }
+                IrStringInsideItem::Array(array) => {
+                    let selector = format!("llg_inside_string_selector({})", source.address);
+                    let search = self.inside_array(array, &selector)?;
+                    self.scalar("int32_t", format!("{search} == LLG_VALUE_EQUAL"))
+                }
                 IrStringInsideItem::Range { low, high } => {
                     let low = self.string(low)?;
                     let high = self.string(high)?;

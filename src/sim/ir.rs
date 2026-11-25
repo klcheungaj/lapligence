@@ -103,8 +103,8 @@ pub use expressions::{
 };
 mod lvalues;
 pub use lvalues::{
-    IrElemSel, IrInsideArrayElement, IrInsideItem, IrLhs, IrPackedSelect, IrStreamDirection,
-    IrStreamTarget,
+    IrElemSel, IrInsideArray, IrInsideArrayElement, IrInsideItem, IrLhs, IrPackedSelect,
+    IrStreamDirection, IrStreamTarget,
 };
 mod calls;
 pub(in crate::sim) use calls::call_argument_name;

@@ -1952,38 +1952,31 @@ decision case for the pull and supply combinations. Estimate: 1 day.
 
 ## Set membership items outside packed storage
 
-**Status:** open (FIN-001 G3, F07-11). Class-handle and chandle selectors
-execute (`sim_019/handle_inside`, decision R14-D1).
+**Status:** narrowed (sim-defects-8). Arrays of strings, reals and handles,
+nested containers, elements of them and container-valued calls execute
+(`sim_019/string_inside`, `sim_019/inside_arrays`, decision R14-D2).
 
 ### Symptom
 
-These legal `inside` set items reject with explicit diagnostics: an array of
-strings, a parameter included (`s inside {sq}`, decision R14-D2); a container of
-reals, handles or records (`r inside {rq}`); an element of a container of
-containers (`x inside {qq[0]}`, "container element access ... requires a
-scalar value"); and a container-result call (`x inside {g()}`).
+These legal `inside` set items reject with explicit diagnostics: a slice of an
+element of a container of containers (`x inside {qq[0][0:1]}`) and a conditional
+expression with such an element as an operand.
 
 ### Cause
 
-String set items traverse only the string leaves of flattened aggregates; the
-container item form (`IrInsideItem::Container`) compares packed elements.
-Nested container elements and container results have no addressed-container
-operand (see
+The item is copied into a temporary container first
+(`lower_inside_array`, `src/sim/codegen/lowering/expressions/membership.rs`), and
+no container assignment has these forms as a source outside a statement that
+stages the element (see
 [resizable containers](#resizable-containers-at-subroutine-object-and-nesting-boundaries)).
 
 ### Intended direction
 
-A string container item that walks the container's string elements, a real
-comparison for real containers, and the addressed-container operand for the
-nested and call forms. Estimate: 1 day for string and real containers.
+The addressed-container operand for the two forms.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_019/neg_string_container_inside.sv`
-and `neg_real_container_inside.sv`;
-`tests/fixtures/sim/feature_completion/ki_audit/neg_inside_nested_container.sv`
-and `neg_inside_container_call.sv` (the call form reports "container result
-of `g` ... must be assigned whole to a container variable").
+`tests/fixtures/sim/feature_completion/sim_019/neg_inside_nested_slice.sv`.
 
 ## Waits on storage without a change notification
 

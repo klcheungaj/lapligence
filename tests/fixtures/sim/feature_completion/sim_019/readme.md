@@ -36,7 +36,28 @@ the legacy and compact (portable and GMP) value backends.
   keyed associative arrays (key order), queues of queues with one and two
   loop variables, and a record's queue member.
 - `handle_inside` (FIN-001 G3): §11.4.13 L15363 "The expression on the left-hand side of the inside operator is any singular expression." and L15376 "The inside operator uses the equality ( == ) operator on nonintegral expressions to perform the comparison."; class handle `==` compares objects (§8.4). `h = b`: `h inside {a, b}` 1, `a inside {b, null}` 0, the null `k inside {a, null}` 1. `a.peer = b`: `a.peer inside {h}` 1; `b.peer` (null) `inside {arr[1]}` (null) 1. `h inside {arr[0]}` with `h = b`, `arr[0] = a` is 0; after `h = a`, `h inside {arr[0], b}` is 1: `hits = 10`; `!(h inside {b})` 1. Chandles take the same path (decision R14-D1).
-- `neg_string_container_inside`, `neg_string_parameter_inside`, `neg_real_container_inside` (llg limitations, FIN-001 G3, decision R14-D2): a queue of strings, a string array parameter or a queue of reals as a set item is legal (§11.4.13 L15365-15366: "If an expression in the list is an unpacked array, its elements are traversed") but rejected with an explicit diagnostic ([known issue](../../../../../docs/known_issues.md#set-membership-items-outside-packed-storage)).
+- `string_inside`, `inside_arrays` (decision R14-D2): §11.4.13 L15365-15367
+  "If an expression in the list is an unpacked array, its elements are
+  traversed by descending into the array until reaching a singular value. The
+  members of the set are scanned until a match is found and the operation
+  returns 1'b1." and L15376-15377 "The inside operator uses the equality ( == )
+  operator on nonintegral expressions to perform the comparison." A probe is 1
+  exactly when the fixture stored that value in one of the listed arrays:
+  arrays of strings in packages, interfaces, instances, class properties,
+  formals, locals, fork branches and initializers, and rows of them; nested
+  containers whole and by element, results of calls, conditionals and locator
+  methods, queue slices, members of records (module, element and activation
+  storage), reals (a packed selector compares as a real), handles of every
+  kind (identity, `null` included). §7.4.6 L8235-8238 and Table 7-1: a row or
+  element with an invalid index reads the default, so `""` is a member of an
+  invalid string row and nothing is a member of an invalid queue; the read
+  creates no associative entry. The selector is evaluated once; L15368-15369
+  "The order of evaluation of the expressions and ranges is nondeterministic",
+  so no other evaluation count is printed. §11.4.13 L15392-15394: `4'b0000`
+  against `4'b1x00, 4'b0011` is 0 (a known bit differs), `4'b1100` is 1.
+- `neg_inside_nested_slice` (llg limitation, [known issue](../../../../../docs/known_issues.md#set-membership-items-outside-packed-storage)):
+  a slice of an element of a container of containers is a legal set item
+  (§11.4.13 L15365-15366) with no operand form.
 - `large`: 100,000-element hashed unique and a captured-bound locator,
   30,000-string unique, sort and keyed rsort, and a 20,000-record keyed sort.
 - `fixed_rows` (FIN-001 G3): locator, min/max, unique and shuffle methods on

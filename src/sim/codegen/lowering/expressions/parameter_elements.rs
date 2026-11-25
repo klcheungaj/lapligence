@@ -18,6 +18,8 @@ const REAL_IMAGE_WIDTH: Option<u64> = Some(64);
 enum SelectPart {
     Member(String),
     Index(NodeId),
+    /// The element at a declared index.
+    Element(i128),
 }
 
 /// The part of a parameter that constant selectors reach.
@@ -85,6 +87,14 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    fn constant_index(&self, part: &SelectPart) -> Option<i128> {
+        match part {
+            SelectPart::Index(index) => self.eval_bound_i128(*index).ok(),
+            SelectPart::Element(index) => Some(*index),
+            SelectPart::Member(_) => None,
+        }
+    }
+
     /// Follow the leading constant selectors of `parts` through the value
     /// of `parameter`: the part reached, its type and the selectors left.
     fn constant_parameter_part<'p>(
@@ -96,8 +106,11 @@ impl<'a> Codegen<'a> {
         let mut descriptor = self.query_descriptor(parameter)?.clone();
         while let Some((part, rest)) = parts.split_first() {
             match (part, &descriptor.shape) {
-                (SelectPart::Index(index), TypeShape::FixedArray { dimensions, .. }) => {
-                    let Ok(index) = self.eval_bound_i128(*index) else {
+                (
+                    SelectPart::Index(_) | SelectPart::Element(_),
+                    TypeShape::FixedArray { dimensions, .. },
+                ) => {
+                    let Some(index) = self.constant_index(part) else {
                         break;
                     };
                     let position = element_position(index, *dimensions.first()?);
@@ -208,6 +221,7 @@ impl<'a> Codegen<'a> {
                     continue;
                 }
                 SelectPart::Index(index) => *index,
+                SelectPart::Element(_) => return Ok(None),
             };
             let (left, right) = match (&descriptor.shape, &mut ranges) {
                 (TypeShape::FixedArray { dimensions, .. }, _) => match dimensions.first() {
@@ -352,7 +366,7 @@ impl<'a> Codegen<'a> {
         let mut descriptor = self.query_descriptor(parameter)?.clone();
         for part in parts {
             descriptor = match (part, &descriptor.shape) {
-                (SelectPart::Index(_), TypeShape::FixedArray { .. }) => {
+                (SelectPart::Index(_) | SelectPart::Element(_), TypeShape::FixedArray { .. }) => {
                     element_descriptor(&descriptor)?
                 }
                 (SelectPart::Member(name), TypeShape::Aggregate(layout)) => layout
@@ -392,6 +406,53 @@ impl<'a> Codegen<'a> {
             return Ok(None);
         };
         self.parameter_string(path, parameter, &parts).map(Some)
+    }
+
+    /// Every string of the array that `node` selects in a parameter of a
+    /// fixed unpacked type; `None` when `node` is no such array.
+    pub(in super::super) fn lower_parameter_strings(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<Vec<IrStringExpr>>, String> {
+        let Some((parameter, mut parts)) = self.parameter_select(node) else {
+            return Ok(None);
+        };
+        let Some(mut descriptor) = self.parameter_part_type(parameter, &parts) else {
+            return Ok(None);
+        };
+        let mut bounds = Vec::new();
+        while let TypeShape::FixedArray { dimensions, .. } = &descriptor.shape {
+            let (Some(bound), Some(element)) =
+                (dimensions.first().copied(), element_descriptor(&descriptor))
+            else {
+                return Ok(None);
+            };
+            bounds.push(bound);
+            descriptor = element;
+        }
+        // Each string evaluates the run-time indices again.
+        if bounds.is_empty()
+            || descriptor.shape != TypeShape::String
+            || !parts.iter().all(|part| match part {
+                SelectPart::Index(index) => self.side_effect_free(*index),
+                SelectPart::Member(_) | SelectPart::Element(_) => true,
+            })
+        {
+            return Ok(None);
+        }
+        let selected = parts.len();
+        let mut strings = Vec::new();
+        for indices in inside_array_index_vectors(&bounds) {
+            parts.truncate(selected);
+            parts.extend(
+                indices
+                    .into_iter()
+                    .map(|index| SelectPart::Element(i128::from(index))),
+            );
+            strings.push(self.parameter_string(path, parameter, &parts)?);
+        }
+        Ok(Some(strings))
     }
 
     /// Lower a character of a string inside a parameter of a fixed unpacked
@@ -534,10 +595,13 @@ impl<'a> Codegen<'a> {
             return None;
         };
         match (part, &descriptor.shape) {
-            (SelectPart::Index(index), TypeShape::FixedArray { dimensions, .. }) => {
+            (
+                SelectPart::Index(_) | SelectPart::Element(_),
+                TypeShape::FixedArray { dimensions, .. },
+            ) => {
                 let bounds = *dimensions.first()?;
                 let element = element_descriptor(descriptor)?;
-                if let Ok(index) = self.eval_bound_i128(*index) {
+                if let Some(index) = self.constant_index(part) {
                     let Some(position) = element_position(index, bounds) else {
                         return Some(());
                     };

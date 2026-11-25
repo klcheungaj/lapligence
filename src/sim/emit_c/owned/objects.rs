@@ -438,6 +438,16 @@ impl Frame<'_, '_> {
                 let right = self.chandle(right)?;
                 self.value(format!("sv4_from_u64({left} == {right}, 1, 0)"), 1, false)
             }
+            HandleInside { handle, array } => {
+                let handle = self.chandle(handle)?;
+                let selector = format!("llg_inside_handle_selector({handle})");
+                let search = self.inside_array(array, &selector)?;
+                self.value(
+                    format!("sv4_from_u64({search} == LLG_VALUE_EQUAL, 1, 0)"),
+                    1,
+                    false,
+                )
+            }
             ClassKey(handle) => {
                 let handle = self.chandle(handle)?;
                 self.value(

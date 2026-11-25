@@ -1486,6 +1486,56 @@ void llg_dyn_value_copy_from_queue(llg_dyn_value_array_t* dst,
 void llg_queue_value_copy_from_dyn(llg_queue_value_array_t* dst,
                                    const llg_dyn_value_array_t* src);
 
+/* Set membership (SV 11.4.13). The selector is borrowed for the call. An
+ * array or value is searched down to its singular values: packed values match
+ * by `==?` with the selector on the left, or as reals when either side is
+ * real, strings by contents and handles by identity. A match decides; without
+ * one an unknown comparison makes the LLG_VALUE_EQUALITY_* result unknown. */
+typedef struct llg_inside_selector_t {
+    uint8_t kind; /* LLG_VALUE_PACKED, _REAL, _STRING, or _CHANDLE for a handle */
+    union {
+        const sv4_t* packed;
+        double real;
+        const llg_string_t* string;
+        const void* handle;
+    } value;
+} llg_inside_selector_t;
+
+static inline llg_inside_selector_t llg_inside_packed_selector(const sv4_t* value) {
+    llg_inside_selector_t selector;
+    selector.kind = LLG_VALUE_PACKED;
+    selector.value.packed = value;
+    return selector;
+}
+static inline llg_inside_selector_t llg_inside_real_selector(double value) {
+    llg_inside_selector_t selector;
+    selector.kind = LLG_VALUE_REAL;
+    selector.value.real = value;
+    return selector;
+}
+static inline llg_inside_selector_t llg_inside_string_selector(const llg_string_t* value) {
+    llg_inside_selector_t selector;
+    selector.kind = LLG_VALUE_STRING;
+    selector.value.string = value;
+    return selector;
+}
+static inline llg_inside_selector_t llg_inside_handle_selector(const void* value) {
+    llg_inside_selector_t selector;
+    selector.kind = LLG_VALUE_CHANDLE;
+    selector.value.handle = value;
+    return selector;
+}
+
+int32_t llg_value_inside(const llg_value_t* value, llg_inside_selector_t selector);
+int32_t llg_dyn_value_inside(const llg_dyn_value_array_t* array,
+                             llg_inside_selector_t selector);
+int32_t llg_queue_value_inside(const llg_queue_value_array_t* queue,
+                               llg_inside_selector_t selector);
+int32_t llg_assoc_value_inside(const llg_assoc_value_t* array,
+                               llg_inside_selector_t selector);
+/* The one-bit result of a search, a fresh owner. */
+sv4_t llg_inside_result(int32_t match);
+
 /* Array-method results computed by generated loops (SIM-019). Generated code
  * evaluates a `with` expression once per element in index or key order and
  * records ordinal positions (int elements of a packed queue) or one key per

@@ -22,10 +22,10 @@ use effects::{is_context_import, EffectSet};
 
 use crate::sim::ir::{
     IrArrayQueryTarget, IrCallArg, IrChandleExpr, IrContainerExpr, IrContainerStmt, IrDependency,
-    IrDisplayArg, IrExpr, IrExprKind, IrInsideItem, IrJumpStateOp, IrLhs, IrMailboxExpr,
-    IrMailboxValue, IrMemoryImage, IrMemoryStorage, IrModel, IrObjectQuery, IrObjectStmt, IrShape,
-    IrStmt, IrStochasticStmt, IrStreamSelector, IrStreamTarget, IrStringExpr, IrStringInsideItem,
-    IrSysFunc, IrValidationError, VirtualDispatch,
+    IrDisplayArg, IrExpr, IrExprKind, IrInsideArray, IrInsideItem, IrJumpStateOp, IrLhs,
+    IrMailboxExpr, IrMailboxValue, IrMemoryImage, IrMemoryStorage, IrModel, IrObjectQuery,
+    IrObjectStmt, IrShape, IrStmt, IrStochasticStmt, IrStreamSelector, IrStreamTarget,
+    IrStringExpr, IrStringInsideItem, IrSysFunc, IrValidationError, VirtualDispatch,
 };
 use crate::sim::semantic::{ExtensionRef, Origin};
 
@@ -2172,7 +2172,9 @@ fn collect_expression_effects(
                             collect_expression_effects(ir, high, effects, visited_calls);
                         }
                     }
-                    IrInsideItem::Container { .. } => {}
+                    IrInsideItem::Array(array) => {
+                        collect_inside_array_effects(ir, array, effects, visited_calls)
+                    }
                     IrInsideItem::Cells(cells) => cells.expressions(&mut |child| {
                         collect_expression_effects(ir, child, effects, visited_calls)
                     }),
@@ -2616,6 +2618,17 @@ fn collect_object_statement_effects(
     }
 }
 
+fn collect_inside_array_effects(
+    ir: &IrModel,
+    array: &IrInsideArray,
+    effects: &mut EffectSet,
+    visited_calls: &mut CallVisits,
+) {
+    if let IrInsideArray::Value { element, .. } = array {
+        collect_chandle_effects(ir, element, effects, visited_calls);
+    }
+}
+
 fn collect_object_query_effects(
     ir: &IrModel,
     query: &IrObjectQuery,
@@ -2643,6 +2656,9 @@ fn collect_object_query_effects(
                     IrStringInsideItem::Value(value) => {
                         collect_string_effects(ir, value, effects, visited_calls)
                     }
+                    IrStringInsideItem::Array(array) => {
+                        collect_inside_array_effects(ir, array, effects, visited_calls)
+                    }
                     IrStringInsideItem::Range { low, high } => {
                         collect_string_effects(ir, low, effects, visited_calls);
                         collect_string_effects(ir, high, effects, visited_calls);
@@ -2659,6 +2675,10 @@ fn collect_object_query_effects(
                     collect_expression_effects(ir, index, effects, visited_calls);
                 }
             }
+        }
+        IrObjectQuery::HandleInside { handle, array } => {
+            collect_chandle_effects(ir, handle, effects, visited_calls);
+            collect_inside_array_effects(ir, array, effects, visited_calls);
         }
         IrObjectQuery::ChandleEq(a, b) => {
             collect_chandle_effects(ir, a, effects, visited_calls);

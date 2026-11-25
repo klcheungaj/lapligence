@@ -780,16 +780,18 @@ impl EmitCtx<'_, '_> {
                 continue;
             }
 
-            let members = self.cg.lower_inside_items(&self.path, &item.exprs)?;
-            let condition = IrExpr::new(
-                IrExprKind::Inside {
-                    value: Box::new(selector_read.clone()),
-                    items: members,
-                },
-                1,
-                false,
-                None,
-            );
+            let path = &self.path;
+            let condition = self.cg.with_set_arrays(|cg| {
+                Ok(IrExpr::new(
+                    IrExprKind::Inside {
+                        value: Box::new(selector_read.clone()),
+                        items: cg.lower_inside_items(path, &item.exprs)?,
+                    },
+                    1,
+                    false,
+                    None,
+                ))
+            })?;
             if !check.is_none() {
                 ir_items.push(IrCaseItem {
                     exprs: vec![condition],
@@ -868,15 +870,17 @@ impl EmitCtx<'_, '_> {
                 }
                 continue;
             }
-            let members = self.cg.lower_inside_string_items(&self.path, &item.exprs)?;
-            let condition = object_query(
-                IrObjectQuery::StringInside {
-                    value: selector_read.clone(),
-                    items: members,
-                },
-                1,
-                false,
-            );
+            let path = &self.path;
+            let condition = self.cg.with_set_arrays(|cg| {
+                Ok(object_query(
+                    IrObjectQuery::StringInside {
+                        value: selector_read.clone(),
+                        items: cg.lower_inside_string_items(path, &item.exprs)?,
+                    },
+                    1,
+                    false,
+                ))
+            })?;
             if !check.is_none() {
                 ir_items.push(IrCaseItem {
                     exprs: vec![condition],

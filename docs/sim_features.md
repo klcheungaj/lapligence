@@ -1404,9 +1404,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   are single set items; casts are not bypassed; unpacked structures are illegal
   member bags. Definite matches dominate an X fallback. Class-handle and
   chandle selectors compare identity with each handle item or `null`
-  (`sim_019/handle_inside`, decision R14-D1). Arrays of strings
-  (decision R14-D2), containers of reals, handles or records, elements of nested containers and container-result
-  calls as set items reject explicitly
+  (`sim_019/handle_inside`, decision R14-D1), also in arrays. Arrays of strings
+  (decision R14-D2), reals and handles, nested containers, their elements and container-valued
+  expressions are traversed (`sim_019/string_inside`, `inside_arrays`); slices of nested
+  containers reject explicitly
   ([known issue](known_issues.md#set-membership-items-outside-packed-storage)),
   as do over-limit payloads.
   SV §11.4.13 **[SV-2005]**.

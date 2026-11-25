@@ -557,6 +557,11 @@ fn string_inside(
     );
     for (index, item) in items.iter().enumerate() {
         match item {
+            IrStringInsideItem::Array(_) => {
+                return Err(
+                    "arrays as inside items require structured whole-model emission".to_owned(),
+                );
+            }
             IrStringInsideItem::Value(item) => {
                 let item_code = string(ctx, item)?;
                 code.push_str(&format!(
@@ -622,6 +627,9 @@ pub(super) fn query(
         ),
         IrObjectQuery::StringDigest(value) => {
             format!("llg_string_digest({})", string(ctx, value)?)
+        }
+        IrObjectQuery::HandleInside { .. } => {
+            return Err("arrays as inside items require structured whole-model emission".to_owned())
         }
         IrObjectQuery::ChandleEq(a, b) => format!(
             "sv4_from_u64({} == {}, 1, 0)",

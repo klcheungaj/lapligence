@@ -1,0 +1,47 @@
+wh 1 1 1 1
+whz 0 0 0 0
+str 1 1 1
+strz 0 0 0
+str1 1 1 1
+real 1 1 0
+cls 1 1 0
+inv 0 0 0
+num 1
+selector 1 1
+rq 1 1 1 1
+rf 1 1 0
+nat 1 1 1 1 1 1 0
+row 1 0
+badrow 0 1
+slice 1
+cond 1
+idx 8
+i 0
+i 1
+i 2
+cq 1 1 0
+cd 1 0
+ca 1 0
+cf 1 0
+cm 1 0 0
+kq 1 0
+null 1 1
+chandle 1
+event 1 0 1 0
+process 1 1
+mailbox 1 0 1 0
+semaphore 1 1
+xq 1 0
+xd 1 0
+xa 1 0
+xf 1 0
+xm 1 0
+PR 1 0
+shq 1 0
+iq 1 0
+int 1 0
+wild 1 0 1
+three 1 1 1 0
+methods 1 0
+case call
+strobe 1

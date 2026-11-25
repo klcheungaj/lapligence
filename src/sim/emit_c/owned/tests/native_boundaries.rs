@@ -307,7 +307,10 @@ fn container_inside_uses_owned_items_and_ordinal_associative_reads() {
     };
     let mut frame = Frame::new(&ctx);
     let result = frame
-        .inside(&number(7, 129), &[IrInsideItem::Container { container: 0 }])
+        .inside(
+            &number(7, 129),
+            &[IrInsideItem::Array(IrInsideArray::Container(0))],
+        )
         .unwrap();
     frame.discard(result);
     assert!(frame.body().contains("llg_assoc_value_at_to(&_llg_t["));

@@ -132,24 +132,6 @@ fn process_handle_forms_are_located_limits() {
 }
 
 #[test]
-fn set_items_of_nested_containers_and_container_calls_are_located_limits() {
-    sim_cli::reject_case_with_id(
-        SUITE,
-        "neg_inside_nested_container",
-        "CODEGEN-009",
-        Some("8:31"),
-        "container element access in tb requires a scalar value",
-    );
-    sim_cli::reject_case_with_id(
-        SUITE,
-        "neg_inside_container_call",
-        "CODEGEN-009",
-        Some("10:31"),
-        "container result of `g` in `tb` must be assigned whole to a container variable",
-    );
-}
-
-#[test]
 fn computed_handle_packed_select_target_is_a_located_limit() {
     sim_cli::reject_case_with_id(
         SUITE,

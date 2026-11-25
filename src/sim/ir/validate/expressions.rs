@@ -208,6 +208,7 @@ impl Validator<'_> {
                 let expected = match query.as_ref() {
                     IrObjectQuery::ClassKey(..) => Some((super::super::CLASS_KEY_WIDTH, false)),
                     IrObjectQuery::ChandleEq(..)
+                    | IrObjectQuery::HandleInside { .. }
                     | IrObjectQuery::HandleCapture(..)
                     | IrObjectQuery::StringCapture(..)
                     | IrObjectQuery::EventCapture(..) => Some((1, false)),
@@ -259,6 +260,7 @@ impl Validator<'_> {
                                 format_value(value)
                                     || items.iter().any(|item| match item {
                                         IrStringInsideItem::Value(value) => format_value(value),
+                                        IrStringInsideItem::Array(_) => false,
                                         IrStringInsideItem::Range { low, high } => {
                                             format_value(low) || format_value(high)
                                         }
@@ -1734,19 +1736,21 @@ impl Validator<'_> {
                         )?;
                     }
                 }
-                IrInsideItem::Container { container } => {
-                    let Some(container_model) = self.model.container(*container) else {
-                        return self.fail(
-                            format_args!("{path}.items[{idx}]"),
-                            "inside container index is out of bounds",
-                        );
-                    };
-                    if !container_model.element.is_packed() {
-                        return self.fail(
-                            format_args!("{path}.items[{idx}]"),
-                            "inside container element must be packed",
-                        );
-                    }
+                IrInsideItem::Array(array) => {
+                    array.validate(&self.model, formals, self.chandle_return.get(), |member| {
+                        member.is_packed() || member.is_real()
+                    })?;
+                    let mut result = Ok(());
+                    array.expressions(&mut |child| {
+                        if result.is_ok() {
+                            result = self.validate_expr(
+                                child,
+                                formals,
+                                format_args!("{path}.items[{idx}]"),
+                            );
+                        }
+                    });
+                    result?;
                 }
                 IrInsideItem::Cells(cells) => {
                     self.validate_fixed_array_cells(

@@ -189,7 +189,9 @@ pub(in crate::sim) fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrEx
                             walk_expr_mut(high, f);
                         }
                     }
-                    IrInsideItem::Container { .. } => {}
+                    IrInsideItem::Array(array) => {
+                        array.expressions_mut(&mut |child| walk_expr_mut(child, f))
+                    }
                     IrInsideItem::Cells(cells) => {
                         cells.expressions_mut(&mut |child| walk_expr_mut(child, f))
                     }

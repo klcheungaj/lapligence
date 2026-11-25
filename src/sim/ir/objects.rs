@@ -280,6 +280,8 @@ pub enum IrStringExpr {
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrStringInsideItem {
     Value(IrStringExpr),
+    /// Every string an array stores below its dimensions.
+    Array(super::IrInsideArray),
     Range {
         low: IrStringExpr,
         high: IrStringExpr,
@@ -672,6 +674,11 @@ pub enum IrObjectQuery {
     /// compares it where other expressions compare their value.
     StringDigest(IrStringExpr),
     ChandleEq(IrChandleExpr, IrChandleExpr),
+    /// Whether an array of handles stores the handle (SV 11.4.13).
+    HandleInside {
+        handle: IrChandleExpr,
+        array: super::IrInsideArray,
+    },
     /// A class handle as an unsigned 64-bit two-state associative key
     /// ([`super::IrAssocKey::Class`]).
     ClassKey(IrChandleExpr),
@@ -1615,6 +1622,12 @@ impl IrObjectQuery {
                 for item in items {
                     match item {
                         IrStringInsideItem::Value(value) => value.validate(model, string_return)?,
+                        IrStringInsideItem::Array(array) => array.validate(
+                            model,
+                            formals,
+                            chandle_return,
+                            super::IrContainerElement::is_string,
+                        )?,
                         IrStringInsideItem::Range { low, high } => {
                             low.validate(model, string_return)?;
                             high.validate(model, string_return)?;
@@ -1626,6 +1639,15 @@ impl IrObjectQuery {
             Self::ChandleEq(a, b) => {
                 a.validate(model, formals, chandle_return)?;
                 b.validate(model, formals, chandle_return)
+            }
+            Self::HandleInside { handle, array } => {
+                handle.validate(model, formals, chandle_return)?;
+                array.validate(
+                    model,
+                    formals,
+                    chandle_return,
+                    super::IrContainerElement::is_handle,
+                )
             }
             Self::ClassKey(handle) => handle.validate(model, formals, chandle_return),
             Self::SemaphoreTryGet(receiver, keys) => {
@@ -1715,6 +1737,7 @@ impl IrObjectQuery {
                 for item in items {
                     match item {
                         IrStringInsideItem::Value(value) => value.expressions(visit),
+                        IrStringInsideItem::Array(array) => array.expressions(visit),
                         IrStringInsideItem::Range { low, high } => {
                             low.expressions(visit);
                             high.expressions(visit);
@@ -1725,6 +1748,10 @@ impl IrObjectQuery {
             Self::ChandleEq(a, b) => {
                 a.expressions(visit);
                 b.expressions(visit);
+            }
+            Self::HandleInside { handle, array } => {
+                handle.expressions(visit);
+                array.expressions(visit);
             }
             Self::ClassKey(handle) => handle.expressions(visit),
             Self::SemaphoreTryGet(receiver, keys) => {
@@ -1783,6 +1810,7 @@ impl IrObjectQuery {
                 for item in items {
                     match item {
                         IrStringInsideItem::Value(value) => value.expressions_mut(visit),
+                        IrStringInsideItem::Array(array) => array.expressions_mut(visit),
                         IrStringInsideItem::Range { low, high } => {
                             low.expressions_mut(visit);
                             high.expressions_mut(visit);
@@ -1793,6 +1821,10 @@ impl IrObjectQuery {
             Self::ChandleEq(a, b) => {
                 a.expressions_mut(visit);
                 b.expressions_mut(visit);
+            }
+            Self::HandleInside { handle, array } => {
+                handle.expressions_mut(visit);
+                array.expressions_mut(visit);
             }
             Self::ClassKey(handle) => handle.expressions_mut(visit),
             Self::SemaphoreTryGet(receiver, keys) => {

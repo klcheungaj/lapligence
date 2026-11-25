@@ -2332,6 +2332,9 @@ struct Codegen<'a> {
     receiver_roots: HashMap<NodeId, Vec<IrStmt>>,
     /// The call or select whose operands `call_operand_prelude` collects.
     call_operand_scope: Option<NodeId>,
+    /// Statements that fill the arrays of the set being lowered that no
+    /// expression can name (`Codegen::with_set_arrays`).
+    set_array_prelude: Option<Vec<IrStmt>>,
     /// Statements that build operands of `call_operand_scope` no expression
     /// can name, run where that expression is evaluated.
     call_operand_prelude: Option<Vec<IrStmt>>,
@@ -2864,6 +2867,7 @@ impl<'a> Codegen<'a> {
             receiver_roots: HashMap::new(),
             call_operand_scope: None,
             call_operand_prelude: None,
+            set_array_prelude: None,
             call_result_containers: HashMap::new(),
             receiver_roots_lowered: HashSet::new(),
             inst: NodeId(0),

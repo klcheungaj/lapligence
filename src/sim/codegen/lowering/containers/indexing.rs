@@ -850,7 +850,10 @@ impl<'a> Codegen<'a> {
     }
 
     /// A lexical container for the result of `call`, when it yields one.
-    fn call_result_temporary(&mut self, call: NodeId) -> Result<Option<usize>, String> {
+    pub(in super::super) fn call_result_temporary(
+        &mut self,
+        call: NodeId,
+    ) -> Result<Option<usize>, String> {
         let callee = match self.kind(call) {
             NodeKind::FuncCall { name, callee, .. } => {
                 let (name, callee) = (name.clone(), *callee);

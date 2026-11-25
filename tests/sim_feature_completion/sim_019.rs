@@ -141,20 +141,24 @@ fn inside_over_class_handles_compares_identity() {
 }
 
 #[test]
-fn neg_inside_string_and_real_container_items() {
-    sim_cli::reject_case(
+fn inside_traverses_arrays_of_strings_in_every_storage() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_019/string_inside.out");
+    sim_cli::run_case_backend_parity(SUITE, "string_inside", expected, &[], &[]);
+}
+
+#[test]
+fn inside_traverses_nested_containers_call_results_reals_and_handles() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_019/inside_arrays.out");
+    sim_cli::run_case_backend_parity(SUITE, "inside_arrays", expected, &[], &[]);
+}
+
+#[test]
+fn neg_inside_slice_of_a_nested_container() {
+    sim_cli::reject_case_with_id(
         SUITE,
-        "neg_string_container_inside",
-        "string inside set item in `tb` is an array of strings whose elements the set cannot traverse",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_string_parameter_inside",
-        "string inside set item in `tb` is an array of strings whose elements the set cannot traverse",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_real_container_inside",
-        "inside set container `rq` in `tb` has real, string, handle, record or container elements",
+        "neg_inside_nested_slice",
+        "CODEGEN-009",
+        Some("7:33"),
+        "resizable container assignment in `tb` requires a compatible array",
     );
 }

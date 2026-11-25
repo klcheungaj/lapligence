@@ -1388,7 +1388,7 @@ impl<'a> Codegen<'a> {
 
 /// Runtime container kind of a queue, dynamic or associative array type.
 /// Fixed arrays of handles reuse the dynamic-array runtime.
-pub(super) fn ir_container_kind(
+pub(in crate::sim::codegen::lowering) fn ir_container_kind(
     array: &ArrayKind,
     name: &str,
     path: &str,
