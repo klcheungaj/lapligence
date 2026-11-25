@@ -66,6 +66,17 @@ fn neg_writer_conflicts_through_port_expressions() {
         "neg_concat_select_conflict",
         "variable storage `tb.bi.a[0]` has both a continuous assignment",
     );
+    // The first of several conflicts is named.
+    sim_cli::reject_case(
+        SUITE,
+        "neg_driver_order",
+        "multiple continuous assignments to variable storage `tb.bi.a0[0 +: 4]`",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_writer_order",
+        "process `tb.always_comb` has multiple writers for `tb.m[0]`",
+    );
 }
 
 #[test]
