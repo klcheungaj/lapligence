@@ -1101,4 +1101,27 @@ mod tests {
             assert_eq!(positions.position(offset), expected, "offset={offset}");
         }
     }
+
+    #[test]
+    fn lines_are_those_that_positions_count() {
+        for (text, expected) in [
+            ("", vec![""]),
+            ("a", vec!["a"]),
+            ("a\n", vec!["a", ""]),
+            ("a\r\nb\rc\nd", vec!["a", "b", "c", "d"]),
+            ("\n\r", vec!["", "", ""]),
+            ("\r\r\n", vec!["", "", ""]),
+            ("a😀\r\n\r\n b \n", vec!["a😀", "", " b ", ""]),
+        ] {
+            let positions = SourcePositions::new(text);
+            let lines: Vec<&str> = positions.lines().collect();
+            assert_eq!(lines, expected, "{text:?}");
+            let (last, _) = positions.position(u64::MAX);
+            assert_eq!(lines.len(), last as usize, "{text:?}");
+            for (number, line) in (1..).zip(lines) {
+                let offset = line.as_ptr() as u64 - text.as_ptr() as u64;
+                assert_eq!(positions.position(offset), (number, 1), "{text:?}");
+            }
+        }
+    }
 }
