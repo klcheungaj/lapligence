@@ -72,6 +72,17 @@ fn members_are_in_implicit_sensitivity() {
 }
 
 #[test]
+fn fixed_arrays_of_containers_and_events_are_views() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "containers",
+        include_str!("../fixtures/sim/feature_completion/ki_static_members/containers.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
 fn members_are_named_from_every_scope() {
     sim_cli::run_case_backend_parity(
         SUITE,

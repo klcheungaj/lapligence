@@ -63,6 +63,16 @@ parameterized class. 8.8 L9893: "The static class properties can be used
 without creating an object of that type." 8.24 L10756-10758: "Each
 specialization of a class has a separate set of static member variables".
 
+## Containers
+
+`containers.sv`: fixed arrays of queues, dynamic and associative arrays, of
+records, nested queues, class handles and events, named through the class, an
+object and a null handle of each specialization. 8.8 L9869-9871: "Sometimes
+only one version of a variable is required to be shared by all instances. These
+class properties are created using the keyword static." 7.4.2 L8053: "Unpacked
+arrays can be made of any data type." Stored like a container property of an
+object.
+
 ## Random properties
 
 `random.sv`: members and elements of static `rand` properties in constraints.

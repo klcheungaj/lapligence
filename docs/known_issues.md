@@ -1655,6 +1655,35 @@ fixed array.
 `typedef struct packed { logic [3:0] hi, lo; } p_t; p_t q[$]; initial begin
 q.push_back(0); q[0].hi = 3; end`
 
+## Fixed arrays of containers with a range that does not start at 0
+
+**Status:** open, a silent wrong result; found while testing static properties.
+
+### Symptom
+
+In a class property (static or not) that is a fixed array of queues, dynamic or
+associative arrays declared with a range such as `[1:0]` or `[2:1]`, a write of
+a whole element (`q[0] = '{1, 2}`, `d[0] = new[2]`), an element of an element
+(`d[0][1] = "z"`) and `foreach` use the position in the array where methods
+(`q[0].push_back`, `size`, `pop_front`) use the index: `q[0] = '{1, 2}` fills
+`q[1]` of a `[1:0]` array.
+
+### Cause
+
+Some paths into a fixed-size container view convert the index to a position by
+the declared range and some take it as the position.
+
+### Intended direction
+
+Convert the index by the range on every path into the view
+(`fixed_view_ranges`).
+
+### Reproduce
+
+`class c; static int q[1:0][$]; endclass initial begin c::q[0] = '{1, 2};
+$display("%p", c::q); end` prints `'{'{1, 2} , '{}}` (the left element, `q[1]`,
+first), not `'{'{}, '{1, 2} }`.
+
 ## Records of the leaf form: two errors a column does not have
 
 **Status:** open (FIN-001 rule 7: records below `LLG_RECORD_COLUMN_MIN_CELLS`

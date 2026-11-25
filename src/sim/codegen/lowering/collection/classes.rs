@@ -228,13 +228,22 @@ impl<'a> Codegen<'a> {
         if matches!(self.kind(child), NodeKind::Var { ty } if ty.kind == "event") {
             let global = self.event_global_name(&path, &self.node(child).name);
             let class = self.node(child).parent;
-            let scope = class.map_or_else(String::new, |class| {
-                self.node(class).full_name().to_owned()
-            });
+            let scope =
+                class.map_or_else(String::new, |class| self.node(class).full_name().to_owned());
             self.collect_event_global(&scope, child, global);
             return Ok(());
         }
-        self.collect_variable(&path, child, &mut HashSet::new())?;
+        // A fixed array of events or containers has no array storage; it is a
+        // fixed-size view of the container runtime, like one of an object.
+        match self.db.array_meta(child).cloned() {
+            Some(meta) if self.is_fixed_array_of_containers(child) => {
+                let view = self.class_container_view(class_index, child, &meta)?;
+                self.container_globals.insert(child, view);
+            }
+            _ => {
+                self.collect_variable(&path, child, &mut HashSet::new())?;
+            }
+        }
         for signal in &mut self.model.signals[first_signal..] {
             signal.hdl_name = None;
         }
@@ -245,6 +254,15 @@ impl<'a> Codegen<'a> {
             self.reserve_initializer_order(child);
         }
         Ok(())
+    }
+
+    /// Whether `property` is a fixed array of events or resizable containers.
+    fn is_fixed_array_of_containers(&self, property: NodeId) -> bool {
+        self.query_descriptor(property).is_some_and(|descriptor| {
+            matches!(&descriptor.shape, TypeShape::FixedArray { element, .. }
+                if matches!(element.shape, TypeShape::Container { .. })
+                    || lower_container_element(element).is_ok_and(|element| element.is_event()))
+        })
     }
 
     /// The storage scope of the static properties of class `class_index`.
@@ -607,6 +625,38 @@ impl<'a> Codegen<'a> {
         meta: &crate::core::db::ArrayMeta,
         fields: &mut Vec<IrClassField>,
     ) -> Result<(), String> {
+        let info = self.class_container_view(class_index, child, meta)?;
+        // The container initializer list is for model storage; an instance
+        // property initializes per object at construction.
+        if meta.initializer().is_some() {
+            self.container_initializers
+                .retain(|(owner, _)| *owner != child);
+        }
+        let field_index = fields.len();
+        self.model.containers[info.ir].class_field = Some((class_index, field_index));
+        self.model.containers[info.ir].c_name =
+            format!("S_llg_class_container_{class_index}_{field_index}");
+        fields.push(IrClassField {
+            c_name: format!(
+                "f_{class_index}_{field_index}_{}",
+                ident(&self.node(child).name)
+            ),
+            ty: IrClassFieldType::Chandle,
+            container: Some(info.ir),
+            native_value: None,
+            event: false,
+        });
+        self.container_globals.insert(child, info);
+        Ok(())
+    }
+
+    /// The container storage of the container or fixed array property `child`.
+    fn class_container_view(
+        &mut self,
+        class_index: usize,
+        child: NodeId,
+        meta: &crate::core::db::ArrayMeta,
+    ) -> Result<ContainerInfo, String> {
         let name = self.node(child).name.clone();
         let descriptor = self
             .query_descriptor(child)
@@ -645,29 +695,11 @@ impl<'a> Codegen<'a> {
             }
         };
         let element = lower_container_element(element)?;
-        let path = format!("llg_class{class_index}");
+        let path = Self::static_property_path(class_index);
         let info = self.container_from_meta(&path, &name, child, meta, element)?;
         if let Some(dimensions) = multidimensional {
             self.fixed_view_dims.insert(info.ir, dimensions);
         }
-        // The container initializer list is for model storage; an instance
-        // property initializes per object at construction.
-        if meta.initializer().is_some() {
-            self.container_initializers
-                .retain(|(owner, _)| *owner != child);
-        }
-        let field_index = fields.len();
-        self.model.containers[info.ir].class_field = Some((class_index, field_index));
-        self.model.containers[info.ir].c_name =
-            format!("S_llg_class_container_{class_index}_{field_index}");
-        fields.push(IrClassField {
-            c_name: format!("f_{class_index}_{field_index}_{}", ident(&name)),
-            ty: IrClassFieldType::Chandle,
-            container: Some(info.ir),
-            native_value: None,
-            event: false,
-        });
-        self.container_globals.insert(child, info);
-        Ok(())
+        Ok(info)
     }
 }
