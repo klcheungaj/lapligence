@@ -1,5 +1,6 @@
 //! Capture.
 
+use crate::IdSet;
 use super::*;
 
 impl Db {
@@ -748,7 +749,7 @@ impl Db {
             {
                 children.clear();
             }
-            let mut seen_children = HashSet::new();
+            let mut seen_children = IdSet::new();
             children.retain(|child| seen_children.insert(*child));
             let projection = match semantic.type_id() {
                 Some(type_id) => Some(match projections.get(&type_id) {
@@ -1991,7 +1992,7 @@ fn time_scale_elements(
     use crate::ffi::slang::{INSTANCE_DECLARED_TIME_SCALE, INSTANCE_DEFAULT_TIME_SCALE};
     let mut found = Vec::new();
     let mut declared: Option<((u64, u64), &crate::ffi::slang::SemanticNode, &'static str)> = None;
-    let mut seen = HashSet::new();
+    let mut seen = IdSet::new();
     for semantic in snapshot.semantic_nodes.iter() {
         let default = semantic.auxiliary & INSTANCE_DEFAULT_TIME_SCALE != 0;
         if !default && semantic.auxiliary & INSTANCE_DECLARED_TIME_SCALE == 0 {

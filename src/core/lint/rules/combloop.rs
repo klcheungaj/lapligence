@@ -18,6 +18,7 @@
 //! stops on this rule's errors, so these exclusions keep ordinary
 //! combinational code from being reported.
 
+use crate::IdSet;
 use std::collections::{HashMap, HashSet};
 
 use crate::core::db::{Db, NodeId, NodeKind, StmtKind};
@@ -211,7 +212,7 @@ fn strongly_connected_components(edges: &[(NodeId, NodeId)], nodes: &[NodeId]) -
     }
 
     // First pass: finish order on the forward graph.
-    let mut visited: HashSet<NodeId> = HashSet::new();
+    let mut visited: IdSet<NodeId> = IdSet::new();
     let mut order: Vec<NodeId> = Vec::new();
     for &start in nodes {
         if !visited.insert(start) {
@@ -236,7 +237,7 @@ fn strongly_connected_components(edges: &[(NodeId, NodeId)], nodes: &[NodeId]) -
     }
 
     // Second pass: reverse finish order on the reversed graph.
-    let mut visited2: HashSet<NodeId> = HashSet::new();
+    let mut visited2: IdSet<NodeId> = IdSet::new();
     let mut sccs = Vec::new();
     for &start in order.iter().rev() {
         if !visited2.insert(start) {

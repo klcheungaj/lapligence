@@ -1,5 +1,6 @@
 //! Calls.
 
+use crate::IdSet;
 use super::super::collection::{
     member_select_statement, CallWriteback, RecordRefDispatch, RecordRefPin, RecordRefSelect,
     TargetSelectors,
@@ -440,7 +441,7 @@ impl EmitCtx<'_, '_> {
                 && !encloses(node)
                 && read
                     .as_ref()
-                    .is_none_or(|read| self.may_write(node, read, &mut HashSet::new()))
+                    .is_none_or(|read| self.may_write(node, read, &mut IdSet::new()))
             {
                 return Some(node);
             }
@@ -504,7 +505,7 @@ impl EmitCtx<'_, '_> {
     /// built-in method's receiver), or a subroutine whose body may, through
     /// the calls it makes. An unresolved callee, one with no body the
     /// lowering can see, or a virtual method may write anything.
-    fn may_write(&self, node: NodeId, read: &HashSet<NodeId>, seen: &mut HashSet<NodeId>) -> bool {
+    fn may_write(&self, node: NodeId, read: &HashSet<NodeId>, seen: &mut IdSet<NodeId>) -> bool {
         let names = |operand: NodeId| {
             self.storage_root(operand)
                 .is_some_and(|root| read.contains(&root))

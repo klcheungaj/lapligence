@@ -1,5 +1,6 @@
 //! Constants.
 
+use crate::IdSet;
 use super::*;
 
 impl<'a> Codegen<'a> {
@@ -232,7 +233,7 @@ impl<'a> Codegen<'a> {
         );
         if frontend_value.is_some()
             && !integral_cast
-            && !self.contains_time_literal(assignment_rhs, &mut HashSet::new())
+            && !self.contains_time_literal(assignment_rhs, &mut IdSet::new())
         {
             return fallback();
         }
@@ -270,7 +271,7 @@ impl<'a> Codegen<'a> {
         )))
     }
 
-    fn contains_time_literal(&self, node: NodeId, visited: &mut HashSet<NodeId>) -> bool {
+    fn contains_time_literal(&self, node: NodeId, visited: &mut IdSet<NodeId>) -> bool {
         if !visited.insert(node) {
             return false;
         }

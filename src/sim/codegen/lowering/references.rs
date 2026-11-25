@@ -1,5 +1,6 @@
 //! References.
 
+use crate::IdSet;
 use super::*;
 use crate::sim::ir::IrPackedSelect;
 
@@ -707,7 +708,7 @@ impl<'a> Codegen<'a> {
     }
 
     pub(in super::super) fn reference_array(&self, mut array: usize) -> usize {
-        let mut seen = HashSet::new();
+        let mut seen = IdSet::new();
         while let Some(next) = self.reference_arrays.get(&array).copied() {
             if !seen.insert(array) {
                 break;
@@ -718,7 +719,7 @@ impl<'a> Codegen<'a> {
     }
 
     pub(in super::super) fn reference_object(&self, mut object: usize) -> usize {
-        let mut seen = HashSet::new();
+        let mut seen = IdSet::new();
         while let Some(next) = self.reference_objects.get(&object).copied() {
             if !seen.insert(object) {
                 break;

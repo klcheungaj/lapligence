@@ -7,6 +7,7 @@
 //! engine. Sequence operands become ordinary sequence automata on the leading
 //! clock; a single-tick Boolean operand becomes a sampled atom.
 
+use crate::IdSet;
 use super::*;
 use crate::sim::ir::{IrProperty, IrPropertyBinaryOp, IrPropertyClock, IrPropertyNode};
 
@@ -954,7 +955,7 @@ impl Codegen<'_> {
             return None;
         };
         let mut stack = vec![(*body, Some(root))];
-        let mut seen = HashSet::new();
+        let mut seen = IdSet::new();
         while let Some((node, enclosing)) = stack.pop() {
             if !seen.insert(node) {
                 continue;
@@ -1289,7 +1290,7 @@ impl Codegen<'_> {
         let mut named = HashSet::new();
         let mut all = false;
         let mut stack = vec![node];
-        let mut seen = HashSet::new();
+        let mut seen = IdSet::new();
         while let Some(current) = stack.pop() {
             if !seen.insert(current) {
                 continue;

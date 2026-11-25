@@ -7,6 +7,7 @@
 //! unsupported expressions and ambiguous multi-dimensional packed types are
 //! consequently quiet.
 
+use crate::IdSet;
 use std::collections::HashSet;
 
 use crate::core::db::{Db, ExprKind, NodeId, NodeKind, Operation};
@@ -31,7 +32,7 @@ impl LintRule for OutOfRangeSelectRule {
         let db = ctx.db;
         let ids = ctx.nodes();
         let nested_array_selects = nested_array_element_selects(db, ids);
-        let mut visited = HashSet::new();
+        let mut visited = IdSet::new();
         let mut out = Vec::new();
 
         for &id in ids {

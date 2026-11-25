@@ -8,6 +8,7 @@
 //! Unsupported constructs remain explicit and are rejected by the consumer
 //! that requires them.
 
+use crate::IdSet;
 use super::slang_types::SlangTypeProjector;
 use super::{
     AlwaysKind, CapturedSemanticKind, CaseKind, ConstantType, DbValidationError, Direction,
@@ -143,6 +144,8 @@ pub use specify::{
 /// Arena index of one [`Node`].
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct NodeId(pub(crate) u32);
+
+impl crate::Id for NodeId {}
 
 impl NodeId {
     pub(crate) const fn from_index(index: usize) -> Self {
@@ -1382,7 +1385,7 @@ impl Db {
             return None;
         }
         let mut pending = vec![interface];
-        let mut visited = HashSet::new();
+        let mut visited = IdSet::new();
         while let Some(owner) = pending.pop() {
             if !visited.insert(owner) {
                 continue;
@@ -1652,7 +1655,7 @@ impl Db {
     /// ordinary storage lookup continues to use the concrete node identity.
     pub fn source_identity(&self, id: NodeId) -> NodeId {
         let mut current = id;
-        let mut seen = HashSet::new();
+        let mut seen = IdSet::new();
         while seen.insert(current) {
             let Some(&representative) = self.source_identities.get(&current) else {
                 break;

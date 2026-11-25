@@ -1,5 +1,6 @@
 //! Captures.
 
+use crate::IdSet;
 use super::*;
 use crate::sim::ir::*;
 
@@ -504,7 +505,7 @@ impl<'a> Codegen<'a> {
         let mut path_targets = HashSet::new();
         let mut names = HashMap::new();
         let mut pending = vec![branch];
-        let mut visited = HashSet::new();
+        let mut visited = IdSet::new();
         while let Some(node) = pending.pop() {
             if !visited.insert(node) {
                 continue;

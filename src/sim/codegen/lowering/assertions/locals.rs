@@ -9,6 +9,7 @@
 //! Each runtime thread owns its copy of every local, so overlapping attempts
 //! and the branches of one attempt initialize and copy out independently.
 
+use crate::IdSet;
 use super::*;
 use crate::sim::codegen::lowering::collection::Select;
 use crate::sim::ir::IrMutationExpr;
@@ -88,7 +89,7 @@ impl Codegen<'_> {
     /// the contained instances themselves.
     fn instance_referenced_locals(&self, body: NodeId) -> Vec<NodeId> {
         let mut found = Vec::new();
-        let mut seen = HashSet::new();
+        let mut seen = IdSet::new();
         let mut pending = vec![body];
         while let Some(current) = pending.pop() {
             if !seen.insert(current) {

@@ -19,6 +19,7 @@
 //! Random stability and the order of draws are decisions S16-D1..D10 in
 //! `docs/lrm_decisions.md`.
 
+use crate::IdSet;
 use super::*;
 use crate::core::db::{CaseItem, ProductionDecl, ProductionItem, ProductionKind, ProductionRule};
 use crate::sim::ir::{
@@ -520,7 +521,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
     fn check_joins(&self, grammar: &Grammar) -> Result<(), String> {
         let db = self.cg.db;
         let reaches = |from: NodeId| {
-            let mut seen = HashSet::new();
+            let mut seen = IdSet::new();
             let mut pending = grammar.callees(db, from);
             while let Some(production) = pending.pop() {
                 if seen.insert(production) {

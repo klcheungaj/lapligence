@@ -35,6 +35,7 @@
 //! differs; when it has a declaration initializer the port collapses only if
 //! no such observer exists (see [`Codegen::collapse_variable_ports`]).
 
+use crate::IdSet;
 use super::*;
 
 /// Sampled-value system functions: their time-zero value of the formal is
@@ -693,7 +694,7 @@ impl Codegen<'_> {
         found: &mut HashSet<NodeId>,
     ) -> bool {
         let mut stack = vec![root];
-        let mut visited = HashSet::new();
+        let mut visited = IdSet::new();
         let mut references = Vec::new();
         while let Some(id) = stack.pop() {
             if !visited.insert(id) {

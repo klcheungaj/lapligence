@@ -16,6 +16,7 @@
 //! - `collect_driver_writes` is the active-driver variant used by rules that
 //!   must distinguish `force` from `release`/`deassign`.
 
+use crate::IdSet;
 use std::collections::{HashMap, HashSet};
 
 use crate::core::db::Operation;
@@ -427,7 +428,7 @@ fn bits_needed(v: u128) -> u32 {
 /// `release`/`deassign` read nothing.
 pub fn collect_reads(db: &Db, root: NodeId) -> Vec<NodeId> {
     let mut out = Vec::new();
-    let mut seen = HashSet::new();
+    let mut seen = IdSet::new();
     walk_reads(db, root, &mut seen, &mut out);
     out
 }
@@ -437,7 +438,7 @@ pub fn collect_reads(db: &Db, root: NodeId) -> Vec<NodeId> {
 /// deduped, in first-encounter order.
 pub fn collect_writes(db: &Db, root: NodeId) -> Vec<NodeId> {
     let mut out = Vec::new();
-    let mut seen = HashSet::new();
+    let mut seen = IdSet::new();
     walk_writes(db, root, LhsTargets::Whole, &mut seen, &mut out);
     out
 }
@@ -449,7 +450,7 @@ pub fn collect_writes(db: &Db, root: NodeId) -> Vec<NodeId> {
 /// their established behavior.
 pub fn collect_writes_with_members(db: &Db, root: NodeId) -> Vec<NodeId> {
     let mut out = Vec::new();
-    let mut seen = HashSet::new();
+    let mut seen = IdSet::new();
     walk_writes(db, root, LhsTargets::Members, &mut seen, &mut out);
     out
 }
@@ -460,7 +461,7 @@ pub fn collect_writes_with_members(db: &Db, root: NodeId) -> Vec<NodeId> {
 /// flow (`combinational-loop`) keeps its established behavior.
 pub fn collect_element_writes(db: &Db, root: NodeId) -> Vec<ElementWrite> {
     let mut targets = Vec::new();
-    let mut seen = HashSet::new();
+    let mut seen = IdSet::new();
     walk_writes(db, root, LhsTargets::Nodes, &mut seen, &mut targets);
     let mut seen = HashSet::new();
     let mut out = Vec::new();
@@ -551,12 +552,12 @@ fn element_signal_of_lhs(db: &Db, id: NodeId) -> Option<NodeId> {
 /// `call_written_actuals`).
 pub fn collect_driver_writes(db: &Db, root: NodeId) -> Vec<NodeId> {
     let mut out = Vec::new();
-    let mut seen = HashSet::new();
+    let mut seen = IdSet::new();
     walk_driver_writes(db, root, &mut seen, &mut out);
     out
 }
 
-fn walk_reads(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {
+fn walk_reads(db: &Db, node: NodeId, seen: &mut IdSet<NodeId>, out: &mut Vec<NodeId>) {
     match db.node_kind(node) {
         NodeKind::Stmt(StmtKind::DelayControl { delay })
         | NodeKind::Stmt(StmtKind::Assign {
@@ -615,7 +616,7 @@ fn walk_reads(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<N
 /// an element select (`s[i].f`) keeps that select among its references, and
 /// each member of a concatenation, streaming or pattern target selects
 /// through its own operands.
-fn walk_lhs_select_reads(db: &Db, lhs: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {
+fn walk_lhs_select_reads(db: &Db, lhs: NodeId, seen: &mut IdSet<NodeId>, out: &mut Vec<NodeId>) {
     match db.node_kind(lhs) {
         NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
             walk_lhs_select_reads(db, *base, seen, out);
@@ -679,7 +680,7 @@ fn walk_lhs_select_reads(db: &Db, lhs: NodeId, seen: &mut HashSet<NodeId>, out: 
     }
 }
 
-fn add_read(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {
+fn add_read(db: &Db, node: NodeId, seen: &mut IdSet<NodeId>, out: &mut Vec<NodeId>) {
     // Reading a clockvar bound to a computed expression reads its operands.
     let clockvar = match db.node_kind(node) {
         NodeKind::Expr(ExprKind::Ref { target: Some(t) } | ExprKind::ScopeRef { target: t }) => {
@@ -741,7 +742,7 @@ fn walk_writes(
     db: &Db,
     node: NodeId,
     targets: LhsTargets,
-    seen: &mut HashSet<NodeId>,
+    seen: &mut IdSet<NodeId>,
     out: &mut Vec<NodeId>,
 ) {
     match db.node_kind(node) {
@@ -773,7 +774,7 @@ fn walk_writes(
     }
 }
 
-fn walk_driver_writes(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {
+fn walk_driver_writes(db: &Db, node: NodeId, seen: &mut IdSet<NodeId>, out: &mut Vec<NodeId>) {
     match db.node_kind(node) {
         NodeKind::Stmt(StmtKind::ProcContAssign { lhs, .. } | StmtKind::Force { lhs, .. }) => {
             add_driver_lhs_write(db, *lhs, seen, out);
@@ -982,7 +983,7 @@ fn add_lhs_write(
     db: &Db,
     lhs: NodeId,
     targets: LhsTargets,
-    seen: &mut HashSet<NodeId>,
+    seen: &mut IdSet<NodeId>,
     out: &mut Vec<NodeId>,
 ) {
     let sig = match targets {
@@ -1011,7 +1012,7 @@ fn add_lhs_members(
     db: &Db,
     lhs: NodeId,
     resolve: fn(&Db, NodeId) -> [Option<NodeId>; 2],
-    seen: &mut HashSet<NodeId>,
+    seen: &mut IdSet<NodeId>,
     out: &mut Vec<NodeId>,
 ) {
     match db.node_kind(lhs) {
@@ -1064,7 +1065,7 @@ pub fn driver_signal_of_lhs(db: &Db, id: NodeId) -> Option<NodeId> {
     }
 }
 
-fn add_driver_lhs_write(db: &Db, lhs: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {
+fn add_driver_lhs_write(db: &Db, lhs: NodeId, seen: &mut IdSet<NodeId>, out: &mut Vec<NodeId>) {
     add_lhs_members(db, lhs, driven_objects_of_lhs, seen, out);
 }
 
@@ -1187,7 +1188,7 @@ pub fn all_nodes(db: &Db) -> Vec<NodeId> {
 /// source-oriented rules that promise function/task coverage must use this
 /// traversal rather than [`all_nodes`].
 pub fn all_design_nodes(db: &Db) -> Vec<NodeId> {
-    fn walk(db: &Db, id: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {
+    fn walk(db: &Db, id: NodeId, seen: &mut IdSet<NodeId>, out: &mut Vec<NodeId>) {
         if !seen.insert(id) {
             return;
         }
@@ -1197,7 +1198,7 @@ pub fn all_design_nodes(db: &Db) -> Vec<NodeId> {
         }
     }
 
-    let mut seen = HashSet::new();
+    let mut seen = IdSet::new();
     let mut out = Vec::new();
     for root in db
         .tops()

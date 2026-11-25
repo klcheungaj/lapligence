@@ -1,5 +1,6 @@
 //! Projection of Slang's typed snapshot records into owned database metadata.
 
+use crate::IdSet;
 use super::{
     AggregateKind, AggregateLayout, AggregateMember, ArrayKind, AssociativeIndex, DpiOpenType,
     ElaboratedTypeRanges, NodeId, PackedMember, PackedRange, TypeDescriptor, TypeId, TypeShape,
@@ -93,7 +94,7 @@ impl<'a> SlangTypeProjector<'a> {
         let mut unpacked = Vec::new();
         let mut current = ty;
         let mut open = false;
-        let mut seen = HashSet::new();
+        let mut seen = IdSet::new();
         loop {
             if !seen.insert(current.id) {
                 return Err(format!("cycle in Slang DPI array type {}", current.id));
@@ -180,7 +181,7 @@ impl<'a> SlangTypeProjector<'a> {
 
     fn unpacked_element(&self, ty: &'a SlangType) -> Result<&'a SlangType, String> {
         let mut current = ty;
-        let mut seen = HashSet::new();
+        let mut seen = IdSet::new();
         while matches!(
             current.kind,
             TypeKind::FixedUnpackedArray
@@ -338,7 +339,7 @@ impl<'a> SlangTypeProjector<'a> {
     fn packed_dimensions(&self, ty: &SlangType) -> Result<Vec<PackedRange>, String> {
         let mut dimensions = Vec::new();
         let mut current = ty;
-        let mut seen = HashSet::new();
+        let mut seen = IdSet::new();
         while matches!(current.kind, TypeKind::PackedArray | TypeKind::Enum) {
             if !seen.insert(current.id) {
                 return Err(format!("cycle in Slang packed type {}", current.id));
@@ -359,7 +360,7 @@ impl<'a> SlangTypeProjector<'a> {
 
     fn packed_base(&self, ty: &'a SlangType) -> Result<&'a SlangType, String> {
         let mut current = ty;
-        let mut seen = HashSet::new();
+        let mut seen = IdSet::new();
         while current.kind == TypeKind::PackedArray {
             if !seen.insert(current.id) {
                 return Err(format!("cycle in Slang packed array type {}", current.id));
@@ -502,7 +503,7 @@ impl<'a> SlangTypeProjector<'a> {
             TypeKind::FixedUnpackedArray => {
                 let mut dimensions = Vec::new();
                 let mut current = ty;
-                let mut seen = HashSet::new();
+                let mut seen = IdSet::new();
                 while current.kind == TypeKind::FixedUnpackedArray {
                     if !seen.insert(current.id) {
                         return Err(format!("cycle in Slang unpacked array type {}", current.id));
@@ -564,7 +565,7 @@ impl<'a> SlangTypeProjector<'a> {
             TypeKind::FixedUnpackedArray => {
                 let mut dimensions = Vec::new();
                 let mut current = ty;
-                let mut seen = HashSet::new();
+                let mut seen = IdSet::new();
                 while current.kind == TypeKind::FixedUnpackedArray {
                     if !seen.insert(current.id) {
                         return Err(format!("cycle in Slang unpacked array type {}", current.id));

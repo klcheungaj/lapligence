@@ -1,5 +1,6 @@
 //! Function bodies.
 
+use crate::IdSet;
 use super::*;
 use crate::sim::ir::{IrVpiAutoStorage, IrVpiAutomatic};
 
@@ -1576,7 +1577,7 @@ impl<'a> Codegen<'a> {
         // the frame, in declaration order (decision A19-D88).
         let frame_path = self.vpi_path(ft);
         let mut pending = vec![ft];
-        let mut seen = HashSet::new();
+        let mut seen = IdSet::new();
         while let Some(node) = pending.pop() {
             if !seen.insert(node) {
                 continue;

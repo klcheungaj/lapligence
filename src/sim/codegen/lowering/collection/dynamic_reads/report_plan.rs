@@ -142,7 +142,7 @@ impl Codegen<'_> {
             return true;
         };
         if stack.contains(&callee) || stack.len() >= MAX_CALLEE_DEPTH {
-            return !self.reads_dynamic_storage_in(body, &mut HashSet::new());
+            return !self.reads_dynamic_storage_in(body, &mut IdSet::new());
         }
         let receivers = self.planned_bind_locals(body, receivers, serial);
         stack.push(callee);

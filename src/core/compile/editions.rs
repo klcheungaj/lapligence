@@ -6,6 +6,7 @@
 //! Tables describe admission, not executable simulator support. Unknown system
 //! names require an explicit prototype; they are never silently treated as a
 //! standard builtin of an older edition.
+use crate::IdSet;
 use super::{
     positions::Utf16Cursor, CompilationUnitMode, Diag, LanguageEdition, Severity, Snapshot, Source,
 };
@@ -650,7 +651,7 @@ fn is_legacy_storage_operand(
                 .map(|edge| edge.target_id),
         );
     }
-    let mut visited = HashSet::new();
+    let mut visited = IdSet::new();
     while let Some(id) = stack.pop() {
         if id == target {
             return true;
@@ -774,7 +775,7 @@ fn subroutine_statement_count(
 /// queue dimensions (A.2.1.3). Walk the declared type's element chain.
 fn later_type_form(types: &HashMap<u64, &Type>, type_id: Option<u64>) -> Option<&'static str> {
     let mut current = type_id.and_then(|id| types.get(&id).copied());
-    let mut visited = HashSet::new();
+    let mut visited = IdSet::new();
     while let Some(ty) = current {
         if !visited.insert(ty.id) {
             return None;
@@ -905,7 +906,7 @@ fn written_variable<'a>(
     root: u64,
 ) -> Option<&'a SemanticNode> {
     let mut stack = vec![root];
-    let mut visited = HashSet::new();
+    let mut visited = IdSet::new();
     while let Some(id) = stack.pop() {
         if !visited.insert(id) {
             continue;

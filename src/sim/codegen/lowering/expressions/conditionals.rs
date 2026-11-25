@@ -1,4 +1,5 @@
 //! Conditional values retain array element boundaries across payload flattening.
+use crate::IdSet;
 use super::super::collection::{RecordColumn, RecordValue};
 use super::*;
 use crate::core::db::ConditionalPatternKind;
@@ -365,7 +366,7 @@ impl Codegen<'_> {
                 format!("conditional structure pattern fields are missing in `{scope_path}`")
             })?
             .to_vec();
-        let mut seen_fields = HashSet::new();
+        let mut seen_fields = IdSet::new();
         let mut seen_names = HashSet::new();
         for field in fields {
             if !seen_fields.insert(field.field) {

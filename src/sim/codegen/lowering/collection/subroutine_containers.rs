@@ -7,6 +7,7 @@
 //! model-global container per declaration and instance. Calls copy inputs in
 //! and outputs back, so a callee never aliases caller storage.
 
+use crate::IdSet;
 use super::*;
 
 impl Codegen<'_> {
@@ -453,7 +454,7 @@ impl Codegen<'_> {
         };
         // A replicated operand would be evaluated once per element here, so
         // only patterns of distinct operands use this form.
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = IdSet::new();
         if !operands.iter().all(|operand| seen.insert(*operand)) {
             return Ok(None);
         }

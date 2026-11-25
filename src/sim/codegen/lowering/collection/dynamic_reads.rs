@@ -24,6 +24,7 @@
 //! (`with_interface_reads`, decision S99-D7); a read it cannot follow is a
 //! located error.
 
+use crate::IdSet;
 use super::*;
 use crate::sim::ir::{IrElementRefKind, IrElementRoot, IrNativeAccessKind};
 
@@ -136,10 +137,10 @@ impl Codegen<'_> {
     /// method it calls: the waiting process must evaluate such an expression
     /// and re-arm on the storage the handles name after every wake.
     pub(in super::super) fn reads_dynamic_storage(&self, root: NodeId) -> bool {
-        self.reads_dynamic_storage_in(root, &mut HashSet::new())
+        self.reads_dynamic_storage_in(root, &mut IdSet::new())
     }
 
-    fn reads_dynamic_storage_in(&self, root: NodeId, visited: &mut HashSet<NodeId>) -> bool {
+    fn reads_dynamic_storage_in(&self, root: NodeId, visited: &mut IdSet<NodeId>) -> bool {
         let mut pending = vec![root];
         while let Some(node) = pending.pop() {
             if self.class_storage_field(node).is_some()
@@ -168,7 +169,7 @@ impl Codegen<'_> {
     /// Whether `root` calls a function with a string formal, directly or in
     /// the body of a function it calls.
     pub(in super::super) fn calls_string_formal_helper(&self, root: NodeId) -> bool {
-        let mut visited = HashSet::new();
+        let mut visited = IdSet::new();
         let mut pending = vec![root];
         while let Some(node) = pending.pop() {
             if let Some(callee) = self.called_subroutine(node) {
@@ -206,7 +207,7 @@ impl Codegen<'_> {
                 let watched = self.calls_virtual_method(node)
                     || self.class_method_call(node).is_some()
                     || self.func_body(callee).is_some_and(|body| {
-                        self.reads_dynamic_storage_in(body, &mut HashSet::new())
+                        self.reads_dynamic_storage_in(body, &mut IdSet::new())
                     });
                 if watched && !self.report_call_binds(node, callee) {
                     return ReportReadPlan::EverySlot;
@@ -1353,7 +1354,7 @@ impl Codegen<'_> {
             return Ok(());
         };
         if stack.contains(&callee) || stack.len() >= MAX_CALLEE_DEPTH {
-            if self.reads_dynamic_storage_in(body, &mut HashSet::new()) {
+            if self.reads_dynamic_storage_in(body, &mut IdSet::new()) {
                 return Err(self.unobservable_read(
                     path,
                     call,
@@ -1709,7 +1710,7 @@ impl Codegen<'_> {
         include_function_bodies: bool,
     ) -> Vec<(NodeId, bool)> {
         let mut nodes = Vec::new();
-        let mut visited = HashSet::new();
+        let mut visited = IdSet::new();
         let mut pending = vec![(root, false)];
         while let Some((node, in_callee)) = pending.pop() {
             match self.kind(node) {

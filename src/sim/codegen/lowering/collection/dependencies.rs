@@ -1,5 +1,6 @@
 //! Dependencies.
 
+use crate::IdSet;
 use super::super::packed_geometry::PackedSelectDim;
 use super::*;
 
@@ -331,7 +332,7 @@ impl<'a> Codegen<'a> {
         let writes = self.collect_process_writes(expression)?;
         let mut owned = HashSet::new();
         let mut owned_arrays = HashSet::new();
-        let mut visited = HashSet::new();
+        let mut visited = IdSet::new();
         self.collect_callee_storage(expression, &mut visited, &mut owned, &mut owned_arrays)?;
         let owned_storage = |dependency: &IrDependency| {
             let storage = match dependency {
@@ -363,7 +364,7 @@ impl<'a> Codegen<'a> {
     fn collect_callee_storage(
         &self,
         root: NodeId,
-        visited: &mut HashSet<NodeId>,
+        visited: &mut IdSet<NodeId>,
         owned: &mut HashSet<IrDependency>,
         owned_arrays: &mut HashSet<usize>,
     ) -> Result<(), String> {
@@ -906,7 +907,7 @@ impl<'a> Codegen<'a> {
             scope_path,
             lhs,
             &mut HashSet::new(),
-            &mut HashSet::new(),
+            &mut IdSet::new(),
             &mut reads,
         )?;
         Ok(reads
@@ -1455,7 +1456,7 @@ impl<'a> Codegen<'a> {
     ) -> Result<Vec<IrDependency>, String> {
         let mut out = Vec::new();
         let mut seen: HashSet<IrDependency> = HashSet::new();
-        let mut visited: HashSet<NodeId> = HashSet::new();
+        let mut visited: IdSet<NodeId> = IdSet::new();
         self.walk_read_signals_mode(
             scope_path,
             root,
@@ -1472,7 +1473,7 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         node: NodeId,
         seen: &mut HashSet<IrDependency>,
-        visited: &mut HashSet<NodeId>,
+        visited: &mut IdSet<NodeId>,
         out: &mut Vec<IrDependency>,
         include_function_bodies: bool,
     ) -> Result<(), String> {
@@ -1493,7 +1494,7 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         node: NodeId,
         seen: &mut HashSet<IrDependency>,
-        visited: &mut HashSet<NodeId>,
+        visited: &mut IdSet<NodeId>,
         out: &mut Vec<IrDependency>,
         include_function_bodies: bool,
         bindings: &HashMap<NodeId, IrDependency>,
@@ -2139,7 +2140,7 @@ impl<'a> Codegen<'a> {
     /// in (`callees`). Such storage adds nothing: the callee's own stores
     /// would wake its caller again, as for the storage
     /// `collect_evaluator_sensitivity` leaves out.
-    fn declared_in_callee(&self, declaration: NodeId, callees: &HashSet<NodeId>) -> bool {
+    fn declared_in_callee(&self, declaration: NodeId, callees: &IdSet<NodeId>) -> bool {
         let owner = if matches!(self.kind(declaration), NodeKind::FuncTask { .. }) {
             Some(declaration)
         } else {
@@ -2153,7 +2154,7 @@ impl<'a> Codegen<'a> {
     fn static_record_dependency(
         &self,
         node: NodeId,
-        callees: &HashSet<NodeId>,
+        callees: &IdSet<NodeId>,
     ) -> Option<IrDependency> {
         let value = self.static_record_read(node)?;
         let declaration = self.native_value_layouts.get(&value).copied()?;
@@ -2173,7 +2174,7 @@ impl<'a> Codegen<'a> {
     fn static_column_dependencies(
         &self,
         node: NodeId,
-        callees: &HashSet<NodeId>,
+        callees: &IdSet<NodeId>,
     ) -> Vec<IrDependency> {
         let Some((root, path)) = self.activation_record_path(node) else {
             return Vec::new();
@@ -2233,7 +2234,7 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         lhs: NodeId,
         seen: &mut HashSet<IrDependency>,
-        visited: &mut HashSet<NodeId>,
+        visited: &mut IdSet<NodeId>,
         out: &mut Vec<IrDependency>,
     ) -> Result<(), String> {
         self.walk_lhs_select_reads_mode(scope_path, lhs, seen, visited, out, true)
@@ -2244,7 +2245,7 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         lhs: NodeId,
         seen: &mut HashSet<IrDependency>,
-        visited: &mut HashSet<NodeId>,
+        visited: &mut IdSet<NodeId>,
         out: &mut Vec<IrDependency>,
         include_function_bodies: bool,
     ) -> Result<(), String> {
@@ -2265,7 +2266,7 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         lhs: NodeId,
         seen: &mut HashSet<IrDependency>,
-        visited: &mut HashSet<NodeId>,
+        visited: &mut IdSet<NodeId>,
         out: &mut Vec<IrDependency>,
         include_function_bodies: bool,
         bindings: &HashMap<NodeId, IrDependency>,

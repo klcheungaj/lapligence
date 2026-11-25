@@ -1,5 +1,6 @@
 //! Virtual interfaces.
 
+use crate::IdSet;
 use super::*;
 use crate::sim::codegen::error::located;
 
@@ -981,7 +982,7 @@ impl<'a> Codegen<'a> {
         let mut view_methods = HashMap::<String, HashSet<String>>::new();
         let mut entries = Vec::new();
         let mut metadata_interfaces = Vec::new();
-        let mut seen_metadata = HashSet::new();
+        let mut seen_metadata = IdSet::new();
         for interface in templates.iter().chain(concrete.iter()) {
             if seen_metadata.insert(*interface) {
                 metadata_interfaces.push(*interface);

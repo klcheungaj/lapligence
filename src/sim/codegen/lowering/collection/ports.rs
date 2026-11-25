@@ -1,5 +1,6 @@
 //! Ports.
 
+use crate::IdSet;
 use super::*;
 
 #[cfg(test)]
@@ -1110,7 +1111,7 @@ impl<'a> Codegen<'a> {
                 parent_path,
                 actual,
                 &mut seen,
-                &mut HashSet::new(),
+                &mut IdSet::new(),
                 &mut reads,
             )?;
             reads
@@ -1183,7 +1184,7 @@ impl<'a> Codegen<'a> {
             parent_path,
             actual,
             &mut seen,
-            &mut HashSet::new(),
+            &mut IdSet::new(),
             &mut reads,
         )?;
         let statement = IrStmt::Assign {
@@ -1926,7 +1927,7 @@ impl<'a> Codegen<'a> {
                     parent_path,
                     actual,
                     &mut seen,
-                    &mut HashSet::new(),
+                    &mut IdSet::new(),
                     &mut reads,
                 )?;
                 (lhs, sig_read_expr_full(&child_info), reads)
@@ -2027,7 +2028,7 @@ impl<'a> Codegen<'a> {
                 parent_path,
                 actual,
                 &mut seen,
-                &mut HashSet::new(),
+                &mut IdSet::new(),
                 &mut reads,
             )?;
             (lhs, rhs, reads)

@@ -1,3 +1,4 @@
+use crate::IdSet;
 use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
@@ -110,7 +111,7 @@ impl Validator<'_> {
             {
                 return self.fail(path, "field metadata key is not a structure pattern");
             }
-            let mut seen_fields = HashSet::new();
+            let mut seen_fields = IdSet::new();
             for (index, field) in fields.iter().enumerate() {
                 self.node(
                     field.field,
@@ -197,7 +198,7 @@ impl Validator<'_> {
                     return self.fail(format!("{path}.base"), "class inherits from itself");
                 }
             }
-            let mut seen = HashSet::new();
+            let mut seen = IdSet::new();
             let mut current = Some(*class);
             while let Some(id) = current {
                 if !seen.insert(id) {
@@ -753,7 +754,7 @@ impl Validator<'_> {
         path: &str,
         expected_kind: impl Fn(&NodeKind) -> bool,
     ) -> Result<(), DbValidationError> {
-        let mut seen = HashSet::new();
+        let mut seen = IdSet::new();
         for (index, root) in roots.iter().copied().enumerate() {
             if !seen.insert(root) {
                 return self.fail(

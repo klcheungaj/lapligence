@@ -6,10 +6,17 @@
 //! look stable while depending on table sizes; neither type therefore offers
 //! an iteration in its own order ([`IdMap::sorted`], [`IdSet::sorted`]).
 
-use std::borrow::Borrow;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasherDefault, Hash, Hasher};
+
+/// A key made of integers.
+pub(crate) trait Id: Copy + Eq + Hash {}
+
+impl Id for u32 {}
+impl Id for u64 {}
+impl Id for usize {}
+impl<A: Id, B: Id> Id for (A, B) {}
 
 /// Hashes the integers an id consists of.
 ///
@@ -69,7 +76,7 @@ impl<K, V> Default for IdMap<K, V> {
     }
 }
 
-impl<K: Eq + Hash, V> IdMap<K, V> {
+impl<K: Id, V> IdMap<K, V> {
     pub(crate) fn new() -> Self {
         Self::default()
     }
@@ -82,27 +89,15 @@ impl<K: Eq + Hash, V> IdMap<K, V> {
         self.0.is_empty()
     }
 
-    pub(crate) fn get<Q>(&self, key: &Q) -> Option<&V>
-    where
-        K: Borrow<Q>,
-        Q: Eq + Hash + ?Sized,
-    {
+    pub(crate) fn get(&self, key: &K) -> Option<&V> {
         self.0.get(key)
     }
 
-    pub(crate) fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
-    where
-        K: Borrow<Q>,
-        Q: Eq + Hash + ?Sized,
-    {
+    pub(crate) fn get_mut(&mut self, key: &K) -> Option<&mut V> {
         self.0.get_mut(key)
     }
 
-    pub(crate) fn contains_key<Q>(&self, key: &Q) -> bool
-    where
-        K: Borrow<Q>,
-        Q: Eq + Hash + ?Sized,
-    {
+    pub(crate) fn contains_key(&self, key: &K) -> bool {
         self.0.contains_key(key)
     }
 
@@ -110,11 +105,7 @@ impl<K: Eq + Hash, V> IdMap<K, V> {
         self.0.insert(key, value)
     }
 
-    pub(crate) fn remove<Q>(&mut self, key: &Q) -> Option<V>
-    where
-        K: Borrow<Q>,
-        Q: Eq + Hash + ?Sized,
-    {
+    pub(crate) fn remove(&mut self, key: &K) -> Option<V> {
         self.0.remove(key)
     }
 
@@ -139,22 +130,22 @@ impl<K: Eq + Hash, V> IdMap<K, V> {
     }
 }
 
-impl<K: Eq + Hash, V> FromIterator<(K, V)> for IdMap<K, V> {
+impl<K: Id, V> FromIterator<(K, V)> for IdMap<K, V> {
     fn from_iter<I: IntoIterator<Item = (K, V)>>(entries: I) -> Self {
         Self(entries.into_iter().collect())
     }
 }
 
-impl<K: Eq + Hash, V> Extend<(K, V)> for IdMap<K, V> {
+impl<K: Id, V> Extend<(K, V)> for IdMap<K, V> {
     fn extend<I: IntoIterator<Item = (K, V)>>(&mut self, entries: I) {
         self.0.extend(entries);
     }
 }
 
-impl<K: Eq + Hash + Borrow<Q>, V, Q: Eq + Hash + ?Sized> std::ops::Index<&Q> for IdMap<K, V> {
+impl<K: Id, V> std::ops::Index<&K> for IdMap<K, V> {
     type Output = V;
 
-    fn index(&self, key: &Q) -> &V {
+    fn index(&self, key: &K) -> &V {
         &self.0[key]
     }
 }
@@ -169,7 +160,7 @@ impl<K> Default for IdSet<K> {
     }
 }
 
-impl<K: Eq + Hash> IdSet<K> {
+impl<K: Id> IdSet<K> {
     pub(crate) fn new() -> Self {
         Self::default()
     }
@@ -198,7 +189,7 @@ impl<K: Eq + Hash> IdSet<K> {
     /// The ids by ascending value.
     pub(crate) fn sorted(&self) -> Vec<K>
     where
-        K: Ord + Copy,
+        K: Ord,
     {
         let mut ids = self.0.iter().copied().collect::<Vec<_>>();
         ids.sort_unstable();
@@ -211,13 +202,13 @@ impl<K: Eq + Hash> IdSet<K> {
     }
 }
 
-impl<K: Eq + Hash> FromIterator<K> for IdSet<K> {
+impl<K: Id> FromIterator<K> for IdSet<K> {
     fn from_iter<I: IntoIterator<Item = K>>(ids: I) -> Self {
         Self(ids.into_iter().collect())
     }
 }
 
-impl<K: Eq + Hash> Extend<K> for IdSet<K> {
+impl<K: Id> Extend<K> for IdSet<K> {
     fn extend<I: IntoIterator<Item = K>>(&mut self, ids: I) {
         self.0.extend(ids);
     }

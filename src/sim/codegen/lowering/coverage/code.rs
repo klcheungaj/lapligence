@@ -17,6 +17,7 @@
 //! into one increment of the entity's counter. A toggle entity is a packed
 //! net or variable of an instance (decision S46-D14); the runtime watches
 //! its storage.
+use crate::IdSet;
 use super::*;
 use crate::sim::ir::{IrStatementItem, IrToggleSignal};
 
@@ -55,7 +56,7 @@ impl Codegen<'_> {
             .chain(self.db.packages().iter().copied())
             .collect::<Vec<_>>();
         let mut stack = roots;
-        let mut seen = HashSet::new();
+        let mut seen = IdSet::new();
         while let Some(node) = stack.pop() {
             if !seen.insert(node) {
                 continue;

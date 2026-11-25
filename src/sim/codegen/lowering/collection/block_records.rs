@@ -8,6 +8,7 @@
 //! its leaves. Static records keep their value and initialize once in the
 //! static schedule (SV 6.21, 10.5); automatic records are reset to their
 //! default-uninitialized value and initialized at every block entry.
+use crate::IdSet;
 use super::record_defaults::LeafDefault;
 use super::*;
 use crate::core::db::JoinKind;
@@ -275,7 +276,7 @@ impl Codegen<'_> {
             return false;
         };
         let mut pending = vec![block];
-        let mut visited = HashSet::new();
+        let mut visited = IdSet::new();
         let mut referencing_fork = false;
         while let Some(node) = pending.pop() {
             if !visited.insert(node) {
@@ -326,7 +327,7 @@ impl Codegen<'_> {
     pub(super) fn references_declaration(&self, node: NodeId, declaration: NodeId) -> bool {
         let name = &self.node(declaration).name;
         let mut pending = vec![node];
-        let mut visited = HashSet::new();
+        let mut visited = IdSet::new();
         while let Some(id) = pending.pop() {
             if !visited.insert(id) {
                 continue;
@@ -590,7 +591,7 @@ impl Codegen<'_> {
 /// Record declarations of one process body and their declaration statements.
 #[derive(Default)]
 struct BlockDeclarations {
-    visited: HashSet<NodeId>,
+    visited: IdSet<NodeId>,
     records: Vec<NodeId>,
     /// String, chandle and class-handle declarations.
     natives: Vec<NodeId>,
