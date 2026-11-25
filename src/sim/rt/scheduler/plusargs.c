@@ -122,8 +122,9 @@ static int32_t llg_plusarg_digit(int32_t c, int32_t base) {
     return digit >= 0 && digit < base ? digit : -1;
 }
 
+// The four-state value of an x or z digit (5.7.1), else 0.
 static int32_t llg_plusarg_unknown_digit(int32_t c) {
-    return c == 'x' || c == 'X' || c == 'z' || c == 'Z';
+    return c == 'x' || c == 'X' ? 2 : c == 'z' || c == 'Z' || c == '?' ? 3 : 0;
 }
 
 static int32_t llg_plusarg_decimal(const char* text, size_t length, sv4_t* output) {
@@ -132,15 +133,23 @@ static int32_t llg_plusarg_decimal(const char* text, size_t length, sv4_t* outpu
     if (start < length && (text[start] == '+' || text[start] == '-')) {
         negative = text[start++] == '-';
     }
-    int32_t digits = 0, unknown = 0;
+    int32_t unknown = 0;
+    size_t digits = 0;
     for (size_t i = start; i < length; ++i) {
         if (text[i] == '_') continue;
-        if (llg_plusarg_unknown_digit(text[i])) unknown = 1;
+        int32_t state = llg_plusarg_unknown_digit((uint8_t)text[i]);
+        if (state) unknown = state;
         else if (llg_plusarg_digit((uint8_t)text[i], 10) < 0) return 0;
-        digits = 1;
+        ++digits;
     }
     if (!digits) return 0;
-    if (unknown) { llg_plusarg_unknown(output); return 1; }
+    if (unknown) {
+        // An x or z digit stands alone in a decimal number (5.7.1).
+        if (digits != 1 || start) return 0;
+        sv4_replace(output, sv4_fill((uint8_t)unknown, llg_sv4_width(*output),
+                                     llg_sv4_signed(*output)));
+        return 1;
+    }
     // The enclosing parser supplies a zeroed, exact-destination-width owner.
     for (size_t i = start; i < length; ++i) {
         if (text[i] == '_') continue;
@@ -159,12 +168,6 @@ static int32_t llg_plusarg_based(const char* text, size_t length, int32_t base,
         negative = text[start] == '-';
         ++start;
     }
-    if (length - start >= 2 && text[start] == '0' &&
-        ((base == 16 && (text[start + 1] == 'x' || text[start + 1] == 'X')) ||
-         (base == 8 && (text[start + 1] == 'o' || text[start + 1] == 'O')) ||
-         (base == 2 && (text[start + 1] == 'b' || text[start + 1] == 'B')))) {
-        start += 2;
-    }
     uint32_t bit = 0;
     int32_t digits = 0;
     int32_t unknown = 0;
@@ -172,14 +175,9 @@ static int32_t llg_plusarg_based(const char* text, size_t length, int32_t base,
         char c = text[--i];
         if (c == '_') continue;
         int32_t digit = llg_plusarg_digit((uint8_t)c, base);
-        int32_t state = 0;
-        if (digit >= 0) state = 0;
-        else if (llg_plusarg_unknown_digit((uint8_t)c)) {
-            state = c == 'z' || c == 'Z' ? 3 : 2;
-            unknown = 1;
-        } else {
-            return 0;
-        }
+        int32_t state = digit >= 0 ? 0 : llg_plusarg_unknown_digit((uint8_t)c);
+        if (digit < 0 && !state) return 0;
+        if (state) unknown = 1;
         ++digits;
         for (int32_t j = 0; j < bits_per_digit; ++j) {
             if (state != 0) {
@@ -209,6 +207,9 @@ static int32_t llg_plusarg_real_value(const char* text, size_t length,
         *output = 0.0;
         return 1;
     }
+    // strtod also accepts hexadecimal numbers, infinities and NaNs.
+    for (size_t i = 0; i < length; ++i)
+        if (!memchr("0123456789+-.eE", text[i], 15)) return 0;
     char* copy = llg_checked_malloc(length + 1, 1, "plusarg real value");
     memcpy(copy, text, length);
     copy[length] = '\0';
@@ -311,11 +312,6 @@ static int32_t llg_plusarg_integral_real(const char* text, size_t length,
     size_t start = 0;
     int32_t negative = length && text[0] == '-';
     if (length && (text[0] == '-' || text[0] == '+')) ++start;
-    if (base != 10u && length - start >= 2 && text[start] == '0' &&
-        ((base == 2u && (text[start + 1] == 'b' || text[start + 1] == 'B')) ||
-         (base == 8u && (text[start + 1] == 'o' || text[start + 1] == 'O')) ||
-         (base == 16u && (text[start + 1] == 'x' || text[start + 1] == 'X'))))
-        start += 2;
     int32_t digits = 0, unknown = 0;
     for (size_t i = start; i < length; ++i) {
         if (text[i] == '_') continue;
@@ -369,11 +365,7 @@ static int32_t llg_plusarg_integral_real(const char* text, size_t length,
 int32_t llg_value_plusargs_real(const char* format_text, size_t format_len, double* out) {
     if (!out) return 0;
     llg_plusarg_format_t format = {0};
-    if (!llg_plusarg_format_parse(format_text, format_len, &format) ||
-        format.conversion == 's') {
-        llg_plusarg_format_free(&format);
-        return 0;
-    }
+    if (!llg_plusarg_format_parse(format_text, format_len, &format)) return 0;
     const char* value = NULL;
     size_t value_len = 0;
     int32_t converted = 0;
@@ -388,6 +380,12 @@ int32_t llg_value_plusargs_real(const char* format_text, size_t format_len, doub
                 *out = 0.0;
                 converted = 1;
             }
+        } else if (format.conversion == 's') {
+            // The characters as an integral value (6.16).
+            sv4_t bytes = sv4_zero(value_len ? (uint32_t)value_len * 8u : 1u, 0);
+            converted = llg_plusarg_packed_value(value, value_len, 's', &bytes);
+            *out = sv4_to_real(bytes);
+            sv4_destroy(&bytes);
         } else {
             converted = llg_plusarg_integral_real(
                 value, value_len, format.conversion, out);
@@ -404,20 +402,18 @@ int32_t llg_value_plusargs_real(const char* format_text, size_t format_len, doub
 int32_t llg_value_plusargs_string(const char* format_text, size_t format_len, llg_string_t* out) {
     if (!out) return 0;
     llg_plusarg_format_t format = {0};
-    if (!llg_plusarg_format_parse(format_text, format_len, &format) ||
-        format.conversion != 's') {
-        llg_plusarg_format_free(&format);
-        return 0;
-    }
+    if (!llg_plusarg_format_parse(format_text, format_len, &format)) return 0;
     const char* value = NULL;
     size_t value_len = 0;
-    int32_t converted = llg_plusarg_find(&format, &value, &value_len);
+    int32_t found = llg_plusarg_find(&format, &value, &value_len);
+    // Another conversion has no value for a string (decision S26-D26).
+    int32_t converted = found && format.conversion == 's';
     llg_string_t result = {0};
     if (converted) result = llg_string_bytes(value, value_len);
     llg_plusarg_format_free(&format);
     /* No parser-owned buffers may remain across a notifying string write. */
     if (converted) llg_string_move(out, result);
-    return converted;
+    return found;
 }
 
 // Command line of the run, borrowed for vpi_get_vlog_info (38.30). The

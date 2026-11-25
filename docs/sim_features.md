@@ -2459,7 +2459,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Leading-`+` prefix matching, first repeated match, literal `%%`,
   `%d/%h/%x/%o/%b/%f/%e/%g/%s`, wide four-state values and unchanged destinations
   on failure are represented, including packed container-element
-  destinations. An empty string matches nothing (S26-D24). V §17.10; SV §21.6 **[1995/SV-2005]**.
+  destinations. An empty string matches nothing (S26-D24); conversions of
+  another kind than the variable: S26-D26. V §17.10; SV §21.6 **[1995/SV-2005]**.
 - 🟦 **Host commands** — `$system` evaluates one optional string once and
   requires generated-process `LLG_ALLOW_SYSTEM=1` (also `true/yes/on`). Denial
   diagnoses, returns signed 32-bit -1 and fails without shell execution.
