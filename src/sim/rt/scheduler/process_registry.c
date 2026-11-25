@@ -715,11 +715,15 @@ void llg_object_srandom(llg_rng_state_t* object, sv4_t seed) {
 }
 
 llg_string_t llg_object_get_randstate(const llg_rng_state_t* object) {
-    return object ? llg_rng_state_get(object) : llg_string_bytes("", 0);
+    return object ? llg_rng_state_get(object) : llg_process_get_randstate();
 }
 
 void llg_object_set_randstate(llg_rng_state_t* object, llg_string_t state) {
-    if (object && !llg_rng_state_set(object, &state)) {
+    if (!object) {
+        (void)llg_process_set_randstate(state);
+        return;
+    }
+    if (!llg_rng_state_set(object, &state)) {
         llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "random runtime: invalid randstate string");
         llg_last_failure = 1;
     }

@@ -1297,35 +1297,31 @@ peak before the first collection (`LLG_GC_STATS=1` reports `peak`).
 
 ## Statements that go on to the next wait after the run ended in them
 
-**Status:** found by FIN-002 step 4 (failure matrix); not fixed. The report, the
-exit status and the state the run ends in are right; statements of the same
-process up to its next wait or exit check may still run.
+**Status:** found by FIN-002 step 4 (failure matrix); narrowed by sim-defects-8
+(null mailboxes and semaphores stop at the access). The report, the exit status
+and the state the run ends in are right; statements of the same process up to its
+next wait or exit check may still run.
 
 ### Symptom
 
-- `num`, `try_get` and `try_put` of a null mailbox and `get`, `put` and `try_get`
-  of a null semaphore report the error and end the run, but the statements after
-  the call run up to the next wait. Every other null handle stops the process at
-  the access.
-- A value change callback of a plain assignment that calls
-  `vpi_control(vpiFinish)`: the statements after the assignment run up to the
-  next one that checks for the end of the run.
+A value change callback of a plain assignment that calls
+`vpi_control(vpiFinish)`: the statements after the assignment run up to the
+next one that checks for the end of the run.
 
 ### Cause
 
-The calls and plain assignments have no `ExecutionEffect::Terminate`
-(`src/sim/execution.rs`), so no exit check follows them.
+A plain assignment has no `ExecutionEffect::Terminate` (`src/sim/execution.rs`),
+so no exit check follows it.
 
 ### Intended direction
 
-Give both the effect. It adds an exit check after each `put`/`get` of a testbench
-loop and after each assignment of a model with a VPI catalog, and `wait (mb.num())`
-needs an exit check inside its condition, so it needs instruction counts of the
-testbench performance rows first.
+Give it the effect in models with a VPI catalog. Every assignment then pays an
+exit check, so it needs instruction counts of the VPI performance rows first.
 
 ### Reproduce
 
-`semaphore s; initial begin s.put(); $display("went on"); end`.
+A `cbValueChange` on `x` whose routine calls `vpi_control(vpiFinish, 0)`, and
+`initial begin x = 1; $display("went on"); end`.
 
 ## Mailbox message forms without a nested value
 

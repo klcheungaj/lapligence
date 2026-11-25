@@ -261,7 +261,7 @@ impl Validator<'_> {
 
         for (variable, init) in self.db.var_initializers().unordered() {
             let node = self.node(*variable, format_args!("vars_init[{}]", variable.0))?;
-            if !matches!(node.kind, NodeKind::Var { .. }) {
+            if !matches!(node.kind, NodeKind::Var { .. } | NodeKind::NamedEvent) {
                 return self.fail(
                     format!("vars_init[{}]", variable.0),
                     "initializer key is not a variable node",

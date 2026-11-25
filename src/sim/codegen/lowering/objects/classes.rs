@@ -1616,7 +1616,14 @@ impl Codegen<'_> {
                     }
                     IrClassFieldType::Chandle => {
                         if let Some(initializer) = initializer {
-                            let value = self.lower_chandle(path, initializer)?;
+                            let value = if field.event {
+                                self.lower_event_source(path, initializer)?
+                                    .map_or(IrChandleExpr::Null, |source| {
+                                        IrChandleExpr::EventObject(Box::new(source))
+                                    })
+                            } else {
+                                self.lower_chandle(path, initializer)?
+                            };
                             statements.push(IrStmt::Object(Box::new(
                                 IrObjectStmt::ChandleAssignLocal(target, value),
                             )));

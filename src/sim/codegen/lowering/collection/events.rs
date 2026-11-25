@@ -16,8 +16,8 @@ impl<'a> Codegen<'a> {
             return Ok(());
         }
         let Some(metadata) = self.db.event_array_meta(declaration) else {
-            let info = self.new_event_info(self.event_global_name(path, &name));
-            self.event_globals.insert(declaration, info);
+            let global = self.event_global_name(path, &name);
+            self.collect_event_global(path, declaration, global);
             return Ok(());
         };
         if !matches!(metadata.kind(), ArrayKind::Static) {
@@ -75,6 +75,84 @@ impl<'a> Codegen<'a> {
         ));
         self.event_arrays.insert(declaration, array);
         Ok(())
+    }
+
+    /// The model event of `declaration`, a static scalar event of `path`. Its
+    /// initializer joins the static initialization schedule.
+    pub(in super::super) fn collect_event_global(
+        &mut self,
+        path: &str,
+        declaration: NodeId,
+        global: String,
+    ) {
+        let info = self.new_event_info(global);
+        self.event_globals.insert(declaration, info);
+        if let Some(initializer) = self.db.var_initializer(declaration) {
+            self.reserve_initializer_order(declaration);
+            self.event_initializers
+                .push((declaration, initializer, path.to_owned()));
+        }
+    }
+
+    pub(in super::super) fn emit_event_initializers(&mut self) -> Result<(), String> {
+        for (declaration, initializer, path) in std::mem::take(&mut self.event_initializers) {
+            self.inst = self.initializer_environment(declaration).ok_or_else(|| {
+                format!(
+                    "initializer for event `{}` has no owning instance",
+                    self.node(declaration).name
+                )
+            })?;
+            self.depth_arg = "0".into();
+            let statement = self.event_initializer(&path, declaration, initializer)?;
+            self.record_initializer_source(declaration, initializer);
+            let identity = self.declaration_identity(declaration)?;
+            self.declaration_statements.push((identity, statement));
+        }
+        Ok(())
+    }
+
+    /// The assignment of its initializer to a scalar event variable (SV 6.17).
+    pub(in super::super) fn event_initializer(
+        &mut self,
+        path: &str,
+        declaration: NodeId,
+        initializer: NodeId,
+    ) -> Result<IrStmt, String> {
+        let target = EventTarget {
+            declaration,
+            indices: Vec::new(),
+            access: None,
+        };
+        Ok(IrStmt::EventAssign {
+            target: self.event_ref_of(&target, path)?,
+            source: self.lower_event_source(path, initializer)?,
+        })
+    }
+
+    /// The event whose synchronization object `node` names as a value;
+    /// `None` is null.
+    pub(in super::super) fn lower_event_source(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrEventRef>, String> {
+        if let Some(source) = self.event_target_of(node) {
+            return self.event_ref_of(&source, path).map(Some);
+        }
+        if let Some((container, back)) = self
+            .queue_pop_call(node)
+            .filter(|(container, _)| self.model.containers[*container].element.is_event())
+        {
+            return Ok(Some(IrEventRef::Handle(Box::new(
+                IrChandleExpr::QueuePop { container, back },
+            ))));
+        }
+        if self.is_null_event_expression(node) {
+            return Ok(None);
+        }
+        Err(format!(
+            "named event assignment in `{path}` requires another event handle or null"
+        ))
     }
 
     pub(in super::super) fn new_event_info(&mut self, global: String) -> EventInfo {

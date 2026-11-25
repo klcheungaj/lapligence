@@ -259,8 +259,12 @@ impl<'a> Codegen<'a> {
     ) {
         if self.db.variable_lifetime(child) == VariableLifetime::Static {
             let global = format!("E_class_{class_index}_{}", ident(&self.node(child).name));
-            let info = self.new_event_info(global);
-            self.event_globals.insert(child, info);
+            let path = self
+                .node(child)
+                .parent
+                .map(|class| self.node(class).full_name().to_owned())
+                .unwrap_or_default();
+            self.collect_event_global(&path, child, global);
             return;
         }
         let field_index = fields.len();

@@ -99,6 +99,7 @@ impl Frame<'_, '_> {
                     NativeKind::String,
                     format!("llg_process_handle_get_randstate({})", target.code()),
                 );
+                self.exit_on_failed_access(&format!("!{}", target.code()));
                 self.native_discard(target);
                 value
             }
@@ -106,7 +107,7 @@ impl Frame<'_, '_> {
                 let target = self.chandle(target)?;
                 self.native_value(
                     NativeKind::String,
-                    format!("llg_object_get_randstate(llg_class_rng({target}, \"get_randstate\"))"),
+                    format!("llg_object_get_randstate(llg_class_stream({target}))"),
                 )
             }
             Read(index) => self.native_value(

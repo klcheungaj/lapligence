@@ -711,7 +711,7 @@ impl Frame<'_, '_> {
                     crate::sim::ir::IrProcessRandom::Seed(seed) => {
                         let seed = self.expression(seed)?;
                         self.line(format!(
-                            "llg_object_srandom(llg_class_rng({target}, \"srandom\"), {});",
+                            "llg_object_srandom(llg_class_stream({target}), {});",
                             seed.code
                         ));
                         self.discard(seed);
@@ -719,7 +719,7 @@ impl Frame<'_, '_> {
                     crate::sim::ir::IrProcessRandom::SetState(state) => {
                         let state = self.string(state)?;
                         self.line(format!(
-                            "llg_object_set_randstate(llg_class_rng({target}, \"set_randstate\"), {});",
+                            "llg_object_set_randstate(llg_class_stream({target}), {});",
                             state.take_string()
                         ));
                         self.native_discard(state);

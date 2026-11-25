@@ -25,7 +25,7 @@ use crate::sim::ir::{
     IrDisplayArg, IrExpr, IrExprKind, IrInsideArray, IrInsideItem, IrJumpStateOp, IrLhs,
     IrMailboxExpr, IrMailboxValue, IrMemoryImage, IrMemoryStorage, IrModel, IrObjectQuery,
     IrObjectStmt, IrShape, IrStmt, IrStochasticStmt, IrStreamSelector, IrStreamTarget,
-    IrStringExpr, IrStringInsideItem, IrSysFunc, IrValidationError, VirtualDispatch,
+    IrStringExpr, IrStringInsideItem, IrSysFunc, IrValidationError, IrWaitSrc, VirtualDispatch,
 };
 use crate::sim::semantic::{ExtensionRef, Origin};
 
@@ -912,6 +912,16 @@ impl<'a> CallVisits<'a> {
         }
     }
 
+    /// Add the `Terminate` effect of an access whose rendered code leaves the
+    /// frame on its own failure path (`Frame::exit_on_failed_access`): the
+    /// callers of a subprogram must leave after the call, but the statement
+    /// with the access needs no check after it.
+    fn push_checked_exit(&self, effects: &mut EffectSet) {
+        if self.nested.is_none() {
+            effects.push(ExecutionEffect::Terminate);
+        }
+    }
+
     fn record(&mut self, target: CallTarget) {
         if let Callees::Recorded { targets, .. } = &mut self.callees {
             targets.insert(target);
@@ -1074,9 +1084,20 @@ fn collect_effects(
             }
             IrStmt::EventTrigger { .. }
             | IrStmt::ClockingEventTrigger { .. }
-            | IrStmt::NonblockingEventTrigger { .. }
-            | IrStmt::NonblockingEventTriggerWhen { .. }
-            | IrStmt::NonblockingEventAssignWhen { .. } => effects.push(ExecutionEffect::Trigger),
+            | IrStmt::NonblockingEventTrigger { .. } => effects.push(ExecutionEffect::Trigger),
+            IrStmt::NonblockingEventTriggerWhen { specs, .. }
+            | IrStmt::NonblockingEventAssignWhen { specs, .. } => {
+                effects.push(ExecutionEffect::Trigger);
+                // Waiting on a null event ends the simulation (S14-D8).
+                if specs.iter().any(|(source, _)| {
+                    matches!(
+                        source,
+                        IrWaitSrc::Event(_) | IrWaitSrc::FilteredEvent { .. }
+                    )
+                }) {
+                    effects.push(ExecutionEffect::Terminate);
+                }
+            }
             IrStmt::Fork {
                 join_kind,
                 branches,
@@ -2554,7 +2575,9 @@ fn collect_object_statement_effects(
         | IrObjectStmt::MailboxPutLocal(_, mailbox, value, try_put) => {
             collect_chandle_effects(ir, mailbox, effects, visited_calls);
             collect_mailbox_value_effects(ir, value, effects, visited_calls);
-            if !*try_put {
+            if *try_put {
+                visited_calls.push_checked_exit(effects);
+            } else {
                 effects.push(ExecutionEffect::Suspend);
                 effects.push(ExecutionEffect::Terminate);
             }
@@ -2565,7 +2588,9 @@ fn collect_object_statement_effects(
             collect_mailbox_value_effects(ir, value, effects, visited_calls);
         }
         IrObjectStmt::MailboxGet(_, mailbox, _, _)
+        // A null receiver ends the simulation (SV 8.4), here and below.
         | IrObjectStmt::MailboxGetLocal(_, mailbox, _, _) => {
+            visited_calls.push_checked_exit(effects);
             collect_chandle_effects(ir, mailbox, effects, visited_calls);
             // Both get and peek are blocking mailbox tasks when their queue
             // is empty; peek only changes whether the delivered message is
@@ -2583,6 +2608,7 @@ fn collect_object_statement_effects(
             effects.push(ExecutionEffect::Terminate);
             if let IrObjectStmt::ProcessRandom { op, .. } = statement {
                 match op {
+            visited_calls.push_checked_exit(effects);
                     crate::sim::ir::IrProcessRandom::Seed(seed) => {
                         collect_expression_effects(ir, seed, effects, visited_calls)
                     }
@@ -2597,6 +2623,7 @@ fn collect_object_statement_effects(
             effects.push(ExecutionEffect::Terminate);
             collect_chandle_effects(ir, target, effects, visited_calls);
             match op {
+            visited_calls.push_checked_exit(effects);
                 crate::sim::ir::IrProcessRandom::Seed(seed) => {
                     collect_expression_effects(ir, seed, effects, visited_calls)
                 }
@@ -2720,19 +2747,23 @@ fn collect_object_query_effects(
         }
         IrObjectQuery::ProcessEq(_, _) => {}
         // A null handle ends the simulation (SV 8.4).
+            visited_calls.push_checked_exit(effects);
         IrObjectQuery::ProcessStatus(_) => effects.push(ExecutionEffect::Terminate),
         IrObjectQuery::ArrayQuery(query) => {
             effects.push(ExecutionEffect::RuntimeService);
             if let IrArrayQueryTarget::String { value, .. } = &query.target {
+            visited_calls.push_checked_exit(effects);
                 collect_string_effects(ir, value, effects, visited_calls);
             }
         }
     }
+            visited_calls.push_checked_exit(effects);
 }
 
 fn collect_mailbox_value_effects(
     ir: &IrModel,
     value: &IrMailboxValue,
+            visited_calls.push_checked_exit(effects);
     effects: &mut EffectSet,
     visited_calls: &mut CallVisits,
 ) {
@@ -2926,12 +2957,14 @@ fn collect_string_effects(
                 }
             }
         }
-        IrStringExpr::RandomState | IrStringExpr::ProcessRandState(_) => {
-            effects.push(ExecutionEffect::RuntimeService)
+        IrStringExpr::RandomState => effects.push(ExecutionEffect::RuntimeService),
+        // A null handle ends the simulation (SV 8.4).
+        IrStringExpr::ProcessRandState(_) => {
+            effects.push(ExecutionEffect::RuntimeService);
+            visited_calls.push_checked_exit(effects);
         }
         IrStringExpr::ObjectRandState(target) => {
             effects.push(ExecutionEffect::RuntimeService);
-            effects.push(ExecutionEffect::Terminate);
             collect_chandle_effects(ir, target, effects, visited_calls);
         }
         IrStringExpr::LocalRead(name) => {

@@ -1226,7 +1226,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   repeated-event controls, `.triggered`, `wait_order`, event assignment,
   null and comparison execute. Nonblocking triggers name their event at issue
   and do not suspend the issuer; `.triggered` holds for the time step and is
-  false for null; events test false only when null; `wait_order` lets its
+  false for null (S14-D9); waiting on a null event ends the run (S14-D8);
+  scalar declaration initializers (an event or `null`) execute in every scope;
+  events test false only when null; `wait_order` lets its
   first event use the triggered state, and a failure without an `else` is a
   run-time error that ends the run at once, without final procedures
   (S14-D6)

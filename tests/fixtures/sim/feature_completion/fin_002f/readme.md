@@ -57,12 +57,12 @@ statement that checks for the end of the run.
 
 ## Stale handles
 
-`null_handles` is the industry-standard behaviour. Left out (contexts 19, 29, 61,
-63, 65, 66, 67, 75, 76, 77, 81, 102): `num`, `try_get`, `try_put` of a null mailbox and
-`get`, `put`, `try_get` of a null semaphore, where llg reports the error and goes
-on to the next wait before it ends; `nb <= n.v`; `.triggered`,
-`get_coverage()` and `get_randstate()` through null; `@` and `wait` on a null
-event.
+`null_handles` is the industry-standard behaviour, except that `.triggered` of a
+null event is false (contexts 75, 133: 15.5.3 L20736-20737, decision S14-D9) and
+`get_coverage()` is a static method (context 81: 19.8 L33569-33571, S44-D11). Every
+wait on a null event ends the run (S14-D8); the state methods of a null class
+handle go on with the calling process (S28-D10). The null receiver of context 128
+therefore changes nothing.
 
 `vpi_stale`: a handle of an element selects it at each access (decision A19-D23),
 so it fails while there is no such element and reads the new one afterwards; the

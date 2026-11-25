@@ -1059,7 +1059,8 @@ impl Db {
                     param_inits.insert(id, initializer);
                 }
             }
-            if semantic.kind == SemanticKind::Variable
+            if (semantic.kind == SemanticKind::Variable
+                || semantic.kind == SemanticKind::NamedEvent && !is_event_array)
                 && semantic.subkind != SEMANTIC_VARIABLE_CLOCKING
                 && !is_array
             {

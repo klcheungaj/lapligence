@@ -579,6 +579,44 @@ fn s14_d5_class_property_nba() {
     );
 }
 
+#[test]
+fn s14_d8_wait_on_null_event() {
+    let expected = include_str!("fixtures/sim/lrm_decisions/S14-D8_wait_on_null_event.out");
+    sim_cli::run_case_checked_matrix(SUITE, "S14-D8_wait_on_null_event", &[], &|label, output| {
+        runtime_error(label, output, expected, "null event handle access");
+    });
+}
+
+#[test]
+fn s14_d9_triggered_of_null_event() {
+    run_decision(
+        "S14-D9_triggered_of_null_event",
+        include_str!("fixtures/sim/lrm_decisions/S14-D9_triggered_of_null_event.out"),
+    );
+}
+
+#[test]
+fn s28_d10_state_methods_on_null() {
+    run_decision(
+        "S28-D10_state_methods_on_null",
+        include_str!("fixtures/sim/lrm_decisions/S28-D10_state_methods_on_null.out"),
+    );
+}
+
+#[test]
+fn s44_d11_get_coverage_without_instance() {
+    let expected =
+        include_str!("fixtures/sim/lrm_decisions/S44-D11_get_coverage_without_instance.out");
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "S44-D11_get_coverage_without_instance",
+        &[],
+        &|label, output| {
+            runtime_error(label, output, expected, "null class handle access");
+        },
+    );
+}
+
 /// The failure ends the run at once, without final procedures.
 #[test]
 fn s14_d6_wait_order_error_ends_run() {

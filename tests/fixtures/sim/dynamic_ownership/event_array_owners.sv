@@ -9,8 +9,9 @@ module tb;
         $finish(0);
     end
     initial begin
-        @(events[unknown_index]);
-        $display("unexpected unknown-index wake");
+        -> events[unknown_index];
+        if (events[unknown_index].triggered)
+            $display("unexpected unknown-index trigger");
     end
     initial begin
         #1;

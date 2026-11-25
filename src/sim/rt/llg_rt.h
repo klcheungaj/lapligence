@@ -1912,8 +1912,9 @@ int32_t llg_process_set_randstate(llg_string_t state);
 // Class-object streams. A generated class layout owns the state when the
 // model inspects object streams; `llg_object_rng_create` seeds it from the
 // creating thread (or only consumes that draw when `object` is NULL). The
-// srandom/get/set operations take the object's state; NULL is a no-op for a
-// receiver already reported as null. set_randstate consumes `state`.
+// srandom/get/set operations take the object's state. NULL is a null receiver:
+// srandom is a no-op, the access having been reported, and the state operations
+// address the calling process (S28-D10). set_randstate consumes `state`.
 // A model that observes random streams calls this before spawning: static
 // processes then seed from their instance's initialization stream (18.14.1)
 // instead of the root stream in model spawn order. Reset by llg_rt_cleanup.
@@ -3287,6 +3288,8 @@ void llg_nba_event_after(llg_event_t* ev, uint64_t ticks);
 llg_co_arm_t llg_arm_event(llg_proc_t* self, llg_event_t* ev);
 llg_co_arm_t llg_arm_events(llg_proc_t* self,
                             const llg_event_t* const* evs, int32_t n);
+// Waiting on a null event reports a null event access, ends the simulation and
+// returns EXIT.
 llg_co_arm_t llg_arm_event_triggered(llg_proc_t* self,
                                      const llg_event_t* ev);
 llg_co_arm_t llg_arm_assertion(llg_proc_t* self, uint64_t identity);

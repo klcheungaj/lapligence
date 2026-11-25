@@ -262,25 +262,7 @@ impl EmitCtx<'_, '_> {
                 Some(_) => IrEventRef::Null,
                 None => self.cg.event_ref_of(&target, &self.path)?,
             };
-            let source = if let Some(source) = self.cg.event_target_of(rhs) {
-                Some(self.cg.event_ref_of(&source, &self.path)?)
-            } else if let Some((container, back)) = self
-                .cg
-                .queue_pop_call(rhs)
-                .filter(|(container, _)| self.cg.model.containers[*container].element.is_event())
-            {
-                Some(IrEventRef::Handle(Box::new(IrChandleExpr::QueuePop {
-                    container,
-                    back,
-                })))
-            } else if self.cg.is_null_event_expression(rhs) {
-                None
-            } else {
-                return Err(format!(
-                    "named event assignment in `{}` requires another event handle or null",
-                    self.path
-                ));
-            };
+            let source = self.cg.lower_event_source(&self.path, rhs)?;
             if let Some(slot) = class_slot {
                 let value = source.map_or(IrChandleExpr::Null, |source| {
                     IrChandleExpr::EventObject(Box::new(source))

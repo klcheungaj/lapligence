@@ -514,10 +514,10 @@ void llg_mailbox_trace(llg_value_visit_fn visit, void* context) {
 
 static llg_mailbox_t* mailbox_require(llg_mailbox_t* mailbox,
                                       const char* operation) {
-    if (mailbox) return mailbox;
+    if (LLG_CO_LIKELY(mailbox)) return mailbox;
     llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "mailbox %s on a null handle", operation);
     llg_last_failure = 1;
-    g.finish = 1;
+    llg_rt_request_finish();
     return NULL;
 }
 
@@ -594,7 +594,6 @@ llg_co_arm_t llg_arm_mailbox_put_value(llg_proc_t* self,
     mailbox = mailbox_require(mailbox, "put");
     if (!mailbox) {
         mailbox_value_destroy(&value);
-        if (self) self->chain.exiting = LLG_EXIT_COMPLETE;
         return LLG_CO_ARM_EXIT;
     }
     if (!mailbox_message_kind_matches(mailbox, &value)) {
@@ -699,10 +698,7 @@ llg_co_arm_t llg_arm_mailbox_get_value(llg_proc_t* self,
                                        llg_mailbox_target_t target, int32_t peek) {
     llg_runtime_service_enter(self, "mailbox::get");
     mailbox = mailbox_require(mailbox, "get");
-    if (!mailbox) {
-        if (self) self->chain.exiting = LLG_EXIT_COMPLETE;
-        return LLG_CO_ARM_EXIT;
-    }
+    if (!mailbox) return LLG_CO_ARM_EXIT;
     int32_t result = mailbox_take_value(mailbox, &target, peek);
     if (result < 0) {
         mailbox_type_error();

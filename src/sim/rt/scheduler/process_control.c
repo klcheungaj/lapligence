@@ -583,9 +583,8 @@ llg_co_arm_t llg_arm_semaphore_get(llg_proc_t* self,
                                    llg_semaphore_t* semaphore,
                                    sv4_t key_count) {
     llg_runtime_service_enter(self, "semaphore::get");
-    if (!region_can_mutate("semaphore get") ||
-        !semaphore_valid(semaphore, "get"))
-        return LLG_CO_ARM_READY;
+    if (!region_can_mutate("semaphore get")) return LLG_CO_ARM_READY;
+    if (!semaphore_valid(semaphore, "get")) return LLG_CO_ARM_EXIT;
     if (!self) {
         llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "semaphore get requested outside a simulation process");
         llg_last_failure = 1;

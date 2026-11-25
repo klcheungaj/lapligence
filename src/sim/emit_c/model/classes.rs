@@ -133,7 +133,7 @@ static void llg_class_storage_destroy(void) {
             "LLG_CLASS_RNG_MEMBER",
             "    /* The object's random stream (SV 18.14.1 object stability). */\n    llg_rng_state_t rng;\n",
         ));
-        out.push_str("static llg_rng_state_t* llg_class_rng(void* handle, const char* site) {\n    llg_class_object_t* object = (llg_class_object_t*)llg_class_require(handle, site);\n    return object ? &object->rng : NULL;\n}\n");
+        out.push_str("static llg_rng_state_t* llg_class_stream(void* handle) {\n    llg_class_object_t* object = (llg_class_object_t*)handle;\n    return object ? &object->rng : NULL;\n}\nstatic llg_rng_state_t* llg_class_rng(void* handle, const char* site) {\n    return llg_class_stream(llg_class_require(handle, site));\n}\n");
     } else {
         out.push_str(&declarations.replace("LLG_CLASS_RNG_MEMBER", ""));
     }

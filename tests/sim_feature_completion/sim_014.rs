@@ -216,6 +216,17 @@ fn neg_event_function_triggered() {
 }
 
 #[test]
+fn event_variables_take_their_declaration_initializers() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "event_initializers",
+        include_str!("../fixtures/sim/feature_completion/sim_014/event_initializers.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
 fn triggered_state_identity_and_wait_order() {
     sim_cli::run_case_backend_parity(
         SUITE,

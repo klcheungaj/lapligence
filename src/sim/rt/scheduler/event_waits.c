@@ -133,6 +133,23 @@ void llg_event_watch_remove(llg_event_object_t* ev) {
     if (ev && ev->vpi_watches) ev->vpi_watches--;
 }
 
+// The outcome of waiting on a null event is undefined (SV 15.5.5.2); like an
+// access through a null class handle (8.4) it ends the simulation (S14-D8).
+// `.triggered` of one is false (15.5.3).
+LLG_COLD LLG_NOINLINE static void event_handle_null(const char* access) {
+    if (llg_rt_exiting()) return;
+    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "null event handle access: %s", access);
+    llg_rt_mark_failed();
+    llg_rt_fatal_typed(0, "null event handle access", NULL, 0, "", access);
+}
+
+// Whether a wait names a null event, which ends the simulation.
+static inline int32_t event_control_null(const llg_event_t* ev) {
+    if (LLG_CO_LIKELY(ev && ev->object)) return 0;
+    event_handle_null("event wait");
+    return 1;
+}
+
 int32_t llg_event_triggered(const llg_event_t* ev) {
     llg_event_object_t* object = ev ? ev->object : NULL;
     if (!object || !object->triggered ||
@@ -194,6 +211,8 @@ llg_co_arm_t llg_arm_events(llg_proc_t* self,
     llg_runtime_service_enter(self, "event wait");
     if (n <= 0 || !self || !region_can_mutate("wait scheduling"))
         return LLG_CO_ARM_READY;
+    for (int32_t i = 0; i < n; i++)
+        if (event_control_null(evs[i])) return LLG_CO_ARM_EXIT;
     llg_wait_t* w = &self->wait;
     w->kind = W_EVENT;
     w->resume_region = region_is_reactive(self->region)
@@ -208,7 +227,7 @@ llg_co_arm_t llg_arm_events(llg_proc_t* self,
         w->payload.event.evs = event_wait_list_new(n, &w->payload.event.event_slots);
     }
     for (int32_t i = 0; i < n; i++) {
-        w->payload.event.evs[i] = evs[i] ? evs[i]->object : NULL;
+        w->payload.event.evs[i] = evs[i]->object;
         event_list_add(w->payload.event.evs[i], self, &w->payload.event.event_slots[i]);
     }
     register_wait();
@@ -218,15 +237,15 @@ llg_co_arm_t llg_arm_events(llg_proc_t* self,
 llg_co_arm_t llg_arm_event_triggered(llg_proc_t* self,
                                      const llg_event_t* ev) {
     llg_runtime_service_enter(self, "event triggered wait");
-    if (!self || !region_can_mutate("wait scheduling") ||
-        llg_event_triggered(ev))
-        return LLG_CO_ARM_READY;
+    if (!self || !region_can_mutate("wait scheduling")) return LLG_CO_ARM_READY;
+    if (event_control_null(ev)) return LLG_CO_ARM_EXIT;
+    if (llg_event_triggered(ev)) return LLG_CO_ARM_READY;
     llg_wait_t* w = &self->wait;
     w->kind = W_EVENT_TRIGGERED;
     w->resume_region = region_is_reactive(self->region)
                            ? LLG_REGION_REACTIVE
                            : LLG_REGION_ACTIVE;
-    w->payload.event.triggered_ev = ev ? ev->object : NULL;
+    w->payload.event.triggered_ev = ev->object;
     w->payload.event.inline_slot = -1;
     event_triggered_list_add(w->payload.event.triggered_ev, self);
     register_wait();
@@ -254,6 +273,11 @@ llg_co_arm_t llg_arm_order(llg_proc_t* self,
     llg_runtime_service_enter(self, "wait_order");
     if (n <= 0 || !result || !self || !region_can_mutate("wait scheduling"))
         return LLG_CO_ARM_READY;
+    for (int32_t i = 0; i < n; i++) {
+        if (LLG_CO_LIKELY(evs[i] && evs[i]->object)) continue;
+        event_handle_null("wait_order");
+        return LLG_CO_ARM_EXIT;
+    }
     // SV 15.5.4: "Only the first event in the list can wait for the
     // persistent triggered property." A first event already triggered in
     // this time step counts as observed; the rest need new occurrences.
@@ -278,9 +302,8 @@ llg_co_arm_t llg_arm_order(llg_proc_t* self,
     order->evs = event_wait_list_new(n, &order->event_slots);
     order->n_evs = 0;
     for (int32_t i = 0; i < n; i++) {
-        llg_event_object_t* object = evs[i] ? evs[i]->object : NULL;
+        llg_event_object_t* object = evs[i]->object;
         order->sequence[i] = object;
-        if (!object) continue;
         int32_t seen = 0;
         for (int32_t j = 0; j < order->n_evs; j++) {
             if (order->evs[j] == object) {
@@ -302,13 +325,14 @@ llg_co_arm_t llg_arm_mixed(llg_proc_t* self,
     llg_runtime_service_enter(self, "mixed wait");
     if (!self || n < 0 || !region_can_mutate("wait scheduling"))
         return LLG_CO_ARM_READY;
-    llg_wait_t* w = &self->wait;
     int32_t nsig = 0;
     int32_t nev = 0;
     for (int32_t i = 0; i < n; i++) {
         if (srcs[i].sig) nsig++;
+        else if (event_control_null(srcs[i].ev)) return LLG_CO_ARM_EXIT;
         else nev++;
     }
+    llg_wait_t* w = &self->wait;
     w->kind = W_MIXED;
     w->resume_region = region_is_reactive(self->region)
                            ? LLG_REGION_REACTIVE
@@ -331,7 +355,7 @@ llg_co_arm_t llg_arm_mixed(llg_proc_t* self,
             mixed->last[si] = sv4_clone(srcs[i].sig);
             si++;
         } else {
-            mixed->evs[ei] = srcs[i].ev ? srcs[i].ev->object : NULL;
+            mixed->evs[ei] = srcs[i].ev->object;
             event_list_add(mixed->evs[ei], self, &mixed->event_slots[ei]);
             ei++;
         }
@@ -411,6 +435,7 @@ llg_co_arm_t llg_arm_expressions(llg_proc_t* self,
     // contexts belonging to later entries which have not been evaluated yet.
     for (int32_t i = 0; i < n; i++) {
         if (specs[i].event) {
+            if (event_control_null(specs[i].event)) break;
             llg_event_object_t* object = specs[i].event->object;
             int32_t seen = 0;
             for (int32_t j = 0; j < expression->n_evs; j++)
@@ -457,14 +482,20 @@ uint64_t llg_repeat_count(sv4_t value) {
     return result;
 }
 
+static int32_t event_specs_null(const llg_expr_event_spec_t* specs, int32_t n) {
+    for (int32_t i = 0; i < n; i++)
+        if (specs[i].event && event_control_null(specs[i].event)) return 1;
+    return 0;
+}
+
 static void register_deferred_trigger(const llg_expr_event_spec_t* specs,
                                       int32_t n, uint64_t repeat,
                                       llg_event_object_t* target,
                                       llg_event_assignment_fn action,
                                       llg_frame_t* action_frame) {
     if (n < 0) abort();
-    if ((!target && !action) ||
-        !region_can_mutate("nonblocking event registration")) {
+    if (!region_can_mutate("nonblocking event registration") ||
+        (repeat && event_specs_null(specs, n)) || (!target && !action)) {
         release_expression_contexts(specs, n);
         if (action_frame) llg_frame_release(action_frame);
         return;
