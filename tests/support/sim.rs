@@ -2,11 +2,12 @@
 #![allow(dead_code)]
 
 use std::cell::Cell;
+use std::ffi::OsStr;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -493,6 +494,52 @@ pub(crate) fn ended_by_abort(status: &ExitStatus) -> bool {
             .code()
             .is_some_and(|code| code == 3 || code.cast_unsigned() == STATUS_STACK_BUFFER_OVERRUN)
     }
+}
+
+/// The command that runs `program` without core dumps of it or of the
+/// processes it starts, for programs whose abort a test expects. A core dump
+/// handler (a piped `core_pattern`) can hold an aborting process for seconds,
+/// and one in a container until the test times out. Windows writes no core
+/// dumps; a host where the limit cannot be set runs the program as it is.
+pub(crate) fn command_without_core_dumps(program: impl AsRef<OsStr>) -> Command {
+    let mut command = match core_dump_launcher() {
+        [] => return Command::new(program),
+        [launcher, args @ ..] => {
+            let mut command = Command::new(launcher);
+            command.args(args);
+            command
+        }
+    };
+    command.arg(program.as_ref());
+    command
+}
+
+/// The program and arguments that run the command which follows them without
+/// core dumps. The Linux kernel calls a piped handler for a core limit of 0
+/// as for any other, but not for a limit of 1 (`do_coredump`), which a shell's
+/// `ulimit` cannot set.
+fn core_dump_launcher() -> &'static [&'static str] {
+    static LAUNCHER: OnceLock<&[&str]> = OnceLock::new();
+    LAUNCHER.get_or_init(|| {
+        let launcher: &[&str] = if cfg!(target_os = "linux") {
+            &["prlimit", "--core=1:1"]
+        } else if cfg!(unix) {
+            &["sh", "-c", "ulimit -c 0 && exec \"$0\" \"$@\""]
+        } else {
+            return &[];
+        };
+        // No prlimit, or a hard limit that cannot be raised to 1.
+        let usable = Command::new(launcher[0])
+            .args(&launcher[1..])
+            .arg("true")
+            .output()
+            .is_ok_and(|output| output.status.success());
+        if usable {
+            launcher
+        } else {
+            &[]
+        }
+    })
 }
 
 pub(crate) fn run_command(command: &mut Command, timeout: Duration) -> Result<Output, String> {

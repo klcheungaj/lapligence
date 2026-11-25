@@ -23,6 +23,11 @@ process runners call it on captured output too (`lint_config_cli`; library unit
 tests through `sim::build::model_output_to_lf`). Expected diagnostic paths use
 `source_display`, the resolved native spelling the product prints.
 
+A test that expects an abort starts the program, or the `llg` or CTest that
+runs it, with `sim.rs::command_without_core_dumps` (every `sim_cli` run does):
+where a core dump handler is slow or blocks, each abort takes seconds or never
+ends. The Linux CI containers set the same limit for everything else.
+
 `sim_cli.rs` runs checked-in `.sv` stems or explicit `.v`/`.sv` filenames through
 the public CLI in both HDL optimizer modes. `run_case_after_db_drop` supplements
 that acceptance with checked compilation, validated whole-model generation after

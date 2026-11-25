@@ -277,9 +277,11 @@ int main(void) {
         .expect("create coroutine report directory");
     let executable = sim::build::build_model_cmake(dir.path(), &[("probe.c", PROBE)])
         .expect("coroutine report probe should compile");
-    let output =
-        sim_harness::run_command(&mut Command::new(&executable), sim_harness::MODEL_TIMEOUT)
-            .expect("coroutine report probe should start");
+    let output = sim_harness::run_command(
+        &mut sim_harness::command_without_core_dumps(&executable),
+        sim_harness::MODEL_TIMEOUT,
+    )
+    .expect("coroutine report probe should start");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success(), "probe unexpectedly succeeded");
     assert!(

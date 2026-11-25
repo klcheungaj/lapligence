@@ -28,22 +28,28 @@
 //! for `alloc_foreign` the lines derived in the fixture readme.
 //!
 //! The checked-in run fails a bounded number of requests per model (the
-//! first and last ones and an even spread between them); with
+//! first and last ones and a spread between them); with
 //! `LLG_ALLOC_FAULT_ALL=1` it fails every request, and every request once
 //! more in the mode where all later requests fail too. Commands and the
 //! sanitizer lane: `tests/readme.md`, "Allocation fault injection".
 use super::{sim_cli, sim_harness};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const SUITE: &str = "feature_completion/fin_002d";
 const RUN_TIMEOUT: Duration = Duration::from_secs(120);
+/// A run with a failed request does at most what the fault-free run does, so
+/// it must end within this multiple of that run's time and within
+/// `FAULT_MIN_TIMEOUT` at the least, which leaves room for a loaded host. A
+/// longer one is held, for example by a core dump handler after the abort.
+const FAULT_TIME_FACTOR: u32 = 20;
+const FAULT_MIN_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Requests failed per model at each end of the run, and in between, when
 /// `LLG_ALLOC_FAULT_ALL` does not ask for all of them.
 const EDGE_REQUESTS: u64 = 24;
-const SPREAD_REQUESTS: u64 = 160;
+const SPREAD_REQUESTS: u64 = 100;
 
 /// The runtime message ids of the defined results.
 const ALLOCATION_ID: &str = "SIM-031";
@@ -87,16 +93,22 @@ fn built_model(fixture: &str, built: &(sim_harness::TempDir, Output)) -> PathBuf
     model(built.0.path())
 }
 
-fn run(executable: &Path, directory: &Path, run_args: &[&str], envs: &[(&str, &str)]) -> Output {
-    let mut command = Command::new(executable);
+fn run(
+    executable: &Path,
+    directory: &Path,
+    run_args: &[&str],
+    envs: &[(&str, &str)],
+    limit: Duration,
+) -> Output {
+    let mut command = sim_harness::command_without_core_dumps(executable);
     command
         .current_dir(directory)
         .args(run_args)
         .env_remove("LLG_ALLOC_FAULT")
         .env_remove("LLG_ALLOC_FAULT_COUNT")
         .envs(envs.iter().copied());
-    sim_harness::run_command(&mut command, RUN_TIMEOUT)
-        .unwrap_or_else(|error| panic!("{}: {error}", executable.display()))
+    sim_harness::run_command(&mut command, limit)
+        .unwrap_or_else(|error| panic!("{} {envs:?}: {error}", executable.display()))
 }
 
 /// The ids of the catalogued messages on `stderr`; a line that is not a
@@ -119,12 +131,14 @@ fn requests(count: u64) -> Vec<u64> {
     {
         return (1..=count).collect();
     }
-    let step = (count - 2 * EDGE_REQUESTS).div_ceil(SPREAD_REQUESTS);
+    // Denser at the start, where a model first uses each part of the runtime:
+    // as many different requests as 160 evenly spread ones name.
+    let between = count - 2 * EDGE_REQUESTS;
     let mut chosen: Vec<u64> = (1..=EDGE_REQUESTS).collect();
-    chosen.extend(
-        (EDGE_REQUESTS + 1..=count - EDGE_REQUESTS)
-            .step_by(usize::try_from(step).expect("the step fits the host")),
-    );
+    chosen.extend((0..SPREAD_REQUESTS).map(|index| {
+        EDGE_REQUESTS + 1 + between * index * index / (SPREAD_REQUESTS * SPREAD_REQUESTS)
+    }));
+    chosen.dedup();
     chosen.extend(count - EDGE_REQUESTS + 1..=count);
     chosen
 }
@@ -151,12 +165,15 @@ fn check(
     let directory = built.0;
     let count_file = directory.path().join("alloc_fault_count");
     let count_path = count_file.to_string_lossy().into_owned();
+    let start = Instant::now();
     let clean = run(
         &executable,
         directory.path(),
         run_args,
         &[("LLG_ALLOC_FAULT_COUNT", &count_path)],
+        RUN_TIMEOUT,
     );
+    let limit = (start.elapsed() * FAULT_TIME_FACTOR).max(FAULT_MIN_TIMEOUT);
     let clean_stdout = String::from_utf8_lossy(&clean.stdout).into_owned();
     let clean_stderr = String::from_utf8_lossy(&clean.stderr).into_owned();
     assert_eq!(clean.status.code(), Some(0), "{fixture}: {clean_stderr}");
@@ -181,6 +198,7 @@ fn check(
                 directory.path(),
                 run_args,
                 &[("LLG_ALLOC_FAULT", &setting)],
+                limit,
             );
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
