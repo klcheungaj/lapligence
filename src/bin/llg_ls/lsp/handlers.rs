@@ -30,6 +30,7 @@ mod staging;
 mod state;
 
 use diagnostics::*;
+use identifiers::DocumentTable;
 #[cfg(test)]
 use scheduling::*;
 use staging::*;
@@ -818,6 +819,14 @@ impl LanguageServer for Backend {
                 shared_owner,
             )
         };
+        if !self.answers_at(
+            &analysis,
+            &params.text_document_position_params.text_document.uri,
+            position,
+        ) {
+            request.complete("stale", 0);
+            return Ok(None);
+        }
         let key = RequestKey::new(
             RequestKind::Hover,
             params
@@ -883,10 +892,24 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
         let outcome = document.outcome;
+        let analysis = document.analysis.clone();
+        // A committed table answers for an edited document whose isolated
+        // parse was refused.
+        if let (DocumentTable::Committed, Some(analysis)) = (&document.table, &analysis) {
+            if !self.answers_at(analysis, &uri, position) {
+                request.complete("stale", 0);
+                return Ok(None);
+            }
+        }
         let locations = tokio::task::spawn_blocking(move || document.definitions_at(position))
             .await
             .unwrap_or_default();
-        let mut locations = self.map_locations(&locations);
+        let mut locations = self.current_locations(
+            analysis.as_deref(),
+            locations
+                .iter()
+                .map(|value| (value.name.as_deref(), &value.location)),
+        );
         request.complete(outcome, locations.len());
         Ok(match locations.len() {
             0 => None,
@@ -918,6 +941,14 @@ impl LanguageServer for Backend {
             )
         };
         let include_declaration = params.context.include_declaration;
+        if !self.answers_at(
+            &analysis,
+            &params.text_document_position.text_document.uri,
+            position,
+        ) {
+            request.complete("stale", 0);
+            return Ok(Some(Vec::new()));
+        }
         let key = RequestKey::new(
             RequestKind::References {
                 include_declaration,
@@ -936,16 +967,18 @@ impl LanguageServer for Backend {
                 key.line,
                 key.character
             );
-            let value = self.map_locations(&cached);
+            let value = self.current_references(&analysis, &paths, position, &cached);
             request.complete("cache-hit", value.len());
             return Ok(Some(value));
         }
+        let compiled = Arc::clone(&analysis);
+        let files = paths.clone();
         let values = tokio::task::spawn_blocking(move || {
-            paths
+            files
                 .into_iter()
                 .map(|path| {
                     features::references_at_with_options(
-                        &analysis,
+                        &compiled,
                         &path,
                         position.line,
                         position.character,
@@ -965,7 +998,7 @@ impl LanguageServer for Backend {
             key.line,
             key.character
         );
-        let value = self.map_locations(&values);
+        let value = self.current_references(&analysis, &paths, position, &values);
         request.complete("ok", value.len());
         Ok(Some(value))
     }
@@ -990,6 +1023,13 @@ impl LanguageServer for Backend {
             };
             (analysis, paths, params.position)
         };
+        if self
+            .uncommitted_text(&analysis, &params.text_document.uri)
+            .is_some()
+        {
+            request.complete("stale", 0);
+            return Err(content_modified());
+        }
         let value = tokio::task::spawn_blocking(move || {
             paths.into_iter().find_map(|path| {
                 crate::rename::prepare_rename(&analysis, &path, position.line, position.character)
@@ -1015,11 +1055,10 @@ impl LanguageServer for Backend {
         let mut request = crate::logging::LifecycleSpan::request("textDocument/rename", || {
             Self::log_uri_identity(&params.text_document_position.text_document.uri)
         });
-        let (analysis, paths, position, new_name) = {
+        let uri = params.text_document_position.text_document.uri;
+        let (analysis, paths, position, new_name, max_file_bytes) = {
             let state = self.lock_state();
-            let Some((root, _, paths)) =
-                Self::root_context(&state, &params.text_document_position.text_document.uri)
-            else {
+            let Some((root, _, paths)) = Self::root_context(&state, &uri) else {
                 return Ok(None);
             };
             request.set_root(|| root.descriptor.id.clone());
@@ -1031,15 +1070,21 @@ impl LanguageServer for Backend {
                 paths,
                 params.text_document_position.position,
                 params.new_name,
+                root.descriptor.effective_config().analysis.max_file_bytes,
             )
         };
+        if self.uncommitted_text(&analysis, &uri).is_some() {
+            request.complete("stale", 0);
+            return Err(content_modified());
+        }
+        let compiled = Arc::clone(&analysis);
         // First candidate wins: an invalid name is a request-level error
         // independent of the shadow/real path choice; `Ok(None)` falls through
         // to the next candidate path like the other navigation handlers.
         let value = tokio::task::spawn_blocking(move || {
             for path in paths {
                 match crate::rename::rename(
-                    &analysis,
+                    &compiled,
                     &path,
                     position.line,
                     position.character,
@@ -1067,8 +1112,18 @@ impl LanguageServer for Backend {
                 ))
             }
             Some(Ok(Some(edit))) => {
-                let state = self.lock_state();
-                let edit = Backend::map_workspace_edit_uris(&state, edit);
+                let edit = Backend::map_workspace_edit_uris(&self.lock_state(), edit);
+                // An edit at the position of an older text would change
+                // something else.
+                let current = edit
+                    .changes
+                    .iter()
+                    .flat_map(HashMap::keys)
+                    .all(|uri| self.compiled_current_text(&analysis, uri, max_file_bytes));
+                if !current {
+                    request.complete("stale", 0);
+                    return Err(content_modified());
+                }
                 request.complete("ok", 1);
                 Ok(Some(edit))
             }
@@ -1259,6 +1314,16 @@ impl LanguageServer for Backend {
             request.complete("ok", count);
             Ok(Some(CompletionResponse::Array(values)))
         }
+    }
+}
+
+/// The answer to a request whose document the committed analysis has not
+/// compiled yet; the client asks again.
+fn content_modified() -> tower_lsp::jsonrpc::Error {
+    tower_lsp::jsonrpc::Error {
+        code: tower_lsp::jsonrpc::ErrorCode::ContentModified,
+        message: "the analysis has not read the current text yet".into(),
+        data: None,
     }
 }
 

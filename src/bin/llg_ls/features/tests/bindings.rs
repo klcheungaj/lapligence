@@ -79,7 +79,7 @@ fn a_name_several_declarations_resolve_has_all_of_them() {
     let a = sample_analysis_with_bindings(token_files, bindings);
     let starts: Vec<Position> = definitions_at(&a, hp("/x/top.sv"), 6, 2)
         .iter()
-        .map(|location| location.range.start)
+        .map(|target| target.location.range.start)
         .collect();
     assert_eq!(starts, [Position::new(4, 2), Position::new(9, 1)]);
     assert!(hover_at(&a, hp("/x/top.sv"), 6, 2).is_none());

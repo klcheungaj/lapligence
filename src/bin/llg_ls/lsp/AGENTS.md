@@ -26,6 +26,8 @@ Components: [readme](readme.md), [handlers](handlers/readme.md). Server rules:
 - Always publish diagnostics, after the state lock is released, through the
   ticketed `publish_ordered` path (`diagnostics.rs` docs).
 - Valid analysis replaces `last_good`; compile/admission failures keep navigation.
+- A position from `last_good` leaves the server only through the current-text
+  checks of `identifiers.rs` ([handlers](handlers/readme.md)).
 - Watched-file registrations are serialized by their own gate and read the
   watcher set only after taking their turn.
 

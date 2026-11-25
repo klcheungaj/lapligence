@@ -229,7 +229,7 @@ impl DocumentIdentifiers {
         self.nodes.len()
     }
 
-    pub fn definitions_at(&self, line: u32, col: u32) -> Vec<Location> {
+    pub fn definitions_at(&self, line: u32, col: u32) -> Vec<NamedLocation> {
         definitions_in(&self.nodes, &self.bindings, line, col)
     }
 
@@ -750,13 +750,21 @@ pub(super) fn func_from_decl<'m>(model: &'m DesignModel, decl: &SymEntry) -> Opt
 
 // ── Definition ────────────────────────────────────────────────────────────────
 
+/// A location in the text an analysis compiled, and the identifier that text
+/// has there (`None` for an included file, whose location is its start).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamedLocation {
+    pub name: Option<String>,
+    pub location: Location,
+}
+
 /// The definitions of the name at the 0-based position: the targets its token
 /// is bound to, or the token itself when it declares the name. Highlighting
 /// encodes the same tokens ([`tokens::TokenRule`]), so a name has a definition
 /// exactly when it has a semantic token, apart from the exceptions listed
 /// there. Several targets, for a name several syntax trees or macro expansions
 /// resolve differently, are all returned.
-pub fn definitions_at(a: &Analysis, file: &str, line: u32, col: u32) -> Vec<Location> {
+pub fn definitions_at(a: &Analysis, file: &str, line: u32, col: u32) -> Vec<NamedLocation> {
     match file_tokens(a, file) {
         Some(file_tokens) => definitions_in(&file_tokens.nodes, &a.bindings, line, col),
         None => Vec::new(),
@@ -768,7 +776,7 @@ fn definitions_in(
     bindings: &tokens::Bindings,
     line: u32,
     col: u32,
-) -> Vec<Location> {
+) -> Vec<NamedLocation> {
     let Some(token) = tokens::token_at(nodes, line, col) else {
         return Vec::new();
     };
@@ -776,9 +784,12 @@ fn definitions_in(
         Some(tokens::Definition::Targets(targets)) => {
             targets.iter().map(ref_target_location).collect()
         }
-        Some(tokens::Definition::Itself) => vec![Location {
-            uri: file_uri(&token.file),
-            range: token_range(token),
+        Some(tokens::Definition::Itself) => vec![NamedLocation {
+            name: token.name.clone(),
+            location: Location {
+                uri: file_uri(&token.file),
+                range: token_range(token),
+            },
         }],
         None => Vec::new(),
     }
@@ -792,17 +803,33 @@ fn file_uri(file: &str) -> Url {
 /// LSP location for a bound declaration target (already 0-based), spanning
 /// the target name with the same identifier-width convention as
 /// [`entry_location`]; an included file is its start.
-pub(super) fn ref_target_location(t: &DeclTarget) -> Location {
+fn ref_target_location(t: &DeclTarget) -> NamedLocation {
     let start = Position::new(t.line0, t.col0);
-    let len = if t.kind == tokens::TARGET_FILE {
-        0
-    } else {
-        lsp_name_len(&t.name)
-    };
-    Location {
-        uri: file_uri(&t.file),
-        range: Range::new(start, Position::new(t.line0, t.col0 + len)),
+    let name = (t.kind != tokens::TARGET_FILE).then(|| t.name.clone());
+    let len = name.as_deref().map_or(0, lsp_name_len);
+    NamedLocation {
+        name,
+        location: Location {
+            uri: file_uri(&t.file),
+            range: Range::new(start, Position::new(t.line0, t.col0 + len)),
+        },
     }
+}
+
+/// Whether the text with these lines has the identifier `name` at `start`.
+pub(crate) fn spells_identifier(lines: &[&str], start: Position, name: &str) -> bool {
+    let word = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    let Some(line) = usize::try_from(start.line)
+        .ok()
+        .and_then(|index| lines.get(index))
+    else {
+        return false;
+    };
+    let (before, text) = line.split_at(utf16_byte_offset(line, start.character));
+    // A name of plain characters may be written escaped (5.6.1).
+    let text = text.strip_prefix('\\').unwrap_or(text);
+    text.strip_prefix(name)
+        .is_some_and(|after| !after.starts_with(word) && !before.ends_with(word))
 }
 
 // ── References ────────────────────────────────────────────────────────────────

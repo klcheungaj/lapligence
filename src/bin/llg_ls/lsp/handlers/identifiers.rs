@@ -9,7 +9,7 @@ pub(super) enum DocumentTable {
     /// The committed analysis: of a closed document, of an open one whose
     /// text it compiled, and of an open one whose isolated parse was refused
     /// or failed.
-    Committed(Option<Arc<Analysis>>),
+    Committed,
     /// The isolated parse of an open document's uncommitted text.
     Isolated(Arc<features::DocumentIdentifiers>),
 }
@@ -17,6 +17,9 @@ pub(super) enum DocumentTable {
 /// The table of one request, and how it was obtained.
 pub(super) struct DocumentRequest {
     pub(super) table: DocumentTable,
+    /// The committed analysis. It also gives an isolated parse its positions
+    /// in other documents.
+    pub(super) analysis: Option<Arc<Analysis>>,
     /// The document's path and the epoch of the committed analysis.
     pub(super) path: String,
     pub(super) epoch: u64,
@@ -43,24 +46,24 @@ impl DocumentRequest {
     }
 
     pub(super) fn semantic_tokens(&self) -> SemanticTokens {
-        match &self.table {
-            DocumentTable::Committed(Some(analysis)) => {
+        match (&self.table, &self.analysis) {
+            (DocumentTable::Isolated(identifiers), _) => identifiers.semantic_tokens(),
+            (DocumentTable::Committed, Some(analysis)) => {
                 features::semantic_tokens_for(analysis, &self.path)
             }
-            DocumentTable::Committed(None) => empty_semantic_tokens(),
-            DocumentTable::Isolated(identifiers) => identifiers.semantic_tokens(),
+            (DocumentTable::Committed, None) => empty_semantic_tokens(),
         }
     }
 
-    pub(super) fn definitions_at(&self, position: Position) -> Vec<Location> {
-        match &self.table {
-            DocumentTable::Committed(Some(analysis)) => {
-                features::definitions_at(analysis, &self.path, position.line, position.character)
-            }
-            DocumentTable::Committed(None) => Vec::new(),
-            DocumentTable::Isolated(identifiers) => {
+    pub(super) fn definitions_at(&self, position: Position) -> Vec<features::NamedLocation> {
+        match (&self.table, &self.analysis) {
+            (DocumentTable::Isolated(identifiers), _) => {
                 identifiers.definitions_at(position.line, position.character)
             }
+            (DocumentTable::Committed, Some(analysis)) => {
+                features::definitions_at(analysis, &self.path, position.line, position.character)
+            }
+            (DocumentTable::Committed, None) => Vec::new(),
         }
     }
 }
@@ -124,7 +127,8 @@ impl Backend {
                 }
             }
             let request = DocumentRequest {
-                table: DocumentTable::Committed(analysis),
+                table: DocumentTable::Committed,
+                analysis,
                 path,
                 epoch,
                 outcome: "committed",
@@ -136,7 +140,7 @@ impl Backend {
         let Some(document) = document else {
             return Some(request);
         };
-        if let DocumentTable::Committed(Some(analysis)) = &request.table {
+        if let Some(analysis) = &request.analysis {
             let fingerprint = self.fingerprint(uri, &document.text);
             if analysis.compiled_from(&request.path, fingerprint) {
                 return Some(request);
@@ -170,6 +174,121 @@ impl Backend {
                 root.served_tokens.record_stream(uri, digest);
             }
         }
+    }
+
+    /// The text of open document `uri` unless `analysis` compiled it: an edit
+    /// that no commit has reached yet, so positions in it are not those of the
+    /// analysis.
+    pub(super) fn uncommitted_text(&self, analysis: &Analysis, uri: &Url) -> Option<SharedText> {
+        let text = self.lock_state().documents.get(uri).map(Arc::clone)?;
+        let path = Self::uri_to_path(uri)?;
+        let committed = path
+            .to_str()
+            .is_some_and(|path| analysis.compiled_from(path, self.fingerprint(uri, &text)));
+        (!committed).then_some(text)
+    }
+
+    /// Whether `analysis` answers for `position` of `uri`: everywhere in a
+    /// text it compiled, else where the edited text still has the identifier
+    /// that the analysis has there.
+    pub(super) fn answers_at(&self, analysis: &Analysis, uri: &Url, position: Position) -> bool {
+        let Some(text) = self.uncommitted_text(analysis, uri) else {
+            return true;
+        };
+        let lines: Vec<&str> = text.lines().collect();
+        Self::uri_to_path(uri)
+            .and_then(|path| {
+                let path = path.to_str()?;
+                features::identifier_at(analysis, path, position.line, position.character)
+            })
+            .is_some_and(|token| {
+                let start =
+                    Position::new(token.line.saturating_sub(1), token.col.saturating_sub(1));
+                token
+                    .name
+                    .as_deref()
+                    .is_some_and(|name| features::spells_identifier(&lines, start, name))
+            })
+    }
+
+    /// `locations` of `analysis` as the client names them, without those that
+    /// an uncommitted edit of their document moved or changed.
+    /// A location without a name is taken as it is.
+    pub(super) fn current_locations<'a>(
+        &self,
+        analysis: Option<&Analysis>,
+        locations: impl Iterator<Item = (Option<&'a str>, &'a Location)>,
+    ) -> Vec<Location> {
+        let mut named: Vec<(Option<&str>, Location)> = {
+            let state = self.lock_state();
+            locations
+                .map(|(name, location)| (name, Self::map_location(&state, location.clone())))
+                .collect()
+        };
+        let Some(analysis) = analysis else {
+            return named.into_iter().map(|(_, location)| location).collect();
+        };
+        let mut edited: HashMap<Url, Option<SharedText>> = HashMap::new();
+        for (_, location) in &named {
+            if !edited.contains_key(&location.uri) {
+                let text = self.uncommitted_text(analysis, &location.uri);
+                edited.insert(location.uri.clone(), text);
+            }
+        }
+        let lines: HashMap<&Url, Vec<&str>> = edited
+            .iter()
+            .filter_map(|(uri, text)| Some((uri, text.as_ref()?.lines().collect())))
+            .collect();
+        named.retain(|(name, location)| match (name, lines.get(&location.uri)) {
+            (Some(name), Some(lines)) => {
+                features::spells_identifier(lines, location.range.start, name)
+            }
+            _ => true,
+        });
+        named.into_iter().map(|(_, location)| location).collect()
+    }
+
+    /// [`Self::current_locations`] of the references of the identifier at
+    /// `position`, which all spell its name.
+    pub(super) fn current_references(
+        &self,
+        analysis: &Analysis,
+        paths: &[String],
+        position: Position,
+        references: &[Location],
+    ) -> Vec<Location> {
+        let name = paths
+            .iter()
+            .find_map(|path| {
+                features::identifier_at(analysis, path, position.line, position.character)
+            })
+            .and_then(|token| token.name.as_deref());
+        self.current_locations(
+            Some(analysis),
+            references.iter().map(|location| (name, location)),
+        )
+    }
+
+    /// Whether `analysis` compiled what document `uri` holds now: its open
+    /// text, or else its file.
+    pub(super) fn compiled_current_text(
+        &self,
+        analysis: &Analysis,
+        uri: &Url,
+        max_file_bytes: u64,
+    ) -> bool {
+        if self.lock_state().documents.contains_key(uri) {
+            return self.uncommitted_text(analysis, uri).is_none();
+        }
+        let Some(path) = Self::uri_to_path(uri) else {
+            return false;
+        };
+        let Ok(read) = read_closed_input_snapshot(&path, max_file_bytes) else {
+            return false;
+        };
+        path.to_str().is_some_and(|path| {
+            analysis.compiled_from(path, features::SourceFingerprint::of(&read.text))
+        })
     }
 
     /// The fingerprint of an open document's text, computed once per text.
@@ -330,7 +449,8 @@ mod tests {
             nodes: vec![declaration(1)],
         });
         DocumentRequest {
-            table: DocumentTable::Committed(Some(Arc::new(analysis))),
+            table: DocumentTable::Committed,
+            analysis: Some(Arc::new(analysis)),
             path: "/r/a.sv".to_owned(),
             epoch: 1,
             outcome: "committed",

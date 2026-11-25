@@ -323,7 +323,7 @@ endmodule
     let (line, col) = cursor(text, "`define SET(value) |target");
     let mut lines: Vec<_> = definitions_at(&a, file, line, col)
         .iter()
-        .map(|location| location.range.start.line)
+        .map(|target| target.location.range.start.line)
         .collect();
     lines.sort_unstable();
     assert_eq!(lines, [2, 6]);

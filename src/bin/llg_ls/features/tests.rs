@@ -96,7 +96,7 @@ fn analyze_sources(sources: &[(&'static str, &str)]) -> Analysis {
 fn definition_at(a: &Analysis, file: &str, line: u32, col: u32) -> Option<Location> {
     let mut definitions = definitions_at(a, file, line, col);
     assert!(definitions.len() <= 1, "{definitions:?}");
-    definitions.pop()
+    definitions.pop().map(|target| target.location)
 }
 
 /// The 0-based position of the `|` in `marked`, which without it occurs once
