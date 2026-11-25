@@ -776,3 +776,55 @@ fn lsp_stdio_the_end_of_the_server_cancels_an_isolated_parse() {
         assert_eq!(outcomes, ["cancelled"], "{end}");
     }
 }
+
+/// The findings of an analysis that an edit overtook are sent at the places of
+/// the edited text, which the editor shows (`docs/config.md`, "Positions in
+/// edited files").
+#[test]
+fn lsp_stdio_diagnostics_of_an_overtaken_analysis_follow_the_edit() {
+    let slow = slow_module();
+    let first = module("top", "  logic first;\n");
+    let files = [("slow.sv", slow.as_str()), ("top.sv", first.as_str())];
+    let mut session = Session::ready("overtaken", &files);
+    session.open("top.sv", &first);
+    let saved = broken("overtaken");
+    session.change("top.sv", &saved);
+    session.save("top.sv");
+    session.wait_begun(2);
+    assert_eq!(
+        session.change("top.sv", &format!("// one\n// two\n{saved}")),
+        "admitted"
+    );
+    assert_eq!(
+        session.logged(&["event=root_job.end "]).len(),
+        1,
+        "the analysis ended before the edit"
+    );
+    assert_eq!(session.wait_outcomes(2)[1], "ok");
+    let query = json!({ "query": "no such symbol" });
+    session
+        .client
+        .request("workspace/symbol", query)
+        .expect("workspace/symbol");
+    let uri = session.uri("top.sv");
+    let published = session
+        .client
+        .notifications
+        .iter()
+        .rev()
+        .find(|message| {
+            message["method"] == "textDocument/publishDiagnostics"
+                && message["params"]["uri"] == uri.as_str()
+        })
+        .expect("diagnostics of top.sv");
+    let lines: Vec<u64> = published["params"]["diagnostics"]
+        .as_array()
+        .expect("diagnostics")
+        .iter()
+        .map(|diagnostic| diagnostic["range"]["start"]["line"].as_u64().expect("line"))
+        .collect();
+    // `assign overtaken = missing;` was the second line of the saved text.
+    assert!(!lines.is_empty(), "{published}");
+    assert!(lines.iter().all(|line| *line == 3), "{published}");
+    session.client.shutdown();
+}

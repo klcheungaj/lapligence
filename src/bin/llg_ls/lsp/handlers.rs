@@ -648,7 +648,7 @@ impl LanguageServer for Backend {
             let admission =
                 Self::admit_document_text(&mut state, uri.clone(), params.text_document.text, true);
             let cached_diagnostics = match (root.as_ref(), path.as_ref()) {
-                (Some(root), Some(path)) => retained_diagnostics(&state, root, path),
+                (Some(root), Some(path)) => retained_diagnostics(&mut state, root, path),
                 _ => Vec::new(),
             };
             // Opening a document starts a new client-side lifecycle for this

@@ -4146,29 +4146,3 @@ bound).
 
 Open a file with a module, send `textDocument/didChange` with another module added
 below it and `textDocument/documentSymbol`.
-
-## Diagnostics of an analysis that an edit overtook (llg_ls)
-
-**Status:** noticed while positions were made to follow unsaved edits; not fixed.
-
-### Symptom
-
-Diagnostics of an analysis that ends after a further edit are published at the
-positions of the text it read. An editor moves only the markers that it already
-shows, so these are off by the lines inserted above them until the next save.
-
-### Cause
-
-`commit_job` publishes the analysed positions. The digests that suppress unchanged
-payloads, the unions for shared files and the payload replayed at `didOpen` all hold
-them.
-
-### Intended direction
-
-Map the ranges when a payload is sent (`lsp/handlers/positions.rs`), after the digest
-was compared, and leave those whose place is gone where they were.
-
-### Reproduce
-
-Save a file with an error whose analysis takes a second, insert a line above the
-error within that second and read `textDocument/publishDiagnostics`.

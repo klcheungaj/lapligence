@@ -893,7 +893,8 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   configurations start one analysis when the newest one read other texts, and
   edits none; a rename waits for the save and its analysis; newer triggers, root
   removal, shutdown, `exit` and the end of the input cancel the running one,
-  whose results never show; continuous saves let one finish. Decisions are read
+  whose results never show; continuous saves let one finish; the diagnostics of an
+  analysis that an edit overtook arrive at the places of the edited text. Decisions are read
   from the lifecycle log, and the client answers the server's requests while it
   waits. Unit sweeps in `features/tests/cancellation.rs` cancel at every poll.
 - `lsp_stdio/unsaved_positions.rs`: every request about documents with unsaved

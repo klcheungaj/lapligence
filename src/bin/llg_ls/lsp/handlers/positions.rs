@@ -3,7 +3,8 @@
 //! An analysis starts on a save, so it describes an older text while a document
 //! has unsaved edits. A request asks it at the analysed position of the place
 //! the user sees ([`Placement::analysed`]), and what it names leaves the server at
-//! its place in the current texts or not at all ([`Places::location`]).
+//! its place in the current texts or not at all ([`Places::location`]). Sent
+//! diagnostics move the same way ([`BackendState::place_diagnostics`]).
 //!
 //! The analysed text of an open document ([`AnalysedTexts`]) is the document's
 //! own text, shared with it, until an edit replaces that. So a document is
@@ -383,6 +384,41 @@ impl BackendState {
                     .any(|analysed| Arc::ptr_eq(analysed, text))
             })
         });
+    }
+
+    /// Move `diagnostics` that the last analysis of root `key` found in `file`
+    /// to their places in the current texts, when they are sent: digests and
+    /// unions compare them at the places of the analysed texts, which the
+    /// client never sees. A range whose text an edit touched stays where the
+    /// analysis had it: the client shows the finding at the place of the
+    /// analysed text rather than not at all, and the next analysis replaces it.
+    pub(super) fn place_diagnostics(
+        &mut self,
+        key: &RootKey,
+        file: &Path,
+        diagnostics: &mut [Diagnostic],
+    ) {
+        let texts = match self.roots.get(key) {
+            Some(root) if root.diagnosed_analysed_texts => Arc::clone(&root.analysed_texts),
+            _ => return,
+        };
+        let placement = self.placement(&texts, file);
+        for diagnostic in diagnostics {
+            if let Some(range) = placement.current(diagnostic.range) {
+                diagnostic.range = range;
+            }
+            for related in diagnostic.related_information.iter_mut().flatten() {
+                let Some(path) = Backend::uri_to_path(&related.location.uri) else {
+                    continue;
+                };
+                let range = self
+                    .placement(&texts, &path)
+                    .current(related.location.range);
+                if let Some(range) = range {
+                    related.location.range = range;
+                }
+            }
+        }
     }
 
     /// Drop the analysed texts of the document `path`, which was edited, when

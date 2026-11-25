@@ -145,7 +145,7 @@ pub(super) fn remap_related_diagnostic_uris(diagnostics: &mut [Diagnostic], shad
     }
 }
 
-fn root_names(state: &BackendState) -> BTreeMap<RootKey, String> {
+pub(super) fn root_names(state: &BackendState) -> BTreeMap<RootKey, String> {
     state
         .roots
         .iter()
@@ -153,17 +153,16 @@ fn root_names(state: &BackendState) -> BTreeMap<RootKey, String> {
         .collect()
 }
 
-/// The union of what the last analyses of the roots `keys` found in `file`.
-fn file_diagnostics(
+/// What the last analyses of the roots `keys` found in `file`, by root, with
+/// whether the root owns the file.
+pub(super) fn file_entries(
     state: &BackendState,
     file: &Path,
     keys: &[RootKey],
     descriptors: &[RootDescriptor],
-    names: &BTreeMap<RootKey, String>,
-) -> Vec<Diagnostic> {
+) -> Vec<(RootKey, bool, Diagnostic)> {
     let owner = workspace::owning_root_unfiltered(file, descriptors).map(|owner| owner.root);
-    let entries = keys
-        .iter()
+    keys.iter()
         .filter_map(|key| Some((key, state.roots.get(key)?.all_diagnostics.get(file)?)))
         .flat_map(|(key, diagnostics)| {
             let is_owner = owner.as_ref() == Some(key);
@@ -171,14 +170,29 @@ fn file_diagnostics(
                 .iter()
                 .map(move |diagnostic| (key.clone(), is_owner, diagnostic.clone()))
         })
-        .collect();
+        .collect()
+}
+
+/// The union of `entries` of `file` at their places in the current texts. Each
+/// root's findings move with the texts that root analysed, so the union is
+/// made after they moved.
+fn placed_union(
+    state: &mut BackendState,
+    file: &Path,
+    mut entries: Vec<(RootKey, bool, Diagnostic)>,
+    names: &BTreeMap<RootKey, String>,
+) -> Vec<Diagnostic> {
+    for (key, _, diagnostic) in &mut entries {
+        state.place_diagnostics(key, file, std::slice::from_mut(diagnostic));
+    }
     merge_shared_file_diagnostics(entries, names)
 }
 
 /// What the client should show for `file`, which root `owner` owns, when it
-/// opens the file: the findings of the last analyses.
+/// opens the file: the findings of the last analyses, at their places in the
+/// current texts.
 pub(super) fn retained_diagnostics(
-    state: &BackendState,
+    state: &mut BackendState,
     owner: &RootKey,
     file: &Path,
 ) -> Vec<Diagnostic> {
@@ -189,19 +203,17 @@ pub(super) fn retained_diagnostics(
         .map(|(key, _)| key.clone())
         .collect();
     if trackers.len() > 1 {
-        file_diagnostics(
-            state,
-            file,
-            &trackers,
-            &state.descriptors(),
-            &root_names(state),
-        )
+        let entries = file_entries(state, file, &trackers, &state.descriptors());
+        let names = root_names(state);
+        placed_union(state, file, entries, &names)
     } else {
-        state
+        let mut diagnostics = state
             .roots
             .get(owner)
             .and_then(|root| root.all_diagnostics.get(file).cloned())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        state.place_diagnostics(owner, file, &mut diagnostics);
+        diagnostics
     }
 }
 
@@ -240,7 +252,9 @@ pub(super) fn aggregate_shared_publications(
             trackers.entry(file.clone()).or_default().push(key.clone());
         }
     }
-    let mut computed: BTreeMap<Url, Vec<Diagnostic>> = BTreeMap::new();
+    // The digests of the unions at the places of the analysed texts, with
+    // what they were made of.
+    let mut computed: BTreeMap<Url, (PathBuf, Vec<RootKey>, String)> = BTreeMap::new();
     for (file, keys) in trackers {
         let Ok(uri) = Url::from_file_path(&file) else {
             continue;
@@ -252,23 +266,25 @@ pub(super) fn aggregate_shared_publications(
         if keys.len() < 2 && !was_published {
             continue;
         }
-        let union = file_diagnostics(state, &file, &keys, &descriptors, &names);
+        let entries = file_entries(state, &file, &keys, &descriptors);
+        let union = merge_shared_file_diagnostics(entries, &names);
         // Empty result for a still-tracked file: clear a previously
         // published union (the diagnostics were fixed/cleared elsewhere);
         // never-published files stay unpublished.
         if !union.is_empty() || was_published {
-            computed.insert(uri, union);
+            computed.insert(uri, (file, keys, diagnostics_digest(&union)));
         }
     }
     let mut publications = Vec::new();
-    for (uri, diagnostics) in &computed {
-        let digest = diagnostics_digest(diagnostics);
-        if state.published_shared.get(uri).map(String::as_str) == Some(digest.as_str()) {
+    for (uri, (file, keys, digest)) in &computed {
+        if state.published_shared.get(uri) == Some(digest) {
             continue;
         }
-        state.published_shared.insert(uri.clone(), digest);
+        state.published_shared.insert(uri.clone(), digest.clone());
         if !skip_uris.contains(uri) {
-            publications.push((uri.clone(), diagnostics.clone()));
+            let entries = file_entries(state, file, keys, &descriptors);
+            let union = placed_union(state, file, entries, &names);
+            publications.push((uri.clone(), union));
         }
     }
     // Unions that vanished entirely (folder removed with no surviving
@@ -598,6 +614,7 @@ impl Backend {
         // re-registration follows the SAME predicate so roots that are not
         // strictly valid still register their resolved include dependencies.
         let snapshot_replaced = result.analysis.is_none() || usable;
+        root.diagnosed_analysed_texts = snapshot_replaced;
         if result.analysis.is_none() {
             root.last_good = None;
             read.clear();
@@ -693,6 +710,11 @@ impl Backend {
             ready
         );
         rebuild_dep_dependents(state);
+        for (uri, diagnostics) in &mut publications {
+            if let Some(path) = Self::uri_to_path(uri) {
+                state.place_diagnostics(key, &path, diagnostics);
+            }
+        }
         let published_uris: BTreeSet<Url> =
             publications.iter().map(|(uri, _)| uri.clone()).collect();
         let shared_publications = aggregate_shared_publications(state, &published_uris);

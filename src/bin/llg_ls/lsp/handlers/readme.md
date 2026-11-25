@@ -18,5 +18,6 @@ Blocking Slang work and filesystem isolation stay in scheduling/staging.
   an edit elsewhere would change something else.
 - `staging`: bounded inputs, private shadow paths and include authorization.
 - `diagnostics`: commits, ticket-ordered publication, deduplication and shared-file
-  aggregation.
+  aggregation. Digests and unions compare the places of the analysed texts; a payload
+  moves to the current texts when it is sent (`positions`).
 - `tests`: private backend regressions.

@@ -682,8 +682,9 @@ The server compares the two texts and asks the analysis about what the user sees
   the current text declares, read from its last isolated parse.
 - A rename is refused until the save and its analysis.
 - The server sends no diagnostics on an edit: the editor moves those it shows with
-  the text. Exceptions:
-  [known issues](known_issues.md#diagnostics-of-an-analysis-that-an-edit-overtook-llg_ls).
+  the text. Diagnostics that it sends while a file has unsaved edits (an analysis
+  that ended after an edit, a file that opens) are at the places of the current
+  text; one on text that an edit touched stays at its place in the analysed text.
 
 The comparison is made by the first request after an edit and kept until the next
 one. It looks at 262,144 lines of both texts and above that only at their common

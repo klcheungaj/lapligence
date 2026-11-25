@@ -45,6 +45,9 @@ pub(super) struct RootState {
     /// closed files.  Feeds the shared-file aggregation (which must publish
     /// unions for tracked-but-closed external files too).
     pub(super) all_diagnostics: BTreeMap<PathBuf, Vec<Diagnostic>>,
+    /// Whether `all_diagnostics` have the positions of `analysed_texts`. Not
+    /// after an analysis without feature data: the texts it read are not kept.
+    pub(super) diagnosed_analysed_texts: bool,
     pub(super) generation: u64,
     /// Parent correlation for the next run.  A coalesced trigger replaces
     /// this only when it carries a real request/notification ID; startup and
@@ -690,6 +693,7 @@ impl Backend {
                 diagnostics: BTreeMap::new(),
                 published_digests: BTreeMap::new(),
                 all_diagnostics: BTreeMap::new(),
+                diagnosed_analysed_texts: true,
                 generation: 0,
                 pending_parent_id: None,
                 scheduler: SchedulerState::default(),
