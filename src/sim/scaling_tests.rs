@@ -200,7 +200,7 @@ fn steep(name: &str, depth: usize, limit: f64) -> Vec<String> {
         .filter(|((work, _), _)| {
             !matches!(
                 work,
-                Work::NameScanBytes | Work::FieldLookups | Work::OutlineWeighing
+                Work::NameScanBytes | Work::FieldMisses | Work::OutlineWeighing
             )
         })
         .filter(|((_, small), (_, large))| *large as f64 > limit * (*small as f64) + 64.0)
@@ -325,10 +325,10 @@ fn a_coroutine_body_is_searched_a_fixed_number_of_times() {
 fn few_names_that_are_no_frame_field_are_looked_up_as_one() {
     for count in [20, 200] {
         let db = database(&long_process(count));
-        let (lookups, text) = work_and_text(Work::FieldLookups, &db);
+        let (misses, text) = work_and_text(Work::FieldMisses, &db);
         assert!(
-            lookups <= 100 * count,
-            "{lookups} lookups in {text} bytes for {count} calls"
+            misses <= count,
+            "{misses} names in {text} bytes looked up for {count} calls"
         );
     }
 }

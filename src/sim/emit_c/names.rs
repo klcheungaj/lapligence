@@ -361,6 +361,7 @@ pub(super) fn marker_starts<'t>(
     text: &'t str,
     marker: &'t str,
 ) -> impl Iterator<Item = usize> + 't {
+    count(Work::NameScanBytes, text.len());
     let (text, marker) = (text.as_bytes(), marker.as_bytes());
     let mut at = 0;
     std::iter::from_fn(move || {

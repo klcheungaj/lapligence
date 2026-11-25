@@ -8,8 +8,7 @@ use crate::core::model::TypeInfo;
 use crate::ffi::slang::{
     Snapshot, Type as SlangType, TypeKind, TypeMember, TypeRange, TypeRangeKind,
 };
-use crate::IdMap;
-use crate::IdSet;
+use crate::{IdMap, IdSet};
 use std::collections::HashMap;
 
 mod foreach;
@@ -662,8 +661,6 @@ impl<'a> SlangTypeProjector<'a> {
     }
 }
 
-/// Whether a class type is one of the `std` classes, whose objects the
-/// runtime owns outside the class heap.
 /// Whether a walk along element types that can pass `steps` more types may
 /// pass another. One that passed as many as there are passed one twice.
 fn take_step(steps: &mut usize) -> bool {
@@ -672,6 +669,8 @@ fn take_step(steps: &mut usize) -> bool {
     left.is_some()
 }
 
+/// Whether a class type is one of the `std` classes, whose objects the
+/// runtime owns outside the class heap.
 fn is_builtin_class(display_name: &str) -> bool {
     let name = display_name.trim();
     let name = name.strip_prefix("std::").unwrap_or(name);

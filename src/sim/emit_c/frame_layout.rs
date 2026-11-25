@@ -346,8 +346,9 @@ impl FrameLayout {
         self.field_filter
             .may_hold(name)
             .then(|| {
-                count(Work::FieldLookups, 1);
-                self.fields.get(name)
+                let entry = self.fields.get(name);
+                count(Work::FieldMisses, usize::from(entry.is_none()));
+                entry
             })
             .flatten()
     }

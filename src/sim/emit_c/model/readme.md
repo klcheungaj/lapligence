@@ -158,6 +158,9 @@ Only known activation/net-contribution identities become scalar operands.
 Bodies with local static storage stay separate. Startup-external roots (assertion
 actions) stay separate because they do not receive the startup record initialization.
 
+Only a body that as many others as a group needs agree with in source location
+and number of lines is normalized; a design without repeated bodies pays for the
+comparison of these two.
 Candidates enter exact sharing groups as they are rendered; each group retains
 one normalized source and key. Every member retains its typed operands, including
 each generated constant occurrence and its width/sign, even after its duplicate

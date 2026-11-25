@@ -1,8 +1,7 @@
 //! Capture.
 
 use super::*;
-use crate::IdMap;
-use crate::IdSet;
+use crate::{IdMap, IdSet};
 
 impl Db {
     /// Build the owned semantic database from a validated Slang snapshot.

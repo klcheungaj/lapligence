@@ -17,8 +17,7 @@ use crate::ffi::slang::{
     SEMANTIC_STMT_CONCURRENT_EXPECT, SEMANTIC_STMT_CONCURRENT_RESTRICT, SEMANTIC_STMT_FOR,
     SEMANTIC_STMT_IMMEDIATE_ASSERT, SEMANTIC_STMT_IMMEDIATE_ASSUME, SEMANTIC_STMT_IMMEDIATE_COVER,
 };
-use crate::IdMap;
-use crate::IdSet;
+use crate::{IdMap, IdSet};
 use std::collections::{HashMap, HashSet};
 
 // IEEE 1364-2001 Clauses 15/17/18 and Annex C, plus $feof (17.2.4).

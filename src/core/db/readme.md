@@ -26,6 +26,11 @@ per physical file name, built once from the snapshot's sorted records with one
 pass over each mapped file; `Db::logical_position` derives a node's logical
 file and line on demand. Files without a directive cost nothing per node.
 
+A block scope is a child of its statement and of the scope around it. A walk of
+all statements goes through `Db::walk_children`, and one of the whole design
+through `Db::elaborated_nodes`: following both links passes a nested scope once
+per level around it.
+
 `Db::legacy_directives` lists the active `` `default_decay_time``,
 `` `default_trireg_strength`` and `` `delay_mode_*`` directives with their file,
 line and column. Slang consumes them without effect, and an inactive

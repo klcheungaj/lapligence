@@ -35,8 +35,8 @@ kinds! {
     NormalizedBytes,
     /// Bytes of rendered C searched for names.
     NameScanBytes,
-    /// Names looked up among the fields of a coroutine frame.
-    FieldLookups,
+    /// Names looked up among the fields of a coroutine frame that are none.
+    FieldMisses,
     /// Statements weighed for outlining.
     OutlineWeighing,
     /// Scopes passed on the way outwards from a node.
