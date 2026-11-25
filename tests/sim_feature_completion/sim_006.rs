@@ -135,6 +135,14 @@ fn handle_arrays_copy_identities_only() {
 }
 
 #[test]
+fn associative_arrays_compare_keys_and_elements() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/associative_equality.out");
+    sim_cli::run_case_backend_parity(SUITE, "associative_equality", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "associative_equality", expected);
+}
+
+#[test]
 fn event_containers_keep_trigger_identity() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_006/event_containers.out");
     sim_cli::run_case_backend_parity(SUITE, "event_containers", expected, &[], &[]);

@@ -168,7 +168,9 @@ rather than a false whole-array conflict); keep disjoint
 writers legal and preserve original read sensitivities separately. Zero-delay
 continuous drivers of whole descriptor arrays or constant descriptor rows use
 the fixed-array assignment owner, never a flattened packed driver.
-The always-family single-writer rule counts ordinary assignments only;
+The always-family single-writer rule counts ordinary assignments only and no
+storage declared in a called subroutine (SD10-D1), which no read walk reports
+(SD10-D2);
 force/release and procedural `assign`/`deassign` are overrides another
 process may apply. always_ff admits event triggers and these overrides; only
 event-control count, blocking timing and forks are restricted.

@@ -74,6 +74,20 @@ static int32_t llg_nested_assoc_key_equal(const sv4_t* left_integral,
     return sv4_same(*left_integral, *right_integral);
 }
 
+static int32_t llg_assoc_entry_key_equal(const llg_assoc_entry_t* a,
+                                         const llg_assoc_entry_t* b) {
+    return llg_nested_assoc_key_equal(&a->integral_key, a->string_key,
+                                      a->string_length, &b->integral_key,
+                                      b->string_key, b->string_length);
+}
+
+static int32_t llg_assoc_value_entry_key_equal(
+    const llg_assoc_value_entry_t* a, const llg_assoc_value_entry_t* b) {
+    return llg_nested_assoc_key_equal(&a->integral_key, a->string_key,
+                                      a->string_length, &b->integral_key,
+                                      b->string_key, b->string_length);
+}
+
 int32_t llg_nested_assoc_equal(const llg_nested_assoc_t* a,
                            const llg_nested_assoc_t* b) {
     if (a == b) return 1;
@@ -84,10 +98,7 @@ int32_t llg_nested_assoc_equal(const llg_nested_assoc_t* a,
         for (size_t i = 0; i < size; ++i) {
             const llg_assoc_entry_t* left = &a->array.packed.entries[i];
             const llg_assoc_entry_t* right = &b->array.packed.entries[i];
-            if (!llg_nested_assoc_key_equal(
-                    &left->integral_key, left->string_key, left->string_length,
-                    &right->integral_key, right->string_key,
-                    right->string_length) ||
+            if (!llg_assoc_entry_key_equal(left, right) ||
                 !sv4_same(left->value, right->value))
                 return 0;
         }
@@ -96,14 +107,69 @@ int32_t llg_nested_assoc_equal(const llg_nested_assoc_t* a,
     for (size_t i = 0; i < size; ++i) {
         const llg_assoc_value_entry_t* left = &a->array.values.entries[i];
         const llg_assoc_value_entry_t* right = &b->array.values.entries[i];
-        if (!llg_nested_assoc_key_equal(
-                &left->integral_key, left->string_key, left->string_length,
-                &right->integral_key, right->string_key,
-                right->string_length) ||
+        if (!llg_assoc_value_entry_key_equal(left, right) ||
             !llg_value_equal(&left->value, &right->value))
             return 0;
     }
     return 1;
+}
+
+/* SystemVerilog equality of associative arrays (7.6, 11.4.5): the same keys
+ * with equal elements. The entries are in key order. */
+static int32_t llg_assoc_equality(const llg_assoc_t* a, const llg_assoc_t* b,
+                                  int32_t case_equality) {
+    if (a->size != b->size) return LLG_VALUE_UNEQUAL;
+    for (size_t i = 0; i < a->size; ++i) {
+        if (!llg_assoc_entry_key_equal(&a->entries[i], &b->entries[i]))
+            return LLG_VALUE_UNEQUAL;
+    }
+    int32_t result = LLG_VALUE_EQUAL;
+    for (size_t i = 0; i < a->size && result != LLG_VALUE_UNEQUAL; ++i)
+        result = llg_value_equality_fold(
+            result, llg_packed_equality(a->entries[i].value,
+                                        b->entries[i].value, case_equality));
+    return result;
+}
+
+static int32_t llg_assoc_value_equality(const llg_assoc_value_t* a,
+                                        const llg_assoc_value_t* b,
+                                        int32_t case_equality) {
+    if (a->size != b->size) return LLG_VALUE_UNEQUAL;
+    for (size_t i = 0; i < a->size; ++i) {
+        if (!llg_assoc_value_entry_key_equal(&a->entries[i], &b->entries[i]))
+            return LLG_VALUE_UNEQUAL;
+    }
+    int32_t result = LLG_VALUE_EQUAL;
+    for (size_t i = 0; i < a->size && result != LLG_VALUE_UNEQUAL; ++i)
+        result = llg_value_equality_fold(
+            result, llg_value_equality(&a->entries[i].value,
+                                       &b->entries[i].value, case_equality));
+    return result;
+}
+
+sv4_t llg_assoc_equal(const llg_assoc_t* a, const llg_assoc_t* b,
+                      int32_t case_equality, int32_t negate) {
+    return llg_equality_result(llg_assoc_equality(a, b, case_equality), negate);
+}
+
+sv4_t llg_assoc_value_equal(const llg_assoc_value_t* a,
+                            const llg_assoc_value_t* b, int32_t case_equality,
+                            int32_t negate) {
+    return llg_equality_result(llg_assoc_value_equality(a, b, case_equality),
+                               negate);
+}
+
+int32_t llg_nested_assoc_equality(const llg_nested_assoc_t* a,
+                                  const llg_nested_assoc_t* b,
+                                  int32_t case_equality) {
+    if (llg_nested_assoc_size(a) != llg_nested_assoc_size(b))
+        return LLG_VALUE_UNEQUAL;
+    if (llg_nested_assoc_size(a) == 0) return LLG_VALUE_EQUAL;
+    if (a->desc->element->kind == LLG_VALUE_PACKED)
+        return llg_assoc_equality(&a->array.packed, &b->array.packed,
+                                  case_equality);
+    return llg_assoc_value_equality(&a->array.values, &b->array.values,
+                                    case_equality);
 }
 
 void llg_nested_assoc_trace(const llg_nested_assoc_t* nested,

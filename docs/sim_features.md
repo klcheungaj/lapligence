@@ -423,7 +423,7 @@ Macros, includes and their edition-specific behavior are counted in §11.
   members. Queue, dynamic and associative members of records are their own
   containers in module/static records and companion containers of subroutine
   record values (methods, selects, `foreach`, deep whole-record copies, calls,
-  ports, member-wise equality except associative members, patterns).
+  ports, member-wise equality, patterns).
   Records with queue and dynamic-array members are also container and
   fixed-array elements (an element keeps them inside its value; statements
   naming an element's member stage it). Scalar members of a native record

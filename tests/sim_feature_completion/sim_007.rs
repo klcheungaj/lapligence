@@ -427,11 +427,6 @@ fn record_container_member_boundaries_are_rejected_explicitly() {
         "bad_record_container_element",
         "record elements of a queue, dynamic, associative or fixed array with associative array member `a` are not supported: the element value has no nested associative form",
     );
-    sim_cli::reject_case(
-        SUITE,
-        "bad_record_assoc_equality",
-        "equality of records with associative array member `k` is not supported",
-    );
 }
 
 #[test]
@@ -564,11 +559,6 @@ fn nested_records_and_member_arrays_compare_member_wise() {
         include_str!("../fixtures/sim/feature_completion/sim_007/record_view_equality.out");
     sim_cli::run_case_backend_parity(SUITE, "record_view_equality", expected, &[], &[]);
     sim_cli::run_case_after_db_drop(SUITE, "record_view_equality", expected);
-    sim_cli::reject_case(
-        SUITE,
-        "bad_record_view_equality",
-        "equality of records with associative array member `sub__k` is not supported",
-    );
 }
 
 #[test]

@@ -69,6 +69,7 @@ handle only, never the designated object.
 | `subroutine_container_waits` | §§9.4.2, 9.4.3. `wait` and `@` on containers of formals, automatic locals and class properties wake when the element, size or property changes. Matches industry-standard behaviour. |
 | `nested_associative_handles` | §7.8; §8.5. Handles held in a nested associative array stay reachable through overwrites and shared elements; a subroutine called by the value of an element write sees the array it writes (`put`). Matches industry-standard behaviour. |
 | `nested_associative_selectors` | §11.3.5 L14434-14435 (quoted under `call_container_operands`). A selector that calls a function runs once per evaluation of the select, and not at all in a skipped operand: `aa.exists("z") && aa[nm()].exists(1)` leaves `n` at 0. Matches industry-standard behaviour. |
+| `associative_equality` | §11.2.2, `SystemVerilog-1800-2009.txt` L14175: "Aggregate expressions can also be compared with equality or inequality operators."; §11.4.5 L14794-14799 (x results of `==`, known results of `===`). Two associative arrays are equal when they hold the same keys with equal elements: integral, string, class and wildcard keys; packed, real, string, record, container, fixed-array, event and handle elements; nested arrays; class properties, formals, record members (also nested records) and the ambiguous conditional of such records; in `always_comb` and `wait`. A key that one side misses makes `==` 0 whatever the others hold. Matches industry-standard behaviour. |
 
 ### Clause quotes for `nested_element_methods`
 

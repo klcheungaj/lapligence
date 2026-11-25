@@ -4,8 +4,9 @@ use super::*;
 
 impl Codegen<'_> {
     /// `a == b`, `a != b`, `a === b` or `a !== b` where both operands are
-    /// whole dynamic arrays, queues or fixed-array views (SV 7.6, 11.4.5):
-    /// one runtime comparison of every element in index order.
+    /// whole dynamic arrays, queues, associative arrays or fixed-array views
+    /// (SV 7.6, 11.4.5): one runtime comparison of every element in index or
+    /// key order.
     pub(in super::super) fn lower_container_equality(
         &mut self,
         path: &str,
@@ -59,17 +60,7 @@ impl Codegen<'_> {
                 ))
             }
         };
-        let (left_storage, right_storage) =
-            (&self.model.containers[left], &self.model.containers[right]);
-        let same_kind = matches!(
-            (&left_storage.kind, &right_storage.kind),
-            (IrContainerKind::Dynamic, IrContainerKind::Dynamic)
-                | (IrContainerKind::Queue { .. }, IrContainerKind::Queue { .. })
-        );
-        if !same_kind
-            || left_storage.element.is_packed() != right_storage.element.is_packed()
-            || !left_storage.element.compatible_with(&right_storage.element)
-        {
+        if !self.model.containers[left].comparable_with(&self.model.containers[right]) {
             return Err(format!(
                 "unpacked array equality in `{path}` between different container kinds or element types is not supported"
             ));

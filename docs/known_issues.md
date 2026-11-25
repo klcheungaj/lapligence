@@ -599,8 +599,8 @@ Queue, dynamic and associative members of records
 (`struct { string s; int q[$]; }`) are their own containers in module and
 static records and travel as companion containers of subroutine record values
 (formals, results, automatic and static locals): methods, selects, `foreach`,
-whole-record copies, ports, conditionals, equality (except associative
-members) and assignment patterns work. As elements of queues, dynamic,
+whole-record copies, ports, conditionals, equality and assignment patterns
+work. As elements of queues, dynamic,
 associative and fixed arrays such records keep queue and dynamic-array
 members inside each element value: whole-element copies, calls and
 equality work, and assignment, call and system-task statements that name an
@@ -618,8 +618,7 @@ pops it), or named as the target of a timing-controlled assignment or a
 evaluation); instance class properties of a record type with container
 members (instance properties of records with string, real or handle members
 are one value per object, records of integral leaves are fixed-width
-properties, SIM-011, and static record properties are one shared record); equality of records with an associative member (and conditionals
-with an ambiguous predicate on such records);
+properties, SIM-011, and static record properties are one shared record);
 a run-time selection among more than 4,096 leaves of a module record
 (`NATIVE_MEMBER_SELECT_LIMIT`), and among more than 256 whole records of any
 record (`NATIVE_RECORD_SELECT_LIMIT`); a task waiting on a `ref` formal bound
@@ -3209,10 +3208,8 @@ these forms remain outside them.
   Every object a randomize call reaches evaluates its own functions, also
   objects of the randomized class and the randomized object reached again
   through a ring, and a scalar handle receiver (`next.f(x)`) works.
-- A `randomize()` call used as a value works in assignments, `if` conditions,
-  `return`, declarations, system-task arguments, immediate assertions, loop
-  headers and short-circuit or conditional operands of those. Elsewhere (a
-  `wait` condition, an event control) it rejects.
+- A `randomize()` call in a `wait` condition, an event control or outside
+  procedural code rejects.
 - When the exact model and rejection sampling both exceed their budgets, the
   CDCL search returns a legal solution that is not uniformly distributed
   (S29-D10), against 18.5.9 L30013-30014; the fallbacks also ignore dist

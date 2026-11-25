@@ -472,9 +472,8 @@ int32_t llg_value_equality(const llg_value_t* a, const llg_value_t* b,
             return llg_nested_seq_equality(a->value.container,
                                            b->value.container, case_equality);
         case LLG_VALUE_ASSOC:
-            return llg_nested_assoc_equal(a->value.assoc, b->value.assoc)
-                ? LLG_VALUE_EQUAL
-                : LLG_VALUE_UNEQUAL;
+            return llg_nested_assoc_equality(a->value.assoc, b->value.assoc,
+                                             case_equality);
         default:
             return LLG_VALUE_UNEQUAL;
     }

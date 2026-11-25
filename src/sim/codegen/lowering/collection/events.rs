@@ -572,6 +572,14 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// Whether an operand `node` is an event or a fixed event array, as
+    /// opposed to a whole container of events.
+    pub(in super::super) fn event_operand(&self, node: NodeId) -> bool {
+        self.event_target_of(node).is_some_and(|target| {
+            !target.indices.is_empty() || !self.container_globals.contains_key(&target.declaration)
+        })
+    }
+
     /// Whether `node` calls a function that returns an event.
     pub(in super::super) fn event_function_call(&self, node: NodeId) -> bool {
         let (name, callee) = match self.kind(node) {

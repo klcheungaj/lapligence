@@ -348,9 +348,7 @@ impl Codegen<'_> {
                         },
                     ));
                 }
-                if [a, b]
-                    .iter()
-                    .any(|node| self.event_target_of(*node).is_some())
+                if [a, b].iter().any(|node| self.event_operand(*node))
                     && matches!(
                         op,
                         Operation::Equal
