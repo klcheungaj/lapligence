@@ -600,7 +600,7 @@ impl<'a> Codegen<'a> {
                 .parent
                 .filter(|parent| design.contains(parent));
             let scope = parent
-                .map(|parent| self.instance_path_of(parent))
+                .map(|parent| self.scope_path_of(parent))
                 .unwrap_or_else(|| self.design_name.clone());
             let block_name = self.node(block).name.clone();
             let event = self.new_event_info(format!("E_clocking_{}", block.index()));
@@ -878,7 +878,7 @@ impl<'a> Codegen<'a> {
                     self.node(block).name
                 )
             })?;
-            let path = self.instance_path_of(parent);
+            let path = self.scope_path_of(parent);
             // Callee resolution and hierarchical names use the owning instance.
             self.inst = parent;
             let initial = self.clocking_image_value(&path, &source)?;
@@ -1035,7 +1035,7 @@ impl<'a> Codegen<'a> {
                     self.node(block).name
                 ));
             };
-            let path = self.instance_path_of(parent);
+            let path = self.scope_path_of(parent);
             let process_name =
                 self.new_fn_name(&path, &format!("clocking_{}", self.node(block).name));
             let (event_specs, pre_fns) = {

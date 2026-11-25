@@ -136,7 +136,7 @@ impl<'a> Codegen<'a> {
                 format!(
                     "procedural delay in `{}` is runtime-valued or uses an unsupported \
                  constant expression: {error}",
-                    self.instance_path_of(self.inst)
+                    self.scope_path_of(self.inst)
                 )
             })?;
         self.delay_value_ticks(value, exact_literal, timescale)
@@ -184,7 +184,7 @@ impl<'a> Codegen<'a> {
             ticks,
             unit_fs,
             self.design_precision_fs,
-            &self.instance_path_of(self.inst),
+            &self.scope_path_of(self.inst),
         )
     }
 
@@ -457,11 +457,13 @@ impl<'a> Codegen<'a> {
         while let Some(id) = current {
             match self.kind(id) {
                 NodeKind::ModuleInst { .. } => {
-                    let path = self.instance_path_of(id);
+                    let path = self.scope_path_of(id);
                     return Some(self.display_path(&path).to_owned());
                 }
                 NodeKind::ClassDef => return None,
-                _ if self.is_compilation_unit(id) => return Some(crate::core::db::COMPILATION_UNIT_NAME.to_owned()),
+                _ if self.is_compilation_unit(id) => {
+                    return Some(crate::core::db::COMPILATION_UNIT_NAME.to_owned())
+                }
                 _ if self.is_runtime_environment(id) => return Some(self.namespace_path(id)),
                 _ => current = self.node(id).parent,
             }

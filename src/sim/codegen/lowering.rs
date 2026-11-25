@@ -2274,8 +2274,6 @@ struct Codegen<'a> {
     param_vals: HashMap<NodeId, Val>,
     /// instance/gen-scope path → (signal name → info), for name fallback.
     scope_sig_names: HashMap<String, HashMap<String, SignalInfo>>,
-    /// gen_scope node → its path (e.g. "top.genblk").
-    gen_scope_paths: HashMap<NodeId, String>,
     /// FuncTask arena node → emitted C function name.
     func_names: HashMap<NodeId, String>,
     func_labels: HashMap<NodeId, String>,
@@ -2284,7 +2282,9 @@ struct Codegen<'a> {
     func_scope_labels: HashMap<NodeId, String>,
     /// Raw source components, separate from historical display-path spelling.
     c_paths: HashMap<String, Vec<String>>,
-    instance_paths: HashMap<NodeId, String>,
+    /// Instance, runtime-environment or generate-scope node → its lowering
+    /// path (e.g. `top.u0`, `top.g_0_`).
+    scope_paths: HashMap<NodeId, String>,
     display_paths: HashMap<String, String>,
     /// Instance, runtime-environment and generate-scope node for each
     /// lowering path; resolves `%l` for formats lowered by path alone.
@@ -2821,12 +2821,11 @@ impl<'a> Codegen<'a> {
             scope_array_names: HashMap::new(),
             param_vals: HashMap::new(),
             scope_sig_names: HashMap::new(),
-            gen_scope_paths: HashMap::new(),
             func_names: HashMap::new(),
             func_labels: HashMap::new(),
             func_scope_labels: HashMap::new(),
             c_paths: HashMap::new(),
-            instance_paths: HashMap::new(),
+            scope_paths: HashMap::new(),
             display_paths: HashMap::new(),
             scope_nodes: HashMap::new(),
             func: None,
@@ -2944,10 +2943,11 @@ impl<'a> Codegen<'a> {
         self.db.node_kind(id)
     }
 
-    /// Instance path used for global names: `"top.u0"` for child instances,
+    /// Lowering path of an instance or generate scope, used for global names:
+    /// the path it was collected under, else `"top.u0"` for child instances,
     /// the (library-prefix-stripped) name for top instances.
-    fn instance_path_of(&self, id: NodeId) -> String {
-        if let Some(path) = self.instance_paths.get(&id) {
+    fn scope_path_of(&self, id: NodeId) -> String {
+        if let Some(path) = self.scope_paths.get(&id) {
             return path.clone();
         }
         let path = self.db.instance_path(id);

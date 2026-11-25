@@ -61,7 +61,7 @@ impl Codegen<'_> {
             format!(
                 "unsupported {what} in `{}`",
                 self.owning_inst(node)
-                    .map(|instance| self.source_path(&self.instance_path_of(instance)))
+                    .map(|instance| self.source_path(&self.scope_path_of(instance)))
                     .unwrap_or_default(),
             ),
         )
@@ -163,7 +163,7 @@ impl Codegen<'_> {
         drivers: &GroupDrivers,
     ) -> Result<(), String> {
         let paths = &specify.paths;
-        let scope = self.instance_path_of(instance);
+        let scope = self.scope_path_of(instance);
         let mut sources: Vec<usize> = Vec::new();
         let mut source_index: HashMap<usize, usize> = HashMap::new();
         let mut reads = Vec::new();
@@ -555,7 +555,7 @@ impl Codegen<'_> {
     ) -> Result<Option<usize>, String> {
         let signal = self.model.signal(terminal.info.ir);
         let name = self.display_name(terminal.node);
-        let shown = self.source_path(&self.instance_path_of(instance));
+        let shown = self.source_path(&self.scope_path_of(instance));
         let unsupported = |message: &str| {
             crate::sim::codegen::error::located(
                 location,

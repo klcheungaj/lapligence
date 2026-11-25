@@ -62,7 +62,7 @@ impl<'a> Codegen<'a> {
             return None;
         }
         let owner = self.owner_instance(node)?;
-        Some(format!("{}.initializer", self.instance_path_of(owner)))
+        Some(format!("{}.initializer", self.scope_path_of(owner)))
     }
 
     /// Whether any call, user or system, occurs in the expression at `node`.

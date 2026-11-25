@@ -156,7 +156,7 @@ impl<'a> Codegen<'a> {
     }
 
     pub(in super::super) fn emit_pass(&mut self, top: NodeId, pass: Pass) -> Result<(), String> {
-        let path = self.instance_path_of(top);
+        let path = self.scope_path_of(top);
         self.emit_pass_inst(top, &path, pass)
     }
 
@@ -172,11 +172,11 @@ impl<'a> Codegen<'a> {
                 }
                 for c in &self.node(inst).children {
                     match self.kind(*c) {
-                        NodeKind::GenScope => self.emit_gen_scope(inst, *c, path, Pass::Comb)?,
+                        NodeKind::GenScope => self.emit_gen_scope(inst, *c, Pass::Comb)?,
                         NodeKind::GenScopeArray => {
                             for gs in self.node(*c).children.clone() {
                                 if matches!(self.kind(gs), NodeKind::GenScope) {
-                                    self.emit_gen_scope(inst, gs, path, Pass::Comb)?;
+                                    self.emit_gen_scope(inst, gs, Pass::Comb)?;
                                 }
                             }
                         }
@@ -185,7 +185,7 @@ impl<'a> Codegen<'a> {
                 }
                 for c in &self.node(inst).children {
                     if matches!(self.kind(*c), NodeKind::ModuleInst { .. }) {
-                        let child_path = self.instance_path_of(*c);
+                        let child_path = self.scope_path_of(*c);
                         self.emit_pass_inst(*c, &child_path, Pass::Comb)?;
                     }
                 }
@@ -193,11 +193,11 @@ impl<'a> Codegen<'a> {
             Pass::Links => {
                 for c in &self.node(inst).children {
                     match self.kind(*c) {
-                        NodeKind::GenScope => self.emit_gen_scope(inst, *c, path, Pass::Links)?,
+                        NodeKind::GenScope => self.emit_gen_scope(inst, *c, Pass::Links)?,
                         NodeKind::GenScopeArray => {
                             for gs in self.node(*c).children.clone() {
                                 if matches!(self.kind(gs), NodeKind::GenScope) {
-                                    self.emit_gen_scope(inst, gs, path, Pass::Links)?;
+                                    self.emit_gen_scope(inst, gs, Pass::Links)?;
                                 }
                             }
                         }
@@ -206,7 +206,7 @@ impl<'a> Codegen<'a> {
                 }
                 for c in &self.node(inst).children {
                     if matches!(self.kind(*c), NodeKind::ModuleInst { .. }) {
-                        let child_path = self.instance_path_of(*c);
+                        let child_path = self.scope_path_of(*c);
                         self.emit_links(path, *c)?;
                         self.emit_pass_inst(*c, &child_path, Pass::Links)?;
                     }
@@ -237,11 +237,11 @@ impl<'a> Codegen<'a> {
                 // values collected by `collect_gen_scope`.
                 for c in &self.node(inst).children {
                     match self.kind(*c) {
-                        NodeKind::GenScope => self.emit_gen_scope(inst, *c, path, Pass::Procs)?,
+                        NodeKind::GenScope => self.emit_gen_scope(inst, *c, Pass::Procs)?,
                         NodeKind::GenScopeArray => {
                             for gs in self.node(*c).children.clone() {
                                 if matches!(self.kind(gs), NodeKind::GenScope) {
-                                    self.emit_gen_scope(inst, gs, path, Pass::Procs)?;
+                                    self.emit_gen_scope(inst, gs, Pass::Procs)?;
                                 }
                             }
                         }
@@ -250,7 +250,7 @@ impl<'a> Codegen<'a> {
                 }
                 for c in &self.node(inst).children {
                     if matches!(self.kind(*c), NodeKind::ModuleInst { .. }) {
-                        let child_path = self.instance_path_of(*c);
+                        let child_path = self.scope_path_of(*c);
                         self.emit_pass_inst(*c, &child_path, Pass::Procs)?;
                     }
                 }
@@ -261,18 +261,8 @@ impl<'a> Codegen<'a> {
 
     /// Emit one elaborated generate scope, recursively preserving its concrete
     /// hierarchy path for nested scopes and generated instances.
-    fn emit_gen_scope(
-        &mut self,
-        inst: NodeId,
-        gs: NodeId,
-        parent_path: &str,
-        pass: Pass,
-    ) -> Result<(), String> {
-        let gs_path = self
-            .gen_scope_paths
-            .get(&gs)
-            .cloned()
-            .unwrap_or_else(|| parent_path.to_string());
+    fn emit_gen_scope(&mut self, inst: NodeId, gs: NodeId, pass: Pass) -> Result<(), String> {
+        let gs_path = self.scope_path_of(gs);
         for child in self.node(gs).children.clone() {
             match self.kind(child) {
                 NodeKind::ContAssign { .. } if pass == Pass::Comb => {
@@ -289,16 +279,16 @@ impl<'a> Codegen<'a> {
                 {
                     self.emit_concurrent_assertion(inst, &gs_path, child)?
                 }
-                NodeKind::GenScope => self.emit_gen_scope(inst, child, &gs_path, pass)?,
+                NodeKind::GenScope => self.emit_gen_scope(inst, child, pass)?,
                 NodeKind::GenScopeArray => {
                     for nested in self.node(child).children.clone() {
                         if matches!(self.kind(nested), NodeKind::GenScope) {
-                            self.emit_gen_scope(inst, nested, &gs_path, pass)?;
+                            self.emit_gen_scope(inst, nested, pass)?;
                         }
                     }
                 }
                 NodeKind::ModuleInst { .. } => {
-                    let child_path = self.instance_path_of(child);
+                    let child_path = self.scope_path_of(child);
                     if pass == Pass::Links {
                         self.emit_links(&gs_path, child)?;
                     }
@@ -1173,7 +1163,7 @@ impl<'a> Codegen<'a> {
             .copied()
             .filter(|id| self.db.is_program_instance(*id))
         {
-            let path = self.instance_path_of(program);
+            let path = self.scope_path_of(program);
             let mut pending = self.node(program).children.clone();
             while let Some(child) = pending.pop() {
                 let member = match self.kind(child) {
@@ -1238,7 +1228,7 @@ impl<'a> Codegen<'a> {
                     self.node(process).full_name()
                 )
             })?;
-            let path = self.instance_path_of(inst);
+            let path = self.scope_path_of(inst);
             self.validate_process_contract(&path, stmt, always_type)?;
             let writes = self.collect_ownership_writes(stmt)?;
             let label = self.process_kind_label(always_type);
@@ -1269,10 +1259,7 @@ impl<'a> Codegen<'a> {
             self.inst = inst;
             writers.push(ProcessWriter {
                 node: id,
-                label: format!(
-                    "{}.continuous",
-                    self.source_path(&self.instance_path_of(inst))
-                ),
+                label: format!("{}.continuous", self.source_path(&self.scope_path_of(inst))),
                 writes: self.collect_process_writes(id)?,
             });
         }
@@ -1295,7 +1282,7 @@ impl<'a> Codegen<'a> {
             if !writes.is_empty() {
                 writers.push(ProcessWriter {
                     node: id,
-                    label: format!("{}.gate", self.source_path(&self.instance_path_of(inst))),
+                    label: format!("{}.gate", self.source_path(&self.scope_path_of(inst))),
                     writes,
                 });
             }
@@ -1341,7 +1328,7 @@ impl<'a> Codegen<'a> {
             if !writes.is_empty() {
                 writers.push(ProcessWriter {
                     node: id,
-                    label: format!("{}.port", self.source_path(&self.instance_path_of(inst))),
+                    label: format!("{}.port", self.source_path(&self.scope_path_of(inst))),
                     writes,
                 });
             }
@@ -1497,7 +1484,7 @@ impl<'a> Codegen<'a> {
                     node,
                     label: format!(
                         "{}.initializer",
-                        self.source_path(&self.instance_path_of(inst))
+                        self.source_path(&self.scope_path_of(inst))
                     ),
                     writes,
                 });

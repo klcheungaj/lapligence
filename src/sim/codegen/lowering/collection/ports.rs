@@ -55,7 +55,7 @@ impl<'a> Codegen<'a> {
             })?;
             let path = self
                 .owning_inst(port)
-                .map(|instance| self.instance_path_of(instance))
+                .map(|instance| self.scope_path_of(instance))
                 .unwrap_or_default();
             if !self.net_lvalue_selects_are_constant(actual) {
                 return Err(self.locate_error(port, format!(
@@ -1713,7 +1713,7 @@ impl<'a> Codegen<'a> {
             return Ok(());
         }
 
-        let path = self.instance_path_of(instance);
+        let path = self.scope_path_of(instance);
         let previous_instance = self.inst;
         self.inst = instance;
         let result = self.collect_loop_var(&path, target).map(|_| ());
@@ -1736,7 +1736,7 @@ impl<'a> Codegen<'a> {
         parent_path: &str,
         child_inst: NodeId,
     ) -> Result<(), String> {
-        let child_path = self.instance_path_of(child_inst);
+        let child_path = self.scope_path_of(child_inst);
         self.inst = self.owning_inst(child_inst).unwrap_or(child_inst);
         for c in &self.node(child_inst).children {
             let port = *c;
