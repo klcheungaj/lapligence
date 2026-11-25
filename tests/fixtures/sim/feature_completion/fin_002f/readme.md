@@ -19,8 +19,12 @@ not decide are left out; they are listed here.
 `cancel_regions` are the industry-standard behaviour. Left out: `disable` and
 `kill()` in a coverpoint expression; `disable` of the block of a `final`
 procedure from a function it calls; `kill()` in `post_randomize` of a call whose
-result is assigned (the assignment is or is not made); the pass action of a
-`cover`d sequence (it runs once or once per attempt).
+result is assigned (the assignment is or is not made); the pass action of an
+`assert property` (decision S38-D11 runs it for vacuous successes).
+
+The `act=stop` sections, here and in `cancel_dpi`, are llg's own: a batch run
+goes on after `$stop` ([stop/resume](../../../../../docs/sim_features.md)), so each is the `act=none`
+run. In a final procedure there is nothing to go on with and `SIM-011` says so.
 
 `cancel_dpi`, `cancel_dpi_calls`: an exported task that a `disable` or `kill()`
 ends returns 1 to its C caller, which then is in the disabled state:

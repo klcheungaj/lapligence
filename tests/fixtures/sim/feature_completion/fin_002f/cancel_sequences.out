@@ -171,3 +171,46 @@
 [35] take fatal cover
 [35] final
 === 1 SIM-006
+### +act=stop +ctx=expect
+[35] waiter saw s_ab
+[55] take stop expect
+[55] expect passed
+[55] waiter done
+[100] end hits=1 wait=FINISHED
+[100] final
+=== 0
+### +act=stop +ctx=outside
+[35] waiter saw s_ab
+[55] expect passed
+[55] waiter done
+[100] end hits=0 wait=FINISHED
+[100] final
+=== 0
+### +act=stop +ctx=outside2
+[35] waiter saw s_ab
+[55] expect passed
+[55] waiter done
+[120] end hits=0 wait=FINISHED
+[120] final
+=== 0
+### +act=stop +ctx=fail
+[35] waiter saw s_ab
+[55] expect passed
+[55] waiter done
+[100] end hits=0 wait=FINISHED
+[100] final
+=== 0
+### +act=stop +ctx=cover
+[35] waiter saw s_ab
+[35] take stop cover
+[45] take stop cover
+[55] expect passed
+[55] waiter done
+[55] take stop cover
+[65] take stop cover
+[75] take stop cover
+[85] take stop cover
+[95] take stop cover
+[100] end hits=7 wait=FINISHED
+[100] final
+=== 0

@@ -275,3 +275,64 @@ prog went on
 [65] final woke=101 late=11
 program final
 === 0
+### +act=stop +ctx=nba
+[5] strobe q=1
+[13] program ends
+[22] writer went on
+[25] take stop nba
+[25] after take nba
+[25] strobe2 q=3
+[65] end woke=106 late=11 r=55 d=77 q=6 w=WAITING
+[65] final woke=106 late=11
+program final
+=== 0
+### +act=stop +ctx=ev
+[5] strobe q=1
+[13] program ends
+[22] writer went on
+[25] take stop ev
+[25] after take ev
+[25] strobe2 q=3
+[65] end woke=106 late=11 r=55 d=77 q=6 w=WAITING
+[65] final woke=106 late=11
+program final
+=== 0
+### +act=stop +ctx=latenba
+[5] strobe q=1
+[13] program ends
+[22] writer went on
+[25] strobe2 q=3
+[31] take stop latenba
+[31] after take latenba
+[65] end woke=106 late=11 r=55 d=77 q=6 w=WAITING
+[65] final woke=106 late=11
+program final
+=== 0
+### +act=stop +ctx=prog
+[5] strobe q=1
+[13] take stop prog
+[13] after take prog
+prog went on
+[13] program ends
+[22] writer went on
+[25] strobe2 q=3
+[65] end woke=106 late=11 r=55 d=77 q=6 w=WAITING
+[65] final woke=106 late=11
+program final
+=== 0
+### +act=stop +ctx=exit
+[5] strobe q=1
+exit
+[13] final woke=101 late=0
+program final
+=== 0
+### +act=stop +ctx=progfork
+[5] strobe q=1
+prog disabled fork
+[14] program ends
+[22] writer went on
+[25] strobe2 q=3
+[65] end woke=106 late=11 r=55 d=77 q=6 w=WAITING
+[65] final woke=106 late=11
+program final
+=== 0

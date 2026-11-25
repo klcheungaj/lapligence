@@ -144,3 +144,51 @@ start act=kill ctx=clocking
 [40] bystander
 [50] final
 === 0
+### +act=stop +ctx=nested
+start act=stop ctx=nested
+[1] nested: take
+[1] nested: after take
+r=3
+[1] end of victim
+[1] after victim
+[21] main ends
+[21] final
+=== 0
+### +act=stop +ctx=pre
+start act=stop ctx=pre
+[1] pre: take
+[1] pre: after take
+randomize=1 a=3
+[1] end of victim
+[1] after victim
+[21] main ends
+[21] final
+=== 0
+### +act=stop +ctx=post
+start act=stop ctx=post
+[1] post: take a=3
+[1] post: after take
+randomize=1 a=3
+[1] end of victim
+[1] after victim
+[21] main ends
+[21] final
+=== 0
+### +act=stop +ctx=sample
+start act=stop ctx=sample
+[1] sample: take
+[1] sample: after take
+sampled
+[1] end of victim
+[1] after victim
+[21] main ends
+[21] final
+=== 0
+### +act=stop +ctx=clocking
+start act=stop ctx=clocking
+[5] after clocking take
+[5] end of victim
+[5] after victim
+[25] main ends
+[25] final
+=== 0

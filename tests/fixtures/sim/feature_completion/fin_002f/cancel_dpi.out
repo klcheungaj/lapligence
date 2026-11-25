@@ -648,3 +648,124 @@ c_func: sv_func returned 0 disabled=0
 c_func: sv_func returned 0 disabled=0
 last final
 === 0
+### +act=stop +ctx=task
+[1] sv_task take stop
+[1] sv_task after take
+c_task: sv_task returned 0 disabled=0
+task o=8
+[1] victim ends
+[30] status=FINISHED seen=1 out=0
+[30] final seen=1
+last final
+=== 0
+### +act=stop +ctx=nested
+[1] sv_task take stop
+[1] sv_task after take
+c_task: sv_task returned 0 disabled=0
+c_task: sv_task returned 0 disabled=0
+c_task: sv_task returned 0 disabled=0
+task o=10
+[1] victim ends
+[30] status=FINISHED seen=1 out=0
+[30] final seen=1
+last final
+=== 0
+### +act=stop +ctx=fork
+[1] sv_task take stop
+[1] sv_task after take
+c_task: sv_task returned 0 disabled=0
+branch o=8
+[3] sibling
+[3] victim ends
+[30] status=FINISHED seen=1 out=0
+[30] final seen=1
+last final
+=== 0
+### +act=stop +ctx=func
+[1] sv_func take stop
+[1] sv_func after take
+c_func: sv_func returned 5 disabled=0
+func o=5
+[1] victim ends
+[30] status=FINISHED seen=1 out=0
+[30] final seen=1
+last final
+=== 0
+### +act=stop +ctx=funcn
+[1] sv_func take stop
+[1] sv_func after take
+c_func: sv_func returned 5 disabled=0
+c_func: sv_func returned 6 disabled=0
+c_func: sv_func returned 7 disabled=0
+func o=7
+[1] victim ends
+[30] status=FINISHED seen=1 out=0
+[30] final seen=1
+last final
+=== 0
+### +act=stop +ctx=method
+[1] sv_task take stop
+[1] sv_task after take
+c_task: sv_task returned 0 disabled=0
+c_task: sv_task returned 0 disabled=0
+method o=9
+[1] victim ends
+[30] status=FINISHED seen=1 out=0
+[30] final seen=1
+last final
+=== 0
+### +act=stop +ctx=pre
+[1] sv_func take stop
+[1] sv_func after take
+c_func: sv_func returned 5 disabled=0
+pre r=5
+rand=1 a=3
+[1] victim ends
+[30] status=FINISHED seen=1 out=0
+[30] final seen=1
+last final
+=== 0
+### +act=stop +ctx=post
+[1] sv_func take stop
+[1] sv_func after take
+c_func: sv_func returned 5 disabled=0
+post r=5
+rand=1 a=3
+[1] victim ends
+[30] status=FINISHED seen=1 out=0
+[30] final seen=1
+last final
+=== 0
+### +act=stop +ctx=sample
+[1] sv_func take stop
+[1] sv_func after take
+c_func: sv_func returned 5 disabled=0
+sampled
+[1] victim ends
+[30] status=FINISHED seen=1 out=0
+[30] final seen=1
+last final
+=== 0
+### +act=stop +ctx=expr
+[1] sv_func take stop
+[1] sv_func after take
+c_func: sv_func returned 5 disabled=0
+[1] sv_func take none
+[1] sv_func after take
+c_func: sv_func returned 5 disabled=0
+out=11
+[1] victim ends
+[30] status=FINISHED seen=2 out=11
+[30] final seen=2
+last final
+=== 0
+### +act=stop +ctx=nba
+[5] sv_func take stop
+[5] sv_func after take
+c_func: sv_func returned 5 disabled=0
+out=5
+[15] victim ends
+[30] status=FINISHED seen=1 out=5
+[30] final seen=1
+last final
+=== 0

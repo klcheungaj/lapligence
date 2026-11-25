@@ -66,3 +66,13 @@ sub 1 final
 sub 2 final
 sub 3 final
 === 0
+### +act=stop
+first
+deep went on
+r=2
+after blk
+second done=0 p=WAITING q=WAITING
+sub 1 final
+sub 2 final
+sub 3 final
+=== 0 SIM-011
