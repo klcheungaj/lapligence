@@ -1,4 +1,4 @@
-# FIN-002 conditional operator chains (step 4)
+# FIN-002 conditional operator chains and deep nesting (step 4)
 
 Chains of the conditional operator, 4 to 32 levels deep, run by
 [`tests/sim_feature_completion/fin_002e.rs`](../../../../sim_feature_completion/fin_002e.rs).
@@ -50,3 +50,27 @@ differing packed elements bit by bit, return one of the class operands, keep
 equal reals, or run the increments of an alternative that is not selected.
 The transcript was derived line by line from these rules with a separate
 model of the chain, not from the simulator under test.
+
+## Deep nesting
+
+`deep_nesting.sv` nests every construct tens to hundreds of levels deep: above
+the 60 to 70 levels that used to overflow the stack of an unoptimized `llg`,
+and below what a C compiler accepts, because nested statements become nested
+C blocks (MSVC stops at 128). Tests of the limit itself
+(`llg::stack::MAX_NESTING_DEPTH`) generate their sources in
+[`tests/deep_nesting.rs`](../../../../deep_nesting.rs) and build nothing.
+
+Every line of `deep_nesting.out` is a count or a selection that does not
+depend on the depth:
+
+| Lines | Value |
+| --- | --- |
+| `blocks` | one `initial` in the innermost block of the `if`, `case` and loop nests, and the arm selected from the 150-arm `else` chain (149) |
+| `instances` | `a` plus one for each of 100 instance levels |
+| `binary`, `calls`, `let`, `macro`, `index`, `members`, `string` | the number of operands or levels, plus the innermost value |
+| `parentheses`, `concatenations`, `streams`, `target`, `casts` | the innermost value: a concatenation of one operand is that operand, an even number of bit reversals restores it, and a cast to `byte` truncates 301 to 45 |
+| `unary` | an odd number of complements of 1 |
+| `conditional` | the first, the middle and, past the last condition, the default alternative |
+| `inside` | an even number of memberships of 0 in the set of the previous result; of 1, always 1 |
+| `begin` to `class`, `constraint` | the assignment in the innermost statement, one unit of time per nested `fork` or delay |
+| `property` | an even number of negations of a condition that holds at the first clock edge and fails at the second |

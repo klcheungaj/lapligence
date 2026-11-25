@@ -4,70 +4,49 @@ Open design limitations that are understood but deliberately deferred. Each
 entry states the symptom, the cause, the intended direction and how to
 reproduce it. Remove an entry when the fix lands.
 
-## Deeply nested source overflows the stack
+## Deeply nested source compiles slowly, and C compilers refuse it first
 
-**Status:** found by FIN-002 step 3 (malformed and extreme sources); not
-fixed. A legal design with a long operator chain or deep generate nesting
-ends `llg` with a stack overflow abort instead of a result or a diagnostic.
+**Status:** found by FIN-002 step 4 (nesting limit); not fixed. Source up to
+`llg::stack::MAX_NESTING_DEPTH` has a defined result in every stage, but some
+constructs take time that grows with the square or the cube of their depth,
+and a C compiler may refuse the model of a design `llg` accepts.
 
 ### Symptom
 
-`llg` (and, for the frontend part, any tool that analyses the file) ends
-with `thread 'main' has overflowed its stack` and `SIGABRT`. Measured with
-the unoptimized `quick` profile on Linux (8 MiB main stack); an optimized
-build has smaller frames and fails later, at depths that were not measured:
+Generation (`--gen-only`, unoptimized `quick` profile, Linux):
 
-| Input | `--lint-only` | generation |
-| --- | --- | --- |
-| `a + a + ... + a`, 60 to 10,000 terms | passes | aborts from 70 terms |
-| `s == 0 ? d0 : s == 1 ? d1 : ...`, 56 to 1,000 levels | passes | aborts from 60 levels |
-| the same with 30,000 terms | aborts in the frontend | aborts |
-| `if (1) begin ... end` generate blocks nested 200 deep | passes | passes |
-| the same nested 500 to 5,000 deep | passes | aborts |
+| Construct | Levels and seconds |
+| --- | --- |
+| `for` in `for` | 250: 1.7, 500: 9, 1,000: 60; 4,087 not finished after 900 |
+| `fork begin` in `fork begin` | 250: 1, 500: 7, 1,000: 56; 2,043: 530 |
+| `foreach` in `foreach`, `wait` before `wait` | 500: 17 and 5 |
+| `randcase` in `randcase`, `wait` before `wait` | 4,087: 220 and 420 |
+| packed or unpacked dimensions, selects of one | 4,086: 170 to 310 |
+| `o.n.n...` over class handles | 250: 0.7; beyond 256 refused with `CODEGEN-009`, after 4 s at 500 and 34 s at 1,000 |
+| `else if` chain | 2,000: 6, 4,087: 24 |
 
-Constructs the frontend's parser nests recursively (parentheses, `begin`
-blocks, concatenations) are refused with `ParseTreeTooDeep` and are not
-affected. A conditional operator chain is refused the same way only beyond
-the parser's limit, so the chains in the table reach generation; with an
-unlimited stack a 256-level chain generates in 0.3 s.
+Nested statements become nested C blocks, up to five brackets for one loop.
+GCC builds `begin` and `if` nested 4,087 deep. `llg` raises Clang's limit on
+brackets above what a model can nest, but Clang 4,087 `if` levels deep ends
+with a stack overflow of its own (`BUILD-009`; 2,000 levels build). MSVC
+documents a limit of 128 nested blocks (C1061), which also counts an `else if`
+chain; not run.
 
 ### Cause
 
-The frontend parses a left-associative operator chain in a loop, so its
-depth limit does not count the chain, but the tree it builds is as deep as
-the chain is long, and every later traversal recurses over it:
-`BinaryExpression::fromSyntax` in the frontend, and in llg
-`Codegen::lower_expr` (the first to overflow), validation, the optimizer
-passes and emission. Nested generate blocks recurse through scope lowering
-in the same way. Nothing bounds the depth and nothing sizes the stack for
-it.
-
-Only the stack is in the way: with an unlimited stack (`ulimit -s
-unlimited`, unoptimized `quick` profile, `--gen-only`) the chain
-`a + a + ... + a` takes 0.17 s and 165 MiB for 1,000 terms, 0.7 s and 520 MiB
-for 4,000, and 4.4 s and 1.9 GiB for 16,000, of which about 120 KiB per term
-are stack frames. The frontend's own walks of the chain
-(`Expression::isImplicitString`, `ValuePath::overlaps`,
-`SyntaxNode::getFirstToken`) are quadratic in its length and are a fifth of
-the instructions at 4,000 terms.
+Not analysed; the steps are per construct.
 
 ### Intended direction
 
-Two parts. A depth limit with a located
-error at the first layer that can see it: the wrapper, by an iterative walk
-of each syntax tree before elaboration (or a counter in the frontend's
-operator loop, as a tracked patch), with the limit a named constant well
-above generated code in practice. And a stack sized for that limit in every
-build profile: `llg` and the language server's analysis threads run the
-pipeline on a thread with a fixed large reservation (a named constant; the
-memory guard must not count the reservation). A test at the limit in the
-unoptimized profile then proves the pair.
+Profile the constructs generated code uses first (`else if` chains, generate
+blocks). Emitting a chain of `else if` without nesting its arms would keep it
+below MSVC's limit.
 
 ### Reproduce
 
 ```sh
-python3 -c "print('module tb; logic a; initial \$display(a' + ' + a' * 2000 + '); endmodule')" > chain.sv
-llg --top tb --gen-only chain.sv
+python3 -c "print('module tb; initial begin ' + ''.join(f'for (int i{n} = 0; i{n} < 1; i{n}++) ' for n in range(500)) + '\$display(1); end endmodule')" > loops.sv
+llg --gen-only loops.sv
 ```
 
 ## Declared net views retain per-bit lowering bindings

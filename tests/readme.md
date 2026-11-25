@@ -1579,6 +1579,13 @@ test(fin_002b::failure)'`): one row and one test per failure and interface, with
 the fixture that shows its defined result on the three value backends in both
 optimizer modes; run it with the generated-runtime sanitizers as well.
 
+The nesting limit (`src/stack.rs`) has its own suite, `deep_nesting` of the
+`general` binary: every construct just below and just above the limit, lists
+that are long but not deep, and chains of names. `lsp_stdio::deep_nesting` holds
+the language server's part, `fin_002e::deeply_nested_constructs_build_and_run`
+(`sim_feature_completion`) a built model. The unoptimized `quick` profile has
+the largest stack frames: run them there after a change to a recursive walk.
+
 `LLG_FUZZ_CASES=<count>` or `<first>..<end>` runs a longer local campaign of
 the selected tests (the tests that require both outcomes of a corpus check
 that only for the checked-in range). The run-time readers are C: run their

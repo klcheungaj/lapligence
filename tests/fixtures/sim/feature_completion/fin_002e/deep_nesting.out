@@ -1,0 +1,33 @@
+blocks 152
+instances 101
+binary 500
+parentheses 1
+unary fffffffe
+calls 300
+casts 45
+let 61
+macro 101
+conditional 0 1000
+conditional 50 1050
+conditional 100 7
+inside 0 0
+inside 1 1
+logical 1
+index 80
+members 100
+concatenations 1
+streams 1
+string 81
+target 12
+begin 3
+if 4
+else if 5
+for 6
+case 7
+fork 8 at 41
+wait 9
+delay 10 at 141
+class 60
+constraint 5
+property holds
+property fails

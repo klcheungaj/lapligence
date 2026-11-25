@@ -28,6 +28,8 @@ mod black_box;
 mod broken_edits;
 #[path = "lsp_stdio/configuration.rs"]
 mod configuration;
+#[path = "lsp_stdio/deep_nesting.rs"]
+mod deep_nesting;
 #[path = "lsp_stdio/definitions.rs"]
 mod definitions;
 #[path = "lsp_stdio/dependencies.rs"]

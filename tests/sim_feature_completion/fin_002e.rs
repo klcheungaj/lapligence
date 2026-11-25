@@ -1,4 +1,5 @@
-//! FIN-002 step 4: conditional operator chains (IEEE 1800-2009 11.4.11).
+//! FIN-002 step 4: conditional operator chains (IEEE 1800-2009 11.4.11) and
+//! deeply nested designs.
 //!
 //! A chain of `?:` operators used to emit C that doubled with every level.
 //! The fixtures run chains 4 to 32 levels deep with known, X and Z
@@ -12,6 +13,7 @@
 //! | `cond_chain_types` | wide, signed, mixed-width, two-state, real, string, enumeration and packed structure operands |
 //! | `cond_chain_shapes` | conditionals nested in the first alternative, in both, in the predicate; mixed types along a chain |
 //! | `cond_chain_clause` | unpacked arrays and structures, class handles, reals and increments under the clause text |
+//! | `deep_nesting` | every construct nested tens to hundreds of levels deep; `deep_nesting` in the `general` binary goes up to the limit without building |
 use super::{sim_cli, sim_harness};
 use std::path::Path;
 use std::process::Command;
@@ -92,6 +94,20 @@ fn aggregate_handle_and_real_chains_follow_the_clause() {
         expected!("cond_chain_clause"),
         &[],
         &[],
+    );
+}
+
+/// A model whose generation used to overflow the stack builds and runs. The C
+/// compiler's optimizer is not under test, and takes longer than the rest.
+#[test]
+fn deeply_nested_constructs_build_and_run() {
+    sim_cli::run_case_with_args(
+        SUITE,
+        "deep_nesting",
+        expected!("deep_nesting"),
+        "",
+        &[],
+        &["--model-opt-level", "O1"],
     );
 }
 

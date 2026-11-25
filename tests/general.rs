@@ -26,6 +26,7 @@ mod compilation_units;
 mod compile_errors;
 mod compiler_cache;
 mod config_effect;
+mod deep_nesting;
 mod dump_tokens;
 mod elab_resolve;
 mod emit_decoupling;
