@@ -636,7 +636,7 @@ struct Capture {
   // identity. Canonical pointers alone are only unique for nominal classes.
   std::unordered_map<const DefinitionSymbol*, std::vector<const VirtualInterfaceType*>>
       virtualInterfaceTypes;
-  std::unordered_map<const void*, uint64_t> semanticIds;
+  flat_hash_map<const void*, uint64_t> semanticIds;
   // DPI-C export declarations by the syntax node that holds them, each as
   // (exported subroutine name, C identifier), filled on first use. Every
   // instance of a declaring scope shares that scope's syntax, so this finds
@@ -651,9 +651,43 @@ struct Capture {
   // filled on first use. The syntax outlives capture.
   std::unordered_set<const syntax::ModuleDeclarationSyntax*> directiveTimeScaled;
   bool directiveTimeScaledReady = false;
-  std::vector<std::vector<LlgSlangSemanticEdge>> pendingEdges;
-  // Small nodes retain cheap scans. Only high-fanout parents pay for indexes;
-  // positions refer to the authoritative ordered edge vector, never its memory.
+  // The edges of a node as a chain in the order of their capture. A design has
+  // millions of them, so `edgeMemory` owns them all and frees them at once.
+  struct PendingEdge {
+    LlgSlangSemanticEdge edge;
+    PendingEdge* next = nullptr;
+  };
+  struct PendingEdges {
+    PendingEdge* first = nullptr;
+    PendingEdge* last = nullptr;
+    size_t count = 0;
+
+    void append(PendingEdge* added) {
+      (last ? last->next : first) = added;
+      last = added;
+      count++;
+    }
+
+    // Drop the edges that `matches` accepts and return how many there were.
+    template<typename Matches>
+    size_t remove(Matches&& matches) {
+      PendingEdge* edge = first;
+      const size_t before = count;
+      *this = {};
+      while (edge) {
+        PendingEdge* const next = edge->next;
+        if (!matches(edge->edge)) {
+          edge->next = nullptr;
+          append(edge);
+        }
+        edge = next;
+      }
+      return before - count;
+    }
+  };
+  BumpAllocator edgeMemory;
+  std::vector<PendingEdges> pendingEdges;
+  // Small nodes retain cheap scans. Only high-fanout parents pay for indexes.
   static constexpr size_t kIndexedSemanticEdgeThreshold = 64;
   // Dimensions walked to reach the typedef of a declared type; a type that
   // nests more is reported without a typedef name.
@@ -662,13 +696,14 @@ struct Capture {
     return (static_cast<uint64_t>(role) << 32) | index;
   }
   struct SemanticEdgeIndex {
-    std::map<uint64_t, size_t> roles;
-    std::unordered_map<uint64_t, std::vector<size_t>> children;
+    std::map<uint64_t, PendingEdge*> roles;
+    std::unordered_map<uint64_t, std::vector<PendingEdge*>> children;
 
-    void add(const LlgSlangSemanticEdge& edge, size_t position) {
-      roles.emplace(semanticEdgeKey(edge.role, edge.index), position);
+    void add(PendingEdge* pending) {
+      const LlgSlangSemanticEdge& edge = pending->edge;
+      roles.emplace(semanticEdgeKey(edge.role, edge.index), pending);
       if (edge.role == LLG_SLANG_EDGE_CHILD)
-        children[edge.target_id].push_back(position);
+        children[edge.target_id].push_back(pending);
     }
   };
   std::unordered_map<uint64_t, SemanticEdgeIndex> indexedSemanticEdges;
@@ -684,8 +719,14 @@ struct Capture {
   std::unordered_map<uint64_t, LlgSlangSourceRange> bodyDeclarations;
   std::vector<NameRepeat> nameRepeats;
   std::unordered_map<uint64_t, uint64_t> lexicalTargetAliases;
-  std::unordered_map<const syntax::SyntaxNode*, std::vector<uint64_t>>
-      sourceIdentityGroups;
+  // The nodes that stem from one syntax node, as a chain in the order opposite
+  // to their capture that starts at the index `sourceIdentityGroups` has.
+  struct SourceIdentity {
+    uint64_t semantic_id;
+    uint64_t previous;
+  };
+  std::vector<SourceIdentity> sourceIdentities;
+  flat_hash_map<const syntax::SyntaxNode*, uint64_t> sourceIdentityGroups;
   std::unordered_set<const ParameterSymbol*> overriddenParameters;
   std::unordered_map<uint64_t, SourceLocation> unitValueDeclarations;
   // Parameter override spellings the bridge rewrote for Slang, so
@@ -1709,40 +1750,41 @@ struct Capture {
   }
 
   SemanticEdgeIndex* semanticEdgeIndex(uint64_t source) {
-    const auto& edges = pendingEdges[static_cast<size_t>(source)];
-    if (edges.size() < kIndexedSemanticEdgeThreshold)
+    const PendingEdges& edges = pendingEdges[static_cast<size_t>(source)];
+    if (edges.count < kIndexedSemanticEdgeThreshold)
       return nullptr;
     auto [it, inserted] = indexedSemanticEdges.try_emplace(source);
     if (inserted) {
-      for (size_t position = 0; position < edges.size(); position++)
-        it->second.add(edges[position], position);
+      for (PendingEdge* edge = edges.first; edge; edge = edge->next)
+        it->second.add(edge);
     }
     return &it->second;
   }
 
   LlgSlangSemanticEdge* findSemanticEdge(uint64_t source, uint32_t role,
                                         uint32_t index) {
-    auto& edges = pendingEdges[static_cast<size_t>(source)];
     if (auto* lookup = semanticEdgeIndex(source)) {
       const auto it = lookup->roles.find(semanticEdgeKey(role, index));
-      return it == lookup->roles.end() ? nullptr : &edges[it->second];
+      return it == lookup->roles.end() ? nullptr : &it->second->edge;
     }
-    for (auto& edge : edges) {
-      if (edge.role == role && edge.index == index)
-        return &edge;
+    PendingEdge* pending = pendingEdges[static_cast<size_t>(source)].first;
+    for (; pending; pending = pending->next) {
+      if (pending->edge.role == role && pending->edge.index == index)
+        return &pending->edge;
     }
     return nullptr;
   }
 
   LlgSlangSemanticEdge* findSemanticChild(uint64_t source, uint64_t target) {
-    auto& edges = pendingEdges[static_cast<size_t>(source)];
     if (auto* lookup = semanticEdgeIndex(source)) {
       const auto it = lookup->children.find(target);
-      return it == lookup->children.end() ? nullptr : &edges[it->second.front()];
+      return it == lookup->children.end() ? nullptr : &it->second.front()->edge;
     }
-    for (auto& edge : edges) {
-      if (edge.role == LLG_SLANG_EDGE_CHILD && edge.target_id == target)
-        return &edge;
+    PendingEdge* pending = pendingEdges[static_cast<size_t>(source)].first;
+    for (; pending; pending = pending->next) {
+      if (pending->edge.role == LLG_SLANG_EDGE_CHILD &&
+          pending->edge.target_id == target)
+        return &pending->edge;
     }
     return nullptr;
   }
@@ -1760,9 +1802,10 @@ struct Capture {
       return 0;
     }
     uint32_t index = 0;
-    for (const auto& edge : pendingEdges[static_cast<size_t>(source)]) {
-      if (edge.role == LLG_SLANG_EDGE_CHILD)
-        index = std::max(index, edge.index + 1);
+    const PendingEdge* pending = pendingEdges[static_cast<size_t>(source)].first;
+    for (; pending; pending = pending->next) {
+      if (pending->edge.role == LLG_SLANG_EDGE_CHILD)
+        index = std::max(index, pending->edge.index + 1);
     }
     return index;
   }
@@ -1780,11 +1823,12 @@ struct Capture {
     if (semanticEdgeCount >= maxSemanticEdges())
       throwCountLimit("semantic edge", maxSemanticEdges());
     chargeRecord(output, sizeof(LlgSlangSemanticEdge));
-    auto& edges = pendingEdges[static_cast<size_t>(source)];
-    edges.push_back({role, index, target});
+    auto* pending = edgeMemory.emplace<PendingEdge>(
+        PendingEdge{{role, index, target}});
+    pendingEdges[static_cast<size_t>(source)].append(pending);
     if (auto it = indexedSemanticEdges.find(source);
         it != indexedSemanticEdges.end())
-      it->second.add(edges.back(), edges.size() - 1);
+      it->second.add(pending);
     semanticEdgeCount++;
   }
 
@@ -1798,22 +1842,15 @@ struct Capture {
   void semanticRole(uint64_t source, const void* targetIdentity, uint32_t role,
                     uint32_t index = 0) {
     const uint64_t target = ensureSemantic(targetIdentity);
-    auto& edges = pendingEdges[static_cast<size_t>(source)];
     if (const auto* existing = findSemanticEdge(source, role, index)) {
       if (existing->target_id != target)
         throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
                             "conflicting semantic edge role and index");
       if (!findSemanticChild(source, target))
         return;
-      const size_t oldSize = edges.size();
-      edges.erase(std::remove_if(edges.begin(), edges.end(),
-          [=](const LlgSlangSemanticEdge& edge) {
-            return edge.role == LLG_SLANG_EDGE_CHILD &&
-                   edge.target_id == target;
-          }), edges.end());
-      if (oldSize != edges.size())
-        indexedSemanticEdges.erase(source);
-      semanticEdgeCount -= oldSize - edges.size();
+      removeEdges(source, [=](const LlgSlangSemanticEdge& edge) {
+        return edge.role == LLG_SLANG_EDGE_CHILD && edge.target_id == target;
+      });
       return;
     }
     if (auto* edge = findSemanticChild(source, target)) {
@@ -1821,14 +1858,14 @@ struct Capture {
           it != indexedSemanticEdges.end()) {
         auto& lookup = it->second;
         lookup.roles.erase(semanticEdgeKey(edge->role, edge->index));
-        auto& positions = lookup.children.at(target);
-        const size_t position = positions.front();
+        auto& children = lookup.children.at(target);
+        PendingEdge* const pending = children.front();
         if (role != LLG_SLANG_EDGE_CHILD) {
-          positions.erase(positions.begin());
-          if (positions.empty())
+          children.erase(children.begin());
+          if (children.empty())
             lookup.children.erase(target);
         }
-        lookup.roles.emplace(semanticEdgeKey(role, index), position);
+        lookup.roles.emplace(semanticEdgeKey(role, index), pending);
       }
       edge->role = role;
       edge->index = index;
@@ -1864,24 +1901,28 @@ struct Capture {
   void replaceChildRoles(uint64_t source, uint32_t role) {
     indexedSemanticEdges.erase(source);
     uint32_t index = 0;
-    for (auto& edge : pendingEdges[static_cast<size_t>(source)]) {
-      if (edge.role == LLG_SLANG_EDGE_CHILD) {
-        edge.role = role;
-        edge.index = index++;
+    PendingEdge* pending = pendingEdges[static_cast<size_t>(source)].first;
+    for (; pending; pending = pending->next) {
+      if (pending->edge.role == LLG_SLANG_EDGE_CHILD) {
+        pending->edge.role = role;
+        pending->edge.index = index++;
       }
     }
   }
 
-  void removeChildEdges(uint64_t source) {
-    auto& edges = pendingEdges[static_cast<size_t>(source)];
-    const size_t oldSize = edges.size();
-    edges.erase(std::remove_if(edges.begin(), edges.end(),
-        [](const LlgSlangSemanticEdge& edge) {
-          return edge.role == LLG_SLANG_EDGE_CHILD;
-        }), edges.end());
-    if (oldSize != edges.size())
+  template<typename Matches>
+  void removeEdges(uint64_t source, Matches&& matches) {
+    const size_t removed =
+        pendingEdges[static_cast<size_t>(source)].remove(matches);
+    if (removed)
       indexedSemanticEdges.erase(source);
-    semanticEdgeCount -= oldSize - edges.size();
+    semanticEdgeCount -= removed;
+  }
+
+  void removeChildEdges(uint64_t source) {
+    removeEdges(source, [](const LlgSlangSemanticEdge& edge) {
+      return edge.role == LLG_SLANG_EDGE_CHILD;
+    });
   }
 
   void finalizeSemanticEdges() {
@@ -1891,18 +1932,23 @@ struct Capture {
       cancellation.step();
       auto& node = output.semantic_nodes[i];
       node.edge_start = output.semantic_edges.size();
-      node.edge_count = pendingEdges[i].size();
-      output.semantic_edges.insert(output.semantic_edges.end(),
-                                   pendingEdges[i].begin(), pendingEdges[i].end());
-      std::vector<LlgSlangSemanticEdge>().swap(pendingEdges[i]);
+      node.edge_count = pendingEdges[i].count;
+      const PendingEdge* pending = pendingEdges[i].first;
+      for (; pending; pending = pending->next)
+        output.semantic_edges.push_back(pending->edge);
     }
-    std::vector<std::vector<LlgSlangSemanticEdge>>().swap(pendingEdges);
+    std::vector<PendingEdges>().swap(pendingEdges);
+    edgeMemory = BumpAllocator();
     indexedSemanticEdges.clear();
   }
 
   void sourceIdentity(const syntax::SyntaxNode* syntaxNode, uint64_t semanticId) {
-    if (syntaxNode)
-      sourceIdentityGroups[syntaxNode].push_back(semanticId);
+    if (!syntaxNode)
+      return;
+    const uint64_t index = sourceIdentities.size();
+    auto [last, first] = sourceIdentityGroups.try_emplace(syntaxNode, index);
+    sourceIdentities.push_back({semanticId, first ? LLG_SLANG_INVALID_ID : last->second});
+    last->second = index;
   }
 
   void markOverriddenParameters() {
@@ -1919,10 +1965,16 @@ struct Capture {
   }
 
   void finalizeSourceIdentities() {
-    for (const auto& [syntaxNode, ids] : sourceIdentityGroups) {
+    std::vector<uint64_t> ids;
+    for (const auto& [syntaxNode, last] : sourceIdentityGroups) {
       (void)syntaxNode;
-      if (ids.size() < 2)
+      if (sourceIdentities[last].previous == LLG_SLANG_INVALID_ID)
         continue;
+      ids.clear();
+      for (uint64_t index = last; index != LLG_SLANG_INVALID_ID;
+           index = sourceIdentities[index].previous)
+        ids.push_back(sourceIdentities[index].semantic_id);
+      std::reverse(ids.begin(), ids.end());
       uint64_t representative = *std::min_element(ids.begin(), ids.end());
       for (uint64_t id : ids) {
         const auto& node = output.semantic_nodes[static_cast<size_t>(id)];
