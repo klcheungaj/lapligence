@@ -256,7 +256,7 @@ fn utf16_len(text: &str) -> u32 {
     }
 }
 
-/// The search for what both texts have.
+/// The search for what both texts have, in the order of the texts.
 struct Diff<'t> {
     analysed: &'t [&'t str],
     current: &'t [&'t str],
@@ -267,14 +267,28 @@ struct Diff<'t> {
     complete: bool,
 }
 
+/// What the search has still to look at or to note.
+enum Part {
+    /// This many equal lines from these on.
+    Equal(usize, usize, usize),
+    Open(Span<usize>, Span<usize>),
+}
+
 fn same_line(left: &str, right: &str) -> bool {
-    left == right || left.trim() == right.trim()
+    left == right || left.trim_ascii() == right.trim_ascii()
 }
 
 impl<'t> Diff<'t> {
     fn run(&mut self) {
-        let mut pending = vec![(0..self.analysed.len(), 0..self.current.len())];
-        while let Some((mut analysed, mut current)) = pending.pop() {
+        let mut pending = vec![Part::Open(0..self.analysed.len(), 0..self.current.len())];
+        while let Some(part) = pending.pop() {
+            let (mut analysed, mut current) = match part {
+                Part::Equal(line, place, lines) => {
+                    self.add_equal(line, place, lines);
+                    continue;
+                }
+                Part::Open(analysed, current) => (analysed, current),
+            };
             let equal = |(left, right): &(&&str, &&str)| same_line(left, right);
             let prefix = self.analysed[analysed.clone()]
                 .iter()
@@ -293,33 +307,30 @@ impl<'t> Diff<'t> {
             analysed.end -= suffix;
             current.end -= suffix;
             let (anchors, contested) = self.anchors(&analysed, &current, suffix);
-            let certain = suffix - contested;
-            self.add_equal(analysed.end + contested, current.end + contested, certain);
             if anchors.is_empty() {
-                self.add_equal(analysed.end, current.end, contested);
+                let (line, place) = (analysed.end, current.end);
                 self.add_edited(analysed, current);
+                self.add_equal(line, place, suffix);
                 continue;
             }
             analysed.end += contested;
             current.end += contested;
+            let certain = Part::Equal(analysed.end, current.end, suffix - contested);
+            pending.push(certain);
+            let first = pending.len();
             for (line, place) in anchors {
-                self.add_equal(line, place, 1);
-                pending.push((analysed.start..line, current.start..place));
+                if analysed.start < line || current.start < place {
+                    pending.push(Part::Open(analysed.start..line, current.start..place));
+                }
+                pending.push(Part::Equal(line, place, 1));
                 analysed.start = line + 1;
                 current.start = place + 1;
             }
-            pending.push((analysed, current));
+            pending.push(Part::Open(analysed, current));
+            pending[first..].reverse();
         }
-        self.runs.sort_unstable_by_key(|run| run.analysed);
-        self.runs.dedup_by(|next, run| {
-            let adjoins = run.analysed + run.lines == next.analysed
-                && run.current + run.lines == next.current;
-            if adjoins {
-                run.lines += next.lines;
-            }
-            adjoins
-        });
-        self.pieces.sort_unstable_by_key(|piece| piece.analysed);
+        debug_assert!(self.runs.is_sorted_by_key(|run| run.analysed));
+        debug_assert!(self.pieces.is_sorted_by_key(|piece| piece.analysed));
     }
 
     /// Note `lines` lines that are equal from these on.
@@ -342,8 +353,8 @@ impl<'t> Diff<'t> {
                     }),
                 }
             } else {
-                let indentation = |line: &str| line.len() - line.trim_start().len();
-                let length = from.trim().len();
+                let indentation = |line: &str| line.len() - line.trim_ascii_start().len();
+                let length = from.trim_ascii().len();
                 self.add_piece((line, indentation(from)), (place, indentation(to)), length);
             }
         }
@@ -377,20 +388,6 @@ impl<'t> Diff<'t> {
         current: &Span<usize>,
         suffix: usize,
     ) -> (Vec<(usize, usize)>, usize) {
-        #[derive(Default)]
-        struct Occurrences {
-            analysed: Option<usize>,
-            current: Option<usize>,
-            repeated: bool,
-        }
-        impl Occurrences {
-            fn in_analysed(&mut self, line: usize) {
-                self.repeated |= self.analysed.replace(line).is_some();
-            }
-            fn in_current(&mut self, line: usize) {
-                self.repeated |= self.current.replace(line).is_some();
-            }
-        }
         if analysed.is_empty() || current.is_empty() {
             return (Vec::new(), 0);
         }
@@ -401,34 +398,39 @@ impl<'t> Diff<'t> {
                 return (Vec::new(), 0);
             }
         }
-        let mut lines: HashMap<&'t str, Occurrences> =
-            HashMap::with_capacity(analysed.len() + current.len());
+        let mut lines = Lines::with_capacity(analysed.len().max(current.len()));
         for line in analysed.clone() {
-            let occurrences = lines.entry(self.analysed[line].trim()).or_default();
-            occurrences.in_analysed(line);
+            lines
+                .entry(self.analysed[line].trim_ascii())
+                .in_analysed(line);
         }
         for line in current.clone() {
-            let occurrences = lines.entry(self.current[line].trim()).or_default();
-            occurrences.in_current(line);
+            lines
+                .entry(self.current[line].trim_ascii())
+                .in_current(line);
         }
         let mut contested = 0;
         while contested < suffix {
             let (line, place) = (analysed.end + contested, current.end + contested);
-            let Some(occurrences) = lines.get_mut(self.analysed[line].trim()) else {
+            let Some(occurrences) = lines.get_mut(self.analysed[line].trim_ascii()) else {
                 break;
             };
             occurrences.in_analysed(line);
             occurrences.in_current(place);
             contested += 1;
         }
-        let mut pairs: Vec<(usize, usize)> = lines
-            .into_iter()
+        // These are in the order of the analysed text: each that has a place
+        // there and is not repeated was found there first.
+        let pairs: Vec<(usize, usize)> = lines
+            .found
+            .iter()
+            .filter(|found| !found.repeated)
+            .filter_map(|found| Some((found.analysed?, found.current?)))
             // Punctuation and blank lines mark no place.
-            .filter(|(line, occurrences)| !occurrences.repeated && line.contains(is_word))
-            .filter_map(|(_, occurrences)| Some((occurrences.analysed?, occurrences.current?)))
+            .filter(|(line, _)| self.analysed[*line].contains(is_word))
             .collect();
-        pairs.sort_unstable();
-        (uncontested(&pairs), contested)
+        debug_assert!(pairs.is_sorted());
+        (uncontested(pairs), contested)
     }
 
     /// Note what is unchanged of the lines in `analysed`, which those in
@@ -446,7 +448,7 @@ impl<'t> Diff<'t> {
             let from_rest = &from[if analysed.len() == 1 { prefix } else { 0 }..];
             let to_rest = &to[if current.len() == 1 { prefix } else { 0 }..];
             let suffix = common_suffix(from_rest, to_rest);
-            let is_blank = |rest: &str| rest[..rest.len() - suffix].trim().is_empty();
+            let is_blank = |rest: &str| rest[..rest.len() - suffix].trim_ascii().is_empty();
             let only_split = analysed.len() == 1 && is_blank(from_rest);
             let only_joined = current.len() == 1 && is_blank(to_rest);
             if analysed.len() == current.len() || only_split || only_joined {
@@ -475,9 +477,58 @@ impl<'t> Diff<'t> {
     /// How many bytes of both ends the two lines have in common, the
     /// indentation apart.
     fn resemblance(&self, analysed: usize, current: usize) -> usize {
-        let (from, to) = (self.analysed[analysed].trim(), self.current[current].trim());
+        let (from, to) = (
+            self.analysed[analysed].trim_ascii(),
+            self.current[current].trim_ascii(),
+        );
         let prefix = common_prefix(from, to);
         prefix + common_suffix(&from[prefix..], &to[prefix..])
+    }
+}
+
+/// Where a line occurs in the spans that are compared.
+#[derive(Default)]
+struct Occurrences {
+    analysed: Option<usize>,
+    current: Option<usize>,
+    /// Whether it occurs several times in one of them.
+    repeated: bool,
+}
+
+impl Occurrences {
+    fn in_analysed(&mut self, line: usize) {
+        self.repeated |= self.analysed.replace(line).is_some();
+    }
+
+    fn in_current(&mut self, line: usize) {
+        self.repeated |= self.current.replace(line).is_some();
+    }
+}
+
+/// Distinct lines, in the order in which they were found.
+struct Lines<'t> {
+    numbers: HashMap<&'t str, usize>,
+    found: Vec<Occurrences>,
+}
+
+impl<'t> Lines<'t> {
+    fn with_capacity(lines: usize) -> Self {
+        Self {
+            numbers: HashMap::with_capacity(lines),
+            found: Vec::with_capacity(lines),
+        }
+    }
+
+    fn entry(&mut self, line: &'t str) -> &mut Occurrences {
+        let number = *self.numbers.entry(line).or_insert(self.found.len());
+        if number == self.found.len() {
+            self.found.push(Occurrences::default());
+        }
+        &mut self.found[number]
+    }
+
+    fn get_mut(&mut self, line: &str) -> Option<&mut Occurrences> {
+        Some(&mut self.found[*self.numbers.get(line)?])
     }
 }
 
@@ -512,7 +563,10 @@ fn common_suffix(left: &str, right: &str) -> usize {
 /// that other pairs contradict: text that moved past other text leaves two
 /// chains, of which only a clearly longer one says what stayed in place.
 /// `pairs` ascend in their first member, and no member repeats.
-fn uncontested(pairs: &[(usize, usize)]) -> Vec<(usize, usize)> {
+fn uncontested(pairs: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
+    if pairs.is_sorted_by_key(|pair| pair.1) {
+        return pairs;
+    }
     let mut tails: Vec<usize> = Vec::new();
     let mut previous = vec![None; pairs.len()];
     for (index, pair) in pairs.iter().enumerate() {
@@ -531,14 +585,11 @@ fn uncontested(pairs: &[(usize, usize)]) -> Vec<(usize, usize)> {
         next = previous[index];
     }
     chain.reverse();
-    if chain.len() == pairs.len() {
-        return chain;
-    }
     // For each link, how many other pairs contradict it, and how many links
     // those contradict, as differences between neighbours.
     let mut changes = vec![(0_i64, 0_i64); chain.len() + 1];
     let mut links = chain.iter().peekable();
-    for pair in pairs {
+    for pair in &pairs {
         if links.next_if_eq(&pair).is_some() {
             continue;
         }

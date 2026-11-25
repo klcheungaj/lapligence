@@ -960,7 +960,11 @@ impl<'a> SourcePositions<'a> {
         self.line_starts
             .iter()
             .zip(ends.chain([self.text.len()]))
-            .map(|(&start, end)| self.text[start..end].trim_end_matches(['\r', '\n']))
+            .map(|(&start, end)| {
+                let line = &self.text[start..end];
+                let line = line.strip_suffix('\n').unwrap_or(line);
+                line.strip_suffix('\r').unwrap_or(line)
+            })
     }
 
     /// The text of `range`, empty when it is not inside the source.
