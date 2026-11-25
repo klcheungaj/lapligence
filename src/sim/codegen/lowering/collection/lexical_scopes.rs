@@ -96,4 +96,24 @@ impl Codegen<'_> {
             .next()
             .map(|(statement, ())| statement)
     }
+
+    /// What a lookup of the name of `node` in the blocks and loops around it
+    /// depends on, unless all that could be found is inside `within`.
+    pub(super) fn lexical_key(
+        &self,
+        node: NodeId,
+        within: NodeId,
+    ) -> Option<(&str, NodeId, Option<NodeId>)> {
+        let (innermost, _) = self.lexical_declarations(node).next()?;
+        self.lexical_declarations(node)
+            .flat_map(|(_, variables)| variables)
+            .any(|variable| !self.node_is_within(*variable, within))
+            .then(|| {
+                (
+                    self.node(node).name.as_str(),
+                    innermost,
+                    self.innermost_lexical_loop(node),
+                )
+            })
+    }
 }

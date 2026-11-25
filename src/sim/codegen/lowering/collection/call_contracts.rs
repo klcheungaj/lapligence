@@ -43,6 +43,8 @@ struct CallShapeBody {
     outside: usize,
     formals: Vec<(NodeId, bool)>,
     shape: CallShape,
+    /// Whether a recursive call was left out.
+    recursive: bool,
 }
 
 /// Where an evaluated event expression is computed.
@@ -892,8 +894,11 @@ impl<'a> Codegen<'a> {
         // The nodes still to visit and the bodies on the call path are lists,
         // not the thread's stack: a chain of calls is as long as the design
         // makes it.
+        if let Some(shape) = self.call_shapes.borrow().get(&(ft, inst)) {
+            return shape.clone();
+        }
         let mut nodes = Vec::with_capacity(32);
-        let mut outer = Vec::new();
+        let mut outer = Vec::<CallShapeBody>::new();
         let mut body = self.call_shape_body(ft, inst, None, &mut nodes);
         loop {
             let node = if nodes.len() > body.outside {
@@ -907,9 +912,17 @@ impl<'a> Codegen<'a> {
                 shape.static_refs.dedup();
                 shape.native_refs.sort_unstable();
                 shape.native_refs.dedup();
+                // Without a recursive call the shape depends on nothing else on
+                // the call path, so it holds for every call of the body.
+                if !body.recursive {
+                    self.call_shapes
+                        .borrow_mut()
+                        .insert((body.function, body.inst), shape.clone());
+                }
                 let (Some(call), Some(mut caller)) = (body.call, outer.pop()) else {
                     return shape;
                 };
+                caller.recursive |= body.recursive;
                 self.forward_call_shape(call, shape, &mut caller);
                 body = caller;
                 continue;
@@ -921,8 +934,15 @@ impl<'a> Codegen<'a> {
                 continue;
             };
             // A recursive call adds nothing its outer activation does not.
+            let known = self.call_shapes.borrow().get(&(function, owner)).cloned();
+            if let Some(shape) = known {
+                self.forward_call_shape(node, shape, &mut body);
+                continue;
+            }
             let active = |walk: &CallShapeBody| walk.function == function;
-            if !active(&body) && !outer.iter().any(active) {
+            if active(&body) || outer.iter().any(active) {
+                body.recursive = true;
+            } else {
                 let callee = self.call_shape_body(function, owner, Some(node), &mut nodes);
                 outer.push(std::mem::replace(&mut body, callee));
             }
@@ -937,6 +957,7 @@ impl<'a> Codegen<'a> {
         call: Option<NodeId>,
         nodes: &mut Vec<NodeId>,
     ) -> CallShapeBody {
+        crate::work::count(crate::work::Work::CallBodies, 1);
         let outside = nodes.len();
         nodes.extend(self.func_body(function));
         CallShapeBody {
@@ -946,6 +967,7 @@ impl<'a> Codegen<'a> {
             outside,
             formals: self.func_formals(function),
             shape: CallShape::default(),
+            recursive: false,
         }
     }
 
@@ -1386,7 +1408,16 @@ impl<'a> Codegen<'a> {
     /// cancellation check, so output/inout copy-out is skipped.
     pub(in super::super) fn task_has_disable(&self, ft: NodeId, inst: NodeId) -> bool {
         let mut seen: HashSet<NodeId> = HashSet::new();
-        self.task_has_disable_inner(ft, inst, &mut seen)
+        let disables = self.task_has_disable_inner(ft, inst, &mut seen);
+        // A task is passed once, so what was decided about it on the way to a
+        // `disable` can lack what another call on that way leads to; without
+        // one, none of them leads to any.
+        if !disables {
+            self.task_disables
+                .borrow_mut()
+                .extend(seen.into_iter().map(|task| (task, false)));
+        }
+        disables
     }
 
     /// Whether a task declaration is the target of an explicit `disable`.
@@ -1525,13 +1556,21 @@ impl<'a> Codegen<'a> {
     }
 
     fn task_has_disable_inner(&self, ft: NodeId, inst: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+        if let Some(disables) = self.task_disables.borrow().get(&ft) {
+            return *disables;
+        }
         if !seen.insert(ft) {
             return false;
         }
         let Some(body) = self.func_body(ft) else {
             return false;
         };
-        self.node_has_disable(body, inst, seen)
+        crate::work::count(crate::work::Work::CallBodies, 1);
+        let disables = self.node_has_disable(body, inst, seen);
+        if disables {
+            self.task_disables.borrow_mut().insert(ft, true);
+        }
+        disables
     }
 
     fn node_has_disable(&self, node: NodeId, inst: NodeId, seen: &mut HashSet<NodeId>) -> bool {

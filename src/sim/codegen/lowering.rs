@@ -2227,6 +2227,14 @@ struct Codegen<'a> {
     /// frames, and all automatic variables that any fork branch names outside
     /// its own scope (computed once, syntactically; see `fork_sets`).
     fork_sets: Option<(HashSet<NodeId>, HashSet<NodeId>)>,
+    /// How the calls of a subroutine reach its body, by it and its instance:
+    /// those of subroutines that lead to no recursive call.
+    call_shapes: std::cell::RefCell<HashMap<(NodeId, NodeId), collection::CallShape>>,
+    /// Whether a task leads to a `disable`, where that is decided.
+    task_disables: std::cell::RefCell<HashMap<NodeId, bool>>,
+    /// What each fork branch names outside itself, by its statement.
+    branch_references:
+        std::cell::RefCell<HashMap<NodeId, std::rc::Rc<collection::BranchReferences>>>,
     /// Declarations lowered as `IrStmt::SharedLocal`.
     shared_locals: HashSet<NodeId>,
     /// Event-array declaration and linear element index → lowered event info.
@@ -2810,6 +2818,9 @@ impl<'a> Codegen<'a> {
             vpi_scopes: std::cell::OnceCell::new(),
             local_event_handles: HashMap::new(),
             fork_sets: None,
+            call_shapes: std::cell::RefCell::new(HashMap::new()),
+            task_disables: std::cell::RefCell::new(HashMap::new()),
+            branch_references: std::cell::RefCell::new(HashMap::new()),
             shared_locals: HashSet::new(),
             event_elements: HashMap::new(),
             event_arrays: HashMap::new(),

@@ -12,6 +12,10 @@ pub(crate) enum Work {
     OutlineWeighing,
     /// Scopes passed on the way outwards from a node.
     EnclosingSteps,
+    /// Subroutine bodies entered to follow the calls in them.
+    CallBodies,
+    /// Nodes of fork branches passed for what they name outside.
+    BranchNodes,
 }
 
 /// Note `amount` of `work` done by this thread.
