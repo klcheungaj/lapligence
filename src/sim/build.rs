@@ -191,10 +191,16 @@ endif()"#;
 /// `-Wmisleading-indentation` costs time quadratic in file size (13.6 of 70.9 s
 /// on a 10.8 MB model) and only reports source layout, which carries no meaning
 /// in emitter output, so generated sources skip it; runtime sources keep it.
+/// Clang refuses more than 256 nested brackets unless told otherwise; a model
+/// nests as deep as its source ([`MODEL_BRACKET_DEPTH`]).
 const MODEL_SOURCE_OPTIONS: &str = r#"if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-  set_source_files_properties({MODEL_SOURCES} PROPERTIES COMPILE_OPTIONS -Wno-misleading-indentation)
+  set_source_files_properties({MODEL_SOURCES} PROPERTIES COMPILE_OPTIONS "-Wno-misleading-indentation;$<$<C_COMPILER_ID:Clang,AppleClang>:-fbracket-depth={BRACKET_DEPTH}>")
 endif()
 "#;
+
+/// Brackets a generated C source may nest: a level of the source opens at most
+/// five (a loop), the code around it about ten.
+const MODEL_BRACKET_DEPTH: u32 = 8 * crate::stack::MAX_NESTING_DEPTH;
 
 const RUNTIME_CMAKELISTS_TEMPLATE: &str = r#"cmake_minimum_required(VERSION 3.16)
 project(llg_sim_runtime C)
@@ -1285,7 +1291,9 @@ fn write_cmakelists(
     let model_source_options = if model_sources.is_empty() {
         String::new()
     } else {
-        MODEL_SOURCE_OPTIONS.replace("{MODEL_SOURCES}", &model_sources.join(" "))
+        MODEL_SOURCE_OPTIONS
+            .replace("{MODEL_SOURCES}", &model_sources.join(" "))
+            .replace("{BRACKET_DEPTH}", &MODEL_BRACKET_DEPTH.to_string())
     };
     let cmakelists = CMAKELISTS_TEMPLATE
         .replace(
