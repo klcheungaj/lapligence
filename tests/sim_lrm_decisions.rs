@@ -1167,6 +1167,14 @@ fn s32_d2_bind_program_into_interface() {
 }
 
 #[test]
+fn s32_d3_program_end_ends_threads() {
+    run_decision(
+        "S32-D3_program_end_ends_threads",
+        include_str!("fixtures/sim/lrm_decisions/S32-D3_program_end_ends_threads.out"),
+    );
+}
+
+#[test]
 fn s25_d1_monitor_flag_persists() {
     run_decision(
         "S25-D1_monitor_flag_persists",
