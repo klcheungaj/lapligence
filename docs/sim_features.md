@@ -681,7 +681,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   values support finite extents and names. Fixed struct/union parameters are
   readable whole or by member; override expressions retain their parent scope.
   Parameters declared in procedural blocks, subroutines and methods are read
-  like module parameters
+  like module parameters; a `parameter` of a block, task or function of an
+  instance can be a `defparam` target (23.10.2)
   ([ki_block_parameters](../tests/fixtures/sim/feature_completion/ki_block_parameters/readme.md)).
   A `string` parameter is an argument of a user system task like any other
   parameter

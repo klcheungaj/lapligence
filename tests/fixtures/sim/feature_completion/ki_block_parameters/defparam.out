@@ -1,0 +1,24 @@
+tb.s0.b P=1 Q=2 L=4
+tb.s1.b P=20 Q=21 L=42
+tb.s2.b P=1 Q=44 L=88
+tb.s0.b.inner R=5 w=5
+tb.s1.b.inner R=43 w=43
+tb.s2.b.inner R=9 w=9
+tb.g0.g[0].b P=100
+tb.g0.g[1].b P=101
+tb.g0.g[2].b P=102
+tb.g1.g[0].b P=100
+tb.g1.g[1].b P=101
+tb.g1.g[2].b P=102
+tb.g0.h[0].b P=0
+tb.g0.h[1].b P=77
+tb.g0.h[2].b P=2
+tb.g1.h[0].b P=0
+tb.g1.h[1].b P=77
+tb.g1.h[2].b P=55
+tb.t0 t=4 f=7
+tb.t1 t=44 f=67
+tb.k0.b 3.0000 3 1.500 ab
+tb.k1.b 3.5000 44 7.000 other
+tb.k0.fb 8
+tb.k1.fb 80

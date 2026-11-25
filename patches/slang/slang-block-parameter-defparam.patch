@@ -1,0 +1,188 @@
+diff --git a/include/slang/ast/OpaqueInstancePath.h b/include/slang/ast/OpaqueInstancePath.h
+index e57e542be..abbd978f8 100644
+--- a/include/slang/ast/OpaqueInstancePath.h
++++ b/include/slang/ast/OpaqueInstancePath.h
+@@ -33,6 +33,10 @@ public:
+     /// nearest parent instance.
+     explicit OpaqueInstancePath(const Symbol& symbol);
+ 
++    /// Constructs a path to the scope whose override node holds the given
++    /// parameter: its nearest enclosing instance or generate block.
++    static OpaqueInstancePath toParameterScope(const Symbol& parameter);
++
+     /// @returns true if the path is empty
+     [[nodiscard]] bool empty() const { return entries.empty(); }
+ 
+diff --git a/include/slang/ast/symbols/InstanceSymbols.h b/include/slang/ast/symbols/InstanceSymbols.h
+index 282c70b9f..391753519 100644
+--- a/include/slang/ast/symbols/InstanceSymbols.h
++++ b/include/slang/ast/symbols/InstanceSymbols.h
+@@ -62,6 +62,10 @@ enum class SLANG_EXPORT InstanceFlags : uint8_t {
+ };
+ SLANG_BITMASK(InstanceFlags, TargetedByBind)
+ 
++/// Finds the override node that applies to parameters and instances in the given
++/// scope, which must be part of an instance, or null if there is none.
++const HierarchyOverrideNode* findParentOverrideNode(const Scope& scope);
++
+ /// Common functionality for module, interface, program, and primitive instances.
+ class SLANG_EXPORT InstanceSymbolBase : public Symbol {
+ public:
+diff --git a/include/slang/ast/symbols/ParameterSymbols.h b/include/slang/ast/symbols/ParameterSymbols.h
+index c438539ee..0dca89f21 100644
+--- a/include/slang/ast/symbols/ParameterSymbols.h
++++ b/include/slang/ast/symbols/ParameterSymbols.h
+@@ -70,6 +70,9 @@ public:
+     void serializeTo(ASTSerializer& serializer) const;
+ 
+ private:
++    /// The value a defparam gives this parameter of a block, task or function, if any.
++    const ConstantValue* findBlockOverride() const;
++
+     mutable const ConstantValue* value = nullptr;
+     mutable bool fromStringLit = false;
+     mutable bool needsCoercion = false;
+diff --git a/source/ast/DefParamResolver.cpp b/source/ast/DefParamResolver.cpp
+index e057f6fea..3ade7510c 100644
+--- a/source/ast/DefParamResolver.cpp
++++ b/source/ast/DefParamResolver.cpp
+@@ -636,9 +636,9 @@ void Compilation::resolveDefParamsAndBinds() {
+                 overrides.emplace_back();
+             }
+             else {
+-                overrides.push_back({OpaqueInstancePath(*target), target->getSyntax(),
+-                                     defparam->getSyntax(), defparam->getValue(),
+-                                     target->getHierarchicalPath()});
++                overrides.push_back({OpaqueInstancePath::toParameterScope(*target),
++                                     target->getSyntax(), defparam->getSyntax(),
++                                     defparam->getValue(), target->getHierarchicalPath()});
+             }
+         }
+ 
+diff --git a/source/ast/OpaqueInstancePath.cpp b/source/ast/OpaqueInstancePath.cpp
+index 4e718a5c5..f15a3b2b6 100644
+--- a/source/ast/OpaqueInstancePath.cpp
++++ b/source/ast/OpaqueInstancePath.cpp
+@@ -27,6 +27,21 @@ OpaqueInstancePath::OpaqueInstancePath(const Symbol& symbol) {
+     buildPath(*curr);
+ }
+ 
++OpaqueInstancePath OpaqueInstancePath::toParameterScope(const Symbol& parameter) {
++    auto curr = &parameter;
++    while (curr->kind != SymbolKind::InstanceBody && curr->kind != SymbolKind::GenerateBlock) {
++        auto parent = curr->getHierarchicalParent();
++        if (!parent)
++            return {};
++
++        curr = &parent->asSymbol();
++    }
++
++    OpaqueInstancePath result;
++    result.buildPath(*curr);
++    return result;
++}
++
+ void OpaqueInstancePath::buildPath(const Symbol& symbol) {
+     auto scope = symbol.getHierarchicalParent();
+     const Symbol* current;
+diff --git a/source/ast/symbols/ParameterSymbols.cpp b/source/ast/symbols/ParameterSymbols.cpp
+index 9860ee446..7924b26ef 100644
+--- a/source/ast/symbols/ParameterSymbols.cpp
++++ b/source/ast/symbols/ParameterSymbols.cpp
+@@ -30,10 +30,19 @@ void ParameterSymbolBase::fromLocalSyntax(const Scope& scope,
+                                           const ParameterDeclarationStatementSyntax& syntax,
+                                           SmallVectorBase<Symbol*>& results) {
+     auto paramBase = syntax.parameter;
++
++    // A parameter of a block, task or function can be redefined, though only by a defparam
++    // (SV 23.10.2). In the other scopes that come here the `parameter` keyword is a synonym
++    // for `localparam` (SV 6.20.4).
++    auto scopeKind = scope.asSymbol().kind;
++    const bool isLocal = paramBase->keyword.kind != parsing::TokenKind::ParameterKeyword ||
++                         (scopeKind != SymbolKind::StatementBlock &&
++                          scopeKind != SymbolKind::Subroutine);
++
+     if (paramBase->kind == SyntaxKind::ParameterDeclaration) {
+         SmallVector<ParameterSymbol*> params;
+         ParameterSymbol::fromSyntax(scope, paramBase->as<ParameterDeclarationSyntax>(),
+-                                    /* isLocal */ true, /* isPort */ false, params);
++                                    isLocal, /* isPort */ false, params);
+         for (auto param : params) {
+             param->setAttributes(scope, syntax.attributes);
+             results.push_back(param);
+@@ -42,7 +51,7 @@ void ParameterSymbolBase::fromLocalSyntax(const Scope& scope,
+     else {
+         SmallVector<TypeParameterSymbol*> params;
+         TypeParameterSymbol::fromSyntax(scope, paramBase->as<TypeParameterDeclarationSyntax>(),
+-                                        /* isLocal */ true, /* isPort */ false, params);
++                                        isLocal, /* isPort */ false, params);
+         for (auto param : params) {
+             param->setAttributes(scope, syntax.attributes);
+             results.push_back(param);
+@@ -138,6 +147,11 @@ const ConstantValue& ParameterSymbol::getValue(SourceRange referencingRange) con
+             return *value;
+         }
+ 
++        if (auto overrideValue = findBlockOverride()) {
++            value = scope->getCompilation().allocConstant(ConstantValue(*overrideValue));
++            return *value;
++        }
++
+         evaluating = true;
+         auto guard = ScopeGuard([this] { evaluating = false; });
+ 
+@@ -182,7 +196,44 @@ bool ParameterSymbol::isImplicitString(SourceRange referencingRange) const {
+ }
+ 
+ bool ParameterSymbol::isOverridden() const {
+-    return getDeclaredType()->getFlags().has(DeclaredTypeFlags::InitializerOverridden);
++    return getDeclaredType()->getFlags().has(DeclaredTypeFlags::InitializerOverridden) ||
++           findBlockOverride() != nullptr;
++}
++
++// Whether a defparam can reach a parameter of the given procedural scope: one of an instance,
++// through blocks, subroutines and generate blocks only.
++static bool isInstanceProcedure(const Scope* scope) {
++    for (; scope; scope = scope->asSymbol().getParentScope()) {
++        switch (scope->asSymbol().kind) {
++            case SymbolKind::InstanceBody:
++                return true;
++            case SymbolKind::StatementBlock:
++            case SymbolKind::Subroutine:
++            case SymbolKind::GenerateBlock:
++            case SymbolKind::GenerateBlockArray:
++                break;
++            default:
++                return false;
++        }
++    }
++    return false;
++}
++
++const ConstantValue* ParameterSymbol::findBlockOverride() const {
++    // The parameters of an instance itself take their overrides when they are built.
++    auto scope = getParentScope();
++    auto syntax = getSyntax();
++    if (isLocalParam() || !scope || !syntax ||
++        scope->asSymbol().kind == SymbolKind::InstanceBody || !isInstanceProcedure(scope)) {
++        return nullptr;
++    }
++
++    auto node = findParentOverrideNode(*scope);
++    if (!node)
++        return nullptr;
++
++    auto it = node->paramOverrides.find(syntax);
++    return it == node->paramOverrides.end() ? nullptr : &it->second.cv;
+ }
+ 
+ void ParameterSymbol::setValue(Compilation& compilation, ConstantValue newValue,
+@@ -414,7 +465,7 @@ void DefParamSymbol::resolve() const {
+     }
+ 
+     auto& param = target->as<ParameterSymbol>();
+-    if (param.isLocalParam()) {
++    if (param.isLocalParam() || !isInstanceProcedure(param.getParentScope())) {
+         context.addDiag(diag::DefParamLocal, assignment.name->sourceRange()) << param.name;
+         makeInvalid();
+         return;
