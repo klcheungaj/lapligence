@@ -133,7 +133,8 @@ fn lookups_do_not_follow_every_call_path() {
     let wait = "task automatic LAST(ref logic [7:0] x); @(x); endtask";
     let again = "task automatic LAST(ref logic [7:0] x); @(x); if (d == 3) s0(x); endtask";
     let write = "task automatic LAST(input logic [7:0] x); y = x ^ e; endtask";
-    let cases: [(&str, &dyn Fn(usize, &str) -> String, &str, &str); 15] = [
+    type Level<'a> = &'a dyn Fn(usize, &str) -> String;
+    let cases: [(&str, Level, &str, &str); 15] = [
         ("assign", &value("automatic"), leaf, "assign y = s0(d);"),
         (
             "always_comb",
