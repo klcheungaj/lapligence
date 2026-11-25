@@ -753,8 +753,10 @@ pub(super) fn nonblocking_event_assignment_when_text(
     action: &str,
     frame: crate::sim::ir::FrameId,
     captures: &[crate::sim::ir::IrCapture],
+    bound: bool,
 ) -> Result<String, String> {
     use crate::sim::ir::IrEdge;
+    let bound = i32::from(bound);
     let count = match repeat {
         Some(repeat) => {
             let rendered = render_expr(ctx, repeat)?;
@@ -779,7 +781,7 @@ pub(super) fn nonblocking_event_assignment_when_text(
     }
     if specs.is_empty() {
         return Ok(format!(
-            "    {{\n{frame_setup}        llg_nba_event_assign_when(NULL, 0, {count}, {action}, {frame_name});\n    }}\n"
+            "    {{\n{frame_setup}        llg_nba_event_assign_when(NULL, 0, {count}, {action}, {frame_name}, {bound});\n    }}\n"
         ));
     }
     let edge_kind = |edge: &IrEdge| match edge {
@@ -800,7 +802,7 @@ pub(super) fn nonblocking_event_assignment_when_text(
         let mut text = wait_events_text(ctx, specs)?;
         let needle = format!("llg_wait_expressions(_events, {});", specs.len());
         let replacement = format!(
-            "llg_nba_event_assign_when(_events, {}, {count}, {action}, {frame_name});",
+            "llg_nba_event_assign_when(_events, {}, {count}, {action}, {frame_name}, {bound});",
             specs.len()
         );
         if !text.contains(&needle) {
@@ -836,7 +838,7 @@ pub(super) fn nonblocking_event_assignment_when_text(
         })
         .collect::<Result<Vec<_>, String>>()?;
     Ok(format!(
-        "    {{\n{frame_setup}        llg_expr_event_spec_t _events[] = {{{}}};\n        llg_nba_event_assign_when(_events, {}, {count}, {action}, {frame_name});\n    }}\n",
+        "    {{\n{frame_setup}        llg_expr_event_spec_t _events[] = {{{}}};\n        llg_nba_event_assign_when(_events, {}, {count}, {action}, {frame_name}, {bound});\n    }}\n",
         entries.join(", "),
         entries.len()
     ))

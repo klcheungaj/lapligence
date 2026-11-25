@@ -1375,6 +1375,9 @@ impl EmitCtx<'_, '_> {
                 .transpose()?;
             return self.lower_native_event_nba(h, lhs, rhs, &specs, count);
         }
+        let bound = self
+            .intra_event_specs(timing)
+            .is_ok_and(|(specs, _)| self.cg.event_control_binds(&specs));
         let (specs, repeat) = self.lower_intra_event_timing(timing)?;
         let lh = self.cg.lower_lhs(&self.path, lhs)?;
         let rhs_ir = self.lower_assignment_rhs(lhs, rhs, op, &lh)?;
@@ -1409,6 +1412,7 @@ impl EmitCtx<'_, '_> {
             action,
             frame,
             captures,
+            bound,
         }])
     }
 
@@ -1440,10 +1444,9 @@ impl EmitCtx<'_, '_> {
     /// RHS (and an NBA's destination selectors) are evaluated first, then the
     /// control is armed (SV 9.4.5). A blocking assignment waits in its own
     /// process. A nonblocking assignment must not block its issuer, so its
-    /// captured values and armed event state move to a detached process that
-    /// waits, then issues the NBA (SV 9.4.5, 10.4.2). That process is not a
-    /// child of the issuer, so `wait fork`/`disable fork` never observe it,
-    /// just as they never observe a runtime-owned pending NBA.
+    /// captured values and armed event state move to a process that waits,
+    /// then issues the NBA (SV 9.4.5, 10.4.2). `wait fork` does not wait for
+    /// it; [`Self::event_nba_process`] tells whether it ends with the issuer.
     #[allow(clippy::too_many_arguments)]
     fn lower_process_event_assignment(
         &mut self,
@@ -1501,8 +1504,18 @@ impl EmitCtx<'_, '_> {
             captures,
             action,
             "event_nba",
-            IrJoinKind::Detached,
+            self.event_nba_process(specs),
         )?])
+    }
+
+    /// How the process that waits for the event control of a nonblocking
+    /// assignment belongs to the issuer (decision S09-D8).
+    pub(super) fn event_nba_process(&self, specs: &[EventSpec]) -> IrJoinKind {
+        if self.cg.event_control_binds(specs) {
+            IrJoinKind::Bound
+        } else {
+            IrJoinKind::Detached
+        }
     }
 
     /// Arm a process-evaluated event control in the issuing process and
@@ -1524,19 +1537,9 @@ impl EmitCtx<'_, '_> {
         kind: &str,
         join_kind: IrJoinKind,
     ) -> Result<IrStmt, String> {
-        fn expressions(spec: &EventSpec, out: &mut Vec<NodeId>) {
-            match spec {
-                EventSpec::Qualified { event, condition } => {
-                    out.push(*condition);
-                    expressions(event, out);
-                }
-                EventSpec::Named(event) => out.push(*event),
-                EventSpec::AnyChange { sig } | EventSpec::Edge { sig, .. } => out.push(*sig),
-            }
-        }
         let mut nodes = Vec::new();
         for spec in specs {
-            expressions(spec, &mut nodes);
+            self.cg.event_spec_expressions(spec, &mut nodes);
         }
         for node in nodes {
             if let Some(target) = self
@@ -1698,7 +1701,7 @@ impl EmitCtx<'_, '_> {
             vec![IrCapture::new(storage, initial)],
             vec![write],
             "event_native_nba",
-            IrJoinKind::Detached,
+            self.event_nba_process(specs),
         )?;
         Ok(vec![IrStmt::Block(vec![declare, spawn])])
     }

@@ -108,11 +108,14 @@ A completed top-level process (static, assertion action or detached spawn) is
 retired at completion, or when its last join_none group detaches, and freed at
 the next `reap_retired_procs` boundary. Nonblocking updates belong to no process:
 those of a completed or killed one commit. The exceptions (timed event triggers,
-and updates queued between `llg_nba_bind_begin` and `_end`: decision S09-D8) are
+updates queued between `llg_nba_bind_begin` and `_end`, and assignments waiting
+for the controls decision S09-D11 names: decision S09-D8) are
 bound (`bound_updates.c`): an `llg_bound_update_t`, whose first member is a fork
 group of kind `LLG_JOIN_UPDATE`, hangs in the issuer's `held_groups` until the
-update commits, and the process of a trigger control that needs one hangs there
-in a group of kind `LLG_JOIN_BOUND`. So kill, disable fork, disable and `$exit`
+update commits, and the process that waits for such a control, when one does,
+hangs there in a group of kind `LLG_JOIN_BOUND`. A named event of an assignment's
+control is taken by a region callback after the turn that triggers it, so a
+clocking event, which happens in Observed, queues its update from Active. So kill, disable fork, disable and `$exit`
 reach them like held descendants, `wait fork` does not see them, and a process
 that issues none carries nothing. A bound NBA names its binding in its locator,
 the one test the commit of an ordinary update has anyway.

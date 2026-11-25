@@ -461,7 +461,8 @@ static void register_deferred_trigger(const llg_expr_event_spec_t* specs,
                                       int32_t n, uint64_t repeat,
                                       llg_event_object_t* target,
                                       llg_event_assignment_fn action,
-                                      llg_frame_t* action_frame) {
+                                      llg_frame_t* action_frame,
+                                      int32_t bound) {
     if (n < 0) abort();
     if ((!target && !action) ||
         !region_can_mutate("nonblocking event registration")) {
@@ -539,23 +540,25 @@ static void register_deferred_trigger(const llg_expr_event_spec_t* specs,
     else
         g.deferred_triggers = trigger;
     g.deferred_trigger_tail = trigger;
-    if (target) deferred_trigger_bind(trigger);
+    trigger->region = region_is_reactive(g.current_region) ? LLG_REGION_REACTIVE
+                                                           : LLG_REGION_ACTIVE;
+    if (bound) deferred_trigger_bind(trigger);
 }
 
 void llg_nba_event_when(const llg_expr_event_spec_t* specs, int32_t n,
                         llg_event_t* target, uint64_t repeat) {
     register_deferred_trigger(specs, n, repeat,
-                              target ? target->object : NULL, NULL, NULL);
+                              target ? target->object : NULL, NULL, NULL, 1);
 }
 
 void llg_nba_event_assign_when(const llg_expr_event_spec_t* specs, int32_t n,
                                uint64_t repeat,
                                llg_event_assignment_fn action,
-                               llg_frame_t* frame) {
+                               llg_frame_t* frame, int32_t bound) {
     if (!action) {
         release_expression_contexts(specs, n);
         if (frame) llg_frame_release(frame);
         return;
     }
-    register_deferred_trigger(specs, n, repeat, NULL, action, frame);
+    register_deferred_trigger(specs, n, repeat, NULL, action, frame, bound);
 }

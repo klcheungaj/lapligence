@@ -1869,6 +1869,14 @@ fn s09_d10_pending_processes_start_first() {
 }
 
 #[test]
+fn s09_d11_event_controlled_updates() {
+    run_decision(
+        "S09-D11_event_controlled_updates",
+        include_str!("fixtures/sim/lrm_decisions/S09-D11_event_controlled_updates.out"),
+    );
+}
+
+#[test]
 fn s27_d1_load_wakes_changed_words() {
     run_decision(
         "S27-D1_load_wakes_changed_words",

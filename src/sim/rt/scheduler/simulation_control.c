@@ -393,11 +393,9 @@ int32_t llg_schedule_region_callback_after(llg_region_t region,
     return llg_schedule_region_callback_id(region, callback, data, ticks, NULL);
 }
 
-int32_t llg_schedule_region_callback_id(llg_region_t region,
-                                    llg_region_callback_fn callback,
-                                    void* data, uint64_t ticks,
-                                    llg_region_callback_id_t* id) {
-    if (!callback || !callback_region_allowed(region, ticks)) return 0;
+static void add_region_callback(llg_region_t region,
+                                llg_region_callback_fn callback, void* data,
+                                uint64_t ticks, llg_region_callback_id_t* id) {
     if (ticks > UINT64_MAX - g.now || g.callback_sequence == UINT64_MAX) {
         llg_msg(LLG_MSG_INTERNAL, NULL, "region callback time or sequence overflow");
         abort();
@@ -415,6 +413,14 @@ int32_t llg_schedule_region_callback_id(llg_region_t region,
         id->sequence = entry->sequence;
     }
     insert_region_callback(entry);
+}
+
+int32_t llg_schedule_region_callback_id(llg_region_t region,
+                                    llg_region_callback_fn callback,
+                                    void* data, uint64_t ticks,
+                                    llg_region_callback_id_t* id) {
+    if (!callback || !callback_region_allowed(region, ticks)) return 0;
+    add_region_callback(region, callback, data, ticks, id);
     return 1;
 }
 

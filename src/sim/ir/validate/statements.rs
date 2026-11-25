@@ -1440,6 +1440,7 @@ impl Validator<'_> {
                 action,
                 frame,
                 captures,
+                bound: _,
             } => {
                 self.validate_lhs(lhs, formals, format_args!("{path}.lhs"))?;
                 self.validate_expr(rhs, formals, format_args!("{path}.rhs"))?;

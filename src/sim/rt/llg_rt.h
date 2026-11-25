@@ -3380,11 +3380,13 @@ void llg_nba_event_when(const llg_expr_event_spec_t* specs, int32_t n,
 // issue time. The runtime owns `frame` until the source matches or teardown;
 // `action` submits the detached NBA using the captured frame values. A zero
 // repeat count invokes `action` immediately, without registering a waiter.
+// Triggers of a named event count after the turn they happen in, once for each
+// event. A `bound` one ends with the issuing process until the source matches.
 typedef void (*llg_event_assignment_fn)(llg_frame_t* frame);
 void llg_nba_event_assign_when(const llg_expr_event_spec_t* specs, int32_t n,
                                uint64_t repeat,
                                llg_event_assignment_fn action,
-                               llg_frame_t* frame);
+                               llg_frame_t* frame, int32_t bound);
 // Normalize a packed repeat count without truncating values wider than 64 bits.
 uint64_t llg_repeat_count(sv4_t value);
 

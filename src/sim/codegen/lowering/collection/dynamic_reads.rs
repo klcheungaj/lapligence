@@ -205,6 +205,38 @@ impl Codegen<'_> {
         false
     }
 
+    /// Whether a nonblocking assignment under event control `specs` ends with
+    /// its issuer (decision S09-D8): the control names an event, or reads
+    /// storage that is neither a net nor a declared variable (a class
+    /// property, also a static one, an element of a dynamically sized array,
+    /// a member of a virtual interface).
+    pub(in super::super) fn event_control_binds(&self, specs: &[EventSpec]) -> bool {
+        let mut pending = Vec::new();
+        for spec in specs {
+            self.event_spec_expressions(spec, &mut pending);
+        }
+        if pending
+            .iter()
+            .any(|root| self.event_target_of(*root).is_some() || self.reads_dynamic_storage(*root))
+        {
+            return true;
+        }
+        while let Some(node) = pending.pop() {
+            let target = match self.kind(node) {
+                NodeKind::Expr(ExprKind::Ref { target }) => *target,
+                NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs.first().copied().flatten(),
+                _ => None,
+            };
+            if target.is_some_and(|target| self.is_static_property(target))
+                || self.container_of(node).is_some()
+            {
+                return true;
+            }
+            pending.extend(self.node(node).children.iter().copied());
+        }
+        false
+    }
+
     /// Whether `root` calls a function with a string formal, directly or in
     /// the body of a function it calls.
     pub(in super::super) fn calls_string_formal_helper(&self, root: NodeId) -> bool {

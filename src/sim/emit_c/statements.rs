@@ -846,6 +846,7 @@ fn render_stmt_scoped(
             action,
             frame,
             captures,
+            bound,
             ..
         } => nonblocking_event_assignment_when_text(
             ctx,
@@ -854,6 +855,7 @@ fn render_stmt_scoped(
             action,
             *frame,
             captures,
+            *bound,
         )?,
         IrStmt::WaitAny { sens, .. } => wait_any_text(ctx, sens),
         IrStmt::WaitCond { cond, sens, body } => {

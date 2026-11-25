@@ -64,8 +64,8 @@ impl EmitCtx<'_, '_> {
     /// `target <= @(e) value` over a located target. The untimed write is
     /// lowered with its selectors as locals and split: everything a queued
     /// write needs is evaluated at issue, in selector, value, repeat count
-    /// order, and copied into the frame of a detached process that waits for
-    /// the control and then issues the same writes (SV 9.4.5, 10.4.2).
+    /// order, and copied into the frame of a process that waits for the
+    /// control and then issues the same writes (SV 9.4.5, 10.4.2).
     pub(super) fn lower_located_event_nba(
         &mut self,
         h: NodeId,
@@ -113,7 +113,7 @@ impl EmitCtx<'_, '_> {
             captures,
             action,
             "event_native_nba",
-            IrJoinKind::Detached,
+            self.event_nba_process(specs),
         )?);
         Ok(vec![IrStmt::Block(before)])
     }

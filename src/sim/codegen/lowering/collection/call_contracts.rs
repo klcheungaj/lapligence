@@ -1305,7 +1305,7 @@ impl<'a> Codegen<'a> {
     }
 
     /// Expression roots an event spec evaluates.
-    fn event_spec_expressions(&self, spec: &EventSpec, out: &mut Vec<NodeId>) {
+    pub(in super::super) fn event_spec_expressions(&self, spec: &EventSpec, out: &mut Vec<NodeId>) {
         match spec {
             EventSpec::Qualified { event, condition } => {
                 self.event_spec_expressions(event, out);

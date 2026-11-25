@@ -709,12 +709,14 @@ static void deferred_trigger_fire(llg_deferred_trigger_t* trigger) {
         llg_frame_t* frame = trigger->action_frame;
         trigger->action_frame = NULL;
         invoke_deferred_action(trigger->action, frame);
-        return;
+    } else {
+        llg_nba_t* n = nba_event_queue(trigger->target, 0);
+        if (n && trigger->bound) {
+            bound_update_queued(trigger->bound, n);
+            return;
+        }
     }
-    llg_nba_t* n = nba_event_queue(trigger->target, 0);
-    if (!trigger->bound) return;
-    if (n) bound_update_queued(trigger->bound, n);
-    else bound_update_end(trigger->bound);
+    if (trigger->bound) bound_update_end(trigger->bound);
 }
 
 static void deferred_trigger_unlink(llg_deferred_trigger_t* trigger) {
@@ -735,6 +737,29 @@ static void deferred_trigger_matched(llg_deferred_trigger_t* trigger) {
     free_deferred_trigger(trigger);
 }
 
+static void deferred_trigger_occurrence(void* data) {
+    llg_deferred_trigger_t* trigger = (llg_deferred_trigger_t*)data;
+    trigger->occurred = 0;
+    deferred_trigger_matched(trigger);
+}
+
+// A named event of `trigger`'s control. An assignment takes it as a process
+// that waits for it does, after the turn that triggers it.
+static void deferred_trigger_event_matched(llg_deferred_trigger_t* trigger) {
+    if (!trigger->action) {
+        deferred_trigger_matched(trigger);
+        return;
+    }
+    llg_region_t region = trigger->region;
+    if (g.current_region == LLG_REGION_INACTIVE && region == LLG_REGION_ACTIVE)
+        region = LLG_REGION_INACTIVE;
+    if (g.current_region == LLG_REGION_RE_INACTIVE && region == LLG_REGION_REACTIVE)
+        region = LLG_REGION_RE_INACTIVE;
+    trigger->occurred = 1;
+    add_region_callback(region, deferred_trigger_occurrence, trigger, 0,
+                        &trigger->occurrence);
+}
+
 static void deferred_trigger_source_change(sv4_t* sig, double* real) {
     llg_deferred_trigger_t* next;
     for (llg_deferred_trigger_t* trigger = g.deferred_triggers; trigger; trigger = next) {
@@ -746,7 +771,7 @@ static void deferred_trigger_source_change(sv4_t* sig, double* real) {
             }
         }
         next = trigger->next;
-        if (matched) deferred_trigger_matched(trigger);
+        if (matched && !trigger->occurred) deferred_trigger_matched(trigger);
     }
 }
 
@@ -755,6 +780,8 @@ static void deferred_trigger_event(llg_event_object_t* ev) {
     llg_deferred_trigger_t* next;
     for (llg_deferred_trigger_t* trigger = g.deferred_triggers; trigger; trigger = next) {
         int32_t matched = 0;
+        next = trigger->next;
+        if (trigger->occurred) continue;
         for (int32_t i = 0; i < trigger->n; i++) {
             llg_expr_event_spec_t* spec = &trigger->specs[i];
             if (spec->event_object == ev && expression_qualifies(spec)) {
@@ -762,8 +789,7 @@ static void deferred_trigger_event(llg_event_object_t* ev) {
                 break;
             }
         }
-        next = trigger->next;
-        if (matched) deferred_trigger_matched(trigger);
+        if (matched) deferred_trigger_event_matched(trigger);
     }
 }
 

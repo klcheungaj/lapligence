@@ -762,6 +762,7 @@ impl Frame<'_, '_> {
                 repeat,
                 action,
                 captures,
+                bound,
                 ..
             } => {
                 // An intra-assignment control captures its RHS and destination
@@ -775,8 +776,9 @@ impl Frame<'_, '_> {
                 let frame = self.name("event_action");
                 let frame = self.publish_captures(&frame, captures);
                 self.line(format!(
-                    "llg_nba_event_assign_when({sources}, {}, {count}, {action}, {frame});",
-                    specs.len()
+                    "llg_nba_event_assign_when({sources}, {}, {count}, {action}, {frame}, {});",
+                    specs.len(),
+                    i32::from(*bound)
                 ));
             }
             IrStmt::EventTrigger { ev } => {

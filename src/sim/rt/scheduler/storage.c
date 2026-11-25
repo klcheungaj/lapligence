@@ -835,6 +835,9 @@ static LLG_OUTLYING void bound_update_drop(llg_fork_group_t* grp);
 static void promote_delayed_nbas(void);
 static void deferred_trigger_source_change(sv4_t* sig, double* real);
 static void deferred_trigger_event(llg_event_object_t* ev);
+static void add_region_callback(llg_region_t region,
+                                llg_region_callback_fn callback, void* data,
+                                uint64_t ticks, llg_region_callback_id_t* id);
 static void process_local_release_all(llg_proc_t* proc);
 static void start_pending_fork_children(llg_proc_t* parent);
 static void proc_complete(llg_proc_t* self);

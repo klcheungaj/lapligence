@@ -1955,6 +1955,42 @@ Pass a native record's leaf markers with the record value.
 `neg_ref_wait_record_property_real.sv`;
 `sim_008/record_ref_interface_element_waits.sv` with `-D N=16`.
 
+## Initializers of named events are ignored
+
+**Status:** open, a silent wrong result; found by the probes of event-controlled
+updates.
+
+### Symptom
+
+`event a = ev;` and `event n = null;` in a module, package or block leave the
+variable a separate event: a trigger of `ev` does not wake `@(a)`, and `n ==
+null` is false. The initializer of an event array stops the import with an
+internal error (ELAB-002), that of a class property of type `event` is a located
+error. An assignment (`a = ev;`) works.
+
+### Cause
+
+The import records no initializer for a named-event declaration.
+
+### Intended direction
+
+Record it and lower it like an event assignment, in the order of the other
+initializers of its scope (6.8, 15.5.5.1). Estimate: one day.
+
+### Reproduce
+
+```systemverilog
+module tb;
+  event ev;
+  event a = ev;
+  initial begin
+    fork @(a) $display("woken"); join_none
+    #1 ->ev;
+    #1 $finish;
+  end
+endmodule
+```
+
 ## Level waits on the identity of an event variable reject
 
 **Status:** rejected with a located diagnostic (no longer a hang). Class event
