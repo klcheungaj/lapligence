@@ -423,11 +423,13 @@ fn unpacked_array_concatenations_assign_queues_and_dynamic_arrays() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_006/queue_concatenation.out");
     sim_cli::run_case_backend_parity(SUITE, "queue_concatenation", expected, &[], &[]);
-    sim_cli::reject_case(
-        SUITE,
-        "neg_dynamic_array_concat",
-        "unpacked array concatenation of arrays into a dynamic array",
-    );
+}
+
+#[test]
+fn array_items_of_any_kind_concatenate_into_any_array_target() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/array_concatenation.out");
+    sim_cli::run_case_backend_parity(SUITE, "array_concatenation", expected, &[], &[]);
 }
 
 #[test]

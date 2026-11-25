@@ -557,9 +557,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
   containers through `this`, handle variables, handle formals and handle
   property chains, with per-object initializers; static ones anywhere); calls copy
   them in and out and pattern actuals build at the call. Unpacked array
-  concatenations (§10.10) assign element values to queues and dynamic
-  arrays, and queues also combine queues and queue slices
-  (`q = {q[1:$], x}`); array items assigned to a dynamic array reject. A
+  concatenations (§10.10) assign element values and arrays of any kind
+  (fixed, dynamic, queue, slices, rows, call results, members) to queues,
+  dynamic arrays and fixed arrays (`q = {q[1:$], fa, x}`); an item of a
+  run-time size into a fixed target is checked at run time. A
   whole fixed array of strings, handles or records assigned to a dynamic
   array copies element by element (SV §7.6, [ki_uvm_run](../tests/fixtures/sim/feature_completion/ki_uvm_run/readme.md)).
   Declaration initializers accept any whole-container source (`new[n]`,

@@ -639,6 +639,15 @@ fn sd10_d4_initializer_error_runs_no_finals() {
 }
 
 #[test]
+fn sd10_d5_concatenation_item_conversions() {
+    sim_cli::run_case_backend_parity_ending_in_fatal(
+        SUITE,
+        "SD10-D5_concatenation_item_conversions",
+        include_str!("fixtures/sim/lrm_decisions/SD10-D5_concatenation_item_conversions.out"),
+    );
+}
+
+#[test]
 fn s28_d10_state_methods_on_null() {
     run_decision(
         "S28-D10_state_methods_on_null",

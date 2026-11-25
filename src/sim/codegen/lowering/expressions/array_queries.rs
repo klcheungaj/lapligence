@@ -103,7 +103,7 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    pub(super) fn query_unpacked_dimensions_for(descriptor: &TypeDescriptor) -> u32 {
+    pub(in super::super) fn query_unpacked_dimensions_for(descriptor: &TypeDescriptor) -> u32 {
         match &descriptor.shape {
             TypeShape::FixedArray {
                 dimensions,

@@ -185,9 +185,10 @@ impl Frame<'_, '_> {
             } else {
                 "llg_dyn_value_new"
             };
-            self.line(format!(
-                "{{ sv4_t size = sv4_from_u64({size}ULL, 64, 0); {function}(&{target}, size, NULL); sv4_destroy(&size); }}"
-            ));
+            // The size is a frame temporary: a coroutine addresses no C local.
+            let size = self.value(format!("sv4_from_u64({size}ULL, 64, 0)"), 64, false);
+            self.line(format!("{function}(&{target}, {}, NULL);", size.code));
+            self.discard(size);
         }
         Ok(target)
     }

@@ -93,19 +93,21 @@ impl<'a> Codegen<'a> {
         match self.kind(node) {
             NodeKind::Expr(ExprKind::Operation {
                 op: Operation::Concat,
-                operands,
-                reordered,
                 ..
             }) => {
+                // Each item must stand for the elements of a queue.
+                let Some(items) = self.unpacked_concat_items(node) else {
+                    return Ok(None);
+                };
                 let mut sources = Vec::new();
-                for operand in operands {
-                    let Some(mut nested) = self.lower_queue_sources(path, *operand)? else {
+                for item in items {
+                    if !item.array {
+                        return Ok(None);
+                    }
+                    let Some(mut nested) = self.lower_queue_sources(path, item.node)? else {
                         return Ok(None);
                     };
                     sources.append(&mut nested);
-                }
-                if *reordered {
-                    sources.reverse();
                 }
                 Ok(Some(sources))
             }

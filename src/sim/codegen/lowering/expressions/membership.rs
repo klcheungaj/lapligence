@@ -195,7 +195,10 @@ impl<'a> Codegen<'a> {
 
     /// A lexical container of the type of `node`, an expression whose value
     /// is a dynamic array, queue or associative array.
-    fn container_valued_temporary(&mut self, node: NodeId) -> Result<Option<usize>, String> {
+    pub(in super::super) fn container_valued_temporary(
+        &mut self,
+        node: NodeId,
+    ) -> Result<Option<usize>, String> {
         let Some(descriptor) = self.query_descriptor(node) else {
             return Ok(None);
         };
