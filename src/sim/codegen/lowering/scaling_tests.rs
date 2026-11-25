@@ -12,7 +12,7 @@ fn lookups(body: &str, instances: usize) -> u64 {
     let output = compile_sources_checked(
         &[OwnedSource::compilation_unit(
             "scaling.sv",
-            &format!(
+            format!(
                 "module m(input logic clk, input logic [7:0] d); {body} endmodule \
                  module tb; logic clk; logic [7:0] d; \
                  for (genvar g = 0; g < {instances}; g++) begin : gen \

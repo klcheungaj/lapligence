@@ -939,7 +939,7 @@ impl Frame<'_, '_> {
             // been evaluated, so no other import call intervenes.
             self.line(format!("llg_dpi_next_site = &llg_dpi_sites[{site}];"));
         }
-        if function.dpi.is_none() && super::model::vpi_frame_name(self.ctx, &function).is_some() {
+        if function.dpi.is_none() && super::model::vpi_frame_name(self.ctx, function).is_some() {
             // VPI frames (37.39): the callee's frame entry takes the call
             // object that activates it from here, as its vpiOrigin. Every
             // argument has been evaluated, so no other call intervenes;
@@ -952,19 +952,19 @@ impl Frame<'_, '_> {
         }
         let call_mark = self.cancellation_mark();
         let result = if coroutine {
-            self.coroutine_call(f, &function, &parameters)?;
+            self.coroutine_call(f, function, &parameters)?;
             None
         } else if dispatch_coroutine {
-            self.dispatch_coroutine_call(f, &function, virtual_call, &parameters)?;
+            self.dispatch_coroutine_call(f, function, virtual_call, &parameters)?;
             None
         } else if recursive {
-            self.recursive_call(&function, recursive_target, parameters, native_result)?
+            self.recursive_call(function, recursive_target, parameters, native_result)?
         } else {
             let invocation = format!("{callee}({})", parameters.join(", "));
             let result = if let Some(value) = native_result {
                 self.line(format!("{} = {invocation};", value.code()));
                 Some(CallValue::Native(value))
-            } else if super::super::model::owned_packed_result(&function) {
+            } else if super::super::model::owned_packed_result(function) {
                 // The callee replaces this initialized slot through its
                 // trailing `_llg_result` destination parameter.
                 let ty = function.ret.expect("packed result has a type");
