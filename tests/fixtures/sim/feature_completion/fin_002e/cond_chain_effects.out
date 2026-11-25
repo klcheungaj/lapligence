@@ -1,0 +1,149 @@
+one n=4 pos=0 y=1100 : s0 a0 
+x n=4 pos=0 y=110X : s0 a0 s1 s2 s3 a4 
+xz n=4 pos=0 y=110X : s0 a0 s1 s2 s3 a3 a4 
+x1 n=4 pos=0 y=110X : s0 a0 s1 a1 
+one n=4 pos=1 y=1101 : s0 s1 a1 
+x n=4 pos=1 y=110X : s0 s1 a1 s2 s3 a4 
+xz n=4 pos=1 y=110X : s0 s1 a1 s2 s3 a3 a4 
+x1 n=4 pos=1 y=110X : s0 s1 a1 s2 a2 
+one n=4 pos=2 y=1102 : s0 s1 s2 a2 
+x n=4 pos=2 y=110X : s0 s1 s2 a2 s3 a4 
+xz n=4 pos=2 y=110X : s0 s1 s2 a2 s3 a3 a4 
+x1 n=4 pos=2 y=110X : s0 s1 s2 a2 s3 a3 
+one n=4 pos=3 y=1103 : s0 s1 s2 s3 a3 
+x n=4 pos=3 y=110X : s0 s1 s2 s3 a3 a4 
+xz n=4 pos=3 y=110X : s0 s1 s2 s3 a3 a4 
+x1 n=4 pos=3 y=110X : s0 s1 s2 s3 a3 a4 
+one n=8 pos=0 y=1100 : s0 a0 
+x n=8 pos=0 y=110X : s0 a0 s1 s2 s3 s4 s5 s6 s7 a8 
+xz n=8 pos=0 y=110x : s0 a0 s1 s2 s3 s4 s5 s6 s7 a7 a8 
+x1 n=8 pos=0 y=110X : s0 a0 s1 a1 
+one n=8 pos=1 y=1101 : s0 s1 a1 
+x n=8 pos=1 y=110X : s0 s1 a1 s2 s3 s4 s5 s6 s7 a8 
+xz n=8 pos=1 y=110x : s0 s1 a1 s2 s3 s4 s5 s6 s7 a7 a8 
+x1 n=8 pos=1 y=110X : s0 s1 a1 s2 a2 
+one n=8 pos=2 y=1102 : s0 s1 s2 a2 
+x n=8 pos=2 y=110X : s0 s1 s2 a2 s3 s4 s5 s6 s7 a8 
+xz n=8 pos=2 y=110x : s0 s1 s2 a2 s3 s4 s5 s6 s7 a7 a8 
+x1 n=8 pos=2 y=110X : s0 s1 s2 a2 s3 a3 
+one n=8 pos=3 y=1103 : s0 s1 s2 s3 a3 
+x n=8 pos=3 y=110X : s0 s1 s2 s3 a3 s4 s5 s6 s7 a8 
+xz n=8 pos=3 y=110x : s0 s1 s2 s3 a3 s4 s5 s6 s7 a7 a8 
+x1 n=8 pos=3 y=110X : s0 s1 s2 s3 a3 s4 a4 
+one n=8 pos=4 y=1104 : s0 s1 s2 s3 s4 a4 
+x n=8 pos=4 y=110X : s0 s1 s2 s3 s4 a4 s5 s6 s7 a8 
+xz n=8 pos=4 y=110x : s0 s1 s2 s3 s4 a4 s5 s6 s7 a7 a8 
+x1 n=8 pos=4 y=110X : s0 s1 s2 s3 s4 a4 s5 a5 
+one n=8 pos=5 y=1105 : s0 s1 s2 s3 s4 s5 a5 
+x n=8 pos=5 y=110X : s0 s1 s2 s3 s4 s5 a5 s6 s7 a8 
+xz n=8 pos=5 y=110x : s0 s1 s2 s3 s4 s5 a5 s6 s7 a7 a8 
+x1 n=8 pos=5 y=110X : s0 s1 s2 s3 s4 s5 a5 s6 a6 
+one n=8 pos=6 y=1106 : s0 s1 s2 s3 s4 s5 s6 a6 
+x n=8 pos=6 y=110X : s0 s1 s2 s3 s4 s5 s6 a6 s7 a8 
+xz n=8 pos=6 y=110x : s0 s1 s2 s3 s4 s5 s6 a6 s7 a7 a8 
+x1 n=8 pos=6 y=110X : s0 s1 s2 s3 s4 s5 s6 a6 s7 a7 
+one n=8 pos=7 y=1107 : s0 s1 s2 s3 s4 s5 s6 s7 a7 
+x n=8 pos=7 y=110x : s0 s1 s2 s3 s4 s5 s6 s7 a7 a8 
+xz n=8 pos=7 y=110x : s0 s1 s2 s3 s4 s5 s6 s7 a7 a8 
+x1 n=8 pos=7 y=110x : s0 s1 s2 s3 s4 s5 s6 s7 a7 a8 
+one n=16 pos=0 y=1100 : s0 a0 
+x n=16 pos=0 y=11X0 : s0 a0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 a16 
+xz n=16 pos=0 y=11Xx : s0 a0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 a15 a16 
+x1 n=16 pos=0 y=110X : s0 a0 s1 a1 
+one n=16 pos=2 y=1102 : s0 s1 s2 a2 
+x n=16 pos=2 y=11XX : s0 s1 s2 a2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 a16 
+xz n=16 pos=2 y=11Xx : s0 s1 s2 a2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 a15 a16 
+x1 n=16 pos=2 y=110X : s0 s1 s2 a2 s3 a3 
+one n=16 pos=4 y=1104 : s0 s1 s2 s3 s4 a4 
+x n=16 pos=4 y=11XX : s0 s1 s2 s3 s4 a4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 a16 
+xz n=16 pos=4 y=11Xx : s0 s1 s2 s3 s4 a4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 a15 a16 
+x1 n=16 pos=4 y=110X : s0 s1 s2 s3 s4 a4 s5 a5 
+one n=16 pos=6 y=1106 : s0 s1 s2 s3 s4 s5 s6 a6 
+x n=16 pos=6 y=11XX : s0 s1 s2 s3 s4 s5 s6 a6 s7 s8 s9 s10 s11 s12 s13 s14 s15 a16 
+xz n=16 pos=6 y=11Xx : s0 s1 s2 s3 s4 s5 s6 a6 s7 s8 s9 s10 s11 s12 s13 s14 s15 a15 a16 
+x1 n=16 pos=6 y=110X : s0 s1 s2 s3 s4 s5 s6 a6 s7 a7 
+one n=16 pos=8 y=1108 : s0 s1 s2 s3 s4 s5 s6 s7 s8 a8 
+x n=16 pos=8 y=11XX : s0 s1 s2 s3 s4 s5 s6 s7 s8 a8 s9 s10 s11 s12 s13 s14 s15 a16 
+xz n=16 pos=8 y=11Xx : s0 s1 s2 s3 s4 s5 s6 s7 s8 a8 s9 s10 s11 s12 s13 s14 s15 a15 a16 
+x1 n=16 pos=8 y=110X : s0 s1 s2 s3 s4 s5 s6 s7 s8 a8 s9 a9 
+one n=16 pos=10 y=110a : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 a10 
+x n=16 pos=10 y=11XX : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 a10 s11 s12 s13 s14 s15 a16 
+xz n=16 pos=10 y=11Xx : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 a10 s11 s12 s13 s14 s15 a15 a16 
+x1 n=16 pos=10 y=110X : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 a10 s11 a11 
+one n=16 pos=12 y=110c : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 a12 
+x n=16 pos=12 y=11XX : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 a12 s13 s14 s15 a16 
+xz n=16 pos=12 y=11Xx : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 a12 s13 s14 s15 a15 a16 
+x1 n=16 pos=12 y=110X : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 a12 s13 a13 
+one n=16 pos=14 y=110e : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 a14 
+x n=16 pos=14 y=11XX : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 a14 s15 a16 
+xz n=16 pos=14 y=11Xx : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 a14 s15 a15 a16 
+x1 n=16 pos=14 y=110X : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 a14 s15 a15 
+one n=32 pos=0 y=1100 : s0 a0 
+x n=32 pos=0 y=11X0 : s0 a0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 s16 s17 s18 s19 s20 s21 s22 s23 s24 s25 s26 s27 s28 s29 s30 s31 a32 
+xz n=32 pos=0 y=11Xx : s0 a0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 s16 s17 s18 s19 s20 s21 s22 s23 s24 s25 s26 s27 s28 s29 s30 s31 a31 a32 
+x1 n=32 pos=0 y=110X : s0 a0 s1 a1 
+one n=32 pos=4 y=1104 : s0 s1 s2 s3 s4 a4 
+x n=32 pos=4 y=11XX : s0 s1 s2 s3 s4 a4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 s16 s17 s18 s19 s20 s21 s22 s23 s24 s25 s26 s27 s28 s29 s30 s31 a32 
+xz n=32 pos=4 y=11Xx : s0 s1 s2 s3 s4 a4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 s16 s17 s18 s19 s20 s21 s22 s23 s24 s25 s26 s27 s28 s29 s30 s31 a31 a32 
+x1 n=32 pos=4 y=110X : s0 s1 s2 s3 s4 a4 s5 a5 
+one n=32 pos=8 y=1108 : s0 s1 s2 s3 s4 s5 s6 s7 s8 a8 
+x n=32 pos=8 y=11XX : s0 s1 s2 s3 s4 s5 s6 s7 s8 a8 s9 s10 s11 s12 s13 s14 s15 s16 s17 s18 s19 s20 s21 s22 s23 s24 s25 s26 s27 s28 s29 s30 s31 a32 
+xz n=32 pos=8 y=11Xx : s0 s1 s2 s3 s4 s5 s6 s7 s8 a8 s9 s10 s11 s12 s13 s14 s15 s16 s17 s18 s19 s20 s21 s22 s23 s24 s25 s26 s27 s28 s29 s30 s31 a31 a32 
+x1 n=32 pos=8 y=110X : s0 s1 s2 s3 s4 s5 s6 s7 s8 a8 s9 a9 
+one n=32 pos=12 y=110c : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 a12 
+x n=32 pos=12 y=11XX : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 a12 s13 s14 s15 s16 s17 s18 s19 s20 s21 s22 s23 s24 s25 s26 s27 s28 s29 s30 s31 a32 
+xz n=32 pos=12 y=11Xx : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 a12 s13 s14 s15 s16 s17 s18 s19 s20 s21 s22 s23 s24 s25 s26 s27 s28 s29 s30 s31 a31 a32 
+x1 n=32 pos=12 y=110X : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 a12 s13 a13 
+one n=32 pos=16 y=1110 : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 s16 a16 
+x n=32 pos=16 y=11X0 : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 s16 a16 s17 s18 s19 s20 s21 s22 s23 s24 s25 s26 s27 s28 s29 s30 s31 a32 
+xz n=32 pos=16 y=11Xx : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 s16 a16 s17 s18 s19 s20 s21 s22 s23 s24 s25 s26 s27 s28 s29 s30 s31 a31 a32 
+x1 n=32 pos=16 y=111X : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 s16 a16 s17 a17 
+one n=32 pos=20 y=1114 : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 s16 s17 s18 s19 s20 a20 
+x n=32 pos=20 y=11XX : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 s16 s17 s18 s19 s20 a20 s21 s22 s23 s24 s25 s26 s27 s28 s29 s30 s31 a32 
+xz n=32 pos=20 y=11Xx : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 s16 s17 s18 s19 s20 a20 s21 s22 s23 s24 s25 s26 s27 s28 s29 s30 s31 a31 a32 
+x1 n=32 pos=20 y=111X : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 s16 s17 s18 s19 s20 a20 s21 a21 
+one n=32 pos=24 y=1118 : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 s16 s17 s18 s19 s20 s21 s22 s23 s24 a24 
+x n=32 pos=24 y=11XX : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 s16 s17 s18 s19 s20 s21 s22 s23 s24 a24 s25 s26 s27 s28 s29 s30 s31 a32 
+xz n=32 pos=24 y=11Xx : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 s16 s17 s18 s19 s20 s21 s22 s23 s24 a24 s25 s26 s27 s28 s29 s30 s31 a31 a32 
+x1 n=32 pos=24 y=111X : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 s16 s17 s18 s19 s20 s21 s22 s23 s24 a24 s25 a25 
+one n=32 pos=28 y=111c : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 s16 s17 s18 s19 s20 s21 s22 s23 s24 s25 s26 s27 s28 a28 
+x n=32 pos=28 y=11XX : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 s16 s17 s18 s19 s20 s21 s22 s23 s24 s25 s26 s27 s28 a28 s29 s30 s31 a32 
+xz n=32 pos=28 y=11Xx : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 s16 s17 s18 s19 s20 s21 s22 s23 s24 s25 s26 s27 s28 a28 s29 s30 s31 a31 a32 
+x1 n=32 pos=28 y=111X : s0 s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 s16 s17 s18 s19 s20 s21 s22 s23 s24 s25 s26 s27 s28 a28 s29 a29 
+hits[0]=16
+hits[1]=12
+hits[2]=14
+hits[3]=14
+hits[4]=22
+hits[5]=7
+hits[6]=9
+hits[7]=13
+hits[8]=25
+hits[9]=2
+hits[10]=4
+hits[11]=1
+hits[12]=8
+hits[13]=2
+hits[14]=4
+hits[15]=9
+hits[16]=20
+hits[17]=1
+hits[18]=0
+hits[19]=0
+hits[20]=4
+hits[21]=1
+hits[22]=0
+hits[23]=0
+hits[24]=4
+hits[25]=1
+hits[26]=0
+hits[27]=0
+hits[28]=4
+hits[29]=1
+hits[30]=0
+hits[31]=8
+hits[32]=16
+sc u=1 y=1121 : s0 s1 a33 
+sc u=0 y=1123 : s0 s2 s3 a35 
+sc u=x y=112X : s0 s1 a33 s2 s3 a34 a35 
+sc u=z y=112X : s0 s1 a33 s2 s3 a34 a35 

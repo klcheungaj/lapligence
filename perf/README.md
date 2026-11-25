@@ -1,6 +1,8 @@
 # Performance workloads and tools
 
-`perf/designs/` contains the small legacy baseline suite.
+`perf/designs/` contains the small legacy baseline suite and `prio_mux.sv`,
+two 8-way priority multiplexers written as conditional operator chains and
+evaluated for 100,000 clock cycles (the conditional-heavy row).
 `perf/corpus/` is the coroutine-migration corpus: self-terminating SystemVerilog
 workloads with deterministic summaries. The corpus deliberately covers process
 count, masked NBA, nested timing-task, zero-delay dispatch, and suspended wide

@@ -316,17 +316,22 @@ enum VpiAutoKey {
     NativeValue(usize),
 }
 
-/// Whether a conditional's predicate cannot be X or Z, so its ambiguous arm
-/// (SV 11.4.11) is unreachable. Emitting that arm would evaluate the other
-/// arm twice, doubling the code at every nested conditional.
+/// Whether a conditional's predicate cannot be X or Z by its operator, so
+/// its ambiguous arm (SV 11.4.11) is unreachable.
 fn known_predicate(predicate: &IrExpr) -> bool {
     matches!(
         predicate.kind(),
         IrExprKind::Bin {
-            op: IrBinOp::CaseEq | IrBinOp::CaseNeq,
+            op: IrBinOp::CaseEq | IrBinOp::CaseNeq | IrBinOp::IndexEq | IrBinOp::IndexLt,
             ..
         }
     )
+}
+
+/// Whether a conditional's predicate may be X or Z: a packed value of any
+/// other operator. A real or C truth value never is.
+fn ambiguous_predicate(predicate: &IrExpr) -> bool {
+    predicate.width != 0 && !known_predicate(predicate)
 }
 
 fn pending(feature: &str) -> String {
@@ -1037,6 +1042,13 @@ impl<'a, 'm> Frame<'a, 'm> {
             self.slots[slot] = false;
         } else if value.width == 0 && !value.truth {
             self.line(format!("(void){};", value.code));
+        }
+    }
+    /// Free the slot of a packed owner that the generated code left empty on
+    /// every path: unfilled, moved from or destroyed.
+    fn release_emptied(&mut self, value: Value) {
+        if let Some(slot) = value.slot {
+            self.slots[slot] = false;
         }
     }
     fn replace(&mut self, mut value: Value, code: String, width: u32, signed: bool) -> Value {

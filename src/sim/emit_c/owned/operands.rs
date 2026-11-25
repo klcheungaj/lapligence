@@ -2,6 +2,14 @@
 use super::*;
 
 pub(super) fn stable_expression(expr: &IrExpr) -> bool {
+    stable_tree(expr, 0)
+}
+
+/// Whether `expr` only reads and combines values, with conditional operators
+/// nested at most `conditionals` deep. Such a tree has no effect, so it may
+/// be rendered again, and each rendering is as large as the tree: a
+/// conditional in a selector counts as a level too.
+pub(super) fn stable_tree(expr: &IrExpr, conditionals: u32) -> bool {
     match &expr.kind {
         IrExprKind::Const(_)
         | IrExprKind::Fill(_)
@@ -9,7 +17,7 @@ pub(super) fn stable_expression(expr: &IrExpr) -> bool {
         | IrExprKind::LocalRead(_)
         | IrExprKind::FormalRead(_) => true,
         IrExprKind::Bin { a, b, .. } | IrExprKind::RealBin { a, b, .. } => {
-            stable_expression(a) && stable_expression(b)
+            stable_tree(a, conditionals) && stable_tree(b, conditionals)
         }
         IrExprKind::Un { a, .. }
         | IrExprKind::RealUn { a, .. }
@@ -18,10 +26,19 @@ pub(super) fn stable_expression(expr: &IrExpr) -> bool {
         | IrExprKind::CastToPacked { a }
         | IrExprKind::CastToReal { a, .. }
         | IrExprKind::ToTwoState { a }
-        | IrExprKind::PartSel { base: a, .. } => stable_expression(a),
-        IrExprKind::BitSel { base, idx } => stable_expression(base) && stable_expression(idx),
+        | IrExprKind::PartSel { base: a, .. } => stable_tree(a, conditionals),
+        IrExprKind::BitSel { base, idx } => {
+            stable_tree(base, conditionals) && stable_tree(idx, conditionals)
+        }
         IrExprKind::IdxPartSel { base, base_idx, .. } => {
-            stable_expression(base) && stable_expression(base_idx)
+            stable_tree(base, conditionals) && stable_tree(base_idx, conditionals)
+        }
+        IrExprKind::Mux { sel, a, b }
+        | IrExprKind::ArrayMux { sel, a, b, .. }
+        | IrExprKind::StructMux { sel, a, b, .. } => {
+            conditionals.checked_sub(1).is_some_and(|inner| {
+                stable_tree(sel, inner) && stable_tree(a, inner) && stable_tree(b, inner)
+            })
         }
         _ => false,
     }

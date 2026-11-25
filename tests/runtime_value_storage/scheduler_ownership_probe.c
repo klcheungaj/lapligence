@@ -460,12 +460,10 @@ static void check_time_and_io(void) {
     CHECK(probe_live_values() == 0);
 }
 
-/* The descriptor address index deletes by moving the rest of a cluster back,
- * never by leaving a tombstone: after removals in any order every occupied
- * slot holds a live entry, each live descriptor is found, and a global
- * target, which is never indexed, is not. */
-/* Live entries plus tombstones stay within the load limit, so a miss (a
- * global target) ends within a short walk; live entries all stay findable. */
+/* Live entries plus tombstones stay within the load limit, so a miss ends
+ * within a short walk; live entries all stay findable and lie within the
+ * address bounds; a global target, which is never indexed, is not found, and
+ * neither is an address within the bounds that is no descriptor's. */
 static void check_value_scope_index_state(const sv4_t* global, llg_value_scope_t* const* scopes,
                                           const sv4_t* const* keys, const int* live,
                                           unsigned count) {
@@ -477,9 +475,14 @@ static void check_value_scope_index_state(const sv4_t* global, llg_value_scope_t
     CHECK(indexed == value_scope_count && used == value_scope_used);
     CHECK(!value_scope_capacity ||
           used <= value_scope_capacity / LLG_VALUE_SCOPE_INDEX_LOAD_DIVISOR);
+    CHECK(value_scope_count || value_scope_extent == 0);
     CHECK(value_scope_index_find(global) == NULL);
-    for (unsigned i = 0; i < count; ++i)
-        if (live[i]) CHECK(value_scope_index_find(keys[i]) == scopes[i]);
+    for (unsigned i = 0; i < count; ++i) {
+        if (!live[i]) continue;
+        CHECK(value_scope_index_find(keys[i]) == scopes[i]);
+        CHECK((uintptr_t)keys[i] - value_scope_low < value_scope_extent);
+        CHECK(value_scope_index_find((const char*)keys[i] + 1) == NULL);
+    }
 }
 
 static void check_value_scope_index(void) {
@@ -527,6 +530,22 @@ static void check_value_scope_index(void) {
         check_value_scope_index_state(&global, scopes, keys, live, COUNT);
     }
     CHECK(value_scope_capacity <= capacity);
+    /* A scope reopened at the address it had takes its own tombstone: the
+     * index fills no further however often it comes back, and nothing is
+     * allocated for it. */
+    uintptr_t reopened = 0;
+    size_t filled = 0;
+    for (unsigned step = 0; step < 1000; ++step) {
+        llg_value_scope_t* scope = llg_value_scope_begin(1);
+        uintptr_t address = (uintptr_t)llg_value_scope_values(scope);
+        CHECK(value_scope_index_find(llg_value_scope_values(scope)) == scope);
+        llg_value_scope_end(scope);
+        if (address == reopened) CHECK(value_scope_used == filled);
+        reopened = address;
+        filled = value_scope_used;
+    }
+    CHECK(value_scope_capacity <= capacity);
+    check_value_scope_index_state(&global, scopes, keys, live, COUNT);
     for (unsigned removed = COUNT - KEPT; removed < COUNT; ++removed) {
         llg_value_scope_end(scopes[order[removed]]);
         live[order[removed]] = 0;
