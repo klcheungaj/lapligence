@@ -4,6 +4,9 @@ use super::*;
 
 pub(super) struct SemanticIds {
     pub(super) len: usize,
+    /// The statement of each named block, by the block's symbol. `None` for
+    /// a symbol that several statements own.
+    pub(super) block_statements: HashMap<u64, Option<NodeId>>,
 }
 
 impl SemanticIds {
@@ -13,10 +16,21 @@ impl SemanticIds {
             .enumerate()
             .all(|(index, node)| node.id == index as u64)
         {
-            let ids = Self { len: nodes.len() };
+            let mut ids = Self {
+                len: nodes.len(),
+                block_statements: HashMap::new(),
+            };
             for node in nodes {
                 for id in [node.parent_id(), node.target_id()].into_iter().flatten() {
                     semantic_id(&ids, id)?;
+                }
+                if node.kind == SemanticKind::Statement && matches!(node.subkind, 32 | 56..=58) {
+                    if let Some(symbol) = node.target_id() {
+                        ids.block_statements
+                            .entry(symbol)
+                            .and_modify(|statement| *statement = None)
+                            .or_insert_with(|| Some(NodeId::from_index(node.id as usize)));
+                    }
                 }
             }
             return Ok(ids);
@@ -468,4 +482,55 @@ pub(super) fn call_member_access(
     Err(DbError::InvalidSnapshot(
         "member access chain contains a cycle".into(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::compile::{compile_sources_checked, CompileOpts, OwnedSource};
+
+    /// A named block is found by its symbol in the map of the one walk over
+    /// the nodes; a symbol that two statements own has no statement.
+    #[test]
+    fn named_blocks_are_found_by_their_symbols() {
+        let mut output = compile_sources_checked(
+            &[OwnedSource::compilation_unit(
+                "blocks.sv",
+                "module m; initial begin fork : f #1; #2; join_any disable f; end endmodule \
+                 module tb; m u[3](); endmodule",
+            )],
+            &CompileOpts {
+                top: Some("tb".to_owned()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let db = Db::from_slang(&output.snapshot).unwrap();
+        let targets = db
+            .node_ids()
+            .filter_map(|id| match db.node_kind(id) {
+                NodeKind::Stmt(StmtKind::Disable { target }) => Some(target.expect("statement")),
+                _ => None,
+            })
+            .collect::<HashSet<_>>();
+        assert_eq!(targets.len(), 3);
+        for target in targets {
+            assert!(matches!(
+                db.node_kind(target),
+                NodeKind::Stmt(StmtKind::Fork { .. })
+            ));
+        }
+
+        let nodes = &mut output.snapshot.semantic_nodes;
+        let mut statement = nodes
+            .iter()
+            .find(|node| node.kind == SemanticKind::Statement && node.subkind == 57)
+            .expect("join_any")
+            .clone();
+        let symbol = statement.target_id().expect("block symbol");
+        assert!(SemanticIds::new(nodes).unwrap().block_statements[&symbol].is_some());
+        statement.id = nodes.len() as u64;
+        nodes.push(statement);
+        assert!(SemanticIds::new(nodes).unwrap().block_statements[&symbol].is_none());
+    }
 }

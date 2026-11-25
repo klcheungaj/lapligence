@@ -11,7 +11,10 @@ fn edge(role: SemanticEdgeRole, index: u32, target_id: u64) -> SemanticEdge {
 }
 
 fn ids() -> SemanticIds {
-    SemanticIds { len: 6 }
+    SemanticIds {
+        len: 6,
+        block_statements: Default::default(),
+    }
 }
 
 #[test]

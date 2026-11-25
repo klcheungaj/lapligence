@@ -95,6 +95,55 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// Record the storage of the unpacked aggregate `node`.
+    pub(in crate::sim::codegen::lowering) fn insert_aggregate(
+        &mut self,
+        node: NodeId,
+        aggregate: UnpackedAggregateInfo,
+    ) {
+        if self.unpacked_aggregates.insert(node, aggregate).is_none() {
+            self.aggregates_by_scope
+                .entry(self.instance_path_of(node))
+                .or_default()
+                .entry(&self.db.node(node).name)
+                .or_default()
+                .push(node);
+        }
+    }
+
+    /// Drop what [`Self::insert_aggregate`] recorded for `node`.
+    pub(in crate::sim::codegen::lowering) fn remove_aggregate(&mut self, node: NodeId) {
+        if self.unpacked_aggregates.remove(&node).is_none() {
+            return;
+        }
+        let path = self.instance_path_of(node);
+        let name = self.db.node(node).name.as_str();
+        if let Some(nodes) = self
+            .aggregates_by_scope
+            .get_mut(&path)
+            .and_then(|names| names.get_mut(name))
+        {
+            nodes.retain(|existing| *existing != node);
+        }
+    }
+
+    /// The first unpacked aggregate that the instance or generate scope at
+    /// `path` declares as `name`. A procedural block's record is no
+    /// declaration of the scope.
+    pub(in crate::sim::codegen::lowering) fn aggregate_declared_in(
+        &self,
+        path: &str,
+        name: &str,
+    ) -> Option<NodeId> {
+        self.aggregates_by_scope
+            .get(path)?
+            .get(name)?
+            .iter()
+            .copied()
+            .filter(|node| !self.block_records.contains_key(node))
+            .min_by_key(|node| node.index())
+    }
+
     pub(super) fn collect_aggregate(&mut self, path: &str, node: NodeId) -> Result<bool, String> {
         self.collect_aggregate_unlocated(path, node)
             .map_err(|error| self.locate_error(node, error))
@@ -180,7 +229,7 @@ impl<'a> Codegen<'a> {
                             path: vec![AggregatePathPart::Member(member.name.clone())],
                         })
                         .collect();
-                    self.unpacked_aggregates.insert(
+                    self.insert_aggregate(
                         node,
                         UnpackedAggregateInfo {
                             kind: layout.kind,
@@ -331,7 +380,7 @@ impl<'a> Codegen<'a> {
                     path: vec![AggregatePathPart::Member(member.name.clone())],
                 })
                 .collect();
-            self.unpacked_aggregates.insert(
+            self.insert_aggregate(
                 node,
                 UnpackedAggregateInfo {
                     kind: layout.kind,
@@ -343,21 +392,15 @@ impl<'a> Codegen<'a> {
             );
             return Ok(true);
         }
-        if let Some(aggregate) = sorted_node_ids(&self.unpacked_aggregates)
-            .into_iter()
-            .find(|existing| {
-                // Procedural-block records are never port views.
-                !self.block_records.contains_key(existing)
-                    && self.node(*existing).name == object_name
-                    && self.instance_path_of(*existing) == path
-            })
+        if let Some(aggregate) = self
+            .aggregate_declared_in(path, &object_name)
             .map(|existing| self.unpacked_aggregates[&existing].clone())
         {
             // Slang can expose the same ref-port aggregate declaration through
             // more than one child node.  The instance path plus declaration
             // name identifies one storage owner; reuse its descriptor rather
             // than allocating duplicate recursive leaves.
-            self.unpacked_aggregates.insert(node, aggregate);
+            self.insert_aggregate(node, aggregate);
             return Ok(true);
         }
         let is_ref_port = matches!(
@@ -500,7 +543,7 @@ impl<'a> Codegen<'a> {
                 path: vec![path_part],
             }));
         }
-        self.unpacked_aggregates.insert(
+        self.insert_aggregate(
             node,
             UnpackedAggregateInfo {
                 kind: layout.kind,
@@ -608,7 +651,7 @@ impl<'a> Codegen<'a> {
                     })
             })
             .collect();
-        self.unpacked_aggregates.insert(
+        self.insert_aggregate(
             node,
             UnpackedAggregateInfo {
                 kind: AggregateKind::TaggedUnion,

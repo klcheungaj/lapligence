@@ -376,8 +376,10 @@ impl Codegen<'_> {
     ) -> Result<Vec<EventSpec>, String> {
         let mut blocks = self
             .db
-            .instantiated_node_ids()
-            .filter_map(|id| self.db.clocking_block(id).filter(|info| info.is_global));
+            .clocking_blocks()
+            .iter()
+            .filter(|(id, info)| info.is_global && !self.db.is_uninstantiated(**id))
+            .map(|(_, info)| info);
         match (blocks.next(), blocks.next()) {
             (Some(block), None) => Ok(block.event_specs.clone()),
             (None, _) => Err(format!(

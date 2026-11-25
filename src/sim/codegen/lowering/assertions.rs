@@ -1144,24 +1144,33 @@ impl Codegen<'_> {
         .then_some(*signal)
     }
 
+    /// The global clocking blocks by the scope that declares them.
+    fn global_clocking_blocks(&self) -> &HashMap<NodeId, Vec<NodeId>> {
+        self.global_clocking_blocks.get_or_init(|| {
+            let mut blocks = HashMap::<_, Vec<_>>::new();
+            for (block, info) in self.db.clocking_blocks() {
+                if let Some(scope) = self.node(*block).parent.filter(|_| info.is_global) {
+                    blocks.entry(scope).or_default().push(*block);
+                }
+            }
+            blocks
+        })
+    }
+
     /// Resolve the single global clocking block used by the 2009 global
     /// sampled-value functions.
     pub(super) fn lower_global_sampled_clock(
         &mut self,
         path: &str,
     ) -> Result<SampledClockSource, String> {
-        let blocks = self
-            .db
-            .node_ids()
-            .filter_map(|id| {
-                self.db
-                    .clocking_block(id)
-                    .filter(|info| info.is_global)
-                    .filter(|_| self.node(id).parent == Some(self.inst))
-                    .map(|info| (id, info))
+        let blocks = self.global_clocking_blocks().get(&self.inst);
+        let Some(block) = blocks
+            .and_then(|blocks| match blocks.as_slice() {
+                [block] => Some(*block),
+                _ => None,
             })
-            .collect::<Vec<_>>();
-        let [(_, block)] = blocks.as_slice() else {
+            .and_then(|block| self.db.clocking_block(block))
+        else {
             return Err(format!(
                 "global sampled-value function requires exactly one global clocking block in `{path}`"
             ));
