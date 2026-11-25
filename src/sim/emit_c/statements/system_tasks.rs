@@ -194,6 +194,7 @@ mod tests {
         let ctx = RCtx {
             value_backend: crate::sim::value_backend::ValueBackend::Legacy,
             model: &model,
+            effects: &crate::sim::execution::EffectSummaries::new(&model),
             func: None,
             sampled: false,
             activation_label: None,

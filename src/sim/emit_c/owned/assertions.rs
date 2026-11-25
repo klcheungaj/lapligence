@@ -47,21 +47,16 @@ fn bind_sequence(frame: &mut Frame<'_, '_>, sequence: &IrSequence) {
 }
 
 fn predicate(
-    model: &IrModel,
-    constants: &super::super::constants::PackedConstants,
-    backend: crate::sim::value_backend::ValueBackend,
+    base: &RCtx<'_>,
     index: usize,
     role: &str,
     expression: &IrExpr,
     sampled: bool,
 ) -> Result<String, String> {
     let ctx = RCtx {
-        value_backend: backend,
-        model,
-        func: None,
         sampled,
         activation_label: None,
-        constants: Some(constants),
+        ..*base
     };
     let mut frame = callback_frame(&ctx);
     let value = frame.expression(expression)?;
@@ -83,20 +78,11 @@ fn predicate(
 }
 
 /// Store a history domain's Preponed sample into the runtime-owned slot.
-fn sampled_value(
-    model: &IrModel,
-    constants: &super::super::constants::PackedConstants,
-    backend: crate::sim::value_backend::ValueBackend,
-    name: &str,
-    expression: &IrExpr,
-) -> Result<String, String> {
+fn sampled_value(base: &RCtx<'_>, name: &str, expression: &IrExpr) -> Result<String, String> {
     let ctx = RCtx {
-        value_backend: backend,
-        model,
-        func: None,
         sampled: true,
         activation_label: None,
-        constants: Some(constants),
+        ..*base
     };
     let mut frame = callback_frame(&ctx);
     let value = frame.expression(expression)?;
@@ -118,9 +104,7 @@ fn sampled_value(
 /// argument of every captured operand and future status call, evaluated
 /// against the event's sampled values like a predicate.
 fn future_capture(
-    model: &IrModel,
-    constants: &super::super::constants::PackedConstants,
-    backend: crate::sim::value_backend::ValueBackend,
+    base: &RCtx<'_>,
     index: usize,
     assertion: &IrAssertion,
 ) -> Result<String, String> {
@@ -142,12 +126,9 @@ fn future_capture(
         });
     }
     let ctx = RCtx {
-        value_backend: backend,
-        model,
-        func: None,
         sampled: true,
         activation_label: None,
-        constants: Some(constants),
+        ..*base
     };
     let mut frame = callback_frame(&ctx);
     for (slot, argument) in &slots {
@@ -169,20 +150,11 @@ fn future_capture(
 
 /// A sampled clock's gate reads current values when the clock occurs, like
 /// the `iff` of an event control (SV 9.4.2.3, 16.9.3).
-fn sampled_clock_gate(
-    model: &IrModel,
-    constants: &super::super::constants::PackedConstants,
-    backend: crate::sim::value_backend::ValueBackend,
-    name: &str,
-    expression: &IrExpr,
-) -> Result<String, String> {
+fn sampled_clock_gate(base: &RCtx<'_>, name: &str, expression: &IrExpr) -> Result<String, String> {
     let ctx = RCtx {
-        value_backend: backend,
-        model,
-        func: None,
         sampled: false,
         activation_label: None,
-        constants: Some(constants),
+        ..*base
     };
     let mut frame = callback_frame(&ctx);
     let value = frame.expression(expression)?;
@@ -200,18 +172,13 @@ fn sampled_clock_gate(
     ))
 }
 
-pub(in crate::sim::emit_c) fn callbacks(
-    model: &IrModel,
-    constants: &super::super::constants::PackedConstants,
-    backend: crate::sim::value_backend::ValueBackend,
-) -> Result<String, String> {
+pub(in crate::sim::emit_c) fn callbacks(base: &RCtx<'_>) -> Result<String, String> {
+    let model = base.model;
     let mut out = String::new();
     for (index, clock) in model.sampled_clocks().iter().enumerate() {
         if let Some(gate) = &clock.gate {
             out.push_str(&sampled_clock_gate(
-                model,
-                constants,
-                backend,
+                base,
                 &sampled_clock_gate_name(index),
                 gate,
             )?);
@@ -222,15 +189,13 @@ pub(in crate::sim::emit_c) fn callbacks(
             continue;
         }
         out.push_str(&sampled_value(
-            model,
-            constants,
-            backend,
+            base,
             &sampled_domain_callback_name(index),
             &domain.sample,
         )?);
     }
     for (index, assertion) in model.assertions().iter().enumerate() {
-        assertion_callbacks(model, constants, backend, index, assertion, &mut out)
+        assertion_callbacks(base, index, assertion, &mut out)
             .map_err(|error| crate::sim::located::locate_at(assertion.location(), error))?;
     }
     Ok(out)
@@ -239,9 +204,7 @@ pub(in crate::sim::emit_c) fn callbacks(
 /// The predicate, future-capture, property and sequence callbacks of one
 /// concurrent assertion.
 fn assertion_callbacks(
-    model: &IrModel,
-    constants: &super::super::constants::PackedConstants,
-    backend: crate::sim::value_backend::ValueBackend,
+    base: &RCtx<'_>,
     index: usize,
     assertion: &crate::sim::ir::IrAssertion,
     out: &mut String,
@@ -252,29 +215,21 @@ fn assertion_callbacks(
         ("abort", assertion.abort_condition(), assertion.abort_sync()),
     ] {
         if let Some(expression) = expression {
-            out.push_str(&predicate(
-                model, constants, backend, index, role, expression, sampled,
-            )?);
+            out.push_str(&predicate(base, index, role, expression, sampled)?);
         }
     }
     if assertion.future().is_some_and(|future| future.slots() != 0) {
-        out.push_str(&future_capture(
-            model, constants, backend, index, assertion,
-        )?);
+        out.push_str(&future_capture(base, index, assertion)?);
     }
     if let Some(property) = assertion.property() {
-        out.push_str(&property::render(
-            model, constants, backend, index, property,
-        )?);
+        out.push_str(&property::render(base, index, property)?);
     }
     for (role, graph) in [
         ("antecedent", assertion.antecedent_sequence()),
         ("consequent", assertion.consequent_sequence()),
     ] {
         if let Some(graph) = graph {
-            out.push_str(&sequence::render(
-                model, constants, backend, index, role, graph,
-            )?);
+            out.push_str(&sequence::render(base, index, role, graph)?);
         }
     }
     Ok(())

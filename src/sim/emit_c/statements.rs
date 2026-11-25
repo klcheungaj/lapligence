@@ -1001,6 +1001,7 @@ fn render_stmt_scoped(
             let child = RCtx {
                 value_backend: ctx.value_backend,
                 model: ctx.model,
+                effects: ctx.effects,
                 func: ctx.func,
                 sampled: ctx.sampled,
                 activation_label: Some(exit.clone()),

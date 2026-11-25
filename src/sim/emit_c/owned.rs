@@ -211,8 +211,6 @@ pub(super) struct Frame<'a, 'm> {
     /// rule 1): between such points no activation of a running process can
     /// become cancelled.
     cancellation_points: usize,
-    may_disable: HashMap<usize, bool>,
-    may_terminate: HashMap<usize, bool>,
     access_stack: Vec<String>,
     /// Resolving a wait dependency's native-access receiver: null checks
     /// and class-property lookups yield null or scratch storage silently,
@@ -385,11 +383,13 @@ impl<'a, 'm> Frame<'a, 'm> {
         frame.coroutine_functions = analysis.coroutine_functions();
         frame.suspendable_slots = analysis.suspendable_dispatch_slots().clone();
         frame.suspendable_interface_methods = analysis.suspendable_interface_methods().clone();
-        frame.recursive_targets =
-            crate::sim::execution::direct_call_targets(ctx.model, &ctx.model.func(function).body)
-                .into_iter()
-                .filter(|target| analysis.is_recursive_call(ctx.model, function, target))
-                .collect();
+        frame.recursive_targets = analysis
+            .effects()
+            .call_targets(function)
+            .iter()
+            .filter(|target| analysis.is_recursive_call(ctx.model, function, target))
+            .copied()
+            .collect();
         frame.synchronous = true;
         frame.declare_scope_fields()?;
         Ok(frame)
@@ -463,13 +463,11 @@ impl<'a, 'm> Frame<'a, 'm> {
             return;
         }
         let may_terminate = dynamic
-            || *self.may_terminate.entry(function).or_insert_with(|| {
-                crate::sim::execution::function_has_effect(
-                    self.ctx.model,
-                    function,
-                    crate::sim::execution::ExecutionEffect::Terminate,
-                )
-            });
+            || self
+                .ctx
+                .effects
+                .of_running(function)
+                .contains(crate::sim::execution::ExecutionEffect::Terminate);
         if !may_terminate {
             return;
         }
@@ -528,8 +526,6 @@ impl<'a, 'm> Frame<'a, 'm> {
             terminal_activation: false,
             cancellation_return: false,
             cancellation_points: 0,
-            may_disable: HashMap::new(),
-            may_terminate: HashMap::new(),
             access_stack: Vec::new(),
             quiet_receivers: false,
             static_initialization: false,

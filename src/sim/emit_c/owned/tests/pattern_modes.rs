@@ -13,6 +13,7 @@ fn recursive_pattern_checks_use_the_selected_comparator() {
         let ctx = RCtx {
             value_backend: crate::sim::value_backend::ValueBackend::Legacy,
             model: &model,
+            effects: &crate::sim::execution::EffectSummaries::new(&model),
             func: None,
             sampled: false,
             activation_label: None,

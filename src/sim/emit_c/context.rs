@@ -1,5 +1,6 @@
 //! Shared model and expression context for C rendering.
 
+use crate::sim::execution::EffectSummaries;
 use crate::sim::ir::{IrFunc, IrModel};
 
 // ── Expression rendering ──────────────────────────────────────────────────────
@@ -22,6 +23,8 @@ pub struct RCtx<'m> {
     /// Per-model immutable packed constants, registered during typed emission.
     pub constants: Option<&'m super::constants::PackedConstants>,
     pub model: &'m IrModel,
+    /// Effects of `model`'s subprograms.
+    pub(in crate::sim) effects: &'m EffectSummaries,
     pub func: Option<&'m IrFunc>,
     /// Resolve signal reads through the runtime's Preponed snapshot. This is
     /// used only by concurrent assertion predicates; ordinary design code

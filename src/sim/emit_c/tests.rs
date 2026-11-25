@@ -144,9 +144,11 @@ fn nonblocking_event_trigger_renders_nba_operation() {
 #[test]
 fn runtime_width_limit_is_a_backend_policy_not_an_ir_invariant() {
     let model = IrModel::new("wide".to_owned(), 1).unwrap();
+    let effects = crate::sim::execution::EffectSummaries::new(&model);
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &effects,
         func: None,
         sampled: false,
         activation_label: None,
@@ -313,9 +315,11 @@ fn selected_net_driver_preserves_member_state_conversion() {
 #[test]
 fn detached_fragments_reject_missing_storage_before_rendering() {
     let model = IrModel::new("empty".to_owned(), 1).unwrap();
+    let effects = crate::sim::execution::EffectSummaries::new(&model);
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &effects,
         func: None,
         sampled: false,
         activation_label: None,
@@ -635,9 +639,11 @@ fn evaluated_event_emits_owned_context_and_contextual_callback() {
 #[test]
 fn legacy_fragment_emitter_rejects_valid_ir() {
     let model = IrModel::new("legacy".to_owned(), 1).unwrap();
+    let effects = crate::sim::execution::EffectSummaries::new(&model);
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model: &model,
+        effects: &effects,
         func: None,
         sampled: false,
         activation_label: None,

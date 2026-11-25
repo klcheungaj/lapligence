@@ -5,6 +5,7 @@
 //! not infer scheduling from source process kinds.
 
 mod analysis;
+mod effects;
 mod recursion;
 
 pub use analysis::{
@@ -13,7 +14,11 @@ pub use analysis::{
     SuspensionSite, DEFAULT_EMBED_LIMIT, DEFAULT_POLL_DEPTH_MAX,
 };
 
+pub(in crate::sim) use effects::EffectSummaries;
+
 use std::collections::{BTreeSet, HashSet};
+
+use effects::{is_context_import, EffectSet};
 
 use crate::sim::ir::{
     IrArrayQueryTarget, IrCallArg, IrChandleExpr, IrContainerExpr, IrContainerStmt, IrDependency,
@@ -56,6 +61,36 @@ pub enum ScheduleRegion {
 }
 
 impl ScheduleRegion {
+    /// Every region in declaration order.
+    pub(crate) const ALL: [Self; 26] = [
+        Self::Preponed,
+        Self::PreponedPli,
+        Self::PreActivePli,
+        Self::Active,
+        Self::Inactive,
+        Self::PreNbaPli,
+        Self::PreNba,
+        Self::NonblockingAssign,
+        Self::PostNba,
+        Self::PostNbaPli,
+        Self::PreObservedPli,
+        Self::PreObserved,
+        Self::Observed,
+        Self::PostObserved,
+        Self::PostObservedPli,
+        Self::Reactive,
+        Self::ReInactive,
+        Self::PreReNbaPli,
+        Self::PreReNba,
+        Self::ReNonblockingAssign,
+        Self::PostReNba,
+        Self::PostReNbaPli,
+        Self::PrePostponedPli,
+        Self::PrePostponed,
+        Self::Postponed,
+        Self::PostponedPli,
+    ];
+
     pub fn runtime_symbol(self) -> &'static str {
         match self {
             Self::Preponed => "LLG_REGION_PREPONED",
@@ -139,38 +174,6 @@ pub enum ExecutionTerminator {
     },
 }
 
-/// The distinct effects of a walk, which meets each of them many times.
-#[derive(Default)]
-struct EffectSet {
-    effects: BTreeSet<ExecutionEffect>,
-    /// The only effect the walk asks for, which ends it.
-    sought: Option<ExecutionEffect>,
-}
-
-impl EffectSet {
-    fn seeking(effect: ExecutionEffect) -> Self {
-        Self {
-            effects: BTreeSet::new(),
-            sought: Some(effect),
-        }
-    }
-
-    fn push(&mut self, effect: ExecutionEffect) {
-        self.effects.insert(effect);
-    }
-
-    /// Whether the walk has its answer.
-    fn found(&self) -> bool {
-        self.sought
-            .is_some_and(|effect| self.effects.contains(&effect))
-    }
-
-    /// The effects in ascending order.
-    fn into_vec(self) -> Vec<ExecutionEffect> {
-        self.effects.into_iter().collect()
-    }
-}
-
 /// Executable basic block. Operations are owned rather than borrowed from a
 /// parallel representation, so optimization and emission see one authority.
 #[derive(Clone, Debug, PartialEq)]
@@ -221,15 +224,21 @@ impl ExecutionModel {
         options: ExecutionAnalysisOptions,
     ) -> Result<Self, IrValidationError> {
         ir.validate()?;
-        let processes = build_processes(&mut ir);
-        let analysis = ExecutionAnalysis::analyze(&ir, &processes, options)
-            .map_err(analysis_validation_error)?;
+        let (processes, summaries) = build_processes(&mut ir);
+        let analysis = ExecutionAnalysis::analyze_summarized(
+            &ir,
+            &processes,
+            options,
+            &BTreeSet::new(),
+            summaries,
+        )
+        .map_err(analysis_validation_error)?;
         let model = Self {
             ir,
             processes,
             analysis,
         };
-        model.validate()?;
+        model.validate_operations()?;
         Ok(model)
     }
 
@@ -257,7 +266,7 @@ impl ExecutionModel {
             forced_arena_callees,
         )
         .map_err(analysis_validation_error)?;
-        self.validate()
+        self.validate_operations()
     }
 
     /// Release the typed operations of one process (see
@@ -299,21 +308,54 @@ impl ExecutionModel {
 
     pub(crate) fn refresh_effects(&mut self) -> Result<(), IrValidationError> {
         let ir = &self.ir;
+        let summaries = EffectSummaries::new(ir);
         for process in &mut self.processes {
-            process.effects = effects_for_blocks(ir, &process.blocks);
+            process.effects = effects_for_blocks(ir, &summaries, &process.blocks);
         }
-        let forced_arena_callees = self.analysis.forced_arena_callees().clone();
-        self.analysis = ExecutionAnalysis::analyze_with(
+        self.analysis = ExecutionAnalysis::analyze_summarized(
             ir,
             &self.processes,
             self.analysis.options(),
-            &forced_arena_callees,
+            self.analysis.forced_arena_callees(),
+            summaries,
         )
         .map_err(analysis_validation_error)?;
-        self.validate()
+        self.validate_operations()
     }
 
+    /// Validate the model, including that its effect summaries and analysis
+    /// are those of its operations.
     pub fn validate(&self) -> Result<(), IrValidationError> {
+        self.validate_operations()?;
+        let summaries = EffectSummaries::new(&self.ir);
+        for (index, process) in self.processes.iter().enumerate() {
+            if process.effects != effects_for_blocks(&self.ir, &summaries, &process.blocks) {
+                return Err(IrValidationError::new(
+                    format!("execution.processes[{index}].effects"),
+                    "effect summary does not match executable operations and terminators",
+                ));
+            }
+        }
+        let analysis = ExecutionAnalysis::analyze_summarized(
+            &self.ir,
+            &self.processes,
+            self.analysis.options(),
+            self.analysis.forced_arena_callees(),
+            summaries,
+        )
+        .map_err(analysis_validation_error)?;
+        if self.analysis != analysis {
+            return Err(IrValidationError::new(
+                "execution.analysis",
+                "coroutine analysis does not match executable operations",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Validate everything but the results just derived from the operations:
+    /// the process effects and the analysis.
+    fn validate_operations(&self) -> Result<(), IrValidationError> {
         self.ir.validate()?;
         if self.processes.len() != self.ir.processes().len() {
             return Err(IrValidationError::new(
@@ -417,6 +459,7 @@ impl ExecutionModel {
                 {
                     if !statements_have_effect(
                         &self.ir,
+                        self.analysis.effects(),
                         &block.operations,
                         ExecutionEffect::Suspend,
                     ) {
@@ -429,25 +472,6 @@ impl ExecutionModel {
                     }
                 }
             }
-            if process.effects != effects_for_blocks(&self.ir, &process.blocks) {
-                return Err(IrValidationError::new(
-                    format!("execution.processes[{index}].effects"),
-                    "effect summary does not match executable operations and terminators",
-                ));
-            }
-        }
-        let analysis = ExecutionAnalysis::analyze_with(
-            &self.ir,
-            &self.processes,
-            self.analysis.options(),
-            self.analysis.forced_arena_callees(),
-        )
-        .map_err(analysis_validation_error)?;
-        if self.analysis != analysis {
-            return Err(IrValidationError::new(
-                "execution.analysis",
-                "coroutine analysis does not match executable operations",
-            ));
         }
         Ok(())
     }
@@ -621,7 +645,7 @@ pub(in crate::sim) fn valid_interface_instance(ir: &IrModel, dependency: &IrDepe
         })
 }
 
-fn build_processes(ir: &mut IrModel) -> Vec<ExecutionProcess> {
+fn build_processes(ir: &mut IrModel) -> (Vec<ExecutionProcess>, EffectSummaries) {
     let mut processes = ir
         .processes
         .iter_mut()
@@ -661,15 +685,20 @@ fn build_processes(ir: &mut IrModel) -> Vec<ExecutionProcess> {
             }
         })
         .collect::<Vec<_>>();
+    let summaries = EffectSummaries::new(ir);
     for process in &mut processes {
-        process.effects = effects_for_blocks(ir, &process.blocks);
+        process.effects = effects_for_blocks(ir, &summaries, &process.blocks);
     }
-    processes
+    (processes, summaries)
 }
 
-fn effects_for_blocks(ir: &IrModel, blocks: &[ExecutionBlock]) -> Vec<ExecutionEffect> {
+fn effects_for_blocks(
+    ir: &IrModel,
+    summaries: &EffectSummaries,
+    blocks: &[ExecutionBlock],
+) -> Vec<ExecutionEffect> {
     let mut effects = EffectSet::default();
-    let mut visited_calls = CallVisits::default();
+    let mut visited_calls = CallVisits::summarized(summaries);
     for (block_index, block) in blocks.iter().enumerate() {
         collect_effects(ir, &block.operations, &mut effects, &mut visited_calls);
         if matches!(&block.terminator, ExecutionTerminator::Suspend { .. }) {
@@ -689,19 +718,32 @@ fn effects_for_blocks(ir: &IrModel, blocks: &[ExecutionBlock]) -> Vec<ExecutionE
 
 #[cfg(test)]
 fn effects_for_statements(ir: &IrModel, statements: &[IrStmt]) -> Vec<ExecutionEffect> {
+    let summaries = EffectSummaries::new(ir);
     let mut effects = EffectSet::default();
-    collect_effects(ir, statements, &mut effects, &mut CallVisits::default());
+    collect_effects(
+        ir,
+        statements,
+        &mut effects,
+        &mut CallVisits::summarized(&summaries),
+    );
     effects.into_vec()
 }
 
-/// Whether `effect` is one of [`effects_for_statements`].
+/// Whether `effect` is one of the effects of `statements` in the model that
+/// `summaries` describes.
 pub(in crate::sim) fn statements_have_effect(
     ir: &IrModel,
+    summaries: &EffectSummaries,
     statements: &[IrStmt],
     effect: ExecutionEffect,
 ) -> bool {
     let mut effects = EffectSet::seeking(effect);
-    collect_effects(ir, statements, &mut effects, &mut CallVisits::default());
+    collect_effects(
+        ir,
+        statements,
+        &mut effects,
+        &mut CallVisits::summarized(summaries),
+    );
     effects.found()
 }
 
@@ -717,46 +759,13 @@ pub(in crate::sim) fn effects_for_initializer(
     statements: &[IrStmt],
 ) -> Vec<ExecutionEffect> {
     let mut effects = EffectSet::default();
-    let mut visits = CallVisits {
-        initializer: Some(InitializerVisits {
-            dispatch,
-            slots: HashSet::new(),
-        }),
-        ..CallVisits::default()
-    };
+    let mut visits = CallVisits::new(Callees::Entered {
+        dispatch,
+        slots: HashSet::new(),
+        functions: HashSet::new(),
+    });
     collect_effects(ir, statements, &mut effects, &mut visits);
     effects.into_vec()
-}
-
-/// Effects of running subprogram `function`: its body's, plus for a context
-/// DPI-C import those of every exported subroutine its foreign code may call
-/// (SV 35.5.3: a context call is an optimization barrier). Noncontext and
-/// pure imports keep their own effects; a call from them into an export is
-/// a run-time error, never a hidden effect.
-pub(crate) fn effects_for_function(ir: &IrModel, function: usize) -> Vec<ExecutionEffect> {
-    let mut effects = EffectSet::default();
-    collect_function_effects(ir, function, &mut effects);
-    effects.into_vec()
-}
-
-/// Whether `effect` is one of [`effects_for_function`].
-pub(in crate::sim) fn function_has_effect(
-    ir: &IrModel,
-    function: usize,
-    effect: ExecutionEffect,
-) -> bool {
-    let mut effects = EffectSet::seeking(effect);
-    collect_function_effects(ir, function, &mut effects);
-    effects.found()
-}
-
-fn collect_function_effects(ir: &IrModel, function: usize, effects: &mut EffectSet) {
-    let mut visits = CallVisits::default();
-    if let Some(body) = ir.funcs.get(function).map(|function| &function.body) {
-        visits.insert(function);
-        collect_effects(ir, body, effects, &mut visits);
-    }
-    collect_export_effects(ir, function, effects, &mut visits);
 }
 
 /// When `function` is a context import, add the effects of every exported
@@ -767,12 +776,7 @@ fn collect_export_effects(
     effects: &mut EffectSet,
     visited_calls: &mut CallVisits,
 ) {
-    let context = ir
-        .funcs
-        .get(function)
-        .and_then(crate::sim::ir::IrFunc::dpi_import)
-        .is_some_and(crate::sim::ir::IrDpiImport::is_context);
-    if !context {
+    if !ir.funcs.get(function).is_some_and(is_context_import) {
         return;
     }
     for (export, _) in ir
@@ -835,53 +839,66 @@ impl CallTarget {
     }
 }
 
-/// Call targets written directly in `statements`, including calls inside
-/// expressions and inline constructor recipes, without following callee
-/// bodies. Each distinct target is reported once, in target order.
-pub(crate) fn direct_call_targets(ir: &IrModel, statements: &[IrStmt]) -> Vec<CallTarget> {
-    let mut visits = CallVisits {
-        direct: Some(BTreeSet::new()),
-        ..CallVisits::default()
-    };
-    collect_effects(ir, statements, &mut EffectSet::default(), &mut visits);
-    visits.direct.unwrap_or_default().into_iter().collect()
+/// How an effect walk treats the subprograms its statements call.
+enum Callees<'a> {
+    /// Add the summarized effects of the callee.
+    Summarized(&'a EffectSummaries),
+    /// Record the call for the summaries, which add the callee's effects.
+    Recorded {
+        targets: BTreeSet<CallTarget>,
+        callees: Vec<usize>,
+    },
+    /// Enter the body of each callee once. The walk of a static declaration
+    /// initializer, which calls only functions: a virtual dispatch enters
+    /// every implementation of its slot instead of being summarized as an
+    /// unknown callee, and `$stop` is the stop request a function body
+    /// issues, which does not suspend.
+    Entered {
+        dispatch: &'a VirtualDispatch,
+        slots: HashSet<usize>,
+        functions: HashSet<usize>,
+    },
 }
 
-/// Recursion guard and optional call recorder shared by the effect walkers.
-///
-/// Effect summaries follow callee bodies once (`visited`). In direct mode the
-/// walkers instead record every call target and do not enter callee bodies;
-/// constructor recipes and native accesses, which are expanded inline, are
-/// still walked under the same `visited` keys.
-#[derive(Default)]
+/// State of one effect walk. Constructor recipes and native accesses are
+/// expanded inline, each once: a later or nested use adds no effect.
 struct CallVisits<'a> {
-    visited: HashSet<usize>,
-    direct: Option<BTreeSet<CallTarget>>,
-    /// `Some` in the walk of a static declaration initializer, which calls
-    /// only functions: a virtual dispatch follows every implementation of
-    /// its slot instead of being summarized as an unknown callee, and
-    /// `$stop` is the stop request a function body issues, which does not
-    /// suspend.
-    initializer: Option<InitializerVisits<'a>>,
+    allocations: HashSet<usize>,
+    accesses: HashSet<usize>,
+    callees: Callees<'a>,
 }
 
-struct InitializerVisits<'a> {
-    dispatch: &'a VirtualDispatch,
-    /// The slots walked so far.
-    slots: HashSet<usize>,
-}
-
-impl CallVisits<'_> {
-    fn insert(&mut self, key: usize) -> bool {
-        self.visited.insert(key)
+impl<'a> CallVisits<'a> {
+    fn new(callees: Callees<'a>) -> Self {
+        Self {
+            allocations: HashSet::new(),
+            accesses: HashSet::new(),
+            callees,
+        }
     }
 
-    fn remove(&mut self, key: &usize) {
-        self.visited.remove(key);
+    fn summarized(summaries: &'a EffectSummaries) -> Self {
+        Self::new(Callees::Summarized(summaries))
+    }
+
+    fn recording() -> Self {
+        Self::new(Callees::Recorded {
+            targets: BTreeSet::new(),
+            callees: Vec::new(),
+        })
+    }
+
+    /// The call targets in order and the called subprograms of a recording
+    /// walk.
+    fn into_recorded(self) -> (Box<[CallTarget]>, Vec<usize>) {
+        match self.callees {
+            Callees::Recorded { targets, callees } => (targets.into_iter().collect(), callees),
+            Callees::Summarized(_) | Callees::Entered { .. } => (Box::default(), Vec::new()),
+        }
     }
 
     fn record(&mut self, target: CallTarget) {
-        if let Some(targets) = self.direct.as_mut() {
+        if let Callees::Recorded { targets, .. } = &mut self.callees {
             targets.insert(target);
         }
     }
@@ -897,6 +914,8 @@ fn collect_effects(
         if effects.found() {
             return;
         }
+        #[cfg(test)]
+        effects::WALKED_STATEMENTS.with(|walked| walked.set(walked.get() + 1));
         let statement = statement.unlocated();
         match statement {
             IrStmt::InertialAssign { .. } | IrStmt::InertialEnable(_) => {
@@ -1133,7 +1152,7 @@ fn collect_effects(
             }
             IrStmt::StopControl { .. } => {
                 effects.push(ExecutionEffect::RuntimeService);
-                if visited_calls.initializer.is_none() {
+                if !matches!(visited_calls.callees, Callees::Entered { .. }) {
                     effects.push(ExecutionEffect::Suspend);
                 }
             }
@@ -1224,19 +1243,22 @@ fn collect_effects(
     }
 }
 
-/// With `CallVisits::initializer`, collect the effects of every
-/// implementation of the slot `function` dispatches through. False when the
-/// walker summarizes virtual calls, or the slot has an inline-expanded
-/// implementation, whose specializations dispatch through other slots.
+/// In a walk that enters callees, collect the effects of every implementation
+/// of the slot `function` dispatches through. False when the walk summarizes
+/// virtual calls, or the slot has an inline-expanded implementation, whose
+/// specializations dispatch through other slots.
 fn collect_virtual_effects(
     ir: &IrModel,
     function: usize,
     effects: &mut EffectSet,
     visited_calls: &mut CallVisits,
 ) -> bool {
-    if visited_calls.direct.is_some() {
+    let Callees::Entered {
+        dispatch, slots, ..
+    } = &mut visited_calls.callees
+    else {
         return false;
-    }
+    };
     let Some(slot) = ir
         .funcs
         .get(function)
@@ -1244,10 +1266,6 @@ fn collect_virtual_effects(
     else {
         return false;
     };
-    let Some(initializer) = visited_calls.initializer.as_mut() else {
-        return false;
-    };
-    let dispatch = initializer.dispatch;
     let implementations = dispatch.functions(slot);
     if implementations
         .iter()
@@ -1255,7 +1273,7 @@ fn collect_virtual_effects(
     {
         return false;
     }
-    if !initializer.slots.insert(slot) {
+    if !slots.insert(slot) {
         return true;
     }
     for &index in implementations {
@@ -1272,27 +1290,40 @@ fn collect_callee_effects(
     visited_calls: &mut CallVisits,
 ) {
     if conservative && !collect_virtual_effects(ir, function, effects, visited_calls) {
-        effects.push(ExecutionEffect::Suspend);
-        effects.push(ExecutionEffect::Terminate);
-        effects.push(ExecutionEffect::Disable);
+        push_unknown_callee_effects(effects);
     }
-    if effects.found() || visited_calls.direct.is_some() || !visited_calls.insert(function) {
+    if effects.found() {
         return;
     }
-    let index = function;
-    if let Some(function) = ir.funcs.get(function) {
-        // Imported native code cannot suspend beneath its foreign frame, but
-        // it can synchronously request finish or kill through the runtime.
-        if function.dpi_import().is_some() {
-            effects.push(ExecutionEffect::Terminate);
+    let Some(callee) = ir.funcs.get(function) else {
+        push_unknown_callee_effects(effects);
+        return;
+    };
+    match &mut visited_calls.callees {
+        Callees::Summarized(summaries) => match summaries.of_call(function) {
+            Some(summary) => effects.extend(summary),
+            None => push_unknown_callee_effects(effects),
+        },
+        Callees::Recorded { callees, .. } => callees.push(function),
+        Callees::Entered { functions, .. } => {
+            if functions.insert(function) {
+                // Imported native code cannot suspend beneath its foreign
+                // frame, but it can synchronously request finish or kill
+                // through the runtime.
+                if callee.dpi_import().is_some() {
+                    effects.push(ExecutionEffect::Terminate);
+                }
+                collect_effects(ir, &callee.body, effects, visited_calls);
+                collect_export_effects(ir, function, effects, visited_calls);
+            }
         }
-        collect_effects(ir, &function.body, effects, visited_calls);
-        collect_export_effects(ir, index, effects, visited_calls);
-    } else {
-        effects.push(ExecutionEffect::Suspend);
-        effects.push(ExecutionEffect::Terminate);
-        effects.push(ExecutionEffect::Disable);
     }
+}
+
+fn push_unknown_callee_effects(effects: &mut EffectSet) {
+    effects.push(ExecutionEffect::Suspend);
+    effects.push(ExecutionEffect::Terminate);
+    effects.push(ExecutionEffect::Disable);
 }
 
 fn collect_statement_expression_effects(
@@ -1722,17 +1753,6 @@ fn collect_native_access_effects(
     let Some((index, access)) = ir.native_access(name) else {
         return;
     };
-    // Storage recipes occupy a disjoint recursion namespace after procedures
-    // and allocation recipes. Malformed cycles cannot recurse indefinitely.
-    let Some(key) = ir
-        .funcs
-        .len()
-        .checked_add(ir.class_allocations.len())
-        .and_then(|base| base.checked_add(index))
-    else {
-        effects.push(ExecutionEffect::RuntimeService);
-        return;
-    };
     // A null virtual-interface receiver is a fatal run-time error.
     if matches!(
         access.kind,
@@ -1741,9 +1761,9 @@ fn collect_native_access_effects(
     ) {
         effects.push(ExecutionEffect::Terminate);
     }
-    if visited_calls.insert(key) {
+    // Malformed cycles cannot recurse indefinitely.
+    if visited_calls.accesses.insert(index) {
         collect_chandle_effects(ir, &access.receiver, effects, visited_calls);
-        visited_calls.remove(&key);
     }
 }
 
@@ -2853,13 +2873,9 @@ fn collect_chandle_effects(
             // observable runtime operation even when its handle is discarded.
             effects.push(ExecutionEffect::RuntimeService);
             if let Some(allocation) = ir.class_allocations.get(*index) {
-                // Recipe identities use a disjoint namespace from procedures.
                 // A recursive constructor call must not recurse in this analysis.
-                if let Some(key) = ir.funcs.len().checked_add(*index) {
-                    if visited_calls.insert(key) {
-                        collect_effects(ir, &allocation.body, effects, visited_calls);
-                        visited_calls.remove(&key);
-                    }
+                if visited_calls.allocations.insert(*index) {
+                    collect_effects(ir, &allocation.body, effects, visited_calls);
                 }
             }
         }
@@ -3137,7 +3153,7 @@ mod tests {
                 &model,
                 &expression,
                 &mut effects,
-                &mut CallVisits::default(),
+                &mut CallVisits::summarized(&EffectSummaries::new(&model)),
             );
             assert!(effects
                 .into_vec()
@@ -3440,7 +3456,7 @@ mod tests {
             &ir,
             &expression,
             &mut expression_effects,
-            &mut CallVisits::default(),
+            &mut CallVisits::summarized(&EffectSummaries::new(&ir)),
         );
         let expression_effects = expression_effects.into_vec();
         assert!(expression_effects.contains(&ExecutionEffect::Suspend));
@@ -3555,7 +3571,9 @@ mod tests {
                 )))],
             ));
             assert_eq!(
-                effects_for_function(&ir, 1).contains(&ExecutionEffect::Terminate),
+                EffectSummaries::new(&ir)
+                    .of_running(1)
+                    .contains(ExecutionEffect::Terminate),
                 stops
             );
         }
@@ -3790,7 +3808,11 @@ mod tests {
             resume: 0,
             region: ScheduleRegion::Active,
         };
-        model.processes[0].effects = effects_for_blocks(&model.ir, &model.processes[0].blocks);
+        model.processes[0].effects = effects_for_blocks(
+            &model.ir,
+            &EffectSummaries::new(&model.ir),
+            &model.processes[0].blocks,
+        );
 
         assert!(model
             .validate()

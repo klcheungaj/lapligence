@@ -78,18 +78,9 @@ pub(in crate::sim::emit_c) fn redrive_function(index: usize) -> String {
 /// so the instances of one module share one body through the same records
 /// (`model::sharing`); a function no body replaced ignores it.
 pub(in crate::sim::emit_c) fn redrive_sources<'m>(
-    model: &'m IrModel,
-    constants: &super::super::super::constants::PackedConstants,
-    backend: crate::sim::value_backend::ValueBackend,
+    ctx: &RCtx<'m>,
 ) -> Result<Vec<(String, String, &'m IrRedrive)>, String> {
-    let ctx = RCtx {
-        value_backend: backend,
-        model,
-        func: None,
-        sampled: false,
-        activation_label: None,
-        constants: Some(constants),
-    };
+    let model = ctx.model;
     let mut sources = Vec::new();
     for (index, redrive) in model.redrives.iter().enumerate() {
         let IrRedriveAction::Evaluate(body) = &redrive.action else {
@@ -101,7 +92,7 @@ pub(in crate::sim::emit_c) fn redrive_sources<'m>(
         // A plain function like the static initializers: a driver's
         // statements never wait. Temporaries live in a block that closes
         // before `_llg_return`.
-        let mut frame = Frame::new(&ctx);
+        let mut frame = Frame::new(ctx);
         frame.line("(void)context;");
         frame.line("{");
         frame.statements(body)?;

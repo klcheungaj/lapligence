@@ -9,6 +9,7 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model,
+        effects: execution.analysis().effects(),
         func: None,
         sampled: false,
         activation_label: None,

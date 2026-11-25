@@ -22,7 +22,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::sim::ir::{IrModel, VirtualDispatch};
 
 use super::analysis::strongly_connected_components;
-use super::{direct_call_targets, CallTarget};
+use super::{CallTarget, EffectSummaries};
 
 /// Cyclic components of the synchronous call graph.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -38,6 +38,7 @@ pub(super) struct RecursionAnalysis {
 impl RecursionAnalysis {
     pub(super) fn analyze(
         ir: &IrModel,
+        effects: &EffectSummaries,
         dispatch: &VirtualDispatch,
         suspendable: &BTreeSet<usize>,
     ) -> Self {
@@ -55,7 +56,7 @@ impl RecursionAnalysis {
         let mut targets = BTreeMap::new();
         let mut graph = BTreeMap::new();
         for &function in &nodes {
-            let calls = direct_call_targets(ir, &ir.funcs[function].body);
+            let calls = effects.call_targets(function);
             let callees = calls
                 .iter()
                 .flat_map(|target| target.functions(ir, dispatch))
@@ -83,7 +84,7 @@ impl RecursionAnalysis {
             ..Self::default()
         };
         for (function, calls) in &targets {
-            for target in calls {
+            for target in calls.iter() {
                 if !analysis.recursive_call(ir, dispatch, *function, target) {
                     continue;
                 }

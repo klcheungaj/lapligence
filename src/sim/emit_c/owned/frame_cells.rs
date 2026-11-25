@@ -141,11 +141,10 @@ impl CellEligibility {
         // borrow a caller cell after the ordinary call has returned.
         if dynamic
             || callee.dpi.is_some()
-            || crate::sim::execution::statements_have_effect(
-                ctx.model,
-                &callee.body,
-                crate::sim::execution::ExecutionEffect::Spawn,
-            )
+            || ctx
+                .effects
+                .of_running(function)
+                .contains(crate::sim::execution::ExecutionEffect::Spawn)
         {
             self.proven = false;
         }

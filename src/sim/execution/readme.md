@@ -28,6 +28,15 @@ Optimizers update every execution-owned block, recompute effects, and validate
 summaries. Resume and entry blocks may differ; bodies are never reconstructed
 from the emptied staging table.
 
+`execution/effects.rs` holds the effect summaries of the subprograms
+(`EffectSummaries`): each body is walked once, without entering callees, and the
+results are propagated over the call graph. Analysis, validation and emission
+read a callee's effects there (`ExecutionAnalysis::effects`, `RCtx::effects`)
+and never walk a callee's body; only a static initializer, which follows virtual
+dispatch exactly, does. Lowering, refresh and arena reanalysis derive the process
+effects and the analysis and then check the operations; `ExecutionModel::validate`
+also recomputes both and compares them.
+
 `execution/analysis.rs` derives the stackless coroutine set and suspendable call
 graph after each effect refresh. Processes and fork branches are depth-zero
 anchors. Static call-site depth uses the maximum incoming path; sites deeper
@@ -53,7 +62,7 @@ exported task frame its foreign code requests.
 `execution/recursion.rs` finds recursion among synchronous (non-suspending)
 subprograms so that SystemVerilog recursion depth never consumes native stack.
 Its graph has one node per non-inline subprogram with a body that is not
-suspendable; edges come from `direct_call_targets` (statement, expression,
+suspendable; edges come from `EffectSummaries::call_targets` (statement, expression,
 string/chandle, fixed-value and inline-constructor calls, without following
 callee bodies). A class virtual call contributes an edge to every method with
 the slot (`ir::VirtualDispatch`, indexed once per analysis and read by emission), a virtual-interface call to every instance implementation. Every

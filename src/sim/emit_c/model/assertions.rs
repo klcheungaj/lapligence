@@ -18,6 +18,7 @@ fn render_assertion_predicate(
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model,
+        effects: &crate::sim::execution::EffectSummaries::new(model),
         func: None,
         sampled,
         activation_label: None,
@@ -70,6 +71,7 @@ fn render_assertion_sequence(
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
         model,
+        effects: &crate::sim::execution::EffectSummaries::new(model),
         func: None,
         sampled: true,
         activation_label: None,

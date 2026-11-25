@@ -33,7 +33,8 @@ use crate::sim::ir::{IrModel, IrObjectStmt, IrPreFn, IrProcessControl, IrStmt, V
 
 use super::recursion::RecursionAnalysis;
 use super::{
-    effects_for_function, CallTarget, ExecutionEffect, ExecutionProcess, ExecutionTerminator,
+    effects::EffectMask, CallTarget, EffectSummaries, ExecutionEffect, ExecutionProcess,
+    ExecutionTerminator,
 };
 
 /// Default crossover for direct polling, matching `LLG_CO_POLL_DEPTH_MAX`.
@@ -178,6 +179,7 @@ pub struct ExecutionAnalysis {
     sites: BTreeMap<CoroutineId, BTreeMap<OperationPath, SuspensionSite>>,
     recursion: RecursionAnalysis,
     virtual_dispatch: VirtualDispatch,
+    effects: EffectSummaries,
     suspending_slots: BTreeSet<usize>,
     suspending_interface_methods: BTreeSet<(usize, usize)>,
 }
@@ -203,30 +205,31 @@ impl ExecutionAnalysis {
         options: ExecutionAnalysisOptions,
         forced_arena_callees: &BTreeSet<usize>,
     ) -> Result<Self, ExecutionAnalysisError> {
-        let function_effects = ir
-            .funcs
-            .iter()
-            .enumerate()
-            .map(|(index, function)| {
-                let mut effects = effects_for_function(ir, index);
-                // Dynamic dispatch is conservatively suspendable for tasks,
-                // but a SystemVerilog function (including a void function)
-                // cannot suspend. `$stop` there is a deferred scheduler
-                // request, so it must not turn the function or its callers
-                // into coroutines.
-                if !function.is_task {
-                    effects.retain(|effect| *effect != ExecutionEffect::Suspend);
-                }
-                effects
-            })
-            .collect::<Vec<_>>();
+        Self::analyze_summarized(
+            ir,
+            processes,
+            options,
+            forced_arena_callees,
+            EffectSummaries::new(ir),
+        )
+    }
+
+    /// [`Self::analyze_with`] when the effect summaries of `ir` are known.
+    pub(super) fn analyze_summarized(
+        ir: &IrModel,
+        processes: &[ExecutionProcess],
+        options: ExecutionAnalysisOptions,
+        forced_arena_callees: &BTreeSet<usize>,
+        effects: EffectSummaries,
+    ) -> Result<Self, ExecutionAnalysisError> {
+        let function_effects = effects.coroutine_effects(ir);
         let coroutine_functions = ir
             .funcs
             .iter()
             .enumerate()
             .filter(|(index, function)| {
                 !function.is_inline_expanded()
-                    && function_effects[*index].contains(&ExecutionEffect::Suspend)
+                    && function_effects[*index].contains(ExecutionEffect::Suspend)
             })
             .map(|(index, _)| index)
             .collect::<BTreeSet<_>>();
@@ -427,7 +430,8 @@ impl ExecutionAnalysis {
         }
 
         let virtual_dispatch = VirtualDispatch::new(ir);
-        let recursion = RecursionAnalysis::analyze(ir, &virtual_dispatch, &coroutine_functions);
+        let recursion =
+            RecursionAnalysis::analyze(ir, &effects, &virtual_dispatch, &coroutine_functions);
         Ok(Self {
             options,
             forced_arena_callees: forced_arena_callees.clone(),
@@ -437,6 +441,7 @@ impl ExecutionAnalysis {
             sites,
             recursion,
             virtual_dispatch,
+            effects,
             suspending_slots,
             suspending_interface_methods,
         })
@@ -508,6 +513,11 @@ impl ExecutionAnalysis {
     /// The virtual methods of the analyzed model.
     pub(in crate::sim) fn virtual_dispatch(&self) -> &VirtualDispatch {
         &self.virtual_dispatch
+    }
+
+    /// The effects and call targets of the analyzed model's subprograms.
+    pub(in crate::sim) fn effects(&self) -> &EffectSummaries {
+        &self.effects
     }
 
     /// Class virtual slots with an arena-dispatch helper.
@@ -584,7 +594,7 @@ struct SiteDraft {
 /// Effects a call site observes: each function's own effects, and which
 /// class virtual slots have a suspending implementation.
 struct CallEffects<'a> {
-    functions: &'a [Vec<ExecutionEffect>],
+    functions: &'a [EffectMask],
     virtual_slots: Vec<Option<usize>>,
     suspending_slots: &'a BTreeSet<usize>,
     suspending_interface_methods: &'a BTreeSet<(usize, usize)>,
@@ -597,7 +607,7 @@ impl CallEffects<'_> {
     fn dispatch_suspends(&self, function: usize) -> bool {
         match self.virtual_slots.get(function) {
             Some(Some(slot)) => self.suspending_slots.contains(slot),
-            Some(None) => self.functions[function].contains(&ExecutionEffect::Suspend),
+            Some(None) => self.functions[function].contains(ExecutionEffect::Suspend),
             None => true,
         }
     }
@@ -810,7 +820,7 @@ fn suspension_operation(
             } else if call.virtual_dispatch {
                 function_effects.dispatch_suspends(function)
             } else {
-                callee.is_none_or(|effects| effects.contains(&ExecutionEffect::Suspend))
+                callee.is_none_or(|effects| effects.contains(ExecutionEffect::Suspend))
             };
             if !suspends {
                 return None;
@@ -1076,7 +1086,8 @@ mod tests {
     fn virtual_dispatch_suspends_when_any_slot_implementation_does() {
         // f0 and f1 share slot 3 and only the override f1 suspends; f2 is
         // alone in slot 4.
-        let effects = vec![vec![], vec![ExecutionEffect::Suspend], vec![]];
+        let suspend = EffectMask::of(ExecutionEffect::Suspend);
+        let effects = [EffectMask::default(), suspend, EffectMask::default()];
         let slots = [3].into_iter().collect::<BTreeSet<_>>();
         let call_effects = CallEffects {
             functions: &effects,
@@ -1512,7 +1523,7 @@ mod tests {
             ))),
             statement_call(0, IrDepth::PROC),
         ];
-        let effects = vec![vec![ExecutionEffect::Suspend]];
+        let effects = [EffectMask::of(ExecutionEffect::Suspend)];
         let slots = BTreeSet::new();
         let function_effects = &CallEffects {
             functions: &effects,

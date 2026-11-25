@@ -5,6 +5,7 @@ fn policy(model: &IrModel, statements: &[IrStmt]) -> super::super::frame_cells::
         &RCtx {
             value_backend: crate::sim::value_backend::ValueBackend::Legacy,
             model,
+            effects: &crate::sim::execution::EffectSummaries::new(model),
             func: None,
             sampled: false,
             activation_label: None,

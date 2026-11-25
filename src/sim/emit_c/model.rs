@@ -326,6 +326,7 @@ fn render_coroutine_functions(
         let ctx = RCtx {
             value_backend: backend,
             model,
+            effects: execution.analysis().effects(),
             func: Some(function),
             sampled: false,
             activation_label: None,
@@ -384,6 +385,7 @@ fn render_recursive_functions(
         let ctx = RCtx {
             value_backend: backend,
             model,
+            effects: execution.analysis().effects(),
             func: Some(function),
             sampled: false,
             activation_label: None,
@@ -509,6 +511,7 @@ fn render_coroutine_process(
     let ctx = RCtx {
         value_backend: tables.backend,
         model,
+        effects: analysis.effects(),
         func: None,
         sampled: false,
         activation_label: None,
@@ -571,6 +574,7 @@ fn render_coroutine_branches(
     let ctx = RCtx {
         value_backend: backend,
         model,
+        effects: execution.analysis().effects(),
         func: None,
         sampled: false,
         activation_label: None,
@@ -1301,6 +1305,7 @@ fn render_model(
             let ctx = RCtx {
                 value_backend: config.backend,
                 model,
+                effects: execution.analysis().effects(),
                 func: Some(function),
                 sampled: false,
                 activation_label: None,
@@ -1318,24 +1323,21 @@ fn render_model(
         }
     }
     let net_tables = net_batches::collect(model, &coroutine_processes);
-    let mut evaluators = storage::condition_evaluator_sources(
-        &RCtx {
-            value_backend: config.backend,
-            model,
-            func: None,
-            sampled: false,
-            activation_label: None,
-            constants: Some(&constants),
-        },
-        &names,
-    )?;
+    let ctx = RCtx {
+        value_backend: config.backend,
+        model,
+        effects: execution.analysis().effects(),
+        func: None,
+        sampled: false,
+        activation_label: None,
+        constants: Some(&constants),
+    };
+    let mut evaluators = storage::condition_evaluator_sources(&ctx, &names)?;
     // Redrive functions share bodies like the condition evaluators; like
     // their processes, the ones of a generate iteration or a port link
     // differ in literal payloads only.
     let mut generated_evaluators = HashSet::new();
-    for (name, source, redrive) in
-        super::owned::model::redrive_sources(model, &constants, config.backend)?
-    {
+    for (name, source, redrive) in super::owned::model::redrive_sources(&ctx)? {
         if sharing::generate_iteration(&redrive.label) || redrive.port_link {
             generated_evaluators.insert(name.clone());
         }
@@ -1735,14 +1737,6 @@ fn render_model(
         &coroutine_functions,
         &mut out,
     );
-    let ctx = RCtx {
-        value_backend: config.backend,
-        model,
-        func: None,
-        sampled: false,
-        activation_label: None,
-        constants: Some(&constants),
-    };
     for (index, f) in model.funcs.iter().enumerate() {
         if super::owned::model::inline_template(f) {
             continue;
@@ -1833,17 +1827,11 @@ fn render_model(
         plain_functions,
     ));
     out.push_str(&sharing.bodies);
-    out.push_str(&super::owned::assertions::callbacks(
-        model,
-        &constants,
-        config.backend,
-    )?);
+    out.push_str(&super::owned::assertions::callbacks(&ctx)?);
     out.push_str(&super::owned::assertions::registrations(model)?);
     super::owned::model::storage_lifecycle(
-        model,
+        &ctx,
         execution.analysis().virtual_dispatch(),
-        &constants,
-        config.backend,
         &sharing.evaluators,
         &mut out,
     )?;

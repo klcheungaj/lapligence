@@ -2,20 +2,15 @@
 use super::*;
 
 pub(super) fn render(
-    model: &IrModel,
-    constants: &super::super::super::constants::PackedConstants,
-    backend: crate::sim::value_backend::ValueBackend,
+    base: &RCtx<'_>,
     index: usize,
     role: &str,
     sequence: &IrSequence,
 ) -> Result<String, String> {
     let ctx = RCtx {
-        value_backend: backend,
-        model,
-        func: None,
         sampled: true,
         activation_label: None,
-        constants: Some(constants),
+        ..*base
     };
     let mut frame = callback_frame(&ctx);
     bind_sequence(&mut frame, sequence);
@@ -98,7 +93,7 @@ pub(super) fn render(
             .unwrap_or_else(|| "LLG_SEQUENCE_UNBOUNDED".to_owned());
         let clock = transition
             .clock_signal
-            .map(|signal| format!("&{}", registration::signal_name(model, signal)))
+            .map(|signal| format!("&{}", registration::signal_name(base.model, signal)))
             .unwrap_or_else(|| "NULL".to_owned());
         let edge = if transition.clock_signal.is_some() {
             if transition.clock_posedge {
@@ -197,7 +192,7 @@ pub(super) fn render(
     };
     let leading_clock = sequence
         .leading_clock
-        .map(|signal| format!("&{}", registration::signal_name(model, signal)))
+        .map(|signal| format!("&{}", registration::signal_name(base.model, signal)))
         .unwrap_or_else(|| "NULL".to_owned());
     let leading_edge = if sequence.leading_posedge {
         "LLG_EV_POSEDGE"
