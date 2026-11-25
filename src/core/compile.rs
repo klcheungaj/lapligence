@@ -4017,11 +4017,12 @@ fn resolve_include_under_root(root: &OpenedPath, target: &Path) -> Option<Admitt
 }
 
 const MAX_INCLUDE_DISCOVERY_DEPTH: usize = 256;
-const MAX_MACRO_EXPANSION_DEPTH: usize = 64;
 
 struct MacroExpansionBudget {
     bytes: Cell<u64>,
     work: Cell<u64>,
+    /// An expansion nested too deeply and was left as written.
+    too_deep: Cell<bool>,
 }
 
 impl MacroExpansionBudget {
@@ -4029,6 +4030,7 @@ impl MacroExpansionBudget {
         Self {
             bytes: Cell::new(limit),
             work: Cell::new(limit),
+            too_deep: Cell::new(false),
         }
     }
 
@@ -4120,7 +4122,7 @@ fn admit_macro_includes(
     if depth > MAX_INCLUDE_DISCOVERY_DEPTH {
         return Err(StartupError::new(
             StartupErrorKind::LimitExceeded,
-            "include expansion depth exceeds the configured admission limit",
+            format!("{name}: include files nest more than {MAX_INCLUDE_DISCOVERY_DEPTH} deep"),
         ));
     }
     let including = Path::new(name);
@@ -4503,7 +4505,18 @@ fn include_target(
     macros: &MacroEnvironment,
     budget: &MacroExpansionBudget,
 ) -> Result<Option<String>, StartupError> {
+    budget.too_deep.set(false);
     let expanded = expand_macros(arguments, macros, budget)?;
+    if budget.too_deep.get() {
+        return Err(StartupError::new(
+            StartupErrorKind::LimitExceeded,
+            format!(
+                "the macros of an `include directive nest more than {} deep: {}",
+                crate::stack::MAX_NESTING_DEPTH,
+                arguments.trim()
+            ),
+        ));
+    }
     Ok(parsed_include_target(&expanded))
 }
 
@@ -4586,7 +4599,8 @@ fn expand_macro_text(
     depth: usize,
 ) -> Result<String, StartupError> {
     budget.step()?;
-    if depth > MAX_MACRO_EXPANSION_DEPTH {
+    if depth > crate::stack::MAX_NESTING_DEPTH as usize {
+        budget.too_deep.set(true);
         let mut output = String::with_capacity(text.len());
         budget.push_str(&mut output, text)?;
         return Ok(output);
