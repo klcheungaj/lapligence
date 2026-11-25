@@ -105,8 +105,16 @@ co-allocates and initializes its root frame after the process record and owns on
 arena until that record is reclaimed, including kill and teardown paths.
 A completed top-level process (static, assertion action or detached spawn) is
 retired at completion, or when its last join_none group detaches, and freed at
-the next `reap_retired_procs` boundary; it can no longer be killed, so its
-same-slot NBAs leave the cancellable owner list and commit from their queues.
+the next `reap_retired_procs` boundary. Nonblocking updates belong to no process:
+those of a completed or killed one commit. The exceptions (timed event triggers,
+and updates queued between `llg_nba_bind_begin` and `_end`: decision S09-D8) are
+bound (`bound_updates.c`): an `llg_bound_update_t`, whose first member is a fork
+group of kind `LLG_JOIN_UPDATE`, hangs in the issuer's `held_groups` until the
+update commits, and the process of a trigger control that needs one hangs there
+in a group of kind `LLG_JOIN_BOUND`. So kill, disable fork, disable and `$exit`
+reach them like held descendants, `wait fork` does not see them, and a process
+that issues none carries nothing. A bound NBA names its binding in its locator,
+the one test the commit of an ordinary update has anyway.
 Fork children are freed with their zombie groups; finals never retire.
 Creators release frame references after spawn; children release on completion,
 cancellation and teardown. Joined children may borrow live parent cells; cancel
@@ -116,8 +124,10 @@ hold live descendants keeps its handle linked (for `kill()` alone; other
 methods see it terminated) and counts in its own group's `holding`; a group
 that ends with a nonzero count moves to the parent's `held_groups` instead of
 the zombie list. Kill and `disable fork` walk live and held groups, so they
-reach descendants below finished processes (SV 9.6.3, 9.7); when the last of
-them ends, the hold is released up the tree and the records are reclaimed. Process handles retain terminal identity separately from
+reach descendants below finished processes (SV 9.6.3, 9.7); `disable` ends the
+groups of either kind whose `owner_activation` chain names its target, also in
+an activation that was left (decision S09-D9). When the last descendant ends,
+the hold is released up the tree and the records are reclaimed. Process handles retain terminal identity separately from
 coroutine storage: counted storage (process variables, by-value formals,
 container elements) retains and releases; plain handle storage (class
 properties, record leaves, non-input formals, results, fork-shared slots)

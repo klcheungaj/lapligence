@@ -29,6 +29,7 @@
 #include "scheduler/process_waits.c"
 #include "scheduler/event_waits.c"
 #include "scheduler/nonblocking.c"
+#include "scheduler/bound_updates.c"
 #include "scheduler/fixed_arrays.c"
 #include "scheduler/stochastic.c"
 #include "scheduler/reference_writes.c"

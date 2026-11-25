@@ -2913,9 +2913,8 @@ void llg_rt_run_finals(void);
 // until every live group of the current process is done (useful after join_none /
 // join_any, whose groups outlive the parent's wait). `llg_disable_fork` kills
 // all descendants of the current process, including children still pending
-// their first execution; killed children's immediate NBA lists are discarded.
-// Future updates already in the global timed NBA queue retain their persistent
-// targets.
+// their first execution. Updates they have scheduled commit, except those bound
+// to them (S09-D8): an update retains its target and value, not its process.
 
 typedef struct llg_fork_group llg_fork_group_t;
 
@@ -2956,6 +2955,12 @@ llg_proc_t* llg_fork_with_frame(const llg_co_desc_t* desc,
 llg_proc_t* llg_spawn_detached_with_frame(const llg_co_desc_t* desc,
                                           const char* name,
                                           llg_frame_t* frame);
+// The same, except that the process ends with its issuer like a descendant
+// (S09-D8) although `wait fork` does not wait for it: the process-evaluated
+// event control of a nonblocking trigger.
+llg_proc_t* llg_spawn_bound_with_frame(const llg_co_desc_t* desc,
+                                       const char* name,
+                                       llg_frame_t* frame);
 // Spawn a runtime-owned Active process that belongs to no process: no
 // parent, fork group or program origin, so `wait fork`, `disable fork` and
 // the end of the calling process or program never observe it. Callable
@@ -3032,7 +3037,7 @@ double llg_frame_read_real(const llg_frame_t* frame, size_t slot);
 void* llg_frame_read_opaque(const llg_frame_t* frame, size_t slot);
 void llg_frame_write_real(llg_frame_t* frame, size_t slot, double value);
 // Kill every descendant of the current process, including those whose parent
-// has finished (SV 9.6.3; immediate NBA lists are discarded).
+// has finished (SV 9.6.3).
 void llg_disable_fork(llg_proc_t* self);
 
 // Named block/task activation registry. Declaration and instance identities
@@ -3273,8 +3278,10 @@ int32_t llg_sequence_triggered(uint32_t endpoint);
 // copied into runtime-owned queue state, so the issuing process may finish
 // before the trigger commits.
 void llg_nba_event(llg_event_t* ev);
-// Queue a nonblocking event trigger after `ticks`; zero stays in the current
-// time slot's NBA region, while a positive delay enters the timed NBA queue.
+// Queue a timed trigger (`->> #d ev`) `ticks` from now; zero stays in the
+// current time slot's NBA region. Unlike the trigger above it ends with the
+// issuing process (S09-D8): kill, disable, disable fork and $exit drop it like
+// a descendant of the process, also after the process has finished.
 void llg_nba_event_after(llg_event_t* ev, uint64_t ticks);
 // A single named event uses inline copied storage; larger lists are heap-owned.
 // Named-event arms copy the event list before SUSPEND. Triggered returns READY
@@ -3365,7 +3372,8 @@ int32_t llg_ref_selected(const llg_ref_t* ref);
 // Register a nonblocking trigger whose source control is evaluated at issue
 // time. The copied descriptors remain live until one source matches; the
 // target event is then submitted to the ordinary NBA queue. `repeat` is zero
-// for a no-op request and otherwise the number of matches required.
+// for an immediate trigger and otherwise the number of matches required. A
+// timed trigger: it ends with the issuing process until it commits.
 void llg_nba_event_when(const llg_expr_event_spec_t* specs, int32_t n,
                         llg_event_t* target, uint64_t repeat);
 // Register a nonblocking assignment whose source control is evaluated at
@@ -3616,8 +3624,9 @@ void llg_value_leaf_forget(void* leaf);
 // Entries are released by llg_clocking_forget_signal or llg_rt_cleanup.
 void llg_rt_clocking_history_signal(sv4_t* signal);
 
-// Assignments.  llg_nba records on the current process's list and commits in
-// the NBA region; llg_ba writes immediately and notifies waiters.
+// Assignments.  llg_nba commits in the NBA region, whether or not its process
+// still exists then (see llg_nba_bind_begin); llg_ba writes immediately and
+// notifies waiters.
 // Packed write/enqueue inputs are borrowed. Retained values/masks are cloned;
 // targets must be initialized stable cells that outlive pending writes.
 void llg_nba(sv4_t* target, sv4_t value);
@@ -3681,6 +3690,10 @@ void* llg_nba_hold_new(void);
 void llg_nba_hold_open(void* held);
 void llg_nba_hold_close(void);
 void llg_nba_hold_release(void* held, uint64_t ticks);
+// The updates of this time slot queued between `begin` and `end`, where no
+// other statement runs, end with the issuing process (S09-D8).
+void llg_nba_bind_begin(void);
+void llg_nba_bind_end(void);
 // The next NBA queued writes the item at `items` of a value, found when it
 // commits rather than at the address the NBA call names: an element of `array`
 // at `indices` (fixed here), or `root`. Copies its arguments.

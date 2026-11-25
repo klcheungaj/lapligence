@@ -158,9 +158,9 @@ fn fork_join_none_then_wait_fork() {
 }
 
 /// `disable fork`: a branch records a non-blocking assignment and then waits
-/// on a long delay; the parent wakes the branch's runner, kills it with
-/// `disable fork;` before the NBA region — the recorded NBA is discarded, so
-/// the signal must remain X and the simulation must terminate cleanly.
+/// on a long delay; the parent kills it with `disable fork;` before the NBA
+/// region. The recorded update commits (S09-D8); the branch's later statement
+/// never runs.
 const DISABLE_FORK_SV: &str = r#"module tb;
     reg [7:0] a;
     reg ev;
@@ -175,6 +175,8 @@ const DISABLE_FORK_SV: &str = r#"module tb;
         @(posedge ev);
         disable fork;
         $display("after disable at t=%0t a=%0d", $time, a);
+        #1 $display("after the NBA region at t=%0t a=%0d", $time, a);
+        #20 $display("later at t=%0t a=%0d", $time, a);
         $finish;
     end
 endmodule
@@ -187,23 +189,28 @@ endmodule
 //        child eligible.  The child runs (same active pass): records NBA a<=7,
 //        writes ev=1
 //        (X->1 = posedge, wakes the parent), then waits #10.
-//        parent runs (same pass): `disable fork;` kills the child while it
-//        is suspended — llg_kill_proc frees the child's pending NBA list,
-//        so a<=7 is discarded and never committed (the child's all_procs
-//        slot is NULLed).  $display prints a=x, $finish.
+//        parent runs (same pass): `disable fork;` kills the child while it is
+//        suspended; its update stays queued. $display prints a=x.
+//   t=1  the NBA region of t=0 committed a=7.
+//   t=21 the killed child never reached its second assignment.
 //
-// Expected stdout (exactly):
+// Expected stdout (exactly, times in the 1 ps default unit):
 //   after disable at t=0 a=x
+//   after the NBA region at t=1000 a=7
+//   later at t=21000 a=7
 
 #[test]
-fn disable_fork_discards_killed_children_nbas() {
+fn disable_fork_keeps_the_updates_of_killed_children() {
     if !llg::sim::build::cmake_available() {
         eprintln!("SKIP: cmake not available");
         return;
     }
     let _guard = CWD_LOCK.lock().unwrap();
     let stdout = run_design(DISABLE_FORK_SV, "tb", "disable").expect("simulation should run");
-    assert_eq!(stdout, "after disable at t=0 a=x\n");
+    assert_eq!(
+        stdout,
+        "after disable at t=0 a=x\nafter the NBA region at t=1000 a=7\nlater at t=21000 a=7\n"
+    );
 }
 
 /// A `fork … join` inside a `for` loop: three iterations, each forking a

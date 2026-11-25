@@ -1894,6 +1894,8 @@ fn sequence_statement(statement: &IrStmt) -> bool {
                 | IrContainerStmt::RealColumnAssign { nba: true, .. }
                 | IrContainerStmt::NbaHoldOpen(_)
                 | IrContainerStmt::NbaHoldClose
+                | IrContainerStmt::NbaBindOpen
+                | IrContainerStmt::NbaBindClose
                 | IrContainerStmt::NbaHoldRelease { .. }
         ),
         IrStmt::Block(statements) => statements.iter().all(sequence_statement),

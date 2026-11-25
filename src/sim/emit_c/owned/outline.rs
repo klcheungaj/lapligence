@@ -797,6 +797,7 @@ impl Frame<'_, '_> {
         helper.storage_names = self.storage_names;
         helper.cell_eligibility = self.cell_eligibility.clone();
         helper.slots = self.slots.clone();
+        helper.nba_bound = self.nba_bound;
         helper.batch_owner = self.batch_owner.as_ref().map(|_| name.clone());
         helper.outline = Some(sink);
         // A run is no heavier than one run, so nothing inside it splits.

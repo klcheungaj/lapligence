@@ -30,8 +30,10 @@ pub(super) fn render(
     Ok(match operation {
         IrContainerStmt::Declare(_)
         | IrContainerStmt::SharedDeclare(_)
-        | IrContainerStmt::BindElement { .. } => {
-            return Err("container declarations are emitted by the frame".into())
+        | IrContainerStmt::BindElement { .. }
+        | IrContainerStmt::NbaBindOpen
+        | IrContainerStmt::NbaBindClose => {
+            return Err("container declarations and bindings are emitted by the frame".into())
         }
         IrContainerStmt::TouchContents(container) => {
             let storage = &ctx.model.containers[*container];

@@ -69,13 +69,18 @@ static void check_nba_and_scopes(void) {
     sv4_replace(&values[0], sv4_clone(&source));
     sv4_replace(&values[1], sv4_zero(65537, 0));
     llg_nba_masked(&target, source, mask, 0);
-    CHECK(proc->nba_head != NULL && g.delayed_nba_buckets == NULL);
+    CHECK(g.nba_queues[LLG_REGION_NBA].head != NULL && g.delayed_nba_buckets == NULL);
     sv4_t* signals[] = {&source, &target};
     CHECK(llg_arm_any(proc, signals, 2) == LLG_CO_ARM_SUSPEND);
     g.current = NULL;
     llg_kill_proc(proc, 0);
     reap_retired_procs();
     CHECK(g.wait_count == 0 && g.waiters == NULL);
+    // The update outlives its process and the values its scopes held.
+    CHECK(g.nba_queues[LLG_REGION_NBA].head != NULL);
+    commit_nbas(LLG_REGION_NBA);
+    CHECK(g.nba_queues[LLG_REGION_NBA].head == NULL);
+    CHECK(PROBE_BITS(target, 0) == PROBE_BITS(source, 0));
     CHECK(probe_live_values() == baseline);
     scope = llg_value_scope_begin(1);
     sv4_replace(llg_value_scope_values(scope), sv4_clone(&source));
@@ -92,7 +97,7 @@ static void check_nba_and_scopes(void) {
     CHECK(probe_live_values() == 0);
 }
 
-static void check_nba_fifo_and_cancellation(void) {
+static void check_nba_fifo_after_kill(void) {
     llg_rt_init();
     g.current_region = LLG_REGION_ACTIVE;
     sv4_t target = sv4_zero(8, 0);
@@ -113,13 +118,17 @@ static void check_nba_fifo_and_cancellation(void) {
     llg_nba_after(&target, three, 1);
     g.current = NULL;
 
-    // Cancelling one issuer removes only its current-slot entries. The
-    // future write retains its independent payload and destination.
+    // Ending one issuer removes nothing: its updates commit in issue order,
+    // the future one at its time.
     llg_kill_proc(first, 0);
     reap_retired_procs();
-    CHECK(g.nba_queues[LLG_REGION_NBA].head == second->nba_head);
+    size_t queued = 0;
+    for (const llg_nba_t* n = g.nba_queues[LLG_REGION_NBA].head; n; n = n->queue_next)
+        CHECK(PROBE_BITS(n->value, 0) == ++queued);
+    CHECK(queued == 3);
     commit_nbas(LLG_REGION_NBA);
-    CHECK(PROBE_BITS(target, 0) == 2 && second->nba_head == NULL);
+    CHECK(PROBE_BITS(target, 0) == 3);
+    sv4_replace(&target, sv4_zero(8, 0));
     ++g.now;
     commit_nbas(LLG_REGION_NBA);
     CHECK(PROBE_BITS(target, 0) == 3);
@@ -563,7 +572,7 @@ int main(void) {
     check_time_and_io();
     check_value_scope_index();
     check_nba_and_scopes();
-    check_nba_fifo_and_cancellation();
+    check_nba_fifo_after_kill();
     check_narrow_selected_nbas();
     check_frames();
     check_inertial_and_force();

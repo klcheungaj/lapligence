@@ -859,6 +859,10 @@ impl<'a, 'm> Frame<'a, 'm> {
             binding.shortreal,
         );
         self.line(format!("if ({}) {{", target.valid));
+        let bound = nba && self.nba_bound;
+        if bound {
+            self.line("llg_nba_bind_begin();");
+        }
         if let Some(reference) = &target.reference {
             if nba && target.reference_scopes.is_empty() {
                 return Err(pending("nonblocking writes through reference formals"));
@@ -1041,6 +1045,9 @@ impl<'a, 'm> Frame<'a, 'm> {
                     binding.address, value.code
                 ),
             });
+        }
+        if bound {
+            self.line("llg_nba_bind_end();");
         }
         self.line("}");
         self.discard(value);

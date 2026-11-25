@@ -1148,8 +1148,9 @@ impl EmitCtx<'_, '_> {
     }
 
     /// `->> @(...) ev` whose control calls a helper with effects: like the
-    /// runtime's detached waiter, a detached process waits for the control
-    /// (armed at issue) and then queues the trigger in NBA (SV 15.5.2).
+    /// runtime's waiter, a process of its own waits for the control (armed at
+    /// issue) and then queues the trigger in NBA (SV 15.5.1). It and its
+    /// timed trigger end with the issuer (decision S09-D8).
     fn process_evaluated_event_trigger(
         &mut self,
         statement: NodeId,
@@ -1166,7 +1167,7 @@ impl EmitCtx<'_, '_> {
         let frame = self.cg.new_frame_id()?;
         let action = vec![IrStmt::NonblockingEventTrigger {
             ev: event,
-            ticks: None,
+            ticks: Some(IrDelay::Constant(0)),
         }];
         Ok(vec![self.spawn_process_evaluated_action(
             statement,
@@ -1176,6 +1177,7 @@ impl EmitCtx<'_, '_> {
             Vec::new(),
             action,
             "event_trigger",
+            IrJoinKind::Bound,
         )?])
     }
 
