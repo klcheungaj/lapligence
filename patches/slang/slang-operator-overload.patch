@@ -595,7 +595,7 @@ index 5058df7d0..f34516308 100644
      flat_hash_set<const InstanceBodySymbol*> activeInstanceBodies;
      flat_hash_set<const DefinitionSymbol*> usedIfacePorts;
 diff --git a/source/ast/Expression.cpp b/source/ast/Expression.cpp
-index 2f0389a41..13dd6c9d1 100644
+index 2f0389a41..227d61fb0 100644
 --- a/source/ast/Expression.cpp
 +++ b/source/ast/Expression.cpp
 @@ -812,7 +812,7 @@ Expression& Expression::create(Compilation& compilation, const ExpressionSyntax&
@@ -616,6 +616,49 @@ index 2f0389a41..13dd6c9d1 100644
              break;
          case SyntaxKind::AssignmentExpression:
          case SyntaxKind::AddAssignmentExpression:
+@@ -1305,25 +1305,31 @@ Expression& Expression::bindSelector(Compilation& compilation, Expression& value
+ 
+ static const SyntaxNode* findOverrideNodeSource(const HierarchyOverrideNode& node) {
+     // Try to find some concrete syntax node (defparam or bind directive) that
+-    // caused us to have this override node.
+-    if (!node.paramOverrides.empty()) {
+-        for (auto& [_, val] : node.paramOverrides) {
+-            if (val.defparam)
+-                return val.defparam;
++    // caused us to have this override node. The maps are keyed by addresses,
++    // so take the first in the source of those they hold.
++    const SyntaxNode* result = nullptr;
++    auto consider = [&](const SyntaxNode* candidate) {
++        if (candidate && (!result || candidate->sourceRange().start() <
++                                         result->sourceRange().start())) {
++            result = candidate;
+         }
+-    }
++    };
++
++    for (auto& [_, val] : node.paramOverrides)
++        consider(val.defparam);
++
++    if (result)
++        return result;
+ 
+     for (auto& [info, _] : node.binds) {
+         if (info.bindSyntax)
+             return info.bindSyntax;
+     }
+ 
+-    for (auto& [_, val] : node.childNodes) {
+-        if (auto result = findOverrideNodeSource(val))
+-            return result;
+-    }
++    for (auto& [_, val] : node.childNodes)
++        consider(findOverrideNodeSource(val));
+ 
+-    return nullptr;
++    return result;
+ }
+ 
+ Expression* Expression::tryBindInterfaceRef(const ASTContext& context,
 diff --git a/source/ast/Scope.cpp b/source/ast/Scope.cpp
 index 6545485a1..8520120ce 100644
 --- a/source/ast/Scope.cpp

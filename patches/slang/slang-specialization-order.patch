@@ -45,6 +45,57 @@ index 7777fa1ba..5577937a1 100644
      mutable SpecMap uninstantiatedSpecMap;
      mutable std::optional<const Type*> defaultSpecialization;
      mutable const ForwardingTypedefSymbol* firstForward = nullptr;
+diff --git a/source/analysis/ConstraintAnalysis.h b/source/analysis/ConstraintAnalysis.h
+index 5311513ba..25309b721 100644
+--- a/source/analysis/ConstraintAnalysis.h
++++ b/source/analysis/ConstraintAnalysis.h
+@@ -32,7 +32,6 @@ public:
+     // Outer value: one EdgeList per distinct path rooted at that symbol.
+     // Each EdgeList holds the path node for that "from" node plus its outgoing edges.
+     using EdgeList = std::pair<ValuePath, SmallVector<ValuePath>>;
+-    using MapType = flat_hash_map<const ValueSymbol*, SmallVector<EdgeList>>;
+ 
+     void addEdge(const ValuePath& from, const ValuePath& to) {
+         // Ensure the 'to' node has an entry (so DFS can start from it even
+@@ -44,8 +43,8 @@ public:
+     }
+ 
+     const EdgeList& findEdgeList(const ValuePath& node) const {
+-        if (auto it = map.find(node.rootSymbol()); it != map.end()) {
+-            for (auto& edgeList : it->second) {
++        if (auto it = indices.find(node.rootSymbol()); it != indices.end()) {
++            for (auto& edgeList : buckets[it->second]) {
+                 if (edgeList.first.overlaps(node))
+                     return edgeList;
+             }
+@@ -53,16 +52,24 @@ public:
+         SLANG_UNREACHABLE;
+     }
+ 
+-    auto allEdgeLists() const { return map | std::views::values | std::views::join; }
++    auto allEdgeLists() const { return buckets | std::views::join; }
+ 
+ private:
+-    MapType map;
++    // The buckets are in the order their symbols were first named, which
++    // decides the cycle that is reported. The map is keyed by addresses, so
++    // its own order changes between runs.
++    flat_hash_map<const ValueSymbol*, size_t> indices;
++    std::vector<SmallVector<EdgeList>> buckets;
+ 
+     SmallVector<ValuePath>& insert(const ValuePath& node) {
+         auto sym = node.rootSymbol();
+         SLANG_ASSERT(sym);
+ 
+-        auto& bucket = map[sym];
++        auto [it, inserted] = indices.try_emplace(sym, buckets.size());
++        if (inserted)
++            buckets.emplace_back();
++
++        auto& bucket = buckets[it->second];
+         for (auto& entry : bucket) {
+             if (entry.first.overlaps(node))
+                 return entry.second;
 diff --git a/source/ast/symbols/ClassSymbols.cpp b/source/ast/symbols/ClassSymbols.cpp
 index 2bb2ece39..877a8f344 100644
 --- a/source/ast/symbols/ClassSymbols.cpp
@@ -130,3 +181,28 @@ index 2bb2ece39..877a8f344 100644
          }
      }
  
+diff --git a/source/ast/symbols/SpecifySymbols.cpp b/source/ast/symbols/SpecifySymbols.cpp
+index ef1e2f5ae..1bb113a37 100644
+--- a/source/ast/symbols/SpecifySymbols.cpp
++++ b/source/ast/symbols/SpecifySymbols.cpp
+@@ -621,9 +621,18 @@ void PulseStyleSymbol::checkPreviouslyUsed(const TimingPathMap& timingPathMap) c
+     for (auto terminal : getTerminals()) {
+         if (auto symbol = terminal->getSymbolReference()) {
+             if (auto it = timingPathMap.find(symbol); it != timingPathMap.end()) {
+-                if (!it->second.empty() && !it->second.begin()->second.empty()) {
++                // The paths are in a map keyed by addresses, whose order
++                // changes between runs, so look for the first in the source.
++                const TimingPathSymbol* first = nullptr;
++                for (auto& [_, paths] : it->second) {
++                    for (auto path : paths) {
++                        if (!first || path->location < first->location)
++                            first = path;
++                    }
++                }
++
++                if (first) {
+                     SourceRange pathRange;
+-                    auto first = it->second.begin()->second.front();
+                     for (auto outputExpr : first->getOutputs()) {
+                         if (outputExpr->getSymbolReference() == symbol) {
+                             pathRange = outputExpr->sourceRange;

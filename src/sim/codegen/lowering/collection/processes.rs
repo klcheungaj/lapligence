@@ -1411,12 +1411,7 @@ impl<'a> Codegen<'a> {
                     continue;
                 }
                 let other = continuous[other];
-                if let Some(storage) = writer.writes.iter().find(|write| {
-                    other
-                        .writes
-                        .iter()
-                        .any(|candidate| self.same_storage(write, candidate))
-                }) {
+                if let Some(storage) = self.shared_storage(&writer.writes, &other.writes) {
                     return Err(located(
                         &self.source_location(writer.node),
                         format!(
@@ -1495,12 +1490,7 @@ impl<'a> Codegen<'a> {
         for driver in &continuous {
             for writer in procedural_index.overlapping(self, &driver.writes) {
                 let writer = &procedural_writers[writer];
-                if let Some(storage) = driver.writes.iter().find(|write| {
-                    writer
-                        .writes
-                        .iter()
-                        .any(|other| self.same_storage(write, other))
-                }) {
+                if let Some(storage) = self.shared_storage(&driver.writes, &writer.writes) {
                     return Err(located(
                         &self.source_location(driver.node),
                         format!(
@@ -1596,12 +1586,7 @@ impl<'a> Codegen<'a> {
                 if restricted.node == other.node {
                     continue;
                 }
-                if let Some(storage) = restricted.writes.iter().find(|write| {
-                    other
-                        .writes
-                        .iter()
-                        .any(|candidate| self.same_storage(write, candidate))
-                }) {
+                if let Some(storage) = self.shared_storage(&restricted.writes, &other.writes) {
                     return Err(located(
                         &self.source_location(restricted.node),
                         format!(
@@ -1616,6 +1601,19 @@ impl<'a> Codegen<'a> {
             }
         }
         Ok(())
+    }
+
+    /// The first of `writes` that names the same storage as one of `others`,
+    /// in the order of the storage keys.
+    fn shared_storage<'w>(
+        &self,
+        writes: &'w HashSet<IrDependency>,
+        others: &HashSet<IrDependency>,
+    ) -> Option<&'w IrDependency> {
+        writes
+            .iter()
+            .filter(|write| others.iter().any(|other| self.same_storage(write, other)))
+            .min_by_key(|write| self.dependency_sort_key(write))
     }
 
     fn function_has_value_return(&self, root: NodeId) -> bool {
@@ -1847,12 +1845,7 @@ impl<'a> Codegen<'a> {
             for (target, writes) in self.subroutine_body_writes(subroutine, body) {
                 for driver in index.overlapping(self, &writes) {
                     let driver = continuous[driver];
-                    let Some(storage) = writes.iter().find(|write| {
-                        driver
-                            .writes
-                            .iter()
-                            .any(|driven| self.same_storage(write, driven))
-                    }) else {
+                    let Some(storage) = self.shared_storage(&writes, &driver.writes) else {
                         continue;
                     };
                     return Err(located(

@@ -155,3 +155,38 @@ fn generated_sources_are_repeatable_across_processes() {
         }
     }
 }
+
+/// Rejected fixtures whose diagnostics once followed the addresses of a
+/// frontend map or the order of a hash set, which change between processes.
+const REJECTED: [&str; 2] = [
+    "feature_completion/rtl_102/neg_driver_order.sv",
+    "feature_completion/rtl_102/neg_writer_order.sv",
+];
+
+#[test]
+fn diagnostics_are_repeatable_across_processes() {
+    let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sim");
+    for fixture in REJECTED {
+        let directory = sim_harness::TempDir::new("diagnostic-determinism")
+            .expect("create the directory of the rejected runs");
+        let mut expected = None;
+        for run in 1..=12 {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
+            command
+                .args(["--top", "tb", "--gen-only", "--out-dir"])
+                .arg(directory.path())
+                .arg(fixture_root.join(fixture));
+            let output = sim_harness::run_command(&mut command, Duration::from_secs(60))
+                .expect("run llg generation process");
+            assert!(!output.status.success(), "{fixture} is accepted");
+            let text = String::from_utf8_lossy(&output.stderr).into_owned()
+                + &String::from_utf8_lossy(&output.stdout);
+            assert!(text.contains("CODEGEN-002"), "{text}");
+            let first = expected.get_or_insert_with(|| text.clone());
+            assert_eq!(
+                &text, first,
+                "the output for {fixture} changed on run {run}"
+            );
+        }
+    }
+}

@@ -1,5 +1,36 @@
+diff --git a/include/slang/analysis/DriverTracker.h b/include/slang/analysis/DriverTracker.h
+index c020ce9f6..a6d3b431c 100644
+--- a/include/slang/analysis/DriverTracker.h
++++ b/include/slang/analysis/DriverTracker.h
+@@ -9,6 +9,7 @@
+ 
+ #include "slang/util/ConcurrentMap.h"
+ #include "slang/util/IntervalMap.h"
++#include <atomic>
+ 
+ namespace slang::ast {
+ 
+@@ -117,7 +118,17 @@ private:
+ 
+     concurrent_map<const ast::ValueSymbol*, SymbolDriverMap> symbolDrivers;
+     concurrent_map<const ast::InstanceBodySymbol*, InstanceDriverState> instanceMap;
+-    concurrent_map<const ast::ValueSymbol*, std::vector<const ValueDriver*>> indirectDrivers;
++
++    struct IndirectDrivers {
++        // The number of symbols noted before this one. The map is keyed by addresses,
++        // so its own order changes between runs.
++        size_t order = 0;
++        std::vector<const ValueDriver*> drivers;
++    };
++    concurrent_map<const ast::ValueSymbol*, IndirectDrivers> indirectDrivers;
++    std::atomic<size_t> numIndirectSymbols = 0;
++
++    void addIndirectDriver(const ast::ValueSymbol& symbol, const ValueDriver& driver);
+ };
+ 
+ } // namespace slang::analysis
 diff --git a/source/analysis/DriverTracker.cpp b/source/analysis/DriverTracker.cpp
-index 7f109183a..7069c377a 100644
+index 7f109183a..11d890eda 100644
 --- a/source/analysis/DriverTracker.cpp
 +++ b/source/analysis/DriverTracker.cpp
 @@ -20,6 +20,34 @@ namespace slang::analysis {
@@ -77,6 +108,84 @@ index 7f109183a..7069c377a 100644
          auto nve = context.alloc.emplace<NamedValueExpression>(
              is->as<ValueSymbol>(), SourceRange{is->location, is->location + is->name.length()});
          addDrivers(context, driverAlloc, *nve, DriverKind::Continuous, flags, scope->asSymbol());
+@@ -133,14 +183,22 @@ void DriverTracker::noteNonCanonicalInstance(AnalysisContext& context, DriverAll
+ 
+ void DriverTracker::propagateIndirectDrivers(AnalysisContext& context, DriverAlloc& driverAlloc) {
+     while (true) {
+-        concurrent_map<const ValueSymbol*, std::vector<const ValueDriver*>> localCopy;
++        concurrent_map<const ValueSymbol*, IndirectDrivers> localCopy;
+         std::swap(indirectDrivers, localCopy);
+         if (localCopy.empty())
+             break;
+ 
+-        localCopy.cvisit_all([&](auto& item) {
++        // Which of two overlapping drivers is reported depends on the order in
++        // which they are added.
++        std::vector<std::pair<const ValueSymbol*, IndirectDrivers>> ordered;
++        ordered.reserve(localCopy.size());
++        localCopy.visit_all(
++            [&](auto& item) { ordered.emplace_back(item.first, std::move(item.second)); });
++        std::ranges::sort(ordered, {}, [](auto& item) { return item.second.order; });
++
++        for (auto& item : ordered) {
+             SmallVector<HierPortDriver> hierPortDrivers;
+-            for (auto original : item.second) {
++            for (auto original : item.second.drivers) {
+                 EvalContext evalCtx(*original->containingSymbol);
+                 original->path.expandIndirectRefs(
+                     context.alloc, evalCtx, [&](const ValuePath& path) {
+@@ -173,10 +231,20 @@ void DriverTracker::propagateIndirectDrivers(AnalysisContext& context, DriverAll
+ 
+             for (auto& hpd : hierPortDrivers)
+                 noteHierPortDriver(context, driverAlloc, hpd);
+-        });
++        }
+     }
+ }
+ 
++void DriverTracker::addIndirectDriver(const ValueSymbol& symbol, const ValueDriver& driver) {
++    indirectDrivers.try_emplace_and_visit(
++        &symbol,
++        [&](auto& item) {
++            item.second.order = numIndirectSymbols++;
++            item.second.drivers.push_back(&driver);
++        },
++        [&](auto& item) { item.second.drivers.push_back(&driver); });
++}
++
+ void DriverTracker::addDrivers(AnalysisContext& context, DriverAlloc& driverAlloc,
+                                const Expression& expr, DriverKind driverKind,
+                                bitmask<DriverFlags> driverFlags, const Symbol& containingSymbol) {
+@@ -364,9 +432,8 @@ void DriverTracker::addDriver(AnalysisContext& context, DriverAlloc& driverAlloc
+     }
+ 
+     // Keep track of "indirect" drivers separately so we can revisit them at the end of analysis.
+-    auto indirectUpdater = [&](auto& item) { item.second.push_back(&driver); };
+     if (symbol.kind == SymbolKind::ModportPort) {
+-        indirectDrivers.try_emplace_and_visit(&symbol, indirectUpdater, indirectUpdater);
++        addIndirectDriver(symbol, driver);
+ 
+         // We don't do overlap detection for modports but we will still track them for downstream
+         // users to query later.
+@@ -375,7 +442,7 @@ void DriverTracker::addDriver(AnalysisContext& context, DriverAlloc& driverAlloc
+     }
+ 
+     if (symbol.isConnectedToRefPort()) {
+-        indirectDrivers.try_emplace_and_visit(&symbol, indirectUpdater, indirectUpdater);
++        addIndirectDriver(symbol, driver);
+ 
+         if (!driver.flags.has(DriverFlags::FromSideEffect)) {
+             // Ref port drivers are side effects that need to be applied to
+@@ -693,8 +760,7 @@ void DriverTracker::applyInstanceSideEffect(AnalysisContext& context, DriverAllo
+         if (auto newTarget = instance.body.find(oldTarget.name)) {
+             auto& valueSym = newTarget->as<ValueSymbol>();
+             auto driver = newDriver(valueSym);
+-            auto updater = [&](auto& item) { item.second.push_back(driver); };
+-            indirectDrivers.try_emplace_and_visit(&valueSym, updater, updater);
++            addIndirectDriver(valueSym, *driver);
+         }
+     }
+ }
 diff --git a/source/ast/expressions/MiscExpressions.cpp b/source/ast/expressions/MiscExpressions.cpp
 index 1feab96e6..85b7df835 100644
 --- a/source/ast/expressions/MiscExpressions.cpp
