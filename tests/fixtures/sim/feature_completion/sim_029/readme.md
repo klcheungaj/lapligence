@@ -63,3 +63,14 @@ value is logically true then the second operand shall not be evaluated." 11.4.11
 expression and the second expression shall be evaluated". A null receiver in a
 skipped operand is never read. `neg_randomize_in_wait` stays rejected: a wait would
 run the call at every wake.
+
+## Value uses (`randomize_values`)
+
+A `randomize()` call, with or without inline constraints, is an operand of any
+expression a statement evaluates: operators, conditions, loop headers, case
+selectors and items, arguments, returns, selectors, patterns, delays and
+assertions. 18.6.1 L30402 of `SystemVerilog-1800-2009.txt`: "The
+randomize() method returns 1 if it successfully sets all the random variables
+and objects to valid". The call runs where the
+expression reaches it: `d.a + d.randomize()` adds the value `a` had before.
+Industry-standard output is identical.

@@ -533,35 +533,24 @@ impl Codegen<'_> {
     }
 
     /// Value-position randomize or mode query; `None` for any other node.
-    /// A randomize call runs in the enclosing statement's prelude, unless
-    /// its evaluation depends on other operands or repeats: it then stays
-    /// in the expression as a statement sequence, which the emitter evaluates
-    /// in place, so a short-circuited operand never runs (11.3.5) and a loop
-    /// condition runs at every test.
+    /// A randomize call stays in the expression as a statement sequence, which
+    /// the emitter evaluates in place: a short-circuited operand never runs
+    /// (11.3.5), a loop condition runs at every test, and an operand before
+    /// the call reads the values the call has not changed yet.
     pub(super) fn lower_random_value(
         &mut self,
         path: &str,
         node: NodeId,
     ) -> Result<Option<IrExpr>, String> {
         if self.db.randomize_call(node).is_some() {
-            let hoisted = match self.rand_prelude.as_ref().map(|(root, _)| *root) {
-                Some(root) => !self.in_conditional_operand(node, root),
-                None if self.in_loop_header(node) => false,
-                None => {
-                    return Err(self.rand_error(
-                        node,
-                        path,
-                        "a randomize call used as a value is supported only in an assignment, a variable declaration, a return, an if condition, a loop condition, an immediate assertion or a system-task argument",
-                    ))
-                }
-            };
-            let (statements, value) = self.lower_randomize(path, node)?;
-            if hoisted {
-                if let Some((_, prelude)) = self.rand_prelude.as_mut() {
-                    prelude.extend(statements);
-                }
-                return Ok(Some(value));
+            if !self.evaluates_in_place(node) {
+                return Err(self.rand_error(
+                    node,
+                    path,
+                    "a randomize call used as a value is not supported in a wait condition, an event control or outside procedural code",
+                ));
             }
+            let (statements, value) = self.lower_randomize(path, node)?;
             let (width, signed) = (value.width, value.signed);
             return Ok(Some(IrExpr::new(
                 IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
@@ -613,6 +602,27 @@ impl Codegen<'_> {
             current = self.node(parent).parent;
         }
         false
+    }
+
+    /// Whether the statement around `node` evaluates it where it executes, as
+    /// opposed to a wait, which evaluates its condition at every wake, and to
+    /// an expression outside procedural code.
+    fn evaluates_in_place(&self, node: NodeId) -> bool {
+        let mut child = node;
+        while let Some(parent) = self.node(child).parent {
+            match self.kind(parent) {
+                NodeKind::Expr(_)
+                | NodeKind::FuncCall { .. }
+                | NodeKind::MethodCall { .. }
+                | NodeKind::SysCall { .. } => child = parent,
+                NodeKind::Stmt(StmtKind::Wait { .. } | StmtKind::EventControl { .. })
+                | NodeKind::ContAssign { .. }
+                | NodeKind::Port { .. }
+                | NodeKind::Gate { .. } => return false,
+                _ => return true,
+            }
+        }
+        true
     }
 
     /// Whether the nearest statement around `node` is the header of a loop

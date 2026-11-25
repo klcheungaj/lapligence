@@ -2596,10 +2596,6 @@ struct Codegen<'a> {
     constraint_mode_bits: HashMap<NodeId, randomization::ModeBit>,
     /// Set while lowering the constraints of one randomize problem.
     rand_lowering: Option<randomization::RandLowering>,
-    /// Statements running value-form randomize calls before the statement
-    /// being lowered (its node), open only for statements that evaluate the
-    /// call exactly once.
-    rand_prelude: Option<(NodeId, Vec<IrStmt>)>,
 }
 
 /// Runtime-visible bindings for one array-method `with` expression. A zero
@@ -2958,7 +2954,6 @@ impl<'a> Codegen<'a> {
             randc_states: HashMap::new(),
             constraint_mode_bits: HashMap::new(),
             rand_lowering: None,
-            rand_prelude: None,
         }
     }
 

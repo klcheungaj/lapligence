@@ -161,11 +161,20 @@ fn unsupported_random_variables_are_located_errors() {
 }
 
 #[test]
+fn randomize_calls_are_values_in_every_expression() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_029/randomize_values.out");
+    sim_cli::run_case_checked_matrix(SUITE, "randomize_values", &[], &|label, output| {
+        assert_eq!(output.status.code(), Some(0), "{label}: {output:?}");
+        assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
+    });
+}
+
+#[test]
 fn value_randomize_outside_one_evaluation_is_a_located_error() {
     sim_cli::reject_case(
         SUITE,
         "neg_randomize_in_wait",
-        "a randomize call used as a value is supported only in",
+        "a randomize call used as a value is not supported in a wait condition",
     );
     names_source_position("neg_randomize_in_wait");
 }
