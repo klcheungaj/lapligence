@@ -1927,15 +1927,13 @@ fn validate_model_abi_for(
 ) -> Result<(), BuildError> {
     for (name, source) in extra {
         let mut abi = None;
-        for line in source.lines() {
-            if let Some(value) = line.strip_prefix("#define LLG_MODEL_VALUE_ABI ") {
-                let value = value.trim();
-                let parsed = value.parse::<u32>().ok();
-                if parsed != Some(config.backend.abi()) || abi.is_some() {
-                    return Err(BuildError::InvalidModelAbi(value.to_owned()));
-                }
-                abi = parsed;
+        for value in lines_after(source, "#define LLG_MODEL_VALUE_ABI ") {
+            let value = value.trim();
+            let parsed = value.parse::<u32>().ok();
+            if parsed != Some(config.backend.abi()) || abi.is_some() {
+                return Err(BuildError::InvalidModelAbi(value.to_owned()));
             }
+            abi = parsed;
         }
         for (guard, expected) in [
             (
@@ -1947,10 +1945,7 @@ fn validate_model_abi_for(
                 config.kernel.selector(),
             ),
         ] {
-            let values = source
-                .lines()
-                .filter_map(|line| line.strip_prefix(guard))
-                .collect::<Vec<_>>();
+            let values = lines_after(source, guard).collect::<Vec<_>>();
             if values.len() > 1
                 || values
                     .first()
@@ -1980,11 +1975,20 @@ fn validate_model_abi_for(
     Ok(())
 }
 
+/// What follows `start` on the lines of `text` that begin with it. The search
+/// is for `start`, not for lines: few lines of a model are looked for.
+fn lines_after<'t>(text: &'t str, start: &'t str) -> impl Iterator<Item = &'t str> {
+    text.match_indices(start)
+        .filter(|(at, _)| *at == 0 || text.as_bytes()[at - 1] == b'\n')
+        .filter_map(move |(at, _)| text[at + start.len()..].split('\n').next())
+        .map(|rest| rest.strip_suffix('\r').unwrap_or(rest))
+}
+
 fn wave_support(extra: &[(&str, &str)]) -> WaveSupport {
     let defines = |wanted: &str| {
         extra
             .iter()
-            .any(|(_, text)| text.lines().any(|line| line.trim_end() == wanted))
+            .any(|(_, text)| lines_after(text, wanted).any(|rest| rest.trim_end().is_empty()))
     };
     if !defines("#define LLG_WAVEFORM 1") {
         WaveSupport::None

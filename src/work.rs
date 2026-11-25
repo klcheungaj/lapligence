@@ -12,6 +12,8 @@ pub(crate) enum Work {
     OutlineWeighing,
     /// Scopes passed on the way outwards from a node.
     EnclosingSteps,
+    /// Nodes of lazy operands passed for a selector that a call computes.
+    SelectorNodes,
     /// Subroutine bodies entered to follow the calls in them.
     CallBodies,
     /// Nodes of fork branches passed for what they name outside.

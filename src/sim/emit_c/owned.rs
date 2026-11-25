@@ -1503,17 +1503,13 @@ impl<'a, 'm> Frame<'a, 'm> {
 
     fn resolve_declarations(&self) -> Result<String, String> {
         const PREFIX: &str = "__llg_declaration_";
+        const SUFFIX: &str = "__";
         let mut output = String::with_capacity(self.code.len());
-        let mut rest = self.code.as_str();
-        while let Some(start) = rest.find(PREFIX) {
-            output.push_str(&rest[..start]);
-            let suffix = &rest[start + PREFIX.len()..];
-            let end = suffix
-                .find("__")
-                .ok_or_else(|| "unterminated deferred coroutine declaration".to_owned())?;
-            let index = suffix[..end]
-                .parse::<usize>()
-                .map_err(|_| "invalid deferred coroutine declaration".to_owned())?;
+        let mut copied = 0;
+        for (start, _) in self.code.match_indices(PREFIX) {
+            output.push_str(&self.code[copied..start]);
+            let (index, end) = marker_index(&self.code, start + PREFIX.len(), SUFFIX)
+                .ok_or_else(|| "invalid deferred coroutine declaration".to_owned())?;
             let record = self
                 .declarations
                 .get(index)
@@ -1530,9 +1526,9 @@ impl<'a, 'm> Frame<'a, 'm> {
             } else {
                 output.push_str(&declaration(&record.ty, &record.name));
             }
-            rest = &suffix[end + 2..];
+            copied = end;
         }
-        output.push_str(rest);
+        output.push_str(&self.code[copied..]);
         Ok(output)
     }
 
@@ -1547,16 +1543,11 @@ impl<'a, 'm> Frame<'a, 'm> {
             .collect::<HashSet<_>>();
         let uses = identifier_counts(code, &locals);
         let mut output = String::with_capacity(code.len());
-        let mut rest = code;
-        while let Some(start) = rest.find(PREFIX) {
-            output.push_str(&rest[..start]);
-            let suffix = &rest[start + PREFIX.len()..];
-            let end = suffix
-                .find(SUFFIX)
-                .ok_or_else(|| "unterminated deferred coroutine local use".to_owned())?;
-            let index = suffix[..end]
-                .parse::<usize>()
-                .map_err(|_| "invalid deferred coroutine local use".to_owned())?;
+        let mut copied = 0;
+        for (start, _) in code.match_indices(PREFIX) {
+            output.push_str(&code[copied..start]);
+            let (index, end) = marker_index(code, start + PREFIX.len(), SUFFIX)
+                .ok_or_else(|| "invalid deferred coroutine local use".to_owned())?;
             let record = self
                 .declarations
                 .get(index)
@@ -1568,11 +1559,21 @@ impl<'a, 'm> Frame<'a, 'm> {
                 output.push_str(&record.name);
                 output.push_str(");");
             }
-            rest = &suffix[end + SUFFIX.len()..];
+            copied = end;
         }
-        output.push_str(rest);
+        output.push_str(&code[copied..]);
         Ok(output)
     }
+}
+
+/// The index at `start` of a marker that `suffix` ends, and where it ends.
+fn marker_index(code: &str, start: usize, suffix: &str) -> Option<(usize, usize)> {
+    let digits = code[start..].bytes().take_while(u8::is_ascii_digit).count();
+    let end = start + digits;
+    let index = code[start..end].parse().ok()?;
+    code[end..]
+        .starts_with(suffix)
+        .then(|| (index, end + suffix.len()))
 }
 
 const NATIVE_USE_MARKER: &str = "/*__llg_native_use ";
@@ -1734,10 +1735,12 @@ fn is_runtime_suspension(text: &str) -> bool {
         "llg_mailbox_put_value",
         "llg_rt_stop_with_level",
     ];
-    text.match_indices('(').any(|(open, _)| {
-        SUSPENSIONS
-            .iter()
-            .any(|suspension| text[..open].ends_with(suspension))
+    let bytes = text.as_bytes();
+    bytes.iter().enumerate().any(|(open, byte)| {
+        *byte == b'('
+            && SUSPENSIONS
+                .iter()
+                .any(|suspension| bytes[..open].ends_with(suspension.as_bytes()))
     })
 }
 

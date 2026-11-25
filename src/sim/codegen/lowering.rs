@@ -2012,6 +2012,9 @@ struct Codegen<'a> {
     /// Whether the statement being staged left a called selector to the lazy
     /// operand holding it.
     deferred_selectors: std::cell::Cell<bool>,
+    /// While the elements of a lazy operand that names no nested array selected
+    /// by a call are collected.
+    no_called_selectors: std::cell::Cell<bool>,
     /// Values evaluated before their statement's nested array is bound, by
     /// source node (`hoist_assignment_source`).
     hoisted_values: HashMap<NodeId, HoistedValue>,
@@ -2752,6 +2755,7 @@ impl<'a> Codegen<'a> {
             staged_nested_elements: HashMap::new(),
             inner_stagings: Vec::new(),
             deferred_selectors: std::cell::Cell::new(false),
+            no_called_selectors: std::cell::Cell::new(false),
             hoisted_values: HashMap::new(),
             hoisted_source: None,
             element_staging_possible: false,

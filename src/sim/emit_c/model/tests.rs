@@ -640,7 +640,7 @@ fn owned_drop_helpers_are_referenced_by_a_model_that_needs_none() {
     let model = IrModel::new("plain".to_string(), 1).unwrap();
     let execution = ExecutionModel::lower(model).unwrap();
     let c = render(&execution).unwrap();
-    let identifiers = identifiers_anywhere(&c).collect::<Vec<_>>();
+    let identifiers = identifiers_anywhere(&c, 1).collect::<Vec<_>>();
     let helpers = c
         .lines()
         .filter_map(|line| line.strip_prefix("static void "))

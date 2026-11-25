@@ -208,24 +208,130 @@ fn spans<const SKIP_COMMENTS: bool>(
     std::iter::from_fn(move || next_identifier::<SKIP_COMMENTS>(bytes, &mut index))
 }
 
-/// The identifiers of `text` wherever they stand, literals and comments
-/// included.
-pub(super) fn identifiers_anywhere(text: &str) -> impl Iterator<Item = &str> {
-    let bytes = text.as_bytes();
-    let mut at = 0;
-    std::iter::from_fn(move || loop {
-        let start = at
-            + bytes[at..]
-                .iter()
-                .position(|byte| is_c_identifier_byte(*byte))?;
-        at = bytes[start..]
-            .iter()
-            .position(|byte| !is_c_identifier_byte(*byte))
-            .map_or(bytes.len(), |length| start + length);
-        if BYTE_CLASSES[usize::from(bytes[start])] == ByteClass::Name {
-            return Some(&text[start..at]);
+/// The identifiers of `text` of at least `shortest` bytes wherever they stand,
+/// literals and comments included.
+pub(super) fn identifiers_anywhere(text: &str, shortest: usize) -> impl Iterator<Item = &str> {
+    let mut names = LongNames::new(shortest);
+    std::iter::from_fn(move || names.next::<false>(text.as_bytes()).map(|span| &text[span]))
+}
+
+/// Finds the identifiers of at least a certain length. Such a name covers one
+/// of any that many consecutive bytes, so most of the text is not read.
+struct LongNames {
+    shortest: usize,
+    /// No identifier that reaches past this byte starts before it.
+    at: usize,
+    /// The first literal or comment that ends behind the last name found.
+    opaque: std::ops::Range<usize>,
+}
+
+impl LongNames {
+    fn new(shortest: usize) -> Self {
+        Self {
+            shortest: shortest.max(1),
+            at: 0,
+            opaque: 0..0,
         }
-    })
+    }
+
+    /// The span of the next name in `bytes`, with `CODE_ONLY` of those outside
+    /// literals and comments. Only bytes behind the last name are read, so a
+    /// caller may rewrite the others between calls.
+    fn next<const CODE_ONLY: bool>(&mut self, bytes: &[u8]) -> Option<std::ops::Range<usize>> {
+        loop {
+            let probe = self.at + self.shortest - 1;
+            if !is_c_identifier_byte(*bytes.get(probe)?) {
+                self.at = probe + 1;
+                continue;
+            }
+            let start = bytes[self.at..probe]
+                .iter()
+                .rposition(|byte| !is_c_identifier_byte(*byte))
+                .map_or(self.at, |before| self.at + before + 1);
+            let end = bytes[probe..]
+                .iter()
+                .position(|byte| !is_c_identifier_byte(*byte))
+                .map_or(bytes.len(), |length| probe + length);
+            self.at = end + 1;
+            if end - start < self.shortest
+                || BYTE_CLASSES[usize::from(bytes[start])] != ByteClass::Name
+            {
+                continue;
+            }
+            if CODE_ONLY {
+                while self.opaque.end <= start && self.opaque.start < bytes.len() {
+                    self.opaque = next_opaque(bytes, self.opaque.end);
+                }
+                if self.opaque.start < end {
+                    continue;
+                }
+            }
+            return Some(start..end);
+        }
+    }
+}
+
+/// The first literal or comment of `bytes` at or after `at`; behind the last
+/// one an empty span at the end.
+fn next_opaque(bytes: &[u8], mut at: usize) -> std::ops::Range<usize> {
+    while let Some(start) = next_opening(bytes, at) {
+        match opaque_end(bytes, start) {
+            Some(end) => return start..end,
+            None => at = start + 1,
+        }
+    }
+    bytes.len()..bytes.len()
+}
+
+/// The end of the literal or comment that the quote or slash at `start` opens.
+fn opaque_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let quote = bytes[start];
+    if quote != b'/' {
+        let mut at = start + 1;
+        while bytes.get(at).is_some_and(|next| *next != quote) {
+            at += if bytes[at] == b'\\' { 2 } else { 1 };
+        }
+        return Some((at + 1).min(bytes.len()));
+    }
+    match bytes.get(start + 1)? {
+        b'*' => Some(
+            bytes[start + 2..]
+                .windows(2)
+                .position(|window| window == b"*/")
+                .map_or(bytes.len(), |offset| start + 2 + offset + 2),
+        ),
+        b'/' => Some(
+            bytes[start..]
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map_or(bytes.len(), |offset| start + offset),
+        ),
+        _ => None,
+    }
+}
+
+/// The first quote or slash of `bytes` at or after `at`, looked for in several
+/// bytes at a time: generated code holds few.
+fn next_opening(bytes: &[u8], mut at: usize) -> Option<usize> {
+    const LOW: u64 = 0x0101_0101_0101_0101;
+    const HIGH: u64 = 0x8080_8080_8080_8080;
+    // A byte of `word` that equals `byte` becomes zero; subtracting one from
+    // it borrows from a top bit the byte itself does not have.
+    let holds = |word: u64, byte: u8| {
+        let difference = word ^ (LOW * u64::from(byte));
+        difference.wrapping_sub(LOW) & !difference & HIGH != 0
+    };
+    while let Some((word, _)) = bytes.get(at..)?.split_first_chunk() {
+        let word = u64::from_le_bytes(*word);
+        if holds(word, b'"') || holds(word, b'\'') || holds(word, b'/') {
+            break;
+        }
+        at += std::mem::size_of_val(&word);
+    }
+    bytes[at..]
+        .iter()
+        .position(|byte| matches!(byte, b'"' | b'\'' | b'/'))
+        .map(|offset| at + offset)
 }
 
 /// Whether a C identifier may hold `byte` after its first character.
@@ -336,26 +442,9 @@ fn next_identifier<const SKIP_COMMENTS: bool>(
                     return Some(start..at);
                 }
             }
-            ByteClass::Quote => {
-                at += 1;
-                while bytes.get(at).is_some_and(|next| *next != byte) {
-                    at += if bytes[at] == b'\\' { 2 } else { 1 };
-                }
-                at = (at + 1).min(bytes.len());
-            }
-            ByteClass::Slash => {
-                let comment = bytes.get(at + 1).filter(|_| SKIP_COMMENTS);
-                at = match comment {
-                    Some(b'*') => bytes[at + 2..]
-                        .windows(2)
-                        .position(|window| window == b"*/")
-                        .map_or(bytes.len(), |offset| at + 2 + offset + 2),
-                    Some(b'/') => bytes[at..]
-                        .iter()
-                        .position(|byte| *byte == b'\n')
-                        .map_or(bytes.len(), |offset| at + offset),
-                    _ => at + 1,
-                };
+            ByteClass::Slash if !SKIP_COMMENTS => at += 1,
+            ByteClass::Quote | ByteClass::Slash => {
+                at = opaque_end(bytes, at).unwrap_or(at + 1);
             }
         }
     }
@@ -398,11 +487,9 @@ pub(super) fn rewrite_identifiers_in_place(
     }
     let shortest = renamed.keys().map(String::len).min().unwrap_or(0);
     let mut bytes = text.into_bytes();
-    let (mut read, mut write, mut copied) = (0, 0, 0);
-    while let Some(span) = next_identifier::<true>(&bytes, &mut read) {
-        if span.len() < shortest {
-            continue;
-        }
+    let mut names = LongNames::new(shortest);
+    let (mut write, mut copied) = (0, 0);
+    while let Some(span) = names.next::<true>(&bytes) {
         // Identifiers are ASCII, so every span is valid UTF-8.
         let replacement = std::str::from_utf8(&bytes[span.clone()])
             .ok()
@@ -511,11 +598,12 @@ pub(super) fn bound_identifiers(
     // collide with one.
     let mut occupied = std::collections::HashSet::new();
     let mut oversized = std::collections::HashSet::new();
-    for span in identifier_spans(&source) {
+    let mut names = LongNames::new(MAX_C_IDENTIFIER_LEN);
+    while let Some(span) = names.next::<true>(source.as_bytes()) {
         let name = &source[span];
         if name.len() == MAX_C_IDENTIFIER_LEN {
             occupied.insert(name);
-        } else if name.len() > MAX_C_IDENTIFIER_LEN && !is_external(name) {
+        } else if !is_external(name) {
             oversized.insert(name);
         }
     }
@@ -864,11 +952,15 @@ mod tests {
     fn identifiers_anywhere_reads_literals_and_comments_and_drops_numbers() {
         let text = "a_1(\"in literal\", 0x1F_b); // é_c\n/* _d */e";
         assert_eq!(
-            identifiers_anywhere(text).collect::<Vec<_>>(),
+            identifiers_anywhere(text, 1).collect::<Vec<_>>(),
             ["a_1", "in", "literal", "_c", "_d", "e"]
         );
-        assert_eq!(identifiers_anywhere("12 é ").count(), 0);
-        assert_eq!(identifiers_anywhere("").count(), 0);
+        assert_eq!(
+            identifiers_anywhere(text, 3).collect::<Vec<_>>(),
+            ["a_1", "literal"]
+        );
+        assert_eq!(identifiers_anywhere("12 é ", 1).count(), 0);
+        assert_eq!(identifiers_anywhere("", 1).count(), 0);
     }
 
     #[test]

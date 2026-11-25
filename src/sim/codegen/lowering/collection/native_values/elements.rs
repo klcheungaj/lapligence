@@ -1830,11 +1830,19 @@ impl Codegen<'_> {
             }) => {
                 let lazy = operands.get(1..).unwrap_or_default().to_vec();
                 for child in children {
-                    if lazy.contains(&child) && self.names_called_selector(child) {
+                    if !lazy.contains(&child) {
+                        self.collect_staged_members(child, false, out, nested);
+                        continue;
+                    }
+                    // What an operand does not name the operands in it do not.
+                    let outer = self.no_called_selectors.get();
+                    if !outer && self.names_called_selector(child) {
                         self.deferred_selectors.set(true);
                         continue;
                     }
+                    self.no_called_selectors.set(true);
                     self.collect_staged_members(child, false, out, nested);
+                    self.no_called_selectors.set(outer);
                 }
             }
             // A member passed to an output, inout or ref formal is written
@@ -2374,6 +2382,7 @@ impl Codegen<'_> {
 
     /// Whether `node` holds a nested array selected by a call.
     fn names_called_selector(&self, node: NodeId) -> bool {
+        crate::work::count(crate::work::Work::SelectorNodes, 1);
         (self.nested_element_selection(node).is_some() && !self.side_effect_free(node))
             || self
                 .node(node)
@@ -2641,6 +2650,9 @@ impl Codegen<'_> {
     /// A queue, dynamic or associative array nested in an element of
     /// container storage (`qq[i]`, `qd[i][j]`, `sq[k]`), named whole.
     fn nested_element_selection(&self, node: NodeId) -> Option<ElementSelection> {
+        if self.model.containers.is_empty() {
+            return None;
+        }
         let nested = |element: Option<IrContainerElement>| {
             matches!(element, Some(IrContainerElement::Container { .. }))
         };
