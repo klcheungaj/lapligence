@@ -314,23 +314,6 @@ impl<'a> Codegen<'a> {
             }
             _ => (*destination, None),
         };
-        // SV 6.24.2: the one check of the types themselves.
-        let source_descriptor = self.query_descriptor(*source).cloned();
-        if source_descriptor.as_ref().is_some_and(|descriptor| {
-            matches!(
-                descriptor.shape,
-                TypeShape::FixedArray { .. } | TypeShape::Container { .. }
-            ) || matches!(
-                &descriptor.shape,
-                TypeShape::Aggregate(layout)
-                    if !matches!(
-                        layout.kind,
-                        AggregateKind::PackedStruct | AggregateKind::PackedUnion
-                    )
-            )
-        }) {
-            return Err(format!("$cast source must be a singular value in `{path}`"));
-        }
         if let Some(target_class_node) = self.class_node_for_type_expr(destination) {
             let source_is_null = matches!(
                 self.kind(*source),
@@ -340,6 +323,7 @@ impl<'a> Codegen<'a> {
                 })
             );
             if !source_is_null && self.cast_source_class(*source).is_none() {
+                self.check_singular_cast_source(path, *source)?;
                 return self.lower_failing_cast(path, *source, failure_location);
             }
             let expected = self
@@ -380,6 +364,7 @@ impl<'a> Codegen<'a> {
                         AggregateKind::PackedStruct | AggregateKind::PackedUnion
                     ) => {}
                 TypeShape::String => {
+                    self.check_singular_cast_source(path, *source)?;
                     return self.lower_string_cast(
                         path,
                         destination,
@@ -401,6 +386,7 @@ impl<'a> Codegen<'a> {
                 }
             }
         }
+        self.check_singular_cast_source(path, *source)?;
         let lhs = if self.cast_destination_has_lhs(destination) {
             Some(self.lower_lhs(path, destination)?)
         } else {
@@ -413,8 +399,8 @@ impl<'a> Codegen<'a> {
         let source_is_string =
             self.is_string_expr(path, *source) && !self.is_string_literal(*source);
         // A handle converts to no other kind of value.
-        if source_descriptor
-            .as_ref()
+        if self
+            .query_descriptor(*source)
             .is_some_and(|descriptor| matches!(descriptor.shape, TypeShape::Opaque { .. }))
         {
             return self.lower_failing_cast(path, *source, failure_location);
@@ -962,6 +948,25 @@ impl<'a> Codegen<'a> {
             false,
             None,
         ))
+    }
+
+    /// The one check `$cast` makes of the types themselves (SV 6.24.2); the
+    /// destination is checked where its kind is known.
+    fn check_singular_cast_source(&self, path: &str, source: NodeId) -> Result<(), String> {
+        let aggregate =
+            self.query_descriptor(source)
+                .is_some_and(|descriptor| match &descriptor.shape {
+                    TypeShape::FixedArray { .. } | TypeShape::Container { .. } => true,
+                    TypeShape::Aggregate(layout) => !matches!(
+                        layout.kind,
+                        AggregateKind::PackedStruct | AggregateKind::PackedUnion
+                    ),
+                    _ => false,
+                });
+        if aggregate {
+            return Err(format!("$cast source must be a singular value in `{path}`"));
+        }
+        Ok(())
     }
 
     /// The class a `$cast` source's object is an instance of, as declared.
