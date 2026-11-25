@@ -1752,10 +1752,9 @@ static LLG_OUTLYING uint32_t rts_auto_block_by_name(const rts_frame_t* frame, co
     for (uint32_t i = 0; table[i].name; ++i) {
         if (!(table[i].flags & LLG_VPI_AUTO_BLOCK)) continue;
         size_t length = strlen(table[i].name);
+        if (length <= best || strncmp(table[i].name, rest, length) != 0) continue;
         char next = rest[length];
-        if (length <= best || strncmp(table[i].name, rest, length) != 0 ||
-            (next != '\0' && next != '.' && next != '['))
-            continue;
+        if (next != '\0' && next != '.' && next != '[') continue;
         if (!frame->slots[LLG_VPI_AUTOS_FIRST + i]) continue;
         found = i;
         best = length;
