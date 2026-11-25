@@ -931,10 +931,10 @@ impl<'a> CallVisits<'a> {
 
 /// Whether a statement may run a callback of a VPI application before its
 /// process continues (`cbForce` and `cbRelease`, an error or assertion
-/// callback, the thread callbacks of a fork). The callback may end the run
-/// with `vpi_control(vpiFinish)`, and the process must not go on then
-/// (38.4, S43-D8). The value change callbacks of a plain assignment are not
-/// included: see `docs/known_issues.md`.
+/// callback, the thread callbacks of a fork, an event trigger, and the value
+/// changes an output task delivers at its check, T1-D11). The callback may end the run with
+/// `vpi_control(vpiFinish)`, and the process must not go on then (38.4,
+/// S43-D8).
 fn runs_application_callbacks(statement: &IrStmt) -> bool {
     matches!(
         statement,
@@ -945,7 +945,19 @@ fn runs_application_callbacks(statement: &IrStmt) -> bool {
             | IrStmt::Fork { .. }
             | IrStmt::CapturedFork { .. }
             | IrStmt::DisableFork
+            | IrStmt::EventTrigger { .. }
+            | IrStmt::Display { .. }
+            | IrStmt::DisplayTyped { .. }
+            | IrStmt::MonitorSet { .. }
     )
+}
+
+/// The effect of a call that checks for changes (T1-D11): a value change
+/// callback of a VPI application may end the run there.
+fn push_check_effects(ir: &IrModel, effects: &mut EffectSet) {
+    if ir.vpi_catalog {
+        effects.push(ExecutionEffect::Terminate);
+    }
 }
 
 fn collect_effects(
@@ -2311,6 +2323,7 @@ fn collect_expression_effects(
             IrSysFunc::LegacyRandom { seed, args, .. } => {
                 effects.push(ExecutionEffect::ImmediateStore);
                 effects.push(ExecutionEffect::RuntimeService);
+                push_check_effects(ir, effects);
                 if let Some(seed) = seed {
                     collect_lhs_expression_effects(ir, seed, effects, visited_calls);
                 }
@@ -2320,12 +2333,14 @@ fn collect_expression_effects(
             }
             IrSysFunc::Urandom { seed } => {
                 effects.push(ExecutionEffect::RuntimeService);
+                push_check_effects(ir, effects);
                 if let Some(seed) = seed {
                     collect_expression_effects(ir, seed, effects, visited_calls);
                 }
             }
             IrSysFunc::UrandomRange { max, min } => {
                 effects.push(ExecutionEffect::RuntimeService);
+                push_check_effects(ir, effects);
                 collect_expression_effects(ir, max, effects, visited_calls);
                 if let Some(min) = min {
                     collect_expression_effects(ir, min, effects, visited_calls);
@@ -3445,6 +3460,14 @@ mod tests {
         assert!(!terminates(fork(), false));
         assert!(terminates(IrStmt::DisableFork, true));
         assert!(!terminates(IrStmt::DisableFork, false));
+        let display = || IrStmt::Display {
+            fmt: String::new(),
+            args: Vec::new(),
+            newline: true,
+            default_radix: crate::sim::ir::IrDisplayRadix::Decimal,
+        };
+        assert!(terminates(display(), true));
+        assert!(!terminates(display(), false));
     }
 
     #[test]

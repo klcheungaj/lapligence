@@ -1295,34 +1295,6 @@ long-running turns, which needs frame maps for the running frame.
 ends; `repeat (100000) begin c = new; end` with no delay reaches its full
 peak before the first collection (`LLG_GC_STATS=1` reports `peak`).
 
-## Statements that go on to the next wait after the run ended in them
-
-**Status:** found by FIN-002 step 4 (failure matrix); narrowed by sim-defects-8
-(null mailboxes and semaphores stop at the access). The report, the exit status
-and the state the run ends in are right; statements of the same process up to its
-next wait or exit check may still run.
-
-### Symptom
-
-A value change callback of a plain assignment that calls
-`vpi_control(vpiFinish)`: the statements after the assignment run up to the
-next one that checks for the end of the run.
-
-### Cause
-
-A plain assignment has no `ExecutionEffect::Terminate` (`src/sim/execution.rs`),
-so no exit check follows it.
-
-### Intended direction
-
-Give it the effect in models with a VPI catalog. Every assignment then pays an
-exit check, so it needs instruction counts of the VPI performance rows first.
-
-### Reproduce
-
-A `cbValueChange` on `x` whose routine calls `vpi_control(vpiFinish, 0)`, and
-`initial begin x = 1; $display("went on"); end`.
-
 ## Mailbox message forms without a nested value
 
 **Status:** open (SIM-017); the two message types below are kept as explicit

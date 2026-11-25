@@ -993,6 +993,13 @@ static inline void change_check(void) {
     if (LLG_CO_UNLIKELY(g.change_count)) change_flush();
 }
 
+// A check before an output task. Nonzero when the calling process has ended
+// the run, as a callback the changes run may: the task then does nothing.
+static inline int32_t change_check_ends_run(void) {
+    change_check();
+    return LLG_CO_UNLIKELY(g.finish) && llg_rt_run_ended();
+}
+
 // Defined in free_variables.c, after the assertion engine it reads.
 static void free_sets_release(void);
 

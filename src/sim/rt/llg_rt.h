@@ -1746,6 +1746,12 @@ void llg_rt_finish_with_level(int32_t verbosity, const char* location);
 int32_t llg_rt_exiting(void);
 // llg_rt_exiting() because the run ended, not because the process did.
 int32_t llg_rt_run_ended(void);
+// The foreign code of a killed process goes on until it returns, and a
+// subroutine it calls runs to its end: put the exit of the current process off
+// for the call and take it up again. Zero when no exit is pending or the run
+// ended.
+int32_t llg_rt_exit_put_off(void);
+void llg_rt_exit_resume(int32_t exiting);
 // Deferred stop for generated functions and vpi_control(vpiStop). Reports the
 // stop now and, when called during a scheduler process turn, records a request
 // that the scheduler observes immediately after llg_co_run returns and before

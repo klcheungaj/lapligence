@@ -166,16 +166,18 @@ typedef struct llg_dpi_call {
     int32_t depth;
     uint8_t chain;
     uint8_t acked;
+    /* The exit of the calling process an export put off (llg_rt_exit_put_off). */
+    uint8_t exiting;
 } llg_dpi_call_t;
 
 /* The foreign call of an import with open-array formals, or of a context
  * import of a model with exports, runs under a guard on the thunk's C stack.
  * A fatal svdpi.h access in that foreign code (S40-D6), or the end of the run
- * in an export it called (S41-D9), abandons it: the runtime pops the innermost guard and jumps back
- * to its thunk, which restores the chain state, releases its value scopes
- * from `mark` and returns without copying anything out. The guards of one
- * native stack nest like its calls; each foreign call context keeps its own
- * guard stack (llg_dpi_context_switch). */
+ * in an export it called (S41-D9), abandons it: the runtime pops the innermost
+ * guard and jumps back to its thunk, which restores the chain state, releases
+ * its value scopes from `mark` and returns without copying anything out. The
+ * guards of one native stack nest like its calls; each foreign call context
+ * keeps its own guard stack (llg_dpi_context_switch). */
 typedef struct llg_dpi_guard {
     jmp_buf jump;
     struct llg_dpi_guard* outer;

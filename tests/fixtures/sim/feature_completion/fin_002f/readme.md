@@ -66,9 +66,9 @@ although the same task called without C in between ends them.
 A callback that a statement runs is inside that statement, so the statement after
 it does not run. Where some simulators refuse `cbDisable`, `cbAtStartOfSimTime`
 or `cbNBASynch` without a pending assignment, or run `cbRelease`, `cbError` and
-`cbStartOfThread` later, the section holds what 38.36 says. Left out: a value
-change callback of a plain assignment, after which llg goes on to the next
-statement that checks for the end of the run.
+`cbStartOfThread` later, the section holds what 38.36 says. The value change
+callback of an assignment runs at the next check (decision T1-D11), here the
+`$display`, which then does nothing.
 
 ## Stale handles
 

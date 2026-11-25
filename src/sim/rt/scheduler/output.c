@@ -63,7 +63,7 @@ static void llg_vprint(const char* fmt, va_list ap, int32_t newline) {
 }
 
 void llg_display(const char* fmt, ...) {
-    change_check();
+    if (change_check_ends_run()) return;
     va_list ap;
     va_start(ap, fmt);
     llg_vprint(fmt, ap, 1);
@@ -71,7 +71,7 @@ void llg_display(const char* fmt, ...) {
 }
 
 void llg_write(const char* fmt, ...) {
-    change_check();
+    if (change_check_ends_run()) return;
     va_list ap;
     va_start(ap, fmt);
     llg_vprint(fmt, ap, 0);
@@ -80,15 +80,13 @@ void llg_write(const char* fmt, ...) {
 
 void llg_display_typed(const char* fmt, llg_fmt_arg_t* args, int32_t n,
                        const char* scope) {
-    change_check();
-    llg_print_typed(fmt, args, n, scope, 1);
+    if (!change_check_ends_run()) llg_print_typed(fmt, args, n, scope, 1);
     llg_fmt_args_destroy(args, n);
 }
 
 void llg_write_typed(const char* fmt, llg_fmt_arg_t* args, int32_t n,
                      const char* scope) {
-    change_check();
-    llg_print_typed(fmt, args, n, scope, 0);
+    if (!change_check_ends_run()) llg_print_typed(fmt, args, n, scope, 0);
     llg_fmt_args_destroy(args, n);
 }
 

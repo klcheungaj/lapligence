@@ -207,6 +207,18 @@ int32_t llg_rt_run_ended(void) {
     return g.finish && llg_rt_exiting();
 }
 
+int32_t llg_rt_exit_put_off(void) {
+    if (!g.current || g.finish) return LLG_EXIT_NONE;
+    int32_t exiting = (int32_t)g.current->chain.exiting;
+    g.current->chain.exiting = LLG_EXIT_NONE;
+    return exiting;
+}
+
+void llg_rt_exit_resume(int32_t exiting) {
+    if (g.current && g.current->chain.exiting == LLG_EXIT_NONE)
+        g.current->chain.exiting = (uint32_t)exiting;
+}
+
 const char* llg_static_init_variable = NULL;
 static const char* llg_static_init_location = NULL;
 
