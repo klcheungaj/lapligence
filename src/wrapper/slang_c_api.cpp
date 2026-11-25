@@ -547,7 +547,7 @@ struct Capture {
   // Comment spans by buffer, sorted, of buffers that hold an invalid byte.
   std::unordered_map<uint32_t, std::vector<std::pair<size_t, size_t>>> commentSpans;
   const LlgSlangLimits& limits;
-  std::vector<std::pair<BufferID, uint64_t>> fileIds;
+  std::unordered_map<BufferID, uint64_t> fileIds;
   std::unordered_map<const Type*, uint64_t> typeIds;
   // Independently declared equivalent virtual-interface types need one owned
   // identity. Canonical pointers alone are only unique for nominal classes.
@@ -766,11 +766,8 @@ struct Capture {
   }
 
   uint64_t findFile(BufferID buffer) const {
-    for (const auto& [candidate, id] : fileIds) {
-      if (candidate == buffer)
-        return id;
-    }
-    return LLG_SLANG_INVALID_ID;
+    const auto found = fileIds.find(buffer);
+    return found == fileIds.end() ? LLG_SLANG_INVALID_ID : found->second;
   }
 
   LlgSlangSourceRange span(SourceLocation location, uint64_t length = 0) const {
@@ -12557,7 +12554,7 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
     const auto buffer = i < request.source_count
                             ? buffers[static_cast<size_t>(i)]
                             : libraryBuffers[static_cast<size_t>(i - request.source_count)];
-    capture.fileIds.emplace_back(buffer.id, i);
+    capture.fileIds.emplace(buffer.id, i);
   }
 
   // A cached include gets a new BufferID that refers to the same admitted file.
@@ -12567,7 +12564,7 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
       continue;
     const auto path = sourceManager.getFullPath(buffer).generic_string();
     if (const auto found = sourcePathIndex.find(path); found != sourcePathIndex.end())
-      capture.fileIds.emplace_back(buffer, found->second);
+      capture.fileIds.emplace(buffer, found->second);
   }
 
   // Capture source bodies before diagnostics are cached so their errors are included.
