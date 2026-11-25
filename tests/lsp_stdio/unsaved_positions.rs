@@ -376,3 +376,75 @@ fn lsp_stdio_an_edit_cancels_the_parse_of_the_older_text() {
     );
     session.client.shutdown();
 }
+
+/// An escaped identifier (IEEE 1800-2009 5.6.1) is ranged from its backslash to
+/// the white space after it, also at the places of an unsaved edit.
+#[test]
+fn lsp_stdio_escaped_identifiers_are_ranged_whole() {
+    const ESCAPED: &str = "\
+module \\esc!m (input logic \\a+b , output logic q);
+  assign q = \\a+b ;
+endmodule
+module top;
+  logic \\a+b , q;
+  \\esc!m  u (.\\a+b (\\a+b ), .q(q));
+endmodule
+";
+    let mut session = Session::ready("unsaved-escaped", &[("top.sv", ESCAPED)]);
+    session.open("top.sv", ESCAPED);
+    for text in [ESCAPED.to_owned(), format!("// A note.\n\n{ESCAPED}")] {
+        session.change("top.sv", &text);
+        let lines: Vec<&str> = text.lines().collect();
+        let spelled = |range: &Value| -> String {
+            let line = range["start"]["line"].as_u64().expect("line") as usize;
+            let start = range["start"]["character"].as_u64().expect("start") as usize;
+            let end = range["end"]["character"].as_u64().expect("end") as usize;
+            assert_eq!(range["end"]["line"], range["start"]["line"], "{range}");
+            lines[line][start..end].to_owned()
+        };
+        let mut params = session.at("top.sv", &text, "a+b ;", 0);
+        params["context"] = json!({ "includeDeclaration": true });
+        let references = session.ask("textDocument/references", params);
+        let found: Vec<String> = references
+            .as_array()
+            .expect("references")
+            .iter()
+            .map(|location| spelled(&location["range"]))
+            .collect();
+        assert_eq!(found, ["\\a+b", "\\a+b", "\\a+b"], "{references}");
+        let at = session.at("top.sv", &text, "esc!m  u", 0);
+        let definition = session.ask("textDocument/definition", at);
+        assert_eq!(spelled(&definition["range"]), "\\esc!m", "{definition}");
+        let symbols = session.ask("textDocument/documentSymbol", session.document("top.sv"));
+        let module = symbols
+            .as_array()
+            .expect("symbols")
+            .iter()
+            .find(|symbol| symbol["name"] == "esc!m")
+            .expect("the escaped module");
+        assert_eq!(spelled(&module["selectionRange"]), "\\esc!m", "{module}");
+        let explorer = session.ask("llg/moduleExplorer", json!({}));
+        let explored = |range: &Value| {
+            spelled(&json!({
+                "start": { "line": range["startLine"], "character": range["startCharacter"] },
+                "end": { "line": range["endLine"], "character": range["endCharacter"] },
+            }))
+        };
+        let instance = explorer["roots"]
+            .as_array()
+            .expect("roots")
+            .iter()
+            .flat_map(|root| root["children"].as_array().into_iter().flatten())
+            .find(|child| child["instanceName"] == "u")
+            .expect("the instance");
+        assert_eq!(explored(&instance["range"]), "\\esc!m", "{instance}");
+        let module = explorer["modules"]
+            .as_array()
+            .expect("modules")
+            .iter()
+            .find(|module| module["name"] == "esc!m")
+            .expect("the escaped module");
+        assert_eq!(explored(&module["range"]), "\\esc!m", "{module}");
+    }
+    session.client.shutdown();
+}

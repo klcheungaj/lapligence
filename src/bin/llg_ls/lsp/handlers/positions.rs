@@ -643,14 +643,16 @@ impl Places {
             // No document has that name.
             return Some(start);
         };
-        let range = features::name_range(start, name);
+        let nodes = features::tokens_of(&self.served.analysis, file);
+        let range = features::identifier_range(nodes, start, name);
         let place = self.location(Some(name), &Location::new(uri, range))?;
         Some(place.range.start)
     }
 
     /// The current line of a declaration.
     pub(super) fn line(&mut self, target: &llg::core::tokens::DeclTarget) -> Option<u32> {
-        let target = features::target_location(target);
+        let nodes = features::tokens_of(&self.served.analysis, &target.file);
+        let target = features::target_location(target, nodes);
         let location = self.location(target.name.as_deref(), &target.location)?;
         Some(location.range.start.line)
     }
