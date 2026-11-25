@@ -36,10 +36,10 @@ fn call_paths_are_rewritten_as_whole_members() {
     ]);
     assert_eq!(
         rewrite_call_paths(
-            "f(&F->u0.b1.calls.c1.x, &F->u0.b1.calls.c10, F->u0.b1.calls.c11, G->u0.b1.calls.c1);",
+            "f(&F->u0.b1.calls.c1.field, &F->u0.b1.calls.c10, F->u0.b1.calls.c11, G->u0.b1.calls.c1);",
             &flattened,
         ),
-        "f(&F->calls1.c1.x, &F->calls1.c10, F->u0.b1.calls.c11, G->u0.b1.calls.c1);"
+        "f(&F->calls1.c1.field, &F->calls1.c10, F->u0.b1.calls.c11, G->u0.b1.calls.c1);"
     );
 }
 
