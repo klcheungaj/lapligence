@@ -450,16 +450,10 @@ impl Frame<'_, '_> {
                 return self.constant_into(&format!("&{}", result.code), arm);
             }
         }
-        // Consumed at once: nothing runs between the read and the copy.
+        // A plain read stays a borrow, which `assign_arm` copies at once:
+        // nothing runs between the read and the copy.
         let value = self.operand(arm)?;
-        if value.width != 0 && value.slot.is_none() && value.fill.is_none() && same_shape {
-            self.assign(
-                &format!("&{}", result.code),
-                &format!("sv4_clone({})", value.address()),
-            );
-        } else {
-            self.assign_arm(result, value);
-        }
+        self.assign_arm(result, value);
         Ok(())
     }
 
@@ -598,8 +592,14 @@ impl Frame<'_, '_> {
         let arm = self.mux_arm(arm, result.width, result.signed);
         if result.width == 0 {
             self.line(format!("{} = {};", result.code, arm.code));
-        } else {
+        } else if arm.slot.is_some() {
             self.line(format!("sv4_move(&{}, &{});", result.code, arm.code));
+        } else {
+            // A borrowed signal, local or pooled constant keeps its value.
+            self.assign(
+                &format!("&{}", result.code),
+                &format!("sv4_clone({})", arm.address()),
+            );
         }
         self.discard(arm);
     }

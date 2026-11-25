@@ -205,6 +205,50 @@ fn a_chain_with_side_effects_calls_each_function_once() {
 }
 
 #[test]
+fn a_borrowed_alternative_is_copied_not_moved() {
+    // A fill wider than one word is a pooled constant and a signal read is
+    // the signal itself: the result takes a copy of either.
+    let model = numeric_model();
+    let constants = super::super::super::constants::PackedConstants::default();
+    let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
+        model: &model,
+        func: None,
+        sampled: false,
+        activation_label: None,
+        constants: Some(&constants),
+    };
+    let call = IrExpr::new(
+        IrExprKind::CallFn(Box::new(IrCallExpr::new(
+            0,
+            vec![IrCallArg::Val(number(1, 65))],
+            IrDepth::PROC,
+            false,
+        ))),
+        65,
+        false,
+        None,
+    );
+    let fill = IrExpr::new(IrExprKind::Fill(3), 65, false, Some(3));
+    let expr = mux(equals(0), call, mux(equals(1), read(), fill));
+    let mut frame = Frame::new(&ctx);
+    model.validate_expr(&expr, None).unwrap();
+    let value = frame.expression(&expr).unwrap();
+    frame.discard(value);
+    let body = frame.body().into_owned();
+    assert!(body.contains("do {"), "{body}");
+    for line in body.lines().filter(|line| line.contains("sv4_move(")) {
+        let source = line.rsplit(", ").next().unwrap();
+        assert!(
+            source.starts_with("&_llg_t["),
+            "moves from a borrow: {line}"
+        );
+    }
+    assert!(find_copy(&body, "&G_value").is_some(), "{body}");
+    assert!(frame.slots.iter().all(|live| !live));
+}
+
+#[test]
 fn a_known_predicate_selects_without_a_state_or_a_merge() {
     let same = IrExpr::new(
         IrExprKind::Bin {
