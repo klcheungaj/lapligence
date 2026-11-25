@@ -856,6 +856,10 @@ pub(crate) fn direct_call_targets(ir: &IrModel, statements: &[IrStmt]) -> Vec<Ca
 #[derive(Default)]
 struct CallVisits<'a> {
     visited: HashSet<usize>,
+    /// Callees visited whose bodies are still to walk, and whether a walk is
+    /// draining them.
+    pending: Vec<usize>,
+    draining: bool,
     direct: Option<BTreeSet<CallTarget>>,
     /// `Some` in the walk of a static declaration initializer, which calls
     /// only functions: a virtual dispatch follows every implementation of
@@ -1279,6 +1283,28 @@ fn collect_callee_effects(
     if effects.found() || visited_calls.direct.is_some() || !visited_calls.insert(function) {
         return;
     }
+    // A callee met while another body is walked waits for the outermost call,
+    // so the stack holds one body however long a chain of calls is.
+    visited_calls.pending.push(function);
+    if std::mem::replace(&mut visited_calls.draining, true) {
+        return;
+    }
+    while let Some(function) = visited_calls.pending.pop() {
+        if effects.found() {
+            break;
+        }
+        collect_body_effects(ir, function, effects, visited_calls);
+    }
+    visited_calls.draining = false;
+}
+
+/// The effects of running the body of `function` itself.
+fn collect_body_effects(
+    ir: &IrModel,
+    function: usize,
+    effects: &mut EffectSet,
+    visited_calls: &mut CallVisits,
+) {
     let index = function;
     if let Some(function) = ir.funcs.get(function) {
         // Imported native code cannot suspend beneath its foreign frame, but

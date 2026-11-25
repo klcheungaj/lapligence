@@ -33,6 +33,17 @@ pub(in super::super) struct CallShape {
     pub(in super::super) native_refs: Vec<usize>,
 }
 
+/// A body [`Codegen::call_shape`] is inside.
+struct CallShapeBody {
+    function: NodeId,
+    inst: NodeId,
+    /// The call that entered it.
+    call: Option<NodeId>,
+    formals: Vec<(NodeId, bool)>,
+    pending: Vec<NodeId>,
+    shape: CallShape,
+}
+
 /// Where an evaluated event expression is computed.
 ///
 /// `Callback` expressions are re-evaluated by the runtime inside the write
@@ -877,7 +888,52 @@ impl<'a> Codegen<'a> {
 
     /// How calls to a subroutine reach its body.
     pub(in super::super) fn call_shape(&self, ft: NodeId, inst: NodeId) -> CallShape {
-        self.call_shape_of(ft, inst, &mut Vec::new())
+        // The bodies on the call path are a list, not the thread's stack: a
+        // chain of calls is as long as the design makes it.
+        let mut outer = Vec::new();
+        let mut body = self.call_shape_body(ft, inst, None);
+        loop {
+            if let Some(node) = body.pending.pop() {
+                body.pending
+                    .extend(self.node(node).children.iter().rev().copied());
+                let Some((function, owner)) = self.call_shape_node(node, &mut body) else {
+                    continue;
+                };
+                // A recursive call adds nothing its outer activation does not.
+                let active = |walk: &CallShapeBody| walk.function == function;
+                if !active(&body) && !outer.iter().any(active) {
+                    let callee = self.call_shape_body(function, owner, Some(node));
+                    outer.push(std::mem::replace(&mut body, callee));
+                }
+                continue;
+            }
+            let mut shape = body.shape;
+            shape.static_refs.sort_unstable();
+            shape.static_refs.dedup();
+            shape.native_refs.sort_unstable();
+            shape.native_refs.dedup();
+            let (Some(call), Some(mut caller)) = (body.call, outer.pop()) else {
+                return shape;
+            };
+            self.forward_call_shape(call, shape, &mut caller);
+            body = caller;
+        }
+    }
+
+    fn call_shape_body(
+        &self,
+        function: NodeId,
+        inst: NodeId,
+        call: Option<NodeId>,
+    ) -> CallShapeBody {
+        CallShapeBody {
+            function,
+            inst,
+            call,
+            formals: self.func_formals(function),
+            pending: self.func_body(function).into_iter().collect(),
+            shape: CallShape::default(),
+        }
     }
 
     /// Whether a task waits on a record `ref` formal. Its wait needs a
@@ -1100,33 +1156,15 @@ impl<'a> Codegen<'a> {
         false
     }
 
-    fn call_shape_of(&self, ft: NodeId, inst: NodeId, stack: &mut Vec<NodeId>) -> CallShape {
-        let mut shape = CallShape::default();
-        // A recursive call adds nothing its outer activation does not.
-        if stack.contains(&ft) {
-            return shape;
-        }
-        let formals = self.func_formals(ft);
-        if let Some(body) = self.func_body(ft) {
-            stack.push(ft);
-            self.call_shape_walk(body, inst, &formals, stack, &mut shape);
-            stack.pop();
-        }
-        shape.static_refs.sort_unstable();
-        shape.static_refs.dedup();
-        shape.native_refs.sort_unstable();
-        shape.native_refs.dedup();
-        shape
-    }
-
-    fn call_shape_walk(
-        &self,
-        node: NodeId,
-        inst: NodeId,
-        formals: &[(NodeId, bool)],
-        stack: &mut Vec<NodeId>,
-        shape: &mut CallShape,
-    ) {
+    /// What `node` itself adds to the shape of the body it is in, or the task
+    /// it calls and that task's instance.
+    fn call_shape_node(&self, node: NodeId, body: &mut CallShapeBody) -> Option<(NodeId, NodeId)> {
+        let CallShapeBody {
+            inst,
+            formals,
+            shape,
+            ..
+        } = body;
         match self.kind(node) {
             NodeKind::Stmt(StmtKind::EventControl {
                 specs,
@@ -1159,38 +1197,34 @@ impl<'a> Codegen<'a> {
                 is_task: true,
                 callee,
                 ..
-            } => {
-                if let Ok((function, owner)) = self.resolve_callee_env(inst, name, true, *callee) {
-                    let inner = self.call_shape_of(function, owner, stack);
-                    let arguments = self.call_argument_nodes(node);
-                    // A forwarded formal is checked at this task's own calls;
-                    // any other actual is checked where this call lowers.
-                    for index in &inner.native_refs {
-                        if let Some(NodeKind::Expr(ExprKind::Ref {
-                            target: Some(target),
-                        })) = arguments.get(*index).map(|actual| self.kind(*actual))
-                        {
-                            if let Some(outer) =
-                                formals.iter().position(|(formal, _)| formal == target)
-                            {
-                                shape.native_refs.push(outer);
-                            }
-                        }
-                    }
-                    // A forwarded `ref` formal lets this task's own callers
-                    // bind the callee's specialization statically; any other
-                    // actual is followed through its descriptor.
-                    for index in inner.static_refs {
-                        if let Some(actual) = arguments.get(index) {
-                            self.note_forwarded_ref(*actual, formals, shape);
-                        }
-                    }
-                }
-            }
+            } => return self.resolve_callee_env(*inst, name, true, *callee).ok(),
             _ => {}
         }
-        for child in &self.node(node).children {
-            self.call_shape_walk(*child, inst, formals, stack, shape);
+        None
+    }
+
+    /// Add the shape of the task `call` enters to the body it is in.
+    fn forward_call_shape(&self, call: NodeId, inner: CallShape, body: &mut CallShapeBody) {
+        let arguments = self.call_argument_nodes(call);
+        // A forwarded formal is checked at this task's own calls; any other
+        // actual is checked where this call lowers.
+        for index in &inner.native_refs {
+            if let Some(NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            })) = arguments.get(*index).map(|actual| self.kind(*actual))
+            {
+                if let Some(outer) = body.formals.iter().position(|(formal, _)| formal == target) {
+                    body.shape.native_refs.push(outer);
+                }
+            }
+        }
+        // A forwarded `ref` formal lets this task's own callers bind the
+        // callee's specialization statically; any other actual is followed
+        // through its descriptor.
+        for index in inner.static_refs {
+            if let Some(actual) = arguments.get(index) {
+                self.note_forwarded_ref(*actual, &body.formals, &mut body.shape);
+            }
         }
     }
 

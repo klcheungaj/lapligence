@@ -48,6 +48,18 @@ struct CallWalk {
     taints: usize,
 }
 
+/// One step of [`Codegen::walk_process_writes`].
+enum WriteStep {
+    Node(NodeId),
+    /// The end of the body of `callee`, entered with `bound` bindings when
+    /// `taints` taints were counted.
+    Return {
+        callee: NodeId,
+        bound: bool,
+        taints: usize,
+    },
+}
+
 impl<'a> Codegen<'a> {
     /// The descriptor dependency of `ref` formal `target` in a typed body,
     /// where no specialization bound its actual (see `CallShape`).
@@ -815,15 +827,7 @@ impl<'a> Codegen<'a> {
         &self,
         root: NodeId,
     ) -> Result<HashSet<IrDependency>, String> {
-        let mut writes = HashSet::new();
-        self.walk_process_writes_bound(
-            root,
-            &mut writes,
-            &mut CallWalk::default(),
-            &HashMap::new(),
-            ProcessWriteMode::Sensitivity,
-        )?;
-        Ok(writes)
+        self.walk_process_writes(root, ProcessWriteMode::Sensitivity)
     }
 
     /// Whether evaluating `reader` can observe storage written through any
@@ -926,15 +930,7 @@ impl<'a> Codegen<'a> {
         &self,
         root: NodeId,
     ) -> Result<HashSet<IrDependency>, String> {
-        let mut writes = HashSet::new();
-        self.walk_process_writes_bound(
-            root,
-            &mut writes,
-            &mut CallWalk::default(),
-            &HashMap::new(),
-            ProcessWriteMode::Ownership,
-        )?;
-        Ok(writes)
+        self.walk_process_writes(root, ProcessWriteMode::Ownership)
     }
 
     /// Ordinary procedural assignments conflict with a continuous variable
@@ -943,199 +939,215 @@ impl<'a> Codegen<'a> {
         &self,
         root: NodeId,
     ) -> Result<HashSet<IrDependency>, String> {
-        let mut writes = HashSet::new();
-        self.walk_process_writes_bound(
-            root,
-            &mut writes,
-            &mut CallWalk::default(),
-            &HashMap::new(),
-            ProcessWriteMode::ContinuousConflict,
-        )?;
-        Ok(writes)
+        self.walk_process_writes(root, ProcessWriteMode::ContinuousConflict)
     }
 
-    fn walk_process_writes_bound(
+    /// The storage `root` writes, with the bodies of the subroutines it calls
+    /// inlined. The steps still to take are a list, not the thread's stack:
+    /// a chain of calls is as long as the design makes it.
+    fn walk_process_writes(
         &self,
-        node: NodeId,
-        writes: &mut HashSet<IrDependency>,
-        calls: &mut CallWalk,
-        bindings: &HashMap<NodeId, IrDependency>,
+        root: NodeId,
         mode: ProcessWriteMode,
-    ) -> Result<(), String> {
-        if self.is_process_self_call(node) {
-            return Ok(());
-        }
-        if self.is_semaphore_constructor_call(node) {
-            for child in &self.node(node).children {
-                self.walk_process_writes_bound(*child, writes, calls, bindings, mode)?;
-            }
-            return Ok(());
-        }
-        if self.is_mailbox_constructor_call(node) {
-            for child in &self.node(node).children {
-                self.walk_process_writes_bound(*child, writes, calls, bindings, mode)?;
-            }
-            return Ok(());
-        }
-        match self.kind(node) {
-            NodeKind::Stmt(StmtKind::Force { lhs, rhs })
-                if mode != ProcessWriteMode::Sensitivity =>
-            {
-                // The generic children can also contain Slang's assignment
-                // wrapper. Visit only the typed operands so that wrapper does
-                // not reclassify the override as an ordinary variable write.
-                self.walk_process_writes_bound(*lhs, writes, calls, bindings, mode)?;
-                self.walk_process_writes_bound(*rhs, writes, calls, bindings, mode)?;
-                return Ok(());
-            }
-            NodeKind::Stmt(StmtKind::Release { lhs } | StmtKind::Deassign { lhs })
-                if mode != ProcessWriteMode::Sensitivity =>
-            {
-                self.walk_process_writes_bound(*lhs, writes, calls, bindings, mode)?;
-                return Ok(());
-            }
-            NodeKind::Stmt(StmtKind::Assign { .. })
-            | NodeKind::Stmt(StmtKind::ProcContAssign { .. })
-            | NodeKind::Stmt(StmtKind::Force { .. })
-            | NodeKind::ContAssign { .. } => {
-                if let Some(lhs) = self.node(node).children.first() {
-                    self.add_process_lhs_write_bound(*lhs, writes, bindings);
-                }
-            }
-            NodeKind::Stmt(StmtKind::Release { lhs })
-            | NodeKind::Stmt(StmtKind::Deassign { lhs }) => {
-                self.add_process_lhs_write_bound(*lhs, writes, bindings);
-                return Ok(());
-            }
-            NodeKind::Stmt(StmtKind::VariableDecl { declaration }) => {
-                // Initializers are assignments for the continuous-driver
-                // conflict rule, but not writes in implicit sensitivity.
-                if let Some(initializer) = self.db.var_initializer(*declaration).or_else(|| {
-                    if mode == ProcessWriteMode::ContinuousConflict {
-                        self.db
-                            .array_meta(*declaration)
-                            .filter(|meta| meta.net_type.is_none())
-                            .and_then(|meta| meta.init)
-                    } else {
-                        None
+    ) -> Result<HashSet<IrDependency>, String> {
+        let mut writes = HashSet::new();
+        let mut calls = CallWalk::default();
+        // The `ref` bindings of each body on the call path, innermost last.
+        let mut scopes = vec![HashMap::<NodeId, IrDependency>::new()];
+        let mut steps = vec![WriteStep::Node(root)];
+        let children = |node| {
+            self.node(node)
+                .children
+                .iter()
+                .rev()
+                .copied()
+                .map(WriteStep::Node)
+        };
+        while let Some(step) = steps.pop() {
+            let node = match step {
+                WriteStep::Node(node) => node,
+                WriteStep::Return {
+                    callee,
+                    bound,
+                    taints,
+                } => {
+                    scopes.pop();
+                    calls.active.remove(&callee);
+                    if bound {
+                        calls.bound.remove(&callee);
+                    } else if calls.taints == taints {
+                        calls.walked.insert(callee);
                     }
-                }) {
-                    if mode == ProcessWriteMode::ContinuousConflict {
-                        self.add_process_lhs_write_bound(*declaration, writes, bindings);
+                    continue;
+                }
+            };
+            let Some(bindings) = scopes.last() else {
+                break;
+            };
+            if self.is_process_self_call(node) {
+                continue;
+            }
+            if self.is_semaphore_constructor_call(node) {
+                steps.extend(children(node));
+                continue;
+            }
+            if self.is_mailbox_constructor_call(node) {
+                steps.extend(children(node));
+                continue;
+            }
+            match self.kind(node) {
+                NodeKind::Stmt(StmtKind::Force { lhs, rhs })
+                    if mode != ProcessWriteMode::Sensitivity =>
+                {
+                    // The generic children can also contain Slang's assignment
+                    // wrapper. Visit only the typed operands so that wrapper does
+                    // not reclassify the override as an ordinary variable write.
+                    steps.extend([WriteStep::Node(*rhs), WriteStep::Node(*lhs)]);
+                    continue;
+                }
+                NodeKind::Stmt(StmtKind::Release { lhs } | StmtKind::Deassign { lhs })
+                    if mode != ProcessWriteMode::Sensitivity =>
+                {
+                    steps.push(WriteStep::Node(*lhs));
+                    continue;
+                }
+                NodeKind::Stmt(StmtKind::Assign { .. })
+                | NodeKind::Stmt(StmtKind::ProcContAssign { .. })
+                | NodeKind::Stmt(StmtKind::Force { .. })
+                | NodeKind::ContAssign { .. } => {
+                    if let Some(lhs) = self.node(node).children.first() {
+                        self.add_process_lhs_write_bound(*lhs, &mut writes, bindings);
                     }
-                    self.walk_process_writes_bound(initializer, writes, calls, bindings, mode)?;
                 }
-                return Ok(());
-            }
-            NodeKind::Expr(ExprKind::Operation {
-                op:
-                    Operation::PostIncrement
-                    | Operation::PreIncrement
-                    | Operation::PostDecrement
-                    | Operation::PreDecrement
-                    | Operation::Assignment
-                    | Operation::OverloadUpdate
-                    | Operation::OverloadPostUpdate,
-                operands,
-                ..
-            }) => {
-                if let Some(lhs) = operands.first() {
-                    self.add_process_lhs_write_bound(*lhs, writes, bindings);
+                NodeKind::Stmt(StmtKind::Release { lhs })
+                | NodeKind::Stmt(StmtKind::Deassign { lhs }) => {
+                    self.add_process_lhs_write_bound(*lhs, &mut writes, bindings);
+                    continue;
                 }
-            }
-            NodeKind::MethodCall {
-                name,
-                receiver: Some(receiver),
-                ..
-            } if Self::mutating_container_method(name) => {
-                self.add_process_lhs_write_bound(*receiver, writes, bindings);
-            }
-            NodeKind::FuncCall {
-                name,
-                is_task,
-                callee,
-                ..
-            } => {
-                let (ft, callee_inst) =
-                    self.resolve_callee_env(self.inst, name, *is_task, *callee)?;
-                let (_, _, formals) = self.func_info(ft, callee_inst)?;
-                let mut callee_bindings = HashMap::new();
-                let recursive = calls.active.contains(&ft);
-                if recursive && calls.bound.contains(&ft) {
-                    calls.taints += 1;
-                }
-                for ((formal, is_out), actual) in formals.iter().zip(&self.node(node).children) {
-                    let is_ref = matches!(
-                        self.kind(*formal),
-                        NodeKind::FuncArg {
-                            direction: DbDirection::Ref,
-                            ..
+                NodeKind::Stmt(StmtKind::VariableDecl { declaration }) => {
+                    // Initializers are assignments for the continuous-driver
+                    // conflict rule, but not writes in implicit sensitivity.
+                    if let Some(initializer) = self.db.var_initializer(*declaration).or_else(|| {
+                        if mode == ProcessWriteMode::ContinuousConflict {
+                            self.db
+                                .array_meta(*declaration)
+                                .filter(|meta| meta.net_type.is_none())
+                                .and_then(|meta| meta.init)
+                        } else {
+                            None
                         }
-                    );
-                    let actual = self.unwrap_output_actual(*actual);
-                    if is_ref
-                        && recursive
-                        && self.packed_storage_prefix_bound(actual, bindings).is_some()
-                    {
+                    }) {
+                        if mode == ProcessWriteMode::ContinuousConflict {
+                            self.add_process_lhs_write_bound(*declaration, &mut writes, bindings);
+                        }
+                        steps.push(WriteStep::Node(initializer));
+                    }
+                    continue;
+                }
+                NodeKind::Expr(ExprKind::Operation {
+                    op:
+                        Operation::PostIncrement
+                        | Operation::PreIncrement
+                        | Operation::PostDecrement
+                        | Operation::PreDecrement
+                        | Operation::Assignment
+                        | Operation::OverloadUpdate
+                        | Operation::OverloadPostUpdate,
+                    operands,
+                    ..
+                }) => {
+                    if let Some(lhs) = operands.first() {
+                        self.add_process_lhs_write_bound(*lhs, &mut writes, bindings);
+                    }
+                }
+                NodeKind::MethodCall {
+                    name,
+                    receiver: Some(receiver),
+                    ..
+                } if Self::mutating_container_method(name) => {
+                    self.add_process_lhs_write_bound(*receiver, &mut writes, bindings);
+                }
+                NodeKind::FuncCall {
+                    name,
+                    is_task,
+                    callee,
+                    ..
+                } => {
+                    let (ft, callee_inst) =
+                        self.resolve_callee_env(self.inst, name, *is_task, *callee)?;
+                    let (_, _, formals) = self.func_info(ft, callee_inst)?;
+                    let mut callee_bindings = HashMap::new();
+                    let recursive = calls.active.contains(&ft);
+                    if recursive && calls.bound.contains(&ft) {
                         calls.taints += 1;
                     }
-                    if is_ref && !recursive {
-                        if let Some(prefix) = self.packed_storage_prefix_bound(actual, bindings) {
-                            callee_bindings.insert(*formal, prefix);
-                        } else if !matches!(
+                    for ((formal, is_out), actual) in formals.iter().zip(&self.node(node).children)
+                    {
+                        let is_ref = matches!(
                             self.kind(*formal),
                             NodeKind::FuncArg {
-                                const_ref: true,
+                                direction: DbDirection::Ref,
                                 ..
                             }
-                        ) {
-                            self.add_process_lhs_write_bound(actual, writes, bindings);
+                        );
+                        let actual = self.unwrap_output_actual(*actual);
+                        if is_ref
+                            && recursive
+                            && self.packed_storage_prefix_bound(actual, bindings).is_some()
+                        {
+                            calls.taints += 1;
                         }
-                    } else if *is_out
-                        || (is_ref
-                            && !matches!(
+                        if is_ref && !recursive {
+                            if let Some(prefix) = self.packed_storage_prefix_bound(actual, bindings)
+                            {
+                                callee_bindings.insert(*formal, prefix);
+                            } else if !matches!(
                                 self.kind(*formal),
                                 NodeKind::FuncArg {
                                     const_ref: true,
                                     ..
                                 }
-                            ))
-                    {
-                        self.add_process_lhs_write_bound(actual, writes, bindings);
+                            ) {
+                                self.add_process_lhs_write_bound(actual, &mut writes, bindings);
+                            }
+                        } else if *is_out
+                            || (is_ref
+                                && !matches!(
+                                    self.kind(*formal),
+                                    NodeKind::FuncArg {
+                                        const_ref: true,
+                                        ..
+                                    }
+                                ))
+                        {
+                            self.add_process_lhs_write_bound(actual, &mut writes, bindings);
+                        }
                     }
-                }
-                let bound = !callee_bindings.is_empty();
-                if bound {
-                    calls.taints += 1;
-                }
-                if (bound || !calls.walked.contains(&ft)) && calls.active.insert(ft) {
+                    let bound = !callee_bindings.is_empty();
                     if bound {
-                        calls.bound.insert(ft);
+                        calls.taints += 1;
                     }
-                    let taints = calls.taints;
-                    if let Some(body) = self.func_body(ft) {
-                        self.walk_process_writes_bound(
-                            body,
-                            writes,
-                            calls,
-                            &callee_bindings,
-                            mode,
-                        )?;
-                    }
-                    calls.active.remove(&ft);
-                    if bound {
-                        calls.bound.remove(&ft);
-                    } else if calls.taints == taints {
-                        calls.walked.insert(ft);
+                    if (bound || !calls.walked.contains(&ft)) && calls.active.insert(ft) {
+                        if bound {
+                            calls.bound.insert(ft);
+                        }
+                        // The body runs before the call's other children.
+                        steps.extend(children(node));
+                        steps.push(WriteStep::Return {
+                            callee: ft,
+                            bound,
+                            taints: calls.taints,
+                        });
+                        steps.extend(self.func_body(ft).map(WriteStep::Node));
+                        scopes.push(callee_bindings);
+                        continue;
                     }
                 }
+                _ => {}
             }
-            _ => {}
+            steps.extend(children(node));
         }
-        for child in &self.node(node).children {
-            self.walk_process_writes_bound(*child, writes, calls, bindings, mode)?;
-        }
-        Ok(())
+        Ok(writes)
     }
 
     fn mutating_container_method(name: &str) -> bool {
@@ -1470,6 +1482,7 @@ impl<'a> Codegen<'a> {
         include_function_bodies: bool,
         bindings: &HashMap<NodeId, IrDependency>,
     ) -> Result<(), String> {
+        self.check_stack(node)?;
         // Reaching a procedural concurrent assertion only queues it (IEEE
         // 1800-2009 16.15.6): its arguments are sampled at its clock and its
         // actions run in their own processes, so the procedure reads none of

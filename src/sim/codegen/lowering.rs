@@ -4746,6 +4746,58 @@ mod startup_spawn_tests {
 }
 
 #[cfg(test)]
+mod name_chain_tests {
+    use super::*;
+
+    /// A walk that follows calls is as deep as the chain of them, so it stops
+    /// at the call that would leave too little stack for a nested tree.
+    #[test]
+    fn a_chain_of_calls_past_the_stack_is_a_located_error() {
+        const LINKS: usize = 400;
+        let chain: String = (0..LINKS)
+            .map(|link| {
+                format!(
+                    "function automatic int f{link}(int x); return f{}(x) + g; endfunction\n",
+                    link + 1
+                )
+            })
+            .collect();
+        let source = format!(
+            "module tb;\nint a, g, y;\n{chain}\
+             function automatic int f{LINKS}(int x); return x + g; endfunction\n\
+             always_comb y = f0(a);\nendmodule\n"
+        );
+        let compiled = crate::core::compile::compile_sources_checked(
+            &[crate::core::compile::OwnedSource::compilation_unit(
+                "chain.sv", source,
+            )],
+            &crate::core::compile::CompileOpts {
+                top: Some("tb".to_owned()),
+                ..Default::default()
+            },
+        )
+        .expect("compile the chain");
+        let db = Db::from_slang(&compiled.snapshot).expect("owned database");
+        let lower = |stack: usize, headroom: usize| {
+            crate::stack::run_on_stack(stack, headroom, || {
+                lower_model(&db, &CodegenOptions::default()).map(|_| ())
+            })
+            .expect("a thread")
+        };
+        lower(64 << 20, 1 << 20).expect("the chain fits");
+        let error = lower(64 << 20, 62 << 20).expect_err("2 MiB do not hold the chain");
+        assert!(error.contains(crate::stack::EXHAUSTED), "{error}");
+        let error = CodegenError::new(error);
+        assert!(
+            error
+                .location()
+                .is_some_and(|location| location.starts_with("chain.sv:")),
+            "{error:?}"
+        );
+    }
+}
+
+#[cfg(test)]
 mod user_system_function_name_tests {
     use super::user_system_function_name;
 
