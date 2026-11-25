@@ -117,3 +117,14 @@ passes it.
 | `edge` | `d + e + 1` when its least significant bit rises |
 | `f` | `r` after it changes |
 | `handle`, `wait` | the time at which the waited value appears |
+
+## Task diamonds
+
+`task_diamonds.sv`: the same with tasks, whose frames embed the frame of the
+task they call once per call. GCC's `-fdevirtualize` follows every path of
+nested types, so models build without it. `t0(200)` enables a task that ends
+after one time unit below each level and adds 201, 30 times, and `t30(200)`
+once: 61 time units later `y` is 6230.
+
+- 13.3 L18399-18400: "Regardless of how many tasks have been enabled, con-
+  trol shall not return until all enabled tasks have completed."

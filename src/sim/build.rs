@@ -193,8 +193,12 @@ endif()"#;
 /// in emitter output, so generated sources skip it; runtime sources keep it.
 /// Clang refuses more than 256 nested brackets unless told otherwise; a model
 /// nests as deep as its source ([`MODEL_BRACKET_DEPTH`]).
+/// GCC's `-fdevirtualize` (from `-O2`) has nothing to find in C, but looks for
+/// polymorphic types along every path of nested struct types: a coroutine frame
+/// embeds its callee's frame per call site, so the paths are those of the call
+/// graph, exponentially many where tasks call the next one twice.
 const MODEL_SOURCE_OPTIONS: &str = r#"if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-  set_source_files_properties({MODEL_SOURCES} PROPERTIES COMPILE_OPTIONS "-Wno-misleading-indentation;$<$<C_COMPILER_ID:Clang,AppleClang>:-fbracket-depth={BRACKET_DEPTH}>")
+  set_source_files_properties({MODEL_SOURCES} PROPERTIES COMPILE_OPTIONS "-Wno-misleading-indentation;$<$<C_COMPILER_ID:GNU>:-fno-devirtualize>;$<$<C_COMPILER_ID:Clang,AppleClang>:-fbracket-depth={BRACKET_DEPTH}>")
 endif()
 "#;
 
