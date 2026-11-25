@@ -325,7 +325,7 @@ pub(super) fn statement_from_slang(
                 .flatten(),
         },
         47 => StmtKind::Empty,
-        48 => {
+        crate::ffi::slang::SEMANTIC_STMT_EXPRESSION => {
             let expression = required(SemanticEdgeRole::Body, "expression statement body")?;
             let semantic = &snapshot.semantic_nodes[expression.index()];
             if semantic.subkind == 71 {

@@ -4682,6 +4682,11 @@ public:
             statement.syntax->template as<syntax::BlockStatementSyntax>().begin.location(),
             result.range.file_id);
     }
+    if constexpr (std::same_as<T, ExpressionStatement>) {
+      if (statement.syntax &&
+          statement.syntax->kind == syntax::SyntaxKind::VoidCastedCallStatement)
+        result.auxiliary = LLG_SLANG_EXPRESSION_STMT_VOID_CAST;
+    }
     if constexpr (std::same_as<T, CaseStatement>) {
       result.auxiliary = semanticUniquePriorityCheck(statement.check);
       switch (statement.condition) {

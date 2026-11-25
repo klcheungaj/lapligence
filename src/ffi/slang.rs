@@ -43,7 +43,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 85;
+const ABI_VERSION: u32 = 86;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -995,6 +995,7 @@ pub const SEMANTIC_STMT_FOR: u32 = 35;
 /// A statement list; as a task or function body its `auxiliary` keeps the
 /// byte offset + 1, in the subroutine's file, of the token after the name,
 /// or 0.
+pub const SEMANTIC_STMT_EXPRESSION: u32 = 48;
 pub const SEMANTIC_STMT_LIST: u32 = 60;
 
 /// Immediate assertion statement tags owned by the C ABI.
@@ -1076,6 +1077,9 @@ pub(crate) const DIST_DEFAULT: u64 = 1 << 0;
 /// A `const'(expr)` cast (auxiliary of a conversion expression, IEEE
 /// 1800-2009 6.24.1).
 pub(crate) const CONVERSION_CONST: u64 = 1 << 0;
+/// A `void'(call)` statement (auxiliary of an expression statement, IEEE
+/// 1800-2009 13.4.1).
+pub(crate) const EXPRESSION_STMT_VOID_CAST: u64 = 1 << 0;
 
 /// Immediate assertion metadata carried in [`SemanticNode::auxiliary`].
 pub const SEMANTIC_ASSERTION_DEFERRED: u64 = 1 << 0;

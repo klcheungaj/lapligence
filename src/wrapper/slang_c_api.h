@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 85u
+#define LLG_SLANG_ABI_VERSION 86u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -880,6 +880,12 @@ enum {
  * assertion evaluates when it is queued rather than sampling (16.15.6.1). */
 enum {
   LLG_SLANG_CONVERSION_CONST = 1ull << 0
+};
+
+/* Expression statement qualifiers carried in auxiliary (ABI v86). VOID_CAST
+ * marks a `void'(call)` statement (IEEE 1800-2009 13.4.1). */
+enum {
+  LLG_SLANG_EXPRESSION_STMT_VOID_CAST = 1ull << 0
 };
 
 /* Subroutine-call qualifiers carried in auxiliary. */

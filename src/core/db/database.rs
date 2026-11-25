@@ -423,6 +423,8 @@ pub struct Db {
     const_casts: HashSet<NodeId>,
     /// Assertion expressions written in parentheses (16.14.3).
     parenthesized_assertions: HashSet<NodeId>,
+    /// `void'(call)` statements (13.4.1).
+    void_cast_statements: HashSet<NodeId>,
     /// Method-call node → the frontend-owned iterator declaration used by its
     /// `with` expression.  Slang visits the expression itself as a structural
     /// child, but the implicit iterator variable is not an argument edge.
@@ -617,6 +619,7 @@ impl Db {
             method_calls_with_clause: HashSet::new(),
             const_casts: HashSet::new(),
             parenthesized_assertions: HashSet::new(),
+            void_cast_statements: HashSet::new(),
             method_call_iterators: HashMap::new(),
             packed_members: HashMap::new(),
             aggregate_layouts: HashMap::new(),
@@ -732,6 +735,7 @@ impl Db {
             method_calls_with_clause: HashSet::new(),
             const_casts: HashSet::new(),
             parenthesized_assertions: HashSet::new(),
+            void_cast_statements: HashSet::new(),
             method_call_iterators: HashMap::new(),
             packed_members: HashMap::new(),
             aggregate_layouts: HashMap::new(),
@@ -1421,6 +1425,13 @@ impl Db {
         self.parenthesized_assertions.contains(&id)
     }
 
+    /// Whether statement `id` is `void'(call)`: it calls a function and drops
+    /// its value (IEEE 1800-2009 13.4.1), where the bare call of `$cast` is a
+    /// task (6.24.2).
+    pub fn is_void_cast_statement(&self, id: NodeId) -> bool {
+        self.void_cast_statements.contains(&id)
+    }
+
     /// Whether `id` declares a member of a structure or union type. Every
     /// variable of the type shares the declaration, so it is no object.
     pub fn is_record_member(&self, id: NodeId) -> bool {
@@ -1487,6 +1498,10 @@ impl Db {
 
     pub(crate) fn parenthesized_assertion_nodes(&self) -> &HashSet<NodeId> {
         &self.parenthesized_assertions
+    }
+
+    pub(crate) fn void_cast_statement_nodes(&self) -> &HashSet<NodeId> {
+        &self.void_cast_statements
     }
 
     pub(crate) fn method_call_iterator_nodes(&self) -> &HashMap<NodeId, NodeId> {

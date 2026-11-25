@@ -314,6 +314,23 @@ impl<'a> Codegen<'a> {
             }
             _ => (*destination, None),
         };
+        // SV 6.24.2: the one check of the types themselves.
+        let source_descriptor = self.query_descriptor(*source).cloned();
+        if source_descriptor.as_ref().is_some_and(|descriptor| {
+            matches!(
+                descriptor.shape,
+                TypeShape::FixedArray { .. } | TypeShape::Container { .. }
+            ) || matches!(
+                &descriptor.shape,
+                TypeShape::Aggregate(layout)
+                    if !matches!(
+                        layout.kind,
+                        AggregateKind::PackedStruct | AggregateKind::PackedUnion
+                    )
+            )
+        }) {
+            return Err(format!("$cast source must be a singular value in `{path}`"));
+        }
         if let Some(target_class_node) = self.class_node_for_type_expr(destination) {
             let source_is_null = matches!(
                 self.kind(*source),
@@ -322,10 +339,8 @@ impl<'a> Codegen<'a> {
                     ..
                 })
             );
-            if !source_is_null && !self.is_chandle_expr(path, *source) {
-                return Err(format!(
-                    "$cast class source is not a class handle in `{path}`"
-                ));
+            if !source_is_null && self.cast_source_class(*source).is_none() {
+                return self.lower_failing_cast(path, *source, failure_location);
             }
             let expected = self
                 .class_nodes
@@ -395,26 +410,14 @@ impl<'a> Codegen<'a> {
             Some(lhs) => self.dynamic_cast_lhs_shape(lhs)?,
             None => self.cast_value_shape(path, destination, target_descriptor.as_ref())?,
         };
-        let source_descriptor = self.query_descriptor(*source).cloned();
         let source_is_string =
             self.is_string_expr(path, *source) && !self.is_string_literal(*source);
-        if let Some(descriptor) = &source_descriptor {
-            let unsupported = matches!(
-                descriptor.shape,
-                TypeShape::FixedArray { .. }
-                    | TypeShape::Container { .. }
-                    | TypeShape::Opaque { .. }
-            ) || matches!(
-                &descriptor.shape,
-                TypeShape::Aggregate(layout)
-                    if !matches!(
-                        layout.kind,
-                        AggregateKind::PackedStruct | AggregateKind::PackedUnion
-                    )
-            );
-            if unsupported {
-                return Err(format!("$cast source must be a singular value in `{path}`"));
-            }
+        // A handle converts to no other kind of value.
+        if source_descriptor
+            .as_ref()
+            .is_some_and(|descriptor| matches!(descriptor.shape, TypeShape::Opaque { .. }))
+        {
+            return self.lower_failing_cast(path, *source, failure_location);
         }
         // A string converts to a packed value and never to a real one.
         if source_is_string && target_width == 0 {
@@ -961,12 +964,19 @@ impl<'a> Codegen<'a> {
         ))
     }
 
+    /// The class a `$cast` source's object is an instance of, as declared.
+    /// Other handles (a chandle, a virtual interface, a process) have none: a
+    /// run-time check must not look at what they refer to.
+    fn cast_source_class(&self, source: NodeId) -> Option<NodeId> {
+        self.query_descriptor(source)
+            .filter(|descriptor| descriptor.info.kind == "class")
+            .and_then(|descriptor| self.db.class_for_type(descriptor.id))
+            .or_else(|| self.class_node_for_type_expr(source))
+    }
+
     /// Whether the static class of `source` is `target` or derives from it.
     fn cast_is_upcast(&self, source: NodeId, target: NodeId) -> bool {
-        let mut class = self
-            .query_descriptor(source)
-            .filter(|descriptor| descriptor.info.kind == "class")
-            .and_then(|descriptor| self.db.class_for_type(descriptor.id));
+        let mut class = self.cast_source_class(source);
         while let Some(current) = class {
             if current == target {
                 return true;

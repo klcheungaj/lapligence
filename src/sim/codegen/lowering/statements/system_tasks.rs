@@ -496,10 +496,14 @@ impl EmitCtx<'_, '_> {
                 Ok(vec![self.lower_string_format_target(*target, value)?])
             }
             "$cast" => {
-                let location = self.finish_location(h);
-                let status = self
+                // `void'($cast(...))` calls the function (6.24.2).
+                let function = self
                     .cg
-                    .lower_dynamic_cast(&self.path, &args, Some(location))?;
+                    .node(h)
+                    .parent()
+                    .is_some_and(|parent| self.cg.db.is_void_cast_statement(parent));
+                let location = (!function).then(|| self.finish_location(h));
+                let status = self.cg.lower_dynamic_cast(&self.path, &args, location)?;
                 Ok(vec![IrStmt::DeclLocal {
                     name: format!("_llg_cast_status_{}", h.0),
                     width: 1,
