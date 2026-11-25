@@ -3,7 +3,7 @@
 extern int sv_task(const char* act, int depth, int* o);
 extern int sv_func(const char* act, int depth);
 static void say(const char* s, int a, int b) { printf("%s %d disabled=%d\n", s, a, b); fflush(stdout); }
-int c_task(const char* act, int depth, int* o)
+DPI_DLLESPEC int c_task(const char* act, int depth, int* o)
 {
     int status;
     *o = 77;
@@ -12,7 +12,7 @@ int c_task(const char* act, int depth, int* o)
     if (svIsDisabledState()) { svAckDisabledState(); return 1; }
     return 0;
 }
-int c_func(const char* act, int depth)
+DPI_DLLESPEC int c_func(const char* act, int depth)
 {
     int r = sv_func(act, depth);
     say("c_func: sv_func returned", r, svIsDisabledState());
