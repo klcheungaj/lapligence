@@ -14,7 +14,7 @@ index e57e542be..abbd978f8 100644
      [[nodiscard]] bool empty() const { return entries.empty(); }
  
 diff --git a/include/slang/ast/symbols/InstanceSymbols.h b/include/slang/ast/symbols/InstanceSymbols.h
-index 282c70b9f..391753519 100644
+index 282c70b9f..d8b1fc655 100644
 --- a/include/slang/ast/symbols/InstanceSymbols.h
 +++ b/include/slang/ast/symbols/InstanceSymbols.h
 @@ -62,6 +62,10 @@ enum class SLANG_EXPORT InstanceFlags : uint8_t {
@@ -28,6 +28,18 @@ index 282c70b9f..391753519 100644
  /// Common functionality for module, interface, program, and primitive instances.
  class SLANG_EXPORT InstanceSymbolBase : public Symbol {
  public:
+@@ -148,8 +152,9 @@ public:
+         const ConfigBlockSymbol* configBlock = nullptr, const ConfigRule* configRule = nullptr,
+         SourceLocation locationOverride = {});
+ 
+-    /// Creates a placeholder instance for a virtual interface type declaration.
+-    static const InstanceSymbol& createVirtual(
++    /// Creates a placeholder instance for a virtual interface type declaration,
++    /// or returns null if that type nests too deep (@a maxInstanceDepth).
++    static const InstanceSymbol* createVirtual(
+         const ASTContext& context, SourceLocation loc, const DefinitionSymbol& definition,
+         const syntax::ParameterValueAssignmentSyntax* paramAssignments);
+ 
 diff --git a/include/slang/ast/symbols/ParameterSymbols.h b/include/slang/ast/symbols/ParameterSymbols.h
 index c438539ee..8adb01841 100644
 --- a/include/slang/ast/symbols/ParameterSymbols.h
@@ -48,7 +60,7 @@ index c438539ee..8adb01841 100644
      mutable bool fromStringLit = false;
      mutable bool needsCoercion = false;
 diff --git a/source/ast/DefParamResolver.cpp b/source/ast/DefParamResolver.cpp
-index e057f6fea..a96159eb6 100644
+index e057f6fea..f90bbbbdb 100644
 --- a/source/ast/DefParamResolver.cpp
 +++ b/source/ast/DefParamResolver.cpp
 @@ -547,6 +547,7 @@ void Compilation::resolveDefParamsAndBinds() {
@@ -83,7 +95,15 @@ index e057f6fea..a96159eb6 100644
              }
          }
  
-@@ -813,7 +816,13 @@ void Compilation::resolveDefParamsAndBinds() {
+@@ -696,6 +699,7 @@ void Compilation::resolveDefParamsAndBinds() {
+             diag << visitor.hierarchyProblem->getDefinition().getKindString();
+             diag << options.maxInstanceDepth;
+             sawFatalError = true;
++            noteHierarchyTooDeep();
+             return true;
+         }
+         return false;
+@@ -813,7 +817,13 @@ void Compilation::resolveDefParamsAndBinds() {
                      return;
                  }
  

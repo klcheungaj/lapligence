@@ -2977,14 +2977,32 @@ std::string specializationOrderKey(const Type& specialization) {
   return key;
 }
 
+// Whether a class is left out of the capture. In a design refused because its
+// classes or instances nest without end, those are the specializations that a
+// class names in itself, and the ones named inside them: their names may grow
+// with each level.
+bool isLeftOut(const ClassType& specialization) {
+  if (!specialization.getCompilation().isHierarchyTooDeep())
+    return false;
+  for (const Scope* scope = &specialization; scope;
+       scope = scope->asSymbol().getSpecializingParent()) {
+    const Symbol& symbol = scope->asSymbol();
+    if (symbol.kind == SymbolKind::ClassType && symbol.as<ClassType>().specializationDepth > 0)
+      return true;
+  }
+  return false;
+}
+
 // Slang iterates a generic class's specializations in order of creation, which
 // follows the references of the whole design. Capture numbers the nodes it
 // visits in order, so it visits them sorted by their own parameters instead.
 std::vector<const Type*> orderedSpecializations(const GenericClassDefSymbol& generic) {
   std::vector<std::pair<std::string, const Type*>> keyed;
   keyed.reserve(generic.numSpecializations());
-  for (const Type& specialization : generic.specializations())
-    keyed.emplace_back(specializationOrderKey(specialization), &specialization);
+  for (const Type& specialization : generic.specializations()) {
+    if (!isLeftOut(specialization.as<ClassType>()))
+      keyed.emplace_back(specializationOrderKey(specialization), &specialization);
+  }
   std::stable_sort(keyed.begin(), keyed.end(),
                    [](const auto& left, const auto& right) { return left.first < right.first; });
   std::vector<const Type*> ordered;
@@ -3954,7 +3972,7 @@ public:
         result.auxiliary |= LLG_SLANG_CLASS_INTERFACE;
       if (const Type* base = symbol.getBaseClass()) {
         const Type& canonical = base->getCanonicalType();
-        if (!canonical.isError()) {
+        if (canonical.isClass() && !isLeftOut(canonical.as<ClassType>())) {
           const uint64_t baseId = capture.ensureSemantic(&canonical);
           capture.output.semantic_nodes[static_cast<size_t>(id)].target_id = baseId;
           capture.semanticEdge(id, LLG_SLANG_EDGE_REFERENCE, baseId);
@@ -12249,6 +12267,7 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
       std::numeric_limits<uint32_t>::max()));
   compilationOptions.maxConstantSize = effectiveLimit(
       request.limits.max_value_bits, kDefaultMaxValueBits, kHardMaxValueBits);
+  compilationOptions.maxRecursiveClassSpecialization = request.max_nesting_depth;
   compilationOptions.maxInstanceArray = static_cast<uint32_t>(std::min<uint64_t>(
       effectiveLimit(request.limits.max_instances, kDefaultMaxInstances,
                      kHardMaxInstances),

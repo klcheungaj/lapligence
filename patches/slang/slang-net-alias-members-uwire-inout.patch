@@ -128,7 +128,7 @@ index 1feab96e6..85b7df835 100644
              if (symbol.kind == SymbolKind::Sequence) {
                  context.addDiag(diag::RecursiveSequence, range) << symbol.name;
 diff --git a/source/ast/symbols/InstanceSymbols.cpp b/source/ast/symbols/InstanceSymbols.cpp
-index b6cf0f2f2..75395461a 100644
+index b6cf0f2f2..bde714077 100644
 --- a/source/ast/symbols/InstanceSymbols.cpp
 +++ b/source/ast/symbols/InstanceSymbols.cpp
 @@ -196,37 +196,6 @@ void getInstanceArrayDimensions(const InstanceArraySymbol& array,
@@ -211,7 +211,96 @@ index b6cf0f2f2..75395461a 100644
  std::string_view InstanceSymbolBase::getArrayName() const {
      auto scope = getParentScope();
      if (scope && scope->asSymbol().kind == SymbolKind::InstanceArray)
-@@ -1665,6 +1669,42 @@ void PrimitiveInstanceSymbol::fromSyntax(const PrimitiveInstantiationSyntax& syn
+@@ -395,7 +399,30 @@ InstanceSymbol& InstanceSymbol::createDefault(Compilation& comp, const Definitio
+     return result;
+ }
+ 
+-const InstanceSymbol& InstanceSymbol::createVirtual(
++// Finds the closest instance that encloses the given scope, also through the scopes
++// that name the specializations of the classes around it.
++static const InstanceSymbol* findEnclosingInstance(const Scope& scope) {
++    for (auto curr = &scope; curr; curr = curr->asSymbol().getSpecializingParent()) {
++        auto& sym = curr->asSymbol();
++        if (sym.kind == SymbolKind::InstanceBody) {
++            if (auto inst = sym.as<InstanceBodySymbol>().parentInstance)
++                return inst;
++        }
++    }
++    return nullptr;
++}
++
++// Indicates whether an instance of the given definition encloses the given scope.
++static bool isInInstanceOf(const DefinitionSymbol& definition, const Scope& scope) {
++    auto inst = findEnclosingInstance(scope);
++    while (inst && &inst->getDefinition() != &definition) {
++        auto parent = inst->getParentScope();
++        inst = parent ? findEnclosingInstance(*parent) : nullptr;
++    }
++    return inst != nullptr;
++}
++
++const InstanceSymbol* InstanceSymbol::createVirtual(
+     const ASTContext& context, SourceLocation loc, const DefinitionSymbol& definition,
+     const ParameterValueAssignmentSyntax* paramAssignments) {
+ 
+@@ -405,8 +432,24 @@ const InstanceSymbol& InstanceSymbol::createVirtual(
+         paramBuilder.setAssignments(*paramAssignments, /* isFromConfig */ false);
+ 
+     auto& comp = context.getCompilation();
++    auto enclosing = findEnclosingInstance(*context.scope);
++    const uint32_t depth = enclosing ? enclosing->instanceDepth + 1 : 0;
++    const bool tooDeep = depth > comp.getOptions().maxInstanceDepth;
++    if (comp.isHierarchyTooDeep() && (tooDeep || isInInstanceOf(definition, *context.scope)))
++        return nullptr;
++
++    if (tooDeep) {
++        // An interface that keeps naming itself with new parameter values has no end.
++        auto& diag = context.addDiag(diag::MaxInstanceDepthExceeded, loc);
++        diag << definition.getKindString();
++        diag << comp.getOptions().maxInstanceDepth;
++        if (!context.scope->isUninstantiated())
++            comp.noteHierarchyTooDeep();
++        return nullptr;
++    }
++
+     auto& result = *comp.emplace<InstanceSymbol>(comp, definition.name, loc, definition,
+-                                                 paramBuilder, InstanceFlags::None, 0u);
++                                                 paramBuilder, InstanceFlags::None, depth);
+ 
+     // Set the parent pointer so that traversing upwards still works to find
+     // the instantiation scope. This "virtual" instance never actually gets
+@@ -414,7 +457,7 @@ const InstanceSymbol& InstanceSymbol::createVirtual(
+     result.setParent(*context.scope);
+ 
+     // Allow the compilation to cache this virtual interface instance.
+-    return comp.getOrAddVirtualIface(result);
++    return &comp.getOrAddVirtualIface(result);
+ }
+ 
+ Symbol& InstanceSymbol::createDefaultNested(const Scope& scope,
+@@ -628,6 +671,13 @@ void InstanceSymbol::fromSyntax(Compilation& comp, const HierarchyInstantiationS
+             }
+         }
+ 
++        // Once a hierarchy has turned out to be too deep, nothing more is created
++        // that could take part in an endless one.
++        if (comp.isHierarchyTooDeep() && isInInstanceOf(definition, *context.scope)) {
++            createUninstantiated(specificInstance);
++            return;
++        }
++
+         // This check breaks infinitely recursive hierarchies. Note that this is deliberately
+         // off by one; most of the time this will get hit first in ElabVisitors and we won't
+         // even try to create more instances beneath that. In certain cases (or when visiting
+@@ -642,6 +692,7 @@ void InstanceSymbol::fromSyntax(Compilation& comp, const HierarchyInstantiationS
+             auto& diag = context.addDiag(diag::MaxInstanceDepthExceeded, loc);
+             diag << definition.getKindString();
+             diag << comp.getOptions().maxInstanceDepth;
++            comp.noteHierarchyTooDeep();
+             createUninstantiated(specificInstance);
+             return;
+         }
+@@ -1665,6 +1716,42 @@ void PrimitiveInstanceSymbol::fromSyntax(const PrimitiveInstantiationSyntax& syn
      createPrims(defResult, nullptr);
  }
  
@@ -254,7 +343,7 @@ index b6cf0f2f2..75395461a 100644
  std::span<const Expression* const> PrimitiveInstanceSymbol::getPortConnections() const {
      if (!ports) {
          auto syntax = getSyntax();
-@@ -1721,7 +1761,10 @@ std::span<const Expression* const> PrimitiveInstanceSymbol::getPortConnections()
+@@ -1721,7 +1808,10 @@ std::span<const Expression* const> PrimitiveInstanceSymbol::getPortConnections()
                      dir = (i == conns.size() - 1) ? ArgumentDirection::In : ArgumentDirection::Out;
  
                  SLANG_ASSERT(conns[i]);
@@ -266,7 +355,7 @@ index b6cf0f2f2..75395461a 100644
              }
          }
          else {
-@@ -1760,12 +1803,25 @@ std::span<const Expression* const> PrimitiveInstanceSymbol::getPortConnections()
+@@ -1760,12 +1850,25 @@ std::span<const Expression* const> PrimitiveInstanceSymbol::getPortConnections()
                      ASTContext argCtx = context;
                      argCtx.flags &= ~ASTFlags::DisallowUDNT;
                      argCtx.flags |= ASTFlags::LAndRValue;
