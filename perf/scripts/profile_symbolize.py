@@ -10,6 +10,7 @@ from pathlib import Path
 MAGIC = b"LLGPROF\0"
 HEADER = struct.Struct("=8sIIII")
 RECORD_PREFIX = struct.Struct("=HHI")
+PT_LOAD = 1
 
 
 def read_samples(path):
@@ -49,23 +50,42 @@ def read_maps(path):
 
 
 @functools.lru_cache(maxsize=None)
-def elf_type(path):
+def elf_segments(path):
     try:
         with open(path, "rb") as stream:
-            header = stream.read(20)
+            header = stream.read(64)
+            if len(header) < 52 or header[:4] != b"\x7fELF" or header[4] not in (1, 2):
+                return None
+            wide = header[4] == 2
+            endian = "<" if header[5] == 1 else ">"
+            kind, position, counts = ("Q", 32, 54) if wide else ("I", 28, 42)
+            table = struct.unpack_from(endian + kind, header, position)[0]
+            entry, count = struct.unpack_from(endian + "HH", header, counts)
+            stream.seek(table)
+            programs = stream.read(entry * count)
     except OSError:
         return None
-    if len(header) < 18 or header[:4] != b"\x7fELF":
+    if entry == 0 or len(programs) < entry * count:
         return None
-    endian = "<" if header[5] == 1 else ">"
-    return struct.unpack_from(endian + "H", header, 16)[0]
+    segments = []
+    for base in range(0, entry * count, entry):
+        if wide:
+            kind, _, offset, address, _, size = struct.unpack_from(endian + "IIQQQQ", programs, base)
+        else:
+            kind, offset, address, _, size = struct.unpack_from(endian + "IIIII", programs, base)
+        if kind == PT_LOAD:
+            segments.append((offset, offset + size, address))
+    return segments
 
 
 def locate(address, mappings):
     for start, end, offset, pathname in mappings:
         if start <= address < end and pathname.startswith("/"):
-            object_address = address if elf_type(pathname) == 2 else address - start + offset
-            return pathname, object_address
+            file_offset = address - start + offset
+            for first, last, virtual in elf_segments(pathname) or ():
+                if first <= file_offset < last:
+                    return pathname, file_offset - first + virtual
+            return pathname, file_offset
     return None, address
 
 
