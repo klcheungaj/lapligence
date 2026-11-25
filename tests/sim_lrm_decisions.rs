@@ -1837,6 +1837,14 @@ fn s09_d7_fork_shared_native_wait() {
 }
 
 #[test]
+fn s09_d8_updates_of_ended_processes() {
+    run_decision(
+        "S09-D8_updates_of_ended_processes",
+        include_str!("fixtures/sim/lrm_decisions/S09-D8_updates_of_ended_processes.out"),
+    );
+}
+
+#[test]
 fn s27_d1_load_wakes_changed_words() {
     run_decision(
         "S27-D1_load_wakes_changed_words",

@@ -1,0 +1,18 @@
+returns      v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1 v5=0
+             v5=5 ve=6 after=1
+kill         v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1 v5=0
+             v5=5 ve=6 after=0
+kills itself v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1 v5=0
+             v5=5 ve=6 after=0
+disable fork v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1 v5=0
+             v5=5 ve=6 after=0
+grandchild   v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1 v5=0
+             v5=5 ve=6 after=0
+block        v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1 v5=0
+             v5=5 ve=6 after=0
+fork block   v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1 v5=0
+             v5=5 ve=6 after=0
+task         v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1 v5=0
+             v5=5 ve=6 after=0
+own block    v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1 v5=0
+             v5=5 ve=6 after=0

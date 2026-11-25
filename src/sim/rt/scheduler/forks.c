@@ -392,8 +392,7 @@ void llg_disable_target(llg_proc_t* self, uint32_t declaration,
     }
 
     // A blocked activation must be detached from every wait list before its
-    // coroutine is scheduled again. Immediate NBAs remain attached to the
-    // process and are therefore committed normally after cancellation.
+    // coroutine is scheduled again.
     if (matched) {
         for (llg_activation_t* activation = g.activations; activation;
              activation = activation->all_next) {
@@ -415,9 +414,7 @@ void llg_disable_target(llg_proc_t* self, uint32_t declaration,
 
 // Free completed/killed fork groups: their child procs that were not already
 // freed by disable_fork, the child list nodes and the group struct.  Called
-// from llg_rt_run after commit_nbas with no coroutine running, so done
-// children's NBAs have been committed and their all_procs slots can be NULLed
-// safely (the next commit_nbas then skips them).
+// from llg_rt_run with no coroutine running.
 static void process_zombie_groups(void) {
     llg_fork_group_t* grp = g.zombie_groups;
     g.zombie_groups = NULL;
@@ -429,7 +426,7 @@ static void process_zombie_groups(void) {
             // A completed child can still own live join_none descendants.
             // Keep its process object until those groups unlink themselves;
             // their completion path dereferences the parent pointer.
-            if (c->proc->fork_groups || c->proc->held_groups || c->proc->nba_head) {
+            if (c->proc->fork_groups || c->proc->held_groups) {
                 deferred = 1;
                 continue;
             }

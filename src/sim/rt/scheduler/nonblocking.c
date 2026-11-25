@@ -9,7 +9,6 @@ static uint64_t nba_next_sequence(void) {
 
 static llg_nba_t* new_nba_in_region(uint64_t ticks, llg_region_t region) {
     if (!region_can_mutate("nonblocking scheduling")) return NULL;
-    llg_proc_t* owner = g.in_deferred_action ? NULL : llg_current();
     // An update whose time would pass the last 64-bit time takes effect in
     // the current time slot's NBA region, as industry-standard simulators
     // do (decision S01-D2).
@@ -35,7 +34,6 @@ static llg_nba_t* new_nba_in_region(uint64_t ticks, llg_region_t region) {
     n->time = g.now + ticks;
     n->sequence = nba_next_sequence();
     n->region = region;
-    n->owner = owner;
     return n;
 }
 
@@ -64,26 +62,6 @@ static void nba_queue_remove(llg_nba_queue_t* queue, llg_nba_t* n) {
     else queue->tail = n->queue_prev;
     n->queue_next = NULL;
     n->queue_prev = NULL;
-}
-
-static void nba_owner_append(llg_proc_t* owner, llg_nba_t* n) {
-    n->owner_next = NULL;
-    n->owner_prev = owner->nba_tail;
-    if (owner->nba_tail) owner->nba_tail->owner_next = n;
-    else owner->nba_head = n;
-    owner->nba_tail = n;
-}
-
-static void nba_owner_remove(llg_nba_t* n) {
-    llg_proc_t* owner = n->owner;
-    if (!owner) return;
-    if (n->owner_prev) n->owner_prev->owner_next = n->owner_next;
-    else owner->nba_head = n->owner_next;
-    if (n->owner_next) n->owner_next->owner_prev = n->owner_prev;
-    else owner->nba_tail = n->owner_prev;
-    n->owner_next = NULL;
-    n->owner_prev = NULL;
-    n->owner = NULL;
 }
 
 static llg_nba_bucket_t* delayed_nba_bucket(uint64_t time) {
@@ -127,7 +105,6 @@ static void enqueue_nba(llg_nba_t* n) {
     if (g.nba_hold_open) {
         llg_nba_hold_t* hold = g.nba_hold_open;
         n->queue_next = NULL;
-        n->owner = NULL;
         if (hold->tail) hold->tail->queue_next = n;
         else hold->head = n;
         hold->tail = n;
@@ -135,14 +112,9 @@ static void enqueue_nba(llg_nba_t* n) {
     }
     if (n->time == g.now) {
         nba_queue_append(&g.nba_queues[n->region], n);
-        if (n->owner) nba_owner_append(n->owner, n);
     } else {
         llg_nba_bucket_t* bucket = delayed_nba_bucket(n->time);
         nba_queue_append(&bucket->queues[n->region], n);
-        // Future NBAs retain their destinations and values independently of
-        // the issuing process. They intentionally do not join its cancellable
-        // current-slot list.
-        n->owner = NULL;
     }
 }
 
@@ -235,7 +207,6 @@ static void promote_delayed_nbas(void) {
 
 void llg_nba_hold_release(void* held, uint64_t ticks) {
     llg_nba_hold_t* hold = held;
-    llg_proc_t* owner = g.in_deferred_action ? NULL : llg_current();
     llg_region_t region =
         region_is_reactive(g.current_region) ? LLG_REGION_RE_NBA : LLG_REGION_NBA;
     while (hold->head) {
@@ -247,24 +218,9 @@ void llg_nba_hold_release(void* held, uint64_t ticks) {
         n->time = after > UINT64_MAX - g.now ? g.now : g.now + after;
         n->sequence = nba_next_sequence();
         n->region = region;
-        n->owner = owner;
         enqueue_nba(n);
     }
     nba_hold_destroy(hold);
-}
-
-static void cancel_proc_nbas(llg_proc_t* proc) {
-    while (proc && proc->nba_head) {
-        llg_nba_t* n = proc->nba_head;
-        nba_queue_remove(&g.nba_queues[n->region], n);
-        nba_owner_remove(n);
-        nba_destroy(n);
-    }
-}
-
-// Keep the queued NBAs but end their cancellable link to `proc`.
-static void nba_owner_release_all(llg_proc_t* proc) {
-    while (proc && proc->nba_head) nba_owner_remove(proc->nba_head);
 }
 
 static void free_all_nbas(void) {
@@ -273,7 +229,6 @@ static void free_all_nbas(void) {
         while (queue->head) {
             llg_nba_t* n = queue->head;
             nba_queue_remove(queue, n);
-            nba_owner_remove(n);
             nba_destroy(n);
         }
     }

@@ -19,7 +19,7 @@ fn process_handles_preserve_waits_identity_and_terminal_status() {
 }
 
 #[test]
-fn killing_a_process_tree_drops_only_descendant_nbas() {
+fn killing_a_process_tree_stops_its_statements_and_no_update() {
     sim_cli::run_case(
         "process_control",
         "kill_tree",

@@ -57,8 +57,6 @@ typedef struct llg_nba_locator {
 typedef struct llg_nba {
     struct llg_nba* queue_next;
     struct llg_nba* queue_prev;
-    struct llg_nba* owner_next;
-    struct llg_nba* owner_prev;
     sv4_t* target;
     llg_fixed_array_t *fixed_target, *fixed_value;
     llg_value_scope_t* target_scope;
@@ -74,7 +72,6 @@ typedef struct llg_nba {
     uint64_t time;
     uint64_t sequence;
     llg_region_t region;
-    llg_proc_t* owner;
     int32_t is_real;
     int32_t is_event;
     double* real_target;
@@ -661,8 +658,6 @@ static llg_value_scope_t* root_value_scopes;
 static llg_value_scope_t* all_value_scopes;
 
 struct llg_proc {
-    llg_nba_t* nba_head;
-    llg_nba_t* nba_tail;
     llg_region_t wait_resume_region;
     int32_t has_wait_resume_region;
     // Flags are bytes so the suspension state below fits the same padding.
@@ -783,7 +778,7 @@ _Static_assert(offsetof(llg_proc_t, chain) + sizeof(llg_co_chain_t) -
 _Static_assert(offsetof(llg_proc_t, chain) + sizeof(llg_co_chain_t) ==
                    sizeof(llg_proc_t),
                "coroutine chain must remain the process record's last member");
-_Static_assert(sizeof(llg_proc_t) == 440,
+_Static_assert(sizeof(llg_proc_t) == 424,
                "64-bit process record size changed; update the layout contract");
 #endif
 
@@ -804,8 +799,6 @@ static int32_t region_can_mutate(const char* action);
 static llg_nba_t* new_nba(uint64_t ticks);
 static llg_nba_t* new_clocking_nba(uint64_t ticks);
 static void enqueue_nba(llg_nba_t* n);
-static void cancel_proc_nbas(llg_proc_t* proc);
-static void nba_owner_release_all(llg_proc_t* proc);
 static void free_all_nbas(void);
 static void promote_delayed_nbas(void);
 static void deferred_trigger_source_change(sv4_t* sig, double* real);

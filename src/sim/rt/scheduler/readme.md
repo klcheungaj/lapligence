@@ -105,8 +105,8 @@ co-allocates and initializes its root frame after the process record and owns on
 arena until that record is reclaimed, including kill and teardown paths.
 A completed top-level process (static, assertion action or detached spawn) is
 retired at completion, or when its last join_none group detaches, and freed at
-the next `reap_retired_procs` boundary; it can no longer be killed, so its
-same-slot NBAs leave the cancellable owner list and commit from their queues.
+the next `reap_retired_procs` boundary. Nonblocking updates belong to no process:
+those of a completed or killed one commit (decision S09-D8).
 Fork children are freed with their zombie groups; finals never retire.
 Creators release frame references after spawn; children release on completion,
 cancellation and teardown. Joined children may borrow live parent cells; cancel

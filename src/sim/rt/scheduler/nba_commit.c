@@ -159,7 +159,6 @@ static void commit_nbas(llg_region_t region) {
             change_check();
         }
         nba_queue_remove(queue, next);
-        nba_owner_remove(next);
         apply_nba(next);
         nba_destroy(next);
     }

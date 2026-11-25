@@ -18,7 +18,6 @@ static void free_group_storage(llg_fork_group_t* grp) {
 }
 
 static void free_proc_storage(llg_proc_t* p) {
-    cancel_proc_nbas(p);
     remove_waiters_entry(&p->wait);
     event_unlink(&p->wait);
     event_triggered_unlink(&p->wait);

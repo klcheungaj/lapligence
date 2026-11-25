@@ -88,9 +88,10 @@ static void release_killed_proc_resources(llg_proc_t* proc) {
     process_local_release_all(proc);
 }
 
-// Unlink a suspended or queued proc from every scheduler queue, free its
-// pending NBA list, and retire its storage. A named disable may cancel the
-// executing coroutine; its destruction is deferred until the scheduler resumes.
+// Unlink a suspended or queued proc from every scheduler queue and retire its
+// storage. The updates it has scheduled commit (S09-D8). A named disable may
+// cancel the executing coroutine; its destruction is deferred until the
+// scheduler resumes.
 static void llg_kill_proc(llg_proc_t* p, int32_t notify_parent) {
     if (!p || p->killed) return;
     p->killed = 1;
@@ -100,7 +101,6 @@ static void llg_kill_proc(llg_proc_t* p, int32_t notify_parent) {
     release_program_process(p);
     p->suspended = 0;
     p->wake_pending = 0;
-    cancel_proc_nbas(p);
     mailbox_drop_delivery(p);
 
     llg_wait_t* w = &p->wait;
@@ -174,9 +174,7 @@ static void reap_retired_procs(void) {
 // spawn) once no runtime structure can reach its record or root frame, so
 // repeatedly spawned processes do not accumulate until teardown. Fork children
 // are reclaimed with their zombie groups, and the runner of the final
-// procedures frees their records itself. A completed process is
-// never killed, so its same-slot NBAs need no cancellable owner list and
-// commit from their region queues alone. Live join_none groups may still use
+// procedures frees their records itself. Live join_none groups may still use
 // the parent; fork_group_unlink retries when the last one detaches.
 // Destruction waits for the next reap_retired_procs boundary, so callers may
 // keep reading the record until then.
@@ -188,7 +186,6 @@ static void proc_retire_completed(llg_proc_t* proc) {
     // Unregistered records are final procedures, except delayed-call
     // carriers, which retire here like any completed top-level process.
     if (proc->registry_slot < 0 && !proc_is_delayed_call(proc)) return;
-    nba_owner_release_all(proc);
     if (proc->fork_groups || proc->held_groups) return;
     unregister_proc(proc);
     proc->next_retired = g.retired_procs;

@@ -713,9 +713,6 @@ static void deferred_trigger_fire(llg_deferred_trigger_t* trigger) {
     }
     llg_nba_t* n = new_nba(0);
     if (!n) return;
-    // The retained request is independent of both the issuer and the process
-    // that happened to produce the matching source change.
-    n->owner = NULL;
     n->event_target = trigger->target;
     n->is_event = 1;
     enqueue_nba(n);

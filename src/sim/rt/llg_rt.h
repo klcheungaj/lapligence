@@ -2913,9 +2913,8 @@ void llg_rt_run_finals(void);
 // until every live group of the current process is done (useful after join_none /
 // join_any, whose groups outlive the parent's wait). `llg_disable_fork` kills
 // all descendants of the current process, including children still pending
-// their first execution; killed children's immediate NBA lists are discarded.
-// Future updates already in the global timed NBA queue retain their persistent
-// targets.
+// their first execution. Updates they have scheduled commit (S09-D8): an update
+// retains its target and value, not its process.
 
 typedef struct llg_fork_group llg_fork_group_t;
 
@@ -3032,7 +3031,7 @@ double llg_frame_read_real(const llg_frame_t* frame, size_t slot);
 void* llg_frame_read_opaque(const llg_frame_t* frame, size_t slot);
 void llg_frame_write_real(llg_frame_t* frame, size_t slot, double value);
 // Kill every descendant of the current process, including those whose parent
-// has finished (SV 9.6.3; immediate NBA lists are discarded).
+// has finished (SV 9.6.3).
 void llg_disable_fork(llg_proc_t* self);
 
 // Named block/task activation registry. Declaration and instance identities
