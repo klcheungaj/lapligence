@@ -1003,6 +1003,11 @@ static inline void change_check(void) {
     if (LLG_CO_UNLIKELY(g.change_count)) change_flush();
 }
 
+// Whether there is anything for llg_clocking_forget_signal to forget.
+static inline int32_t changes_watched(void) {
+    return (g.change_rows | g.change_unrowed | g.clocking_count) != 0;
+}
+
 // A check before an output task. Nonzero when the calling process has ended
 // the run, as a callback the changes run may: the task then does nothing.
 static inline int32_t change_check_ends_run(void) {

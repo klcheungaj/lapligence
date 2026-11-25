@@ -48,8 +48,8 @@ static void llg_warn_host_stack_limit(void) {
 
 // ── Fatal boundary checks ────────────────────────────────────────────────────
 
-static _Noreturn void llg_fatal_allocation(const char* what, size_t count,
-                                           size_t size) {
+LLG_COLD LLG_NOINLINE static _Noreturn void llg_fatal_allocation(const char* what, size_t count,
+                                                                 size_t size) {
     llg_msg_abort_allocation(what, count, size);
 }
 
@@ -204,14 +204,12 @@ static void* llg_checked_malloc(size_t count, size_t size, const char* what) {
     return ptr;
 }
 
-static void* llg_checked_calloc(size_t count, size_t size, const char* what) {
-    if (size != 0 && count > SIZE_MAX / size)
-        llg_fatal_allocation(what, count, size);
+static inline void* llg_checked_calloc(size_t count, size_t size, const char* what) {
     // Keep zero-sized requests non-null so callers never depend on a
     // platform-specific malloc(0)/calloc(0) result.
     if (count == 0 || size == 0) count = size = 1;
     void* ptr = calloc(count, size);
-    if (!ptr) llg_fatal_allocation(what, count, size);
+    if (LLG_CO_UNLIKELY(!ptr)) llg_fatal_allocation(what, count, size);
     return ptr;
 }
 
