@@ -319,6 +319,13 @@ impl Codegen<'_> {
                              is not supported in `{path}`"
                         ),
                     )
+                } else if self
+                    .virtual_interface_unvalued
+                    .contains(&(descriptor, member.clone()))
+                {
+                    format!(
+                        "member `{member}` of virtual interface `{spelling}` is a string or a handle, which is not supported through a virtual interface in `{path}`"
+                    )
                 } else if view_port {
                     // A view port without interface storage of its own is a
                     // modport expression port (SV 25.5.4); its expression is

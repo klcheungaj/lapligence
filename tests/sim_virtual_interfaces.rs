@@ -59,6 +59,22 @@ fn queue_virtual_interface_array_rebinds_elements() {
 }
 
 #[test]
+fn string_member_leaves_the_other_members_reachable() {
+    sim_cli::run_case(
+        "virtual_interfaces",
+        "string_member",
+        "data=5 name=bus\n",
+        "INFO: string_member.sv:19:9: [SIM-001] (tb @ 0 ps) $finish called\n",
+        &[],
+    );
+    sim_cli::reject_case(
+        "virtual_interfaces",
+        "neg_string_member",
+        "neg_string_member.sv:15:9 member `name` of virtual interface `bus_if` is a string or a handle",
+    );
+}
+
+#[test]
 fn modport_input_write_is_rejected() {
     sim_cli::reject_case(
         "virtual_interfaces",

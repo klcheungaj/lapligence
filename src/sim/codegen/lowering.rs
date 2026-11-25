@@ -2571,6 +2571,9 @@ struct Codegen<'a> {
     virtual_interface_instances: HashMap<NodeId, (usize, usize)>,
     /// `(descriptor, member path)` → member slot.
     virtual_interface_members: HashMap<(usize, String), usize>,
+    /// `(descriptor, member)` of a member with no packed or real value (a
+    /// string, a handle): a virtual interface reaches no such member.
+    virtual_interface_unvalued: HashSet<(usize, String)>,
     /// `(descriptor, method name)` → method slot.
     virtual_interface_methods: HashMap<(usize, String), usize>,
     /// Modport view restrictions keyed by descriptor and view name. Each
@@ -2948,6 +2951,7 @@ impl<'a> Codegen<'a> {
             virtual_interface_types: HashMap::new(),
             virtual_interface_instances: HashMap::new(),
             virtual_interface_members: HashMap::new(),
+            virtual_interface_unvalued: HashSet::new(),
             virtual_interface_methods: HashMap::new(),
             virtual_interface_views: HashMap::new(),
             virtual_interface_view_methods: HashMap::new(),

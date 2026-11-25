@@ -1065,6 +1065,18 @@ impl<'a> Codegen<'a> {
                 }
             }
         }
+        // A member without a value of its own (a string, a handle) is left
+        // out: it is reported where a virtual interface names it.
+        member_names.retain(|name| {
+            let unvalued = member_info
+                .get(name)
+                .is_some_and(|signal| !signal.real && signal.width == 0);
+            if unvalued {
+                self.virtual_interface_unvalued
+                    .insert((descriptor_index, name.clone()));
+            }
+            !unvalued
+        });
         let members = member_names
             .iter()
             .enumerate()
@@ -1072,7 +1084,7 @@ impl<'a> Codegen<'a> {
                 let signal = member_info.get(name).ok_or_else(|| {
                     format!("virtual interface member `{name}` has no signal metadata")
                 })?;
-                if !signal.real && (signal.width == 0 || signal.width > LLG_MAX_WIDTH) {
+                if !signal.real && signal.width > LLG_MAX_WIDTH {
                     return Err(format!(
                         "virtual interface member `{name}` must be a real or packed signal within the runtime width limit"
                     ));
