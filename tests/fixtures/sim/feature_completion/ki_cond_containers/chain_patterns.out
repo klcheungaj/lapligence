@@ -1,0 +1,144 @@
+0
+one: 1 <s> '{2, 8} 
+chain: 2 <t> '{2, 8} 
+first: 2 <t> '{2, 8} 
+1
+  make(3, num)one: 3 <num> '{3, 9} 
+  make(3, num)chain: 3 <num> '{3, 9} 
+first: 2 <t> '{2, 8} 
+2
+one: 1 <s> '{1, 9} 
+chain: 2 <t> '{2, 8} 
+first: 2 <t> '{2, 8} 
+3
+one: 1 <s> '{2, 8} 
+  make(7, a)chain: 7 <a> '{1, 9} 
+first: 2 <t> '{2, 8} 
+4
+one: 1 <s> '{2, 8} 
+  make(5, v)chain: 5 <v> '{5, 9} 
+first: 1 <s> '{1, 9} 
+5
+  make(3, num)one: 3 <num> '{3, 9} 
+  make(3, num)chain: 3 <num> '{3, 9} 
+first: 1 <s> '{1, 9} 
+6
+one: 1 <s> '{1, 9} 
+  make(5, v)chain: 5 <v> '{5, 9} 
+first: 1 <s> '{1, 9} 
+7
+one: 1 <s> '{2, 8} 
+  make(5, v)chain: 5 <v> '{5, 9} 
+first: 1 <s> '{1, 9} 
+8
+one: 1 <s> '{2, 8} 
+  make(8, b)chain: 8 <b> '{8} 
+first: 2 <t> '{2, 8} 
+9
+  make(3, num)one: 3 <num> '{3, 9} 
+  make(3, num)chain: 3 <num> '{3, 9} 
+first: 2 <t> '{2, 8} 
+10
+one: 1 <s> '{1, 9} 
+  make(8, b)chain: 8 <b> '{8} 
+first: 2 <t> '{2, 8} 
+11
+one: 1 <s> '{2, 8} 
+  make(7, a)chain: 7 <a> '{1, 9} 
+first: 2 <t> '{2, 8} 
+12
+one: 1 <s> '{2, 8} 
+chain: 0 <s> '{0, 9} 
+first: 2 <t> '{2, 8} 
+13
+  make(3, num)one: 3 <num> '{3, 9} 
+  make(3, num)chain: 3 <num> '{3, 9} 
+first: 2 <t> '{2, 8} 
+14
+one: 1 <s> '{1, 9} 
+chain: 0 <s> '{0, 9} 
+first: 2 <t> '{2, 8} 
+15
+one: 1 <s> '{2, 8} 
+chain: 0 <s> '{0, 9} 
+first: 2 <t> '{2, 8} 
+16
+one: 1 <s> '{2, 8} 
+chain: 0 <s> '{0, 9} 
+  make(5, n)first: 5 <n> '{5, 9} 
+17
+  make(3, num)one: 3 <num> '{3, 9} 
+  make(3, num)chain: 3 <num> '{3, 9} 
+  make(8, both)first: 8 <both> '{8, 9} 
+18
+one: 1 <s> '{1, 9} 
+chain: 0 <s> '{0, 9} 
+  make(6, both)first: 6 <both> '{6, 9} 
+19
+one: 1 <s> '{2, 8} 
+chain: 0 <s> '{0, 9} 
+  make(5, n)first: 5 <n> '{5, 9} 
+20
+one: 1 <s> '{2, 8} 
+chain: 0 <s> '{0, 9} 
+first: 2 <t> '{2, 8} 
+21
+  make(3, num)one: 3 <num> '{3, 9} 
+  make(3, num)chain: 3 <num> '{3, 9} 
+first: 2 <t> '{2, 8} 
+22
+one: 1 <s> '{1, 9} 
+chain: 0 <s> '{0, 9} 
+first: 2 <t> '{2, 8} 
+23
+one: 1 <s> '{2, 8} 
+chain: 0 <s> '{0, 9} 
+first: 2 <t> '{2, 8} 
+24
+one: 1 <s> '{2, 8} 
+chain: 0 <> '{0, 0} 
+first: 2 <t> '{2, 8} 
+25
+  make(3, num)one: 3 <num> '{3, 9} 
+  make(3, num)chain: 3 <num> '{3, 9} 
+first: 2 <t> '{2, 8} 
+26
+one: 1 <s> '{1, 9} 
+chain: 0 <> '{0, 0} 
+first: 2 <t> '{2, 8} 
+27
+one: 1 <s> '{2, 8} 
+  make(7, a)chain: 0 <> '{0, 9} 
+first: 2 <t> '{2, 8} 
+28
+one: 1 <s> '{2, 8} 
+  make(5, v)chain: 0 <> '{0, 9} 
+  make(5, n)first: 0 <> '{0, 9} 
+29
+  make(3, num)one: 3 <num> '{3, 9} 
+  make(3, num)chain: 3 <num> '{3, 9} 
+  make(8, both)first: 0 <> '{0, 9} 
+30
+one: 1 <s> '{1, 9} 
+  make(5, v)chain: 0 <> '{0, 9} 
+  make(6, both)first: 0 <> '{0, 9} 
+31
+one: 1 <s> '{2, 8} 
+  make(5, v)chain: 0 <> '{0, 9} 
+  make(5, n)first: 0 <> '{0, 9} 
+32
+one: 1 <s> '{2, 8} 
+  make(8, b)chain: 0 <> '{0, 0} 
+first: 2 <t> '{2, 8} 
+33
+  make(3, num)one: 3 <num> '{3, 9} 
+  make(3, num)chain: 3 <num> '{3, 9} 
+first: 2 <t> '{2, 8} 
+34
+one: 1 <s> '{1, 9} 
+  make(8, b)chain: 0 <> '{0, 0} 
+first: 2 <t> '{2, 8} 
+35
+one: 1 <s> '{2, 8} 
+  make(7, a)chain: 0 <> '{0, 9} 
+first: 2 <t> '{2, 8} 

@@ -190,6 +190,9 @@ mod sim_038;
 #[path = "sim_feature_completion/sim_039.rs"]
 mod sim_039;
 
+#[path = "sim_feature_completion/ki_cond_containers.rs"]
+mod ki_cond_containers;
+
 #[path = "sim_feature_completion/ki_packed_range.rs"]
 mod ki_packed_range;
 

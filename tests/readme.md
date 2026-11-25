@@ -1656,8 +1656,12 @@ hold that: `-E 'test(conditional_chains::)'` (library) renders chains of 8,
 code for twice the levels, in a flat block; `-E 'binary(sim_feature_completion)
 & test(fin_002e::)'` runs the fixtures of
 `fixtures/sim/feature_completion/fin_002e/` (chains of 4 to 32 levels with 0,
-1, X and Z predicates at every position) and bounds each `model.c`. A new
-conditional form (a result type with its own merge) needs a row in both.
+1, X and Z predicates at every position) and bounds each `model.c`.
+Conditionals over containers and records with string, handle or container
+members, which lowering expands into statements, have the same two:
+`-E 'test(conditional_expansion::)'` and `-E 'binary(sim_feature_completion) &
+test(ki_cond_containers::)'`. A new conditional form (a result type with its own
+merge) needs a row in both.
 
 ### One readable fixture
 
