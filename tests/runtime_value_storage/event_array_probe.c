@@ -86,11 +86,14 @@ int main(int argc, char** argv) {
         llg_value_scope_end(scope);
         if (!select_only) {
             valid_wakes = invalid_wakes = 0;
+            /* Waiting on a null event ends the run (S14-D8). */
+            uint32_t null_wait = cycle % 2u;
             llg_spawn(&valid_waiter_desc, "valid-array-wait");
-            llg_spawn(&invalid_waiter_desc, "invalid-array-wait");
+            if (null_wait) llg_spawn(&invalid_waiter_desc, "invalid-array-wait");
             llg_spawn(&trigger_process_desc, "array-trigger");
             llg_rt_run();
-            CHECK(valid_wakes == 1 && invalid_wakes == 0);
+            CHECK(valid_wakes == 1u - null_wait && invalid_wakes == 0);
+            CHECK(llg_rt_failed() == (int32_t)null_wait);
         }
         for (size_t i = 0; i < 4; ++i) llg_event_object_reset(&objects[i]);
         llg_rt_cleanup();

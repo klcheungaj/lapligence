@@ -416,12 +416,14 @@ fn render_with_frame(
                 let name = format!("_fc{}_{}", storage.frame().index(), storage.slot());
                 frame.bind_capture(&name, storage, capture.initial(), "frame")?;
             }
+            frame.line("{");
             let value = frame.expression(rhs)?;
             let writes = frame.prepare_assignment(lhs, value)?;
             for (target, value) in writes {
                 frame.store(&target, value, true, "0")?;
                 frame.release_target(target);
             }
+            frame.line("}");
             frame.line("if (0) goto _llg_return;");
             frame.line("_llg_return: ;");
             frame.line("llg_value_scopes_end_since(_llg_frame_base);");
