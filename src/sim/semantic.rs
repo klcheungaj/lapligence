@@ -225,37 +225,40 @@ impl<'db> SemanticModel<'db> {
     /// visible in the ledger as intentionally unreachable rather than becoming
     /// false unsupported diagnostics.
     pub fn simulation_coverage(&self) -> Vec<SimulationCoverageEntry> {
-        let reachable = self.simulation_reachability();
-        let elaboration_placeholders = self.simulation_elaboration_placeholders();
-        self.db
-            .node_ids()
-            .map(|node| {
-                let class = if reachable[node.index()] {
-                    classify_simulation_node(self.db, node, elaboration_placeholders[node.index()])
-                } else {
-                    SimulationNodeClass::IntentionallyUnreachable
-                };
-                SimulationCoverageEntry {
-                    node,
-                    class,
-                    origin: OriginId(node.index() as u32),
-                    detail: simulation_node_detail(self.db, node),
-                }
+        self.simulation_classes()
+            .map(|(node, class)| SimulationCoverageEntry {
+                node,
+                class,
+                origin: OriginId(node.index() as u32),
+                detail: simulation_node_detail(self.db, node),
             })
             .collect()
+    }
+
+    /// The simulation class of every node.
+    fn simulation_classes(&self) -> impl Iterator<Item = (NodeId, SimulationNodeClass)> + '_ {
+        let reachable = self.simulation_reachability();
+        let elaboration_placeholders = self.simulation_elaboration_placeholders();
+        self.db.node_ids().map(move |node| {
+            let class = if reachable[node.index()] {
+                classify_simulation_node(self.db, node, elaboration_placeholders[node.index()])
+            } else {
+                SimulationNodeClass::IntentionallyUnreachable
+            };
+            (node, class)
+        })
     }
 
     /// Reject every reachable executable node that has no simulation
     /// lowering contract before IR construction starts.
     pub fn validate_simulation(&self) -> Result<(), Vec<SimulationIssue>> {
         let issues = self
-            .simulation_coverage()
-            .into_iter()
-            .filter(|entry| entry.class == SimulationNodeClass::Unsupported)
-            .map(|entry| SimulationIssue {
-                node: entry.node,
-                origin: entry.origin,
-                detail: entry.detail,
+            .simulation_classes()
+            .filter(|(_, class)| *class == SimulationNodeClass::Unsupported)
+            .map(|(node, _)| SimulationIssue {
+                node,
+                origin: OriginId(node.index() as u32),
+                detail: simulation_node_detail(self.db, node),
             })
             .collect::<Vec<_>>();
         if issues.is_empty() {
