@@ -646,6 +646,7 @@ impl Codegen<'_> {
             ref_rooted: false,
         });
         self.native_value_layouts.insert(index, node);
+        self.native_temporaries.insert(index);
         Ok(index)
     }
 

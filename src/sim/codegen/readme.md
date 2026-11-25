@@ -12,6 +12,7 @@ It performs no native frontend calls, unsafe operations or C emission.
 | `timescale.rs` | Slang-resolved units/precision and checked femtosecond ticks across 1fs–100s. |
 | `lowering/collection/fixed_*` | Checked layouts, defaults, patterns, casts and activation/member projections. |
 | `lowering/expressions/conditionals.rs` | Array/structure merge plans before flattening loses immediate boundaries. |
+| `lowering/expressions/conditional_expansion.rs` | Conditionals assigned by statements (containers, native records) in code proportional to the source. |
 | `lowering/packed_geometry.rs` | The one mapping from packed element labels of the outermost visible dimension to LSB-relative bits. |
 | `lowering/collection/packed_elements.rs` | Dimension-relative packed selection chains over fixed-array elements and whole packed values. |
 | `net_collapse.rs`, `port_net_types.rs`, `nets.rs`, `net_arrays.rs`, `net_cells.rs` | Directional net-type selection, undriven net-array cell runs, canonical electrical identities, drivers and publication. |

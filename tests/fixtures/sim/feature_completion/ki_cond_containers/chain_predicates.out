@@ -1,0 +1,60 @@
+vector: 1 <s> 1 9
+signed: 1 <s> 1 9
+real: 1 <s> 1 9
+parameter: 0 <s> 1 9
+unknown: 0 <s> 0 9
+fill: 0 <s> 1 9
+fill x: 0 <s> 0 9
+literal: 0 <s> 0 9
+string: 0 <s> 1 9
+chain: 3 <s> 0 8
+mixed: 0 <> 0 0
+first: 4 <t> 4 8
+vector: 0 <s> 0 9
+signed: 0 <s> 0 9
+real: 0 <s> 0 9
+parameter: 0 <s> 1 9
+unknown: 0 <s> 0 9
+fill: 0 <s> 1 9
+fill x: 0 <s> 0 9
+literal: 0 <s> 0 9
+string: 0 <s> 1 9
+chain: 0 <s> 0 9
+mixed: 0 <s> 0 9
+first: 0 <s> 0 9
+vector: 0 <s> 0 9
+signed: 0 <s> 0 9
+real: 0 <s> 0 9
+parameter: 0 <s> 1 9
+unknown: 0 <s> 0 9
+fill: 0 <s> 1 9
+fill x: 0 <s> 0 9
+literal: 0 <s> 0 9
+string: 0 <s> 1 9
+chain: 0 <s> 0 9
+mixed: 0 <s> 0 9
+first: 0 <s> 0 9
+vector: 0 <s> 0 9
+signed: 0 <s> 0 9
+real: 1 <s> 1 9
+parameter: 0 <s> 1 9
+unknown: 0 <s> 0 9
+fill: 0 <s> 1 9
+fill x: 0 <s> 0 9
+literal: 0 <s> 0 9
+string: 0 <s> 1 9
+chain: 0 <s> 0 9
+mixed: 0 <s> 0 9
+first: 0 <> 0 0
+vector: 0 <s> 0 9
+signed: 0 <s> 0 9
+real: 0 <s> 0 9
+parameter: 0 <s> 1 9
+unknown: 0 <s> 0 9
+fill: 0 <s> 1 9
+fill x: 0 <s> 0 9
+literal: 0 <s> 0 9
+string: 0 <s> 1 9
+chain: 0 <s> 0 9
+mixed: 0 <s> 0 9
+first: 0 <s> 0 9

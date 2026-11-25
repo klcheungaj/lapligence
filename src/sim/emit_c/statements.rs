@@ -1535,6 +1535,9 @@ fn render_stmt_scoped(
             activation_cleanup(scopes, Some(label))
         ),
         IrStmt::Label(label) => format!("    {label}: ;\n"),
+        IrStmt::JumpState(_) => {
+            return Err("a jump state requires the ownership emitter".to_owned());
+        }
         IrStmt::Nop => String::new(),
     };
     Ok(out)

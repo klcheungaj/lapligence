@@ -873,6 +873,7 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         | IrStmt::SdfAnnotate { .. }
         | IrStmt::Label(_)
         | IrStmt::Goto(_)
+        | IrStmt::JumpState(_)
         | IrStmt::Nop
         // Its delay expressions are walked with every statement's.
         | IrStmt::SetNetDelay { .. }
