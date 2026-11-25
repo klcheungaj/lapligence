@@ -604,8 +604,8 @@ fn walk_reads(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<N
         _ => {}
     }
     add_read(db, node, seen, out);
-    for c in &db.node(node).children {
-        walk_reads(db, *c, seen, out);
+    for child in db.walk_children(node) {
+        walk_reads(db, child, seen, out);
     }
 }
 
@@ -768,8 +768,8 @@ fn walk_writes(
         }
         _ => {}
     }
-    for c in &db.node(node).children {
-        walk_writes(db, *c, targets, seen, out);
+    for child in db.walk_children(node) {
+        walk_writes(db, child, targets, seen, out);
     }
 }
 
@@ -855,8 +855,8 @@ fn walk_driver_writes(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &m
         _ => {}
     }
     // Calls nest inside assignment right-hand sides, conditions and actuals.
-    for c in &db.node(node).children {
-        walk_driver_writes(db, *c, seen, out);
+    for child in db.walk_children(node) {
+        walk_driver_writes(db, child, seen, out);
     }
 }
 
@@ -1835,8 +1835,8 @@ pub fn process_local_vars(db: &Db, process: NodeId) -> HashSet<NodeId> {
             }
             _ => {}
         }
-        for child in &db.node(node).children {
-            walk(db, *child, out);
+        for child in db.walk_children(node) {
+            walk(db, child, out);
         }
     }
     let mut out = HashSet::new();
@@ -1878,10 +1878,8 @@ pub fn has_implicit_event(db: &Db, root: NodeId) -> bool {
     if let NodeKind::Stmt(StmtKind::EventControl { implicit: true, .. }) = db.node_kind(root) {
         return true;
     }
-    db.node(root)
-        .children
-        .iter()
-        .any(|c| has_implicit_event(db, *c))
+    db.walk_children(root)
+        .any(|child| has_implicit_event(db, child))
 }
 
 /// True when the process body contains a delay control or a non-implicit
@@ -1894,10 +1892,8 @@ pub fn has_timing_control(db: &Db, root: NodeId) -> bool {
         NodeKind::Stmt(StmtKind::EventControl { implicit, .. }) => return !*implicit,
         _ => {}
     }
-    db.node(root)
-        .children
-        .iter()
-        .any(|c| has_timing_control(db, *c))
+    db.walk_children(root)
+        .any(|child| has_timing_control(db, child))
 }
 
 #[cfg(test)]

@@ -10,6 +10,8 @@ pub(crate) enum Work {
     NormalizedBytes,
     /// Statements weighed for outlining.
     OutlineWeighing,
+    /// Scopes passed on the way outwards from a node.
+    EnclosingSteps,
 }
 
 /// Note `amount` of `work` done by this thread.

@@ -67,8 +67,8 @@ fn nba_assigns(db: &Db, root: NodeId, out: &mut Vec<NodeId>) {
     {
         out.push(root);
     }
-    for c in &db.node(root).children {
-        nba_assigns(db, *c, out);
+    for child in db.walk_children(root) {
+        nba_assigns(db, child, out);
     }
 }
 

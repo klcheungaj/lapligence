@@ -52,8 +52,7 @@ impl Codegen<'_> {
     }
 
     fn is_declaration_scope(&self, id: NodeId) -> bool {
-        matches!(self.kind(id), NodeKind::Stmt(StmtKind::Begin))
-            && self.db.semantic_detail(id) == Some("StatementBlock")
+        self.db.is_block_scope(id)
     }
 
     /// Whether `id` keeps its own count of unnamed scopes: an instance, a

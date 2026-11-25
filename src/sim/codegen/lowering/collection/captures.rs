@@ -344,14 +344,7 @@ impl<'a> Codegen<'a> {
     }
 
     pub(super) fn node_is_within(&self, node: NodeId, scope: NodeId) -> bool {
-        let mut current = Some(node);
-        while let Some(candidate) = current {
-            if candidate == scope {
-                return true;
-            }
-            current = self.node(candidate).parent;
-        }
-        false
+        self.nesting().contains(scope, node)
     }
 
     /// Whether automatic variable `declaration` is shared with a `join_none`

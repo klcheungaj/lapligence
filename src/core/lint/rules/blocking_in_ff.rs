@@ -87,10 +87,8 @@ fn has_edge_event(db: &Db, root: NodeId) -> bool {
             return true;
         }
     }
-    db.node(root)
-        .children
-        .iter()
-        .any(|c| has_edge_event(db, *c))
+    db.walk_children(root)
+        .any(|child| has_edge_event(db, child))
 }
 
 /// Every blocking assignment statement in the subtree rooted at `root`, in
@@ -99,8 +97,8 @@ fn blocking_assigns(db: &Db, root: NodeId, out: &mut Vec<NodeId>) {
     if let NodeKind::Stmt(StmtKind::Assign { blocking: true, .. }) = db.node_kind(root) {
         out.push(root);
     }
-    for c in &db.node(root).children {
-        blocking_assigns(db, *c, out);
+    for child in db.walk_children(root) {
+        blocking_assigns(db, child, out);
     }
 }
 

@@ -292,6 +292,7 @@ mod assertion_context;
 mod clocking_context;
 mod delays;
 mod initialization;
+mod nesting;
 mod net_delay_layout;
 mod packed_geometry;
 mod references;
@@ -2415,8 +2416,10 @@ struct Codegen<'a> {
     /// The iterator variables of every `foreach`, built on first use: local
     /// collection asks for each node of every subroutine body.
     foreach_iterators: std::cell::OnceCell<HashSet<NodeId>>,
-    /// The nearest scope of each node ([`Self::lexical_scopes`]).
-    lexical_scopes: std::cell::OnceCell<Vec<Option<NodeId>>>,
+    /// Which nodes hold which, built on first use.
+    nesting: std::cell::OnceCell<nesting::Nesting>,
+    /// The procedural declarations by name, built on first use.
+    lexical_scopes: std::cell::OnceCell<collection::LexicalScopes>,
     /// Assertion action helpers are registered by the runtime and must not
     /// also be spawned as ordinary design processes at time zero.
     assertion_action_procs: HashSet<String>,
@@ -2873,6 +2876,7 @@ impl<'a> Codegen<'a> {
             wave_block_records: Vec::new(),
             wave_unnamed_blocks: std::cell::OnceCell::new(),
             foreach_iterators: std::cell::OnceCell::new(),
+            nesting: std::cell::OnceCell::new(),
             lexical_scopes: std::cell::OnceCell::new(),
             assertion_action_procs: HashSet::new(),
             checker_free: Vec::new(),
@@ -2935,6 +2939,11 @@ impl<'a> Codegen<'a> {
                 reason: format!("lowered {}", self.node(node).full_name()),
             }
         })
+    }
+
+    /// Which nodes of the design hold which.
+    fn nesting(&self) -> &nesting::Nesting {
+        self.nesting.get_or_init(|| nesting::Nesting::new(self.db))
     }
 
     /// The node at `id` (borrowed from the database, not from `self`).

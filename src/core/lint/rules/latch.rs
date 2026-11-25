@@ -63,8 +63,8 @@ fn collect_cases_without_default(db: &Db, root: NodeId, out: &mut Vec<NodeId>) {
             out.push(root);
         }
     }
-    for c in &db.node(root).children {
-        collect_cases_without_default(db, *c, out);
+    for child in db.walk_children(root) {
+        collect_cases_without_default(db, child, out);
     }
 }
 

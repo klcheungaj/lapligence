@@ -819,6 +819,25 @@ impl Db {
         self.semantic_details.get(id).map(|detail| &**detail)
     }
 
+    /// Whether `id` is the scope a block statement declares its names in.
+    pub(crate) fn is_block_scope(&self, id: NodeId) -> bool {
+        matches!(self.node_kind(id), NodeKind::Stmt(StmtKind::Begin))
+            && self.semantic_detail(id) == Some("StatementBlock")
+    }
+
+    /// The children of `id` for a walk of all the statements of a process or
+    /// subprogram. A block scope is a child of its statement and of the scope
+    /// around it, so a walk through both would pass the scopes inside a
+    /// statement once for each level around it; this leaves out the second.
+    pub(crate) fn walk_children(&self, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+        let scope = self.is_block_scope(id);
+        self.node(id)
+            .children
+            .iter()
+            .copied()
+            .filter(move |child| !(scope && self.is_block_scope(*child)))
+    }
+
     /// Whether any conditional pattern declares a variable.
     pub fn has_conditional_pattern_bindings(&self) -> bool {
         !self.conditional_pattern_bindings.is_empty()

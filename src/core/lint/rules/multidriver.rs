@@ -125,7 +125,7 @@ fn assignments(db: &Db, process: NodeId) -> Vec<NodeId> {
             found.push(node);
             continue;
         }
-        stack.extend(db.node(node).children.iter().copied());
+        stack.extend(db.walk_children(node));
     }
     found
 }

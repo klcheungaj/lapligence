@@ -42,6 +42,8 @@ pub(super) use fixed_values::{
 mod function_bodies;
 mod gates;
 mod initialization;
+mod lexical_scopes;
+pub(super) use lexical_scopes::LexicalScopes;
 mod locals;
 mod lvalues;
 mod module_paths;
