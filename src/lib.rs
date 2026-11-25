@@ -18,6 +18,8 @@ pub mod memory_limit;
 pub mod profile;
 pub mod sim;
 pub mod stack;
+mod id_map;
+pub(crate) use id_map::{IdMap, IdSet};
 pub(crate) mod work;
 
 /// Seeded input generation shared with the integration-test groups
