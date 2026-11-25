@@ -325,7 +325,16 @@ fn plan_directory(
             ))
         })?;
         let spec = parse_patch(&path, &text)?;
-        expected_paths.extend(spec.files.iter().map(|file| file.path.clone()));
+        // Checked whatever the tree's state: an applied tree plans no writes.
+        for file in &spec.files {
+            if !expected_paths.insert(file.path.clone()) {
+                return Err(PatchError::new(format!(
+                    "{label} vendor patch {} overlaps another patch at {}",
+                    spec.path.display(),
+                    file.path.display()
+                )));
+            }
+        }
         specs.push(spec);
     }
     manifest.validate_paths(label, &expected_paths, &retired.entries)?;
@@ -347,19 +356,8 @@ fn plan_directory(
     }
 
     let mut plans = Vec::with_capacity(specs.len());
-    let mut targets = BTreeSet::new();
     for spec in specs {
-        let plan = plan_patch(label, repository, spec, &manifest)?;
-        for write in &plan.writes {
-            if !targets.insert(write.path.clone()) {
-                return Err(PatchError::new(format!(
-                    "{label} vendor patch {} overlaps another patch at {}",
-                    plan.path.display(),
-                    write.path.display()
-                )));
-            }
-        }
-        plans.push(plan);
+        plans.push(plan_patch(label, repository, spec, &manifest)?);
     }
     Ok(plans)
 }
@@ -3040,6 +3038,31 @@ mod tests {
         );
 
         fs::remove_dir_all(root).expect("remove temporary patch tree");
+    }
+
+    /// An applied tree accepts both copies of one diff; a clean one does not.
+    #[test]
+    fn a_file_in_two_patches_is_rejected_in_every_tree_state() {
+        for content in ["one\nold\n", "one\nnew\n"] {
+            let root = temporary_tree();
+            let repository = root.join("repo");
+            let patches = root.join("patches");
+            fs::create_dir_all(&repository).expect("create repository");
+            fs::write(repository.join("alpha.txt"), content).expect("write source");
+            fs::write(patches.join("alpha.patch"), PATCH).expect("write patch");
+            fs::write(patches.join("other.patch"), PATCH).expect("write second patch");
+            write_manifest(&patches, "alpha.txt", "one\nold\n", "one\nnew\n");
+
+            let error = apply_directory("test", &repository, &patches)
+                .expect_err("overlapping patches are rejected");
+            assert!(error.to_string().contains("overlaps another patch"));
+            assert_eq!(
+                fs::read_to_string(repository.join("alpha.txt")).unwrap(),
+                content
+            );
+
+            fs::remove_dir_all(root).expect("remove temporary patch tree");
+        }
     }
 
     #[test]
