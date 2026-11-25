@@ -402,6 +402,48 @@ fn allocation_failure_dpi_and_vpi() {
     );
 }
 
+/// The object and the symbol of one line of `nm -A -u`. GNU and LLVM `nm`
+/// print `<archive>:<member>: U <symbol>` for ELF objects (`w` for a weak
+/// symbol), Apple's and LLVM's `<archive>:<member>: <symbol>` for Mach-O ones,
+/// whose symbols have a leading `_`.
+fn undefined_symbol(line: &str) -> Option<(&str, &str)> {
+    let (rest, symbol) = line.trim_end().rsplit_once(' ')?;
+    let rest = rest.trim_end();
+    let object = match rest.rsplit_once(' ') {
+        Some((object, kind)) if kind.len() == 1 => object.trim_end(),
+        _ => rest,
+    };
+    let object = object.strip_suffix(':')?;
+    let member = object.rsplit([':', '/']).next()?;
+    Some((member, symbol.strip_prefix('_').unwrap_or(symbol)))
+}
+
+#[test]
+fn undefined_symbols_of_both_listing_forms_are_read() {
+    for (line, expected) in [
+        (
+            "/a b/libllg_runtime.a:llg_wave.c.o:                 U llg_alloc_fault_malloc",
+            Some(("llg_wave.c.o", "llg_alloc_fault_malloc")),
+        ),
+        (
+            "/a b/model.c.o:                 w __cxa_finalize",
+            Some(("model.c.o", "_cxa_finalize")),
+        ),
+        (
+            "/a b/libllg_runtime.a:memory.c.o: _malloc",
+            Some(("memory.c.o", "malloc")),
+        ),
+        (
+            "/a/CMakeFiles/sim.dir/model.c.o: _free",
+            Some(("model.c.o", "free")),
+        ),
+        ("", None),
+        ("no object here", None),
+    ] {
+        assert_eq!(undefined_symbol(line), expected, "{line}");
+    }
+}
+
 /// The objects of a fault injection build that still call the C library's
 /// allocator by name: the wrapper's own unit and the vendored libraries the
 /// readme lists as not covered. A runtime unit that does not include
@@ -446,26 +488,23 @@ fn allocation_fault_build_renames_every_runtime_allocation() {
         String::from_utf8_lossy(&output.stderr)
     );
     let listing = String::from_utf8_lossy(&output.stdout);
-    let mut wrapped = 0;
+    let mut wrapped: Vec<&str> = Vec::new();
     let mut direct: Vec<&str> = Vec::new();
     for line in listing.lines() {
-        // `<archive>:<member>: U <symbol>`; Mach-O symbols have a leading `_`.
-        let Some((object, symbol)) = line.rsplit_once(" U ") else {
+        let Some((member, symbol)) = undefined_symbol(line) else {
             continue;
         };
-        let symbol = symbol.trim();
-        let symbol = symbol.strip_prefix('_').unwrap_or(symbol);
-        let object = object.trim_end().trim_end_matches(':');
-        let member = object.rsplit([':', '/']).next().unwrap_or(object);
         if symbol.starts_with("llg_alloc_fault_") {
-            wrapped += 1;
+            if !wrapped.contains(&member) {
+                wrapped.push(member);
+            }
         } else if matches!(symbol, "malloc" | "calloc" | "realloc") && !direct.contains(&member) {
             direct.push(member);
         }
     }
     assert!(
-        wrapped > 20,
-        "few renamed allocations ({wrapped}):\n{listing}"
+        wrapped.len() >= 8,
+        "few objects with renamed allocations ({wrapped:?}):\n{listing}"
     );
     // llg_rt.c holds the wrapper; memory.c is GMP's default allocator, which
     // a model replaces when it starts (compact values with GMP kernels only);
