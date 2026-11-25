@@ -766,13 +766,7 @@ impl<'a> Codegen<'a> {
                         .filter(|reference| matches!(self.kind(*reference), NodeKind::Expr(_))),
                 ),
                 _ if !self.net_lvalue_selects_are_constant(target) => {
-                    self.walk_lhs_select_reads(
-                        path,
-                        target,
-                        &mut seen,
-                        &mut HashSet::new(),
-                        &mut reads,
-                    )?;
+                    self.walk_lhs_select_reads(path, target, &mut seen, &mut reads)?;
                 }
                 _ => {}
             }

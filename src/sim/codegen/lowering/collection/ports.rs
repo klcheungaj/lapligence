@@ -1106,13 +1106,7 @@ impl<'a> Codegen<'a> {
             let child_dependency = IrDependency::ArrayContents(self.reference_array(child));
             let mut reads = vec![child_dependency.clone()];
             let mut seen = HashSet::from([child_dependency]);
-            self.walk_lhs_select_reads(
-                parent_path,
-                actual,
-                &mut seen,
-                &mut HashSet::new(),
-                &mut reads,
-            )?;
+            self.walk_lhs_select_reads(parent_path, actual, &mut seen, &mut reads)?;
             reads
         };
         self.emit_link_process(parent_path, child_path, port, reads, statement);
@@ -1179,13 +1173,7 @@ impl<'a> Codegen<'a> {
         let child_dependency = IrDependency::ArrayContents(child_array);
         let mut reads = vec![child_dependency.clone()];
         let mut seen = HashSet::from([child_dependency]);
-        self.walk_lhs_select_reads(
-            parent_path,
-            actual,
-            &mut seen,
-            &mut HashSet::new(),
-            &mut reads,
-        )?;
+        self.walk_lhs_select_reads(parent_path, actual, &mut seen, &mut reads)?;
         let statement = IrStmt::Assign {
             rhs: apply_lhs_assignment_context(&self.model, &lhs, rhs),
             lhs,
@@ -1922,13 +1910,7 @@ impl<'a> Codegen<'a> {
                 let child_dependency = self.signal_dependency(&child_info);
                 let mut reads = vec![child_dependency.clone()];
                 let mut seen = HashSet::from([child_dependency]);
-                self.walk_lhs_select_reads(
-                    parent_path,
-                    actual,
-                    &mut seen,
-                    &mut HashSet::new(),
-                    &mut reads,
-                )?;
+                self.walk_lhs_select_reads(parent_path, actual, &mut seen, &mut reads)?;
                 (lhs, sig_read_expr_full(&child_info), reads)
             };
             self.push_port_link(
@@ -2023,13 +2005,7 @@ impl<'a> Codegen<'a> {
             };
             let lhs = self.remap_structural_lhs(lhs, port);
             let mut seen = reads.iter().cloned().collect::<HashSet<_>>();
-            self.walk_lhs_select_reads(
-                parent_path,
-                actual,
-                &mut seen,
-                &mut HashSet::new(),
-                &mut reads,
-            )?;
+            self.walk_lhs_select_reads(parent_path, actual, &mut seen, &mut reads)?;
             (lhs, rhs, reads)
         };
         self.push_port_link(

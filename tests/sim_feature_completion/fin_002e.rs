@@ -14,6 +14,7 @@
 //! | `cond_chain_shapes` | conditionals nested in the first alternative, in both, in the predicate; mixed types along a chain |
 //! | `cond_chain_clause` | unpacked arrays and structures, class handles, reals and increments under the clause text |
 //! | `deep_nesting` | every construct nested tens to hundreds of levels deep; `deep_nesting` in the `general` binary goes up to the limit without building |
+//! | `call_diamonds` | functions that reach the last one along 2^30 call paths, in every context that looks into bodies |
 //! | `recursive_specializations` | classes and a module that name themselves with other parameter values until the chain ends |
 use super::{sim_cli, sim_harness};
 use std::path::Path;
@@ -118,6 +119,18 @@ fn recursive_specializations_that_end_run() {
         SUITE,
         "recursive_specializations",
         expected!("recursive_specializations"),
+        "",
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn call_graphs_with_many_paths_build_and_run() {
+    sim_cli::run_case_with_args(
+        SUITE,
+        "call_diamonds",
+        expected!("call_diamonds"),
         "",
         &[],
         &[],

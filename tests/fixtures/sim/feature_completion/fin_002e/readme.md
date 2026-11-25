@@ -95,3 +95,25 @@ one class, and a module that ends in a generate block. Endless ones are refused
 | `leaves` | f(n) = f(n - 1) + f(n - 2) with f(0) = 1 and f(1) = 2 |
 | `ladder` | 60 steps and the last one |
 | `nested` | the fifth handle was never constructed |
+
+## Call diamonds
+
+`call_diamonds.sv`: thirty functions that each call the next one at two places,
+so the first reaches the last along 2^30 call paths. Lowering visits a body once
+for each way its `ref` and handle formals are bound, and an expression whose
+calls would expand to more than 256 inlined bodies is evaluated by its process
+instead of a callback
+([`scaling_tests.rs`](../../../../../src/sim/codegen/lowering/scaling_tests.rs)
+counts the lookups). Only the argument 200 takes the paths, and no process
+passes it.
+
+- 9.2.2.2.2 L11201-11202: "always_comb is sensitive to changes within the
+  contents of a function, whereas always @* is only sensitive to changes to the
+  arguments of a function".
+
+| Line | Value |
+| --- | --- |
+| `n`, `y`, `event`, `monitor`, `force` | `d + e`, one time unit later for `n` |
+| `edge` | `d + e + 1` when its least significant bit rises |
+| `f` | `r` after it changes |
+| `handle`, `wait` | the time at which the waited value appears |

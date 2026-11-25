@@ -7,11 +7,6 @@
 //! writes never notify the scheduler; only the cloned result escapes the frame.
 use super::*;
 
-/// Bound emission-time inlining so recursive or mutually recursive functions
-/// fail with a diagnostic instead of expanding without limit. `formal_overrides`
-/// gains one entry per active inline call, so its depth is the current nesting.
-const PURE_CALL_LIMIT: usize = 32;
-
 /// Statement forms that can appear in a zero-time function whose only effects
 /// are private locals and structured control flow. Qualified branches are
 /// retained: their runtime diagnostic is part of the function's observable
@@ -268,7 +263,10 @@ impl Frame<'_, '_> {
     }
 
     pub(super) fn pure_callback_call(&mut self, call: &IrCallExpr) -> Result<Value, String> {
-        if self.formal_overrides.len() >= PURE_CALL_LIMIT {
+        // Recursive or mutually recursive functions fail with a diagnostic
+        // instead of expanding without limit. `formal_overrides` gains one entry
+        // per active inline call, so its depth is the current nesting.
+        if self.formal_overrides.len() >= crate::sim::ir::CALLBACK_CALL_DEPTH {
             return Err(pending("recursive or excessively deep evaluator callbacks"));
         }
         let function = self.ctx.model.func(call.f);

@@ -1678,6 +1678,8 @@ struct Codegen<'a> {
     /// ([`crate::sim::ir::IrNativeValue::marker`], set when the model is finished). Read
     /// walks borrow the lowering state, hence the cell.
     native_value_markers: std::cell::RefCell<std::collections::BTreeSet<usize>>,
+    /// The shapes [`Self::call_shape`] found: a function of the database.
+    call_shapes: std::cell::RefCell<HashMap<(NodeId, NodeId), std::rc::Rc<collection::CallShape>>>,
     /// CODEGEN-010 warnings, framed like errors (`error::located`) when
     /// they have a location; `GeneratedModel` splits the frame out.
     warnings: Vec<String>,
@@ -2619,6 +2621,7 @@ impl<'a> Codegen<'a> {
             user_system_functions: HashSet::new(),
             comb_excludes_class_references: std::cell::Cell::new(false),
             native_value_markers: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            call_shapes: std::cell::RefCell::default(),
             warnings: Vec::new(),
             model: IrModel::new(String::new(), default_timescale.precision_fs)
                 .expect("the default timescale has non-zero precision"),
