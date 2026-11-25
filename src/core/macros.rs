@@ -240,16 +240,7 @@ impl MacroTable {
 
     /// The `` `define `` names that a written name leads to.
     pub fn targets<'a>(&'a self, site: &'a MacroSite) -> impl Iterator<Item = DeclTarget> + 'a {
-        self.definitions(site).filter_map(|definition| {
-            let source = definition.source.as_ref()?;
-            DeclTarget::from_decl_coords(
-                &definition.name,
-                TARGET_MACRO,
-                &source.file,
-                source.line,
-                source.col,
-            )
-        })
+        self.definitions(site).filter_map(MacroDefinition::target)
     }
 
     /// Every written name of `file`, sorted by position.
@@ -270,6 +261,19 @@ impl MacroTable {
 }
 
 impl MacroDefinition {
+    /// The `` `define `` name, unless a `[compile] defines` entry defines the
+    /// macro.
+    pub fn target(&self) -> Option<DeclTarget> {
+        let source = self.source.as_ref()?;
+        DeclTarget::from_decl_coords(
+            &self.name,
+            TARGET_MACRO,
+            &source.file,
+            source.line,
+            source.col,
+        )
+    }
+
     fn config(name: &str, body: &str) -> Self {
         Self {
             name: name.to_owned(),

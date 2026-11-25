@@ -30,6 +30,12 @@ impl AnalysisInputs {
                 .collect(),
         }
     }
+
+    /// The text of `path` that the analysis read, or that the document held
+    /// when the analysis started.
+    pub(super) fn read(&self, path: &Path) -> Option<SourceFingerprint> {
+        self.texts.get(path).copied()
+    }
 }
 
 /// The texts of `snapshots` that were read from the disk.

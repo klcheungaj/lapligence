@@ -14,8 +14,8 @@ const DELETED: u8 = 3;
 /// The server's `MAX_CONSECUTIVE_CANCELLATIONS`.
 const MAX_CONSECUTIVE_CANCELLATIONS: usize = 3;
 
-struct Session {
-    client: LspProcess,
+pub(super) struct Session {
+    pub(super) client: LspProcess,
     root: PathBuf,
     log: PathBuf,
     version: i64,
@@ -50,7 +50,7 @@ impl Session {
     }
 
     /// [`Self::start`], after the first analysis.
-    fn ready(name: &str, files: &[(&str, &str)]) -> Self {
+    pub(super) fn ready(name: &str, files: &[(&str, &str)]) -> Self {
         let mut session = Self::start(name, files);
         session.client.wait_ready().expect("the first analysis");
         session.wait_outcomes(1);
@@ -61,11 +61,11 @@ impl Session {
         self.root.join(file)
     }
 
-    fn uri(&self, file: &str) -> String {
+    pub(super) fn uri(&self, file: &str) -> String {
         file_uri(&self.path(file))
     }
 
-    fn logged(&self, needles: &[&str]) -> Vec<String> {
+    pub(super) fn logged(&self, needles: &[&str]) -> Vec<String> {
         fs::read_to_string(&self.log)
             .expect("read the log")
             .lines()
@@ -75,7 +75,7 @@ impl Session {
     }
 
     /// Wait for `count` lines, answering the server's requests meanwhile.
-    fn wait_logged(&mut self, needles: &[&str], count: usize) -> Vec<String> {
+    pub(super) fn wait_logged(&mut self, needles: &[&str], count: usize) -> Vec<String> {
         let deadline = Instant::now() + POLL_TIMEOUT;
         loop {
             let lines = self.logged(needles);
@@ -128,11 +128,11 @@ impl Session {
         field(&lines[before], "outcome=").to_owned()
     }
 
-    fn document(&self, file: &str) -> Value {
+    pub(super) fn document(&self, file: &str) -> Value {
         json!({ "textDocument": { "uri": self.uri(file) } })
     }
 
-    fn open(&mut self, file: &str, text: &str) -> String {
+    pub(super) fn open(&mut self, file: &str, text: &str) -> String {
         let uri = self.uri(file);
         self.notify(
             "textDocument/didOpen",
@@ -142,7 +142,7 @@ impl Session {
         )
     }
 
-    fn change(&mut self, file: &str, text: &str) -> String {
+    pub(super) fn change(&mut self, file: &str, text: &str) -> String {
         self.version += 1;
         let uri = self.uri(file);
         let version = self.version;
@@ -156,7 +156,7 @@ impl Session {
     }
 
     /// The notification of a save, without a write of the file.
-    fn save(&mut self, file: &str) -> String {
+    pub(super) fn save(&mut self, file: &str) -> String {
         self.notify("textDocument/didSave", self.document(file))
     }
 
@@ -172,7 +172,7 @@ impl Session {
         )
     }
 
-    fn write(&self, file: &str, text: &str) {
+    pub(super) fn write(&self, file: &str, text: &str) {
         fs::write(self.path(file), text).expect("write a source");
     }
 
@@ -207,7 +207,7 @@ impl Session {
     }
 
     /// What the server serves for `file`, without its cache counters.
-    fn tokens(&mut self, file: &str) -> Vec<String> {
+    pub(super) fn tokens(&mut self, file: &str) -> Vec<String> {
         let dump = self
             .client
             .request("llg/dumpTokens", json!({ "uri": self.uri(file) }))
@@ -235,7 +235,7 @@ fn module(name: &str, body: &str) -> String {
 
 /// A design whose analysis takes long enough to be met halfway, even in an
 /// optimized build.
-fn slow_module() -> String {
+pub(super) fn slow_module() -> String {
     let body: String = (0..1500)
         .map(|n| {
             format!(

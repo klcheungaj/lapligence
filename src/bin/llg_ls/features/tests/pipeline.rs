@@ -147,7 +147,7 @@ fn analyze_full_pipeline_extracts_funcs() {
             .any(|s| s.name == "add" && s.kind == SymbolKind::FUNCTION),
         "syms: {syms:?}"
     );
-    let items = completion_at(&a, &path, 0, 0, "");
+    let items = completion_at(&a, &[], 0, "");
     assert!(
         items
             .iter()

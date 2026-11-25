@@ -13,6 +13,7 @@ read-only module explorer. Components: [readme](readme.md); user behavior:
   ([guide](features/AGENTS.md)).
 - `scheduler.rs`: delay, cancellation and follow-up policy (module docs).
 - `semantic_tokens.rs`: token types and modifiers (the mapping is in the code).
+- `position_map.rs`: where one text of a document has the positions of another.
 - `request_cache.rs`: bounded request caches; `logging.rs`: `LLG_LOG`/`LLG_LOG_FILE`.
 - `config.rs`: re-exports `llg::config` and builds Slang options; add or change
   keys in the library, never here.
@@ -37,7 +38,7 @@ read-only module explorer. Components: [readme](readme.md); user behavior:
 - Highlighting and go-to-definition agree on every name: one table, no lookup by
   spelling ([rules](../../../docs/semantic_tokens.md#names-and-definitions)).
 - Cache keys include the applicable buffer, defines, URI, request arguments and
-  analysis epoch. Snapshot replacement or clearing advances the epoch; servable
+  analysis epoch; positions in keys and values are those of the analysed text. Snapshot replacement or clearing advances the epoch; servable
   module-graph changes notify explorer clients.
 - Bounded caches must not pin retired native state; apply shadow-to-real
   presentation mapping after lookup.

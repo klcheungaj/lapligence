@@ -233,6 +233,11 @@ impl Analysis {
             .is_some_and(|compiled| *compiled == text)
     }
 
+    /// The length of the text that the frontend read as `file`, named exactly.
+    pub(crate) fn compiled_length(&self, file: &Path) -> Option<usize> {
+        Some(self.sources.get(file.to_str()?)?.length)
+    }
+
     /// Attach the include context of the compile that produced this analysis.
     pub(crate) fn set_include_context(&mut self, context: IncludeContext) {
         self.include_context = Arc::new(context);
@@ -1095,6 +1100,7 @@ fn analyze_library_units_after_limit(
 }
 
 /// Return an empty compile-outcome snapshot for backend failure recovery.
+#[cfg(test)]
 pub fn empty_analysis() -> Analysis {
     Analysis::new_with_outcome(
         AnalysisOutcome::Compile,

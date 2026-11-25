@@ -16,6 +16,7 @@ mod inactive_ranges;
 mod logging;
 mod lsp;
 mod module_explorer;
+mod position_map;
 mod rename;
 mod request_cache;
 mod scheduler;

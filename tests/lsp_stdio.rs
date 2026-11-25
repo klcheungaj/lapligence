@@ -54,6 +54,8 @@ mod limits;
 mod recovery;
 #[path = "lsp_stdio/semantic_tokens.rs"]
 mod semantic_tokens;
+#[path = "lsp_stdio/unsaved_positions.rs"]
+mod unsaved_positions;
 #[path = "lsp_stdio/workspace.rs"]
 mod workspace;
 use definitions::single_location;

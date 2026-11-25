@@ -486,6 +486,16 @@ impl Backend {
             }
         }
         let refresh_supported = state.semantic_tokens_refresh;
+        let mut result = result;
+        // What the analysis read of the documents that are open now; the other
+        // admitted texts are released here.
+        let snapshots = std::mem::take(&mut result.snapshots);
+        let mut read: BTreeMap<PathBuf, SharedText> = state
+            .documents
+            .files()
+            .filter_map(|(path, _)| Some((path.clone(), Arc::clone(snapshots.shared(path)?))))
+            .collect();
+        drop(snapshots);
         let Some(root) = state.roots.get_mut(key) else {
             return CommitOutcome::default();
         };
@@ -515,7 +525,6 @@ impl Backend {
             (Some(_), None) => true,
             _ => false,
         };
-        let mut result = result;
         let watchers_refresh = usable || !result.include_deps.is_empty();
         root.include_deps = result.include_deps.clone();
         for file in root.discovered.iter().chain(&root.include_deps) {
@@ -591,9 +600,7 @@ impl Backend {
         let snapshot_replaced = result.analysis.is_none() || usable;
         if result.analysis.is_none() {
             root.last_good = None;
-            // The served snapshot changed (it disappeared): memoized results
-            // keyed on the previous epoch become unreachable.
-            root.analysis_epoch = next_analysis_epoch();
+            read.clear();
         } else if usable {
             root.last_good = result.analysis.map(|mut analysis| {
                 // Undefined-macro hovers name the config file that produced
@@ -608,8 +615,24 @@ impl Backend {
                 );
                 Arc::new(analysis)
             });
-            root.analysis_epoch = next_analysis_epoch();
+            read.retain(|path, text| {
+                let fingerprint = root
+                    .analysed
+                    .as_ref()
+                    .and_then(|inputs| inputs.read(path))
+                    .unwrap_or_else(|| features::SourceFingerprint::of(text));
+                root.compiled(path, fingerprint)
+            });
         }
+        if snapshot_replaced {
+            // The served snapshot changed (or disappeared): memoized results
+            // keyed on the previous epoch become unreachable.
+            root.analysis_epoch = next_analysis_epoch();
+            state.set_analysed_texts(key, read);
+        }
+        let Some(root) = state.roots.get_mut(key) else {
+            return CommitOutcome::default();
+        };
         // Token requests record their inputs only for a client that takes
         // refresh requests, so nothing is compared otherwise.
         let semantic_tokens_refresh = refresh_supported && {
@@ -619,6 +642,7 @@ impl Backend {
                 .map(|analysis| Arc::clone(&analysis.include_context))
                 .unwrap_or_default();
             let documents = &state.documents;
+            let texts = &root.analysed_texts;
             root.served_tokens.take_refresh(
                 snapshot_replaced,
                 &defines,
@@ -626,12 +650,11 @@ impl Backend {
                 |uri| documents.contains_key(uri),
                 |uri| {
                     let path = Self::uri_to_path(uri)?;
-                    let fingerprint = features::SourceFingerprint::of(documents.get(uri)?);
-                    let analysis = analysis?;
-                    let path = path.to_str()?;
-                    analysis
-                        .compiled_from(path, fingerprint)
-                        .then(|| stream_digest(&features::semantic_tokens_for(analysis, path)))
+                    let compiled = Arc::ptr_eq(documents.get(uri)?, texts.get(&path)?);
+                    let (analysis, path) = (analysis.filter(|_| compiled)?, path.to_str()?);
+                    Some(stream_digest(&features::semantic_tokens_for(
+                        analysis, path,
+                    )))
                 },
             )
         };
@@ -669,7 +692,6 @@ impl Backend {
             state.initial_pending.len(),
             ready
         );
-        Self::rebuild_merged(state);
         rebuild_dep_dependents(state);
         let published_uris: BTreeSet<Url> =
             publications.iter().map(|(uri, _)| uri.clone()).collect();

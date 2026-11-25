@@ -1,6 +1,7 @@
 //! Owned backend and per-root state.
 
 use super::inputs::{AnalysisInputs, RunningAnalysis};
+use super::positions::{AnalysedTexts, OpenTexts, TextPair};
 use super::*;
 
 pub(super) struct RootState {
@@ -22,6 +23,8 @@ pub(super) struct RootState {
     /// them so they never repeat on every scan.
     pub(super) config_warnings: Vec<String>,
     pub(super) last_good: Option<Arc<Analysis>>,
+    /// The texts of open documents that `last_good` compiled.
+    pub(super) analysed_texts: Arc<AnalysedTexts>,
     /// Identity of the `last_good` snapshot for the request memoization keys
     /// (`request_cache`).  Stamped with a fresh process-global value exactly
     /// where a commit replaces or clears `last_good`, so any input change that
@@ -58,7 +61,12 @@ pub(super) struct RootState {
 #[derive(Default)]
 pub(super) struct BackendState {
     pub(super) roots: BTreeMap<RootKey, RootState>,
-    pub(super) documents: BTreeMap<Url, SharedText>,
+    pub(super) documents: OpenTexts,
+    /// The texts of edited documents beside those that analyses compiled, by
+    /// path. A document has one pair unless roots compiled different texts of it.
+    pub(super) text_pairs: HashMap<PathBuf, Vec<Arc<TextPair>>>,
+    /// The names that the last isolated parse of an edited document found.
+    pub(super) unsaved_names: HashMap<Url, Arc<Vec<features::DeclaredName>>>,
     /// What a watched-file event found on the disk for an open document that
     /// holds another text. The client loads such a file with a change
     /// notification, which then stands for the event.
@@ -72,7 +80,6 @@ pub(super) struct BackendState {
     pub(super) initialized: bool,
     pub(super) shutting_down: bool,
     pub(super) pending_logs: Vec<String>,
-    pub(super) merged: Option<Arc<Analysis>>,
     pub(super) initial_pending: BTreeSet<RootKey>,
     pub(super) ready_sent: bool,
     /// Reverse include-dependency index: resolved dep path → dependent roots.
@@ -215,6 +222,8 @@ pub(super) struct CompileResult {
     pub(super) analysis: Option<Analysis>,
     pub(super) files: Vec<(PathBuf, String)>,
     pub(super) include_deps: BTreeSet<PathBuf>,
+    /// The texts that were admitted for the analysis.
+    pub(super) snapshots: InputSnapshots,
 }
 
 #[derive(Default)]
@@ -404,14 +413,12 @@ pub(crate) struct Backend {
     /// epoch, so entries never outlive the snapshot they were computed from;
     /// access bypasses the serialized lifecycle queue exactly like the
     /// underlying handlers do.
-    pub(super) hover_cache: MemoCache<RequestKey, Option<Hover>>,
+    pub(super) hover_cache: MemoCache<RequestKey, Option<features::HoverText>>,
     pub(super) references_cache: MemoCache<RequestKey, Vec<Location>>,
     /// Open-buffer isolated parses keyed on (uri, buffer text, effective
     /// `-D` defines, committed analysis epoch) — the exact inputs of the
     /// request-local compile.
     pub(super) open_token_cache: Arc<MemoCache<String, OpenTokenResult>>,
-    /// Fingerprint of the last text of each open document, by URI.
-    pub(super) fingerprints: MemoCache<String, (SharedText, features::SourceFingerprint)>,
     /// In-flight keyed single-flight coordination for open-buffer parse
     /// misses.  This is separate from the result cache so cache changes
     /// owned by another module do not affect the bounded wait lifecycle.
@@ -429,7 +436,6 @@ impl Backend {
             hover_cache: MemoCache::new(NAVIGATION_CACHE_CAPACITY),
             references_cache: MemoCache::new(NAVIGATION_CACHE_CAPACITY),
             open_token_cache: Arc::new(MemoCache::new(TOKEN_CACHE_CAPACITY)),
-            fingerprints: MemoCache::new(NAVIGATION_CACHE_CAPACITY),
             open_token_flights: Arc::new(OpenTokenFlightRegistry::new()),
             inactive_cache: MemoCache::new(NAVIGATION_CACHE_CAPACITY),
         }
@@ -555,7 +561,6 @@ impl Backend {
                 .extend(warnings.iter().map(|warning| warning.message.clone()));
             state.roots.insert(root_path.clone(), root);
             rebuild_dep_dependents(&mut state);
-            Self::rebuild_merged(&mut state);
             root_path
         };
         (Some(root), true)
@@ -681,6 +686,7 @@ impl Backend {
                     .map(|warning| warning.message.clone())
                     .collect(),
                 last_good: None,
+                analysed_texts: Arc::default(),
                 diagnostics: BTreeMap::new(),
                 published_digests: BTreeMap::new(),
                 all_diagnostics: BTreeMap::new(),
@@ -694,28 +700,6 @@ impl Backend {
             },
             errors,
         )
-    }
-
-    /// Rebuild the merged symbol index from every retained root snapshot.
-    pub(super) fn rebuild_merged(state: &mut BackendState) {
-        let indexes: Vec<_> = state
-            .roots
-            .values()
-            .filter_map(|root| root.last_good.as_ref().map(|analysis| &analysis.index))
-            .collect();
-        if indexes.is_empty() {
-            state.merged = None;
-            crate::llg_debug!("merged index cleared roots={}", state.roots.len());
-        } else {
-            let mut merged = features::empty_analysis();
-            merged.index = SymbolIndex::merge(indexes);
-            crate::llg_debug!(
-                "merged index rebuilt roots={} declarations={}",
-                state.roots.len(),
-                merged.index.decls.len()
-            );
-            state.merged = Some(Arc::new(merged));
-        }
     }
 
     pub(super) fn source_root(&self, path: &Path) -> Option<RootKey> {
@@ -760,6 +744,7 @@ impl Backend {
         let max_file_bytes = Self::document_max_file_bytes(state, &uri);
         let path = Self::uri_to_path(&uri).unwrap_or_else(|| PathBuf::from(uri.as_str()));
         if let Some(limit) = open_input_size_limit(&path, &text, max_file_bytes) {
+            state.documents.reject(&uri);
             return Err(limit);
         }
 
@@ -767,8 +752,8 @@ impl Backend {
             state.documents.get(&uri).map(|current| current.as_str()),
             &text,
         );
-        if changed || replace_unchanged {
-            state.documents.insert(uri, Arc::new(text));
+        if changed || replace_unchanged || state.documents.admitted(&uri).is_none() {
+            state.set_document(uri, text);
         }
         Ok(changed)
     }
@@ -787,7 +772,7 @@ impl Backend {
             })
             .collect();
         for (uri, measured_bytes, max_file_bytes) in rejected {
-            if state.documents.remove(&uri).is_some() {
+            if state.remove_document(&uri).is_some() {
                 crate::llg_error!(
                     "event=document.admission outcome=rejected reason=too-large uri={} bytes={} max_file_bytes={} advice={}",
                     crate::logging::bounded_field(uri.as_str()),
@@ -861,23 +846,22 @@ impl Backend {
         Some((root, real, paths))
     }
 
-    pub(super) fn map_location(state: &BackendState, mut location: Location) -> Location {
-        let Ok(path) = location.uri.to_file_path() else {
-            return location;
-        };
-        for root in state.roots.values() {
-            if let Some(real) = root.shadow.real_path(&path) {
-                if let Ok(uri) = Url::from_file_path(real) {
-                    location.uri = uri;
-                }
-                break;
-            }
-        }
-        location
+    /// The URI that the client knows for one that an analysis names.
+    pub(super) fn map_uri(state: &BackendState, uri: &Url) -> Url {
+        uri.to_file_path()
+            .ok()
+            .and_then(|path| {
+                let real = state
+                    .roots
+                    .values()
+                    .find_map(|root| root.shadow.real_path(&path))?;
+                Self::path_to_uri(&real)
+            })
+            .unwrap_or_else(|| uri.clone())
     }
 
     /// Remap the URIs of a plain `changes`-shaped edit from the shadow tree
-    /// back to the real files (same mapping as [`Backend::map_location`]).
+    /// back to the real files (same mapping as [`Backend::map_uri`]).
     pub(super) fn map_workspace_edit_uris(
         state: &BackendState,
         mut edit: WorkspaceEdit,
@@ -887,14 +871,7 @@ impl Backend {
                 changes
                     .into_iter()
                     .map(|(uri, edits)| {
-                        let mapped = Self::map_location(
-                            state,
-                            Location {
-                                uri,
-                                range: Range::default(),
-                            },
-                        )
-                        .uri;
+                        let mapped = Self::map_uri(state, &uri);
                         (mapped, edits)
                     })
                     .collect(),

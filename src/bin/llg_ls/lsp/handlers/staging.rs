@@ -1,5 +1,6 @@
 //! Private source staging, bounded input admission, and include isolation.
 
+use super::positions::OpenTexts;
 use super::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -149,6 +150,31 @@ pub(super) struct OpenTokenDocument {
     pub(super) epoch: u64,
 }
 
+impl RootState {
+    /// What an isolated parse of open document `uri` reads now. The include
+    /// context comes from the committed snapshot that also answers for other
+    /// documents, and its epoch keys the memoized parse, so a replacement of
+    /// the snapshot parses the buffer again.
+    pub(super) fn open_document(
+        &self,
+        documents: &OpenTexts,
+        uri: &Url,
+        real: &Path,
+    ) -> Option<OpenTokenDocument> {
+        Some(OpenTokenDocument {
+            real: real.to_path_buf(),
+            text: Arc::clone(documents.admitted(uri)?),
+            defines: self.descriptor.effective_config().compile.defines,
+            includes: self
+                .last_good
+                .as_ref()
+                .map(|analysis| Arc::clone(&analysis.include_context))
+                .unwrap_or_default(),
+            epoch: self.analysis_epoch,
+        })
+    }
+}
+
 /// Bound the number of open-document parses that can be retained in the
 /// single-flight table.  Entries live while the detached coordinator owns the
 /// parse and through cache publication, then are removed on success/failure;
@@ -203,13 +229,20 @@ pub(super) fn open_document_is_current(
 pub(super) struct OpenTokenFlight {
     pub(super) notify: Notify,
     pub(super) result: Mutex<Option<OpenTokenResult>>,
+    /// The revision that is parsed.
+    uri: Url,
+    text: SharedText,
+    pub(super) cancel: CancelToken,
 }
 
 impl OpenTokenFlight {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(uri: Url, text: SharedText) -> Self {
         Self {
             notify: Notify::new(),
             result: Mutex::new(None),
+            uri,
+            text,
+            cancel: server_token().child(),
         }
     }
 
@@ -272,18 +305,26 @@ impl OpenTokenFlightRegistry {
         }
     }
 
-    pub(super) fn acquire(self: &Arc<Self>, key: String) -> OpenTokenFlightLease {
+    pub(super) fn acquire(
+        self: &Arc<Self>,
+        key: String,
+        uri: &Url,
+        text: &SharedText,
+    ) -> OpenTokenFlightLease {
         let mut flights = self
             .flights
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        if let Some(flight) = flights.get(&key) {
-            return OpenTokenFlightLease::Follower(Arc::clone(flight));
+        match flights.get(&key) {
+            // An undone edit asks again for a revision whose parse it stopped.
+            Some(flight) if flight.cancel.is_cancelled() => {}
+            Some(flight) => return OpenTokenFlightLease::Follower(Arc::clone(flight)),
+            None if flights.len() >= OPEN_TOKEN_FLIGHT_CAPACITY => {
+                return OpenTokenFlightLease::Saturated;
+            }
+            None => {}
         }
-        if flights.len() >= OPEN_TOKEN_FLIGHT_CAPACITY {
-            return OpenTokenFlightLease::Saturated;
-        }
-        let flight = Arc::new(OpenTokenFlight::new());
+        let flight = Arc::new(OpenTokenFlight::new(uri.clone(), Arc::clone(text)));
         flights.insert(key.clone(), Arc::clone(&flight));
         OpenTokenFlightLease::Leader(OpenTokenFlightLeader {
             registry: Arc::clone(self),
@@ -292,6 +333,21 @@ impl OpenTokenFlightRegistry {
             completed: false,
             detached: false,
         })
+    }
+
+    /// Stop the parses of document `uri` whose text is not the `current` one.
+    /// The document's own text changed before: a parse that this call misses
+    /// finds that out when it begins.
+    pub(super) fn cancel_superseded(&self, uri: &Url, current: Option<&str>) {
+        let flights = self
+            .flights
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        for flight in flights.values() {
+            if flight.uri == *uri && current != Some(flight.text.as_str()) {
+                flight.cancel.cancel();
+            }
+        }
     }
 
     pub(super) fn remove(&self, key: &str, flight: &Arc<OpenTokenFlight>) {

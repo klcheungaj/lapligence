@@ -954,6 +954,19 @@ impl<'a> SourcePositions<'a> {
         Self { text, line_starts }
     }
 
+    /// The lines without their line endings: one more than there are endings.
+    pub fn lines(&self) -> impl Iterator<Item = &'a str> + '_ {
+        let ends = self.line_starts[1..].iter().copied();
+        self.line_starts
+            .iter()
+            .zip(ends.chain([self.text.len()]))
+            .map(|(&start, end)| {
+                let line = &self.text[start..end];
+                let line = line.strip_suffix('\n').unwrap_or(line);
+                line.strip_suffix('\r').unwrap_or(line)
+            })
+    }
+
     /// The text of `range`, empty when it is not inside the source.
     pub fn text(&self, range: SourceRange) -> &'a str {
         let bound = |offset| usize::try_from(offset).unwrap_or(usize::MAX);
@@ -1086,6 +1099,29 @@ mod tests {
             (u64::MAX, (4, 2)),
         ] {
             assert_eq!(positions.position(offset), expected, "offset={offset}");
+        }
+    }
+
+    #[test]
+    fn lines_are_those_that_positions_count() {
+        for (text, expected) in [
+            ("", vec![""]),
+            ("a", vec!["a"]),
+            ("a\n", vec!["a", ""]),
+            ("a\r\nb\rc\nd", vec!["a", "b", "c", "d"]),
+            ("\n\r", vec!["", "", ""]),
+            ("\r\r\n", vec!["", "", ""]),
+            ("a😀\r\n\r\n b \n", vec!["a😀", "", " b ", ""]),
+        ] {
+            let positions = SourcePositions::new(text);
+            let lines: Vec<&str> = positions.lines().collect();
+            assert_eq!(lines, expected, "{text:?}");
+            let (last, _) = positions.position(u64::MAX);
+            assert_eq!(lines.len(), last as usize, "{text:?}");
+            for (number, line) in (1..).zip(lines) {
+                let offset = line.as_ptr() as u64 - text.as_ptr() as u64;
+                assert_eq!(positions.position(offset), (number, 1), "{text:?}");
+            }
         }
     }
 }

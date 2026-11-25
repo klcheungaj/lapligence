@@ -1,3 +1,4 @@
+use super::positions::OpenTexts;
 use super::*;
 use crate::test_paths::host_path as hp;
 use state::ClientOrder;
@@ -63,14 +64,15 @@ fn semantic_token_file(path: &Path, line: u32) -> llg::core::tokens::FileTokens 
 fn empty_backend_state() -> BackendState {
     BackendState {
         roots: BTreeMap::new(),
-        documents: BTreeMap::new(),
+        documents: OpenTexts::default(),
         dynamic_watched_files: false,
         watchers_registered: false,
         registered_watchers_digest: None,
         initialized: false,
         shutting_down: false,
         pending_logs: Vec::new(),
-        merged: None,
+        text_pairs: HashMap::new(),
+        unsaved_names: HashMap::new(),
         initial_pending: BTreeSet::new(),
         ready_sent: false,
         dep_dependents: BTreeMap::new(),
@@ -137,7 +139,7 @@ fn document_admission_rejects_before_storage_and_reuses_shared_text() {
         .expect_err("uninitialized documents use the conservative default limit");
     assert_eq!(rejection.kind, InputSizeLimitKind::PerFile);
     assert!(
-        state.documents.is_empty(),
+        !state.documents.contains_key(&uri),
         "rejected text is never retained"
     );
 
@@ -654,6 +656,7 @@ fn oversized_compile_job_publishes_limit_and_retains_last_good_snapshot() {
             config_errors: Vec::new(),
             config_warnings: Vec::new(),
             last_good: Some(Arc::clone(&previous)),
+            analysed_texts: Arc::default(),
             diagnostics: BTreeMap::new(),
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::new(),
@@ -668,14 +671,15 @@ fn oversized_compile_job_publishes_limit_and_retains_last_good_snapshot() {
     );
     let state = Arc::new(Mutex::new(BackendState {
         roots,
-        documents: BTreeMap::new(),
+        documents: OpenTexts::default(),
         dynamic_watched_files: false,
         watchers_registered: false,
         registered_watchers_digest: None,
         initialized: true,
         shutting_down: false,
         pending_logs: Vec::new(),
-        merged: None,
+        text_pairs: HashMap::new(),
+        unsaved_names: HashMap::new(),
         initial_pending: BTreeSet::new(),
         ready_sent: true,
         dep_dependents: BTreeMap::new(),
@@ -742,14 +746,15 @@ fn open_token_freshness_barrier_rejects_stale_revision_before_admission() {
     let uri = Url::parse("file:///tmp/llg-stale-open.sv").expect("document URI");
     let state = Arc::new(Mutex::new(BackendState {
         roots: BTreeMap::new(),
-        documents: BTreeMap::from([(uri.clone(), Arc::new("current".to_owned()))]),
+        documents: OpenTexts::from_iter([(uri.clone(), Arc::new("current".to_owned()))]),
         dynamic_watched_files: false,
         watchers_registered: false,
         registered_watchers_digest: None,
         initialized: true,
         shutting_down: false,
         pending_logs: Vec::new(),
-        merged: None,
+        text_pairs: HashMap::new(),
+        unsaved_names: HashMap::new(),
         initial_pending: BTreeSet::new(),
         ready_sent: true,
         dep_dependents: BTreeMap::new(),
@@ -767,7 +772,7 @@ fn open_token_freshness_barrier_rejects_stale_revision_before_admission() {
         "an obsolete captured revision must fail the admission barrier"
     );
     if open_document_is_current(&state, &uri, "captured-before-edit") {
-        let _ = registry.acquire("stale-revision".to_owned());
+        let _ = acquire(&registry, "stale-revision", "");
     }
     assert_eq!(
         registry.len(),
@@ -779,7 +784,7 @@ fn open_token_freshness_barrier_rejects_stale_revision_before_admission() {
         open_document_is_current(&state, &uri, "current"),
         "the current revision remains eligible for isolated tokens"
     );
-    let leader = match registry.acquire("current-revision".to_owned()) {
+    let leader = match acquire(&registry, "current-revision", "") {
         OpenTokenFlightLease::Leader(leader) => leader,
         _ => panic!("the current revision should be admitted when capacity is available"),
     };
@@ -800,12 +805,12 @@ fn open_token_freshness_barrier_rejects_stale_revision_before_admission() {
 #[test]
 fn open_token_flights_join_and_reclaim() {
     let registry = Arc::new(OpenTokenFlightRegistry::new());
-    let leader = match registry.acquire("same-input".to_owned()) {
+    let leader = match acquire(&registry, "same-input", "") {
         OpenTokenFlightLease::Leader(leader) => leader,
         _ => panic!("first request must lead the flight"),
     };
     let leader_flight = Arc::clone(&leader.flight);
-    let follower = match registry.acquire("same-input".to_owned()) {
+    let follower = match acquire(&registry, "same-input", "") {
         OpenTokenFlightLease::Follower(flight) => flight,
         _ => panic!("identical request must join the existing flight"),
     };
@@ -823,7 +828,7 @@ fn open_token_flights_refuse_overflow_without_a_second_parse() {
     let mut leaders = Vec::new();
     let parses_started = AtomicUsize::new(0);
     for index in 0..OPEN_TOKEN_FLIGHT_CAPACITY {
-        match registry.acquire(format!("input-{index}")) {
+        match acquire(&registry, &format!("input-{index}"), "") {
             OpenTokenFlightLease::Leader(leader) => {
                 // An admitted leader is the only lease that can start a
                 // detached parse.  Keep each leader alive to hold the
@@ -836,11 +841,11 @@ fn open_token_flights_refuse_overflow_without_a_second_parse() {
     }
     assert_eq!(registry.len(), OPEN_TOKEN_FLIGHT_CAPACITY);
     assert!(matches!(
-        registry.acquire("input-0".to_owned()),
+        acquire(&registry, "input-0", ""),
         OpenTokenFlightLease::Follower(_)
     ));
     assert!(matches!(
-        registry.acquire("overflow".to_owned()),
+        acquire(&registry, "overflow", ""),
         OpenTokenFlightLease::Saturated
     ));
     assert_eq!(
@@ -851,6 +856,54 @@ fn open_token_flights_refuse_overflow_without_a_second_parse() {
 
     drop(leaders);
     assert_eq!(registry.len(), 0);
+}
+
+fn token_uri() -> Url {
+    Url::parse("file:///tmp/llg-open-tokens.sv").expect("document URI")
+}
+
+/// Acquire the flight of `key`, which parses `text` of [`token_uri`].
+fn acquire(registry: &Arc<OpenTokenFlightRegistry>, key: &str, text: &str) -> OpenTokenFlightLease {
+    registry.acquire(key.to_owned(), &token_uri(), &Arc::new(text.to_owned()))
+}
+
+fn lead(registry: &Arc<OpenTokenFlightRegistry>, key: &str, text: &str) -> OpenTokenFlightLeader {
+    match acquire(registry, key, text) {
+        OpenTokenFlightLease::Leader(leader) => leader,
+        _ => panic!("the request must lead its flight"),
+    }
+}
+
+#[test]
+fn an_edit_cancels_the_token_flights_of_older_texts() {
+    let registry = Arc::new(OpenTokenFlightRegistry::new());
+    let older = lead(&registry, "older", "module a");
+    let newer = lead(&registry, "newer", "module ab");
+    let other = Url::parse("file:///tmp/llg-other-document.sv").expect("document URI");
+    let elsewhere = match registry.acquire("elsewhere".to_owned(), &other, &Arc::new(String::new()))
+    {
+        OpenTokenFlightLease::Leader(leader) => leader,
+        _ => panic!("the other document's request must lead its flight"),
+    };
+    let cancelled = |leader: &OpenTokenFlightLeader| leader.flight.cancel.is_cancelled();
+
+    registry.cancel_superseded(&token_uri(), Some("module ab"));
+    assert!(cancelled(&older) && !cancelled(&newer) && !cancelled(&elsewhere));
+    assert!(!server_token().is_cancelled());
+
+    // The edit is undone while the cancelled parse still winds down.
+    let again = lead(&registry, "older", "module a");
+    assert!(!cancelled(&again));
+    assert!(!Arc::ptr_eq(&again.flight, &older.flight));
+    drop(older);
+    assert!(
+        matches!(acquire(&registry, "older", "module a"), OpenTokenFlightLease::Follower(flight)
+            if Arc::ptr_eq(&flight, &again.flight)),
+        "the end of the cancelled flight must not remove its successor"
+    );
+
+    registry.cancel_superseded(&token_uri(), None);
+    assert!(cancelled(&again) && cancelled(&newer) && !cancelled(&elsewhere));
 }
 
 fn empty_identifiers() -> Arc<features::DocumentIdentifiers> {
@@ -868,7 +921,7 @@ fn detached_token_coordinator_survives_leader_cancellation() {
         .expect("test runtime");
     runtime.block_on(async {
         let registry = Arc::new(OpenTokenFlightRegistry::new());
-        let mut leader = match registry.acquire("cancelled-request".to_owned()) {
+        let mut leader = match acquire(&registry, "cancelled-request", "") {
             OpenTokenFlightLease::Leader(leader) => leader,
             _ => panic!("first request must lead the flight"),
         };
@@ -897,7 +950,7 @@ fn detached_token_coordinator_survives_leader_cancellation() {
 
         let mut followers = Vec::new();
         for _ in 0..8 {
-            match registry.acquire("cancelled-request".to_owned()) {
+            match acquire(&registry, "cancelled-request", "") {
                 OpenTokenFlightLease::Follower(follower) => followers.push(follower),
                 _ => panic!("identical requests must join the detached flight"),
             }
@@ -921,7 +974,7 @@ fn token_flight_stays_joinable_through_cache_publication() {
         .expect("test runtime");
     runtime.block_on(async {
         let registry = Arc::new(OpenTokenFlightRegistry::new());
-        let mut leader = match registry.acquire("publication-race".to_owned()) {
+        let mut leader = match acquire(&registry, "publication-race", "") {
             OpenTokenFlightLease::Leader(leader) => leader,
             _ => panic!("first request must lead the flight"),
         };
@@ -944,7 +997,7 @@ fn token_flight_stays_joinable_through_cache_publication() {
         // A request racing the publication boundary still joins the
         // existing flight; it cannot become a second leader between the
         // cache write and coordinator completion.
-        let follower = match registry.acquire("publication-race".to_owned()) {
+        let follower = match acquire(&registry, "publication-race", "") {
             OpenTokenFlightLease::Follower(follower) => follower,
             _ => panic!("flight must remain registered through publication"),
         };
@@ -1098,6 +1151,7 @@ fn commit_job_publishes_fileless_diagnostics_on_an_open_compiled_file() {
             config_errors: Vec::new(),
             config_warnings: Vec::new(),
             last_good: None,
+            analysed_texts: Arc::default(),
             diagnostics: BTreeMap::new(),
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::new(),
@@ -1112,14 +1166,15 @@ fn commit_job_publishes_fileless_diagnostics_on_an_open_compiled_file() {
     );
     let state = Arc::new(Mutex::new(BackendState {
         roots,
-        documents: BTreeMap::from([(uri.clone(), Arc::new(String::new()))]),
+        documents: OpenTexts::from_iter([(uri.clone(), Arc::new(String::new()))]),
         dynamic_watched_files: false,
         watchers_registered: false,
         registered_watchers_digest: None,
         initialized: true,
         shutting_down: false,
         pending_logs: Vec::new(),
-        merged: None,
+        text_pairs: HashMap::new(),
+        unsaved_names: HashMap::new(),
         initial_pending: BTreeSet::new(),
         ready_sent: true,
         dep_dependents: BTreeMap::new(),
@@ -1145,6 +1200,7 @@ fn commit_job_publishes_fileless_diagnostics_on_an_open_compiled_file() {
         analysis: Some(analysis),
         files: vec![(real.clone(), compiled)],
         include_deps: BTreeSet::new(),
+        snapshots: InputSnapshots::default(),
     };
 
     let outcome = Backend::commit_job(&state, &root_path, 1, result);
@@ -1213,6 +1269,7 @@ fn commit_job_serves_features_from_partial_analyses() {
             config_errors: Vec::new(),
             config_warnings: Vec::new(),
             last_good: None,
+            analysed_texts: Arc::default(),
             diagnostics: BTreeMap::new(),
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::new(),
@@ -1227,14 +1284,15 @@ fn commit_job_serves_features_from_partial_analyses() {
     );
     let state = Arc::new(Mutex::new(BackendState {
         roots,
-        documents: BTreeMap::new(),
+        documents: OpenTexts::default(),
         dynamic_watched_files: false,
         watchers_registered: false,
         registered_watchers_digest: None,
         initialized: true,
         shutting_down: false,
         pending_logs: Vec::new(),
-        merged: None,
+        text_pairs: HashMap::new(),
+        unsaved_names: HashMap::new(),
         initial_pending: BTreeSet::new(),
         ready_sent: true,
         dep_dependents: BTreeMap::new(),
@@ -1261,6 +1319,7 @@ fn commit_job_serves_features_from_partial_analyses() {
                 analysis,
                 files: vec![(real.clone(), real.to_string_lossy().into_owned())],
                 include_deps: BTreeSet::new(),
+                snapshots: InputSnapshots::default(),
             },
         )
     };
@@ -1377,6 +1436,7 @@ fn commit_job_publishes_closed_files_and_suppresses_unchanged_payloads() {
             config_errors: Vec::new(),
             config_warnings: Vec::new(),
             last_good: None,
+            analysed_texts: Arc::default(),
             diagnostics: BTreeMap::new(),
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::new(),
@@ -1392,14 +1452,15 @@ fn commit_job_publishes_closed_files_and_suppresses_unchanged_payloads() {
     let state = Arc::new(Mutex::new(BackendState {
         roots,
         // Only open.sv is open; closed.sv is never opened by the client.
-        documents: BTreeMap::from([(open_uri.clone(), Arc::new(String::new()))]),
+        documents: OpenTexts::from_iter([(open_uri.clone(), Arc::new(String::new()))]),
         dynamic_watched_files: false,
         watchers_registered: false,
         registered_watchers_digest: None,
         initialized: true,
         shutting_down: false,
         pending_logs: Vec::new(),
-        merged: None,
+        text_pairs: HashMap::new(),
+        unsaved_names: HashMap::new(),
         initial_pending: BTreeSet::new(),
         ready_sent: true,
         dep_dependents: BTreeMap::new(),
@@ -1459,6 +1520,7 @@ fn commit_job_publishes_closed_files_and_suppresses_unchanged_payloads() {
             analysis: Some(error_analysis()),
             files: files.clone(),
             include_deps: BTreeSet::new(),
+            snapshots: InputSnapshots::default(),
         },
     );
     assert_eq!(
@@ -1490,6 +1552,7 @@ fn commit_job_publishes_closed_files_and_suppresses_unchanged_payloads() {
             analysis: Some(error_analysis()),
             files,
             include_deps: BTreeSet::new(),
+            snapshots: InputSnapshots::default(),
         },
     );
     assert!(
@@ -1532,6 +1595,7 @@ fn commit_job_publishes_closed_files_and_suppresses_unchanged_payloads() {
                 ),
             ],
             include_deps: BTreeSet::new(),
+            snapshots: InputSnapshots::default(),
         },
     );
     assert_eq!(
@@ -2179,14 +2243,15 @@ fn watcher_options_cover_config_sources_and_include_deps() {
         .with_config(Some(Arc::new(config)));
     let mut state = BackendState {
         roots: BTreeMap::new(),
-        documents: BTreeMap::new(),
+        documents: OpenTexts::default(),
         dynamic_watched_files: true,
         watchers_registered: false,
         registered_watchers_digest: None,
         initialized: true,
         shutting_down: false,
         pending_logs: Vec::new(),
-        merged: None,
+        text_pairs: HashMap::new(),
+        unsaved_names: HashMap::new(),
         initial_pending: BTreeSet::new(),
         ready_sent: true,
         dep_dependents: BTreeMap::new(),
@@ -2208,6 +2273,7 @@ fn watcher_options_cover_config_sources_and_include_deps() {
             config_errors: Vec::new(),
             config_warnings: Vec::new(),
             last_good: None,
+            analysed_texts: Arc::default(),
             diagnostics: BTreeMap::new(),
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::new(),
@@ -2248,14 +2314,15 @@ fn reload_keeps_last_valid_config_on_malformed_reload() {
 
     let mut state = BackendState {
         roots: BTreeMap::new(),
-        documents: BTreeMap::new(),
+        documents: OpenTexts::default(),
         dynamic_watched_files: false,
         watchers_registered: false,
         registered_watchers_digest: None,
         initialized: true,
         shutting_down: false,
         pending_logs: Vec::new(),
-        merged: None,
+        text_pairs: HashMap::new(),
+        unsaved_names: HashMap::new(),
         initial_pending: BTreeSet::new(),
         ready_sent: true,
         dep_dependents: BTreeMap::new(),
@@ -2279,6 +2346,7 @@ fn reload_keeps_last_valid_config_on_malformed_reload() {
             config_errors: Vec::new(),
             config_warnings: Vec::new(),
             last_good: None,
+            analysed_texts: Arc::default(),
             diagnostics: BTreeMap::new(),
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::new(),
@@ -2378,14 +2446,15 @@ fn dep_dependents_maps_every_dependent_root() {
     let only_a = PathBuf::from(hp("/tmp/a/only.inc"));
     let mut state = BackendState {
         roots: BTreeMap::new(),
-        documents: BTreeMap::new(),
+        documents: OpenTexts::default(),
         dynamic_watched_files: false,
         watchers_registered: false,
         registered_watchers_digest: None,
         initialized: true,
         shutting_down: false,
         pending_logs: Vec::new(),
-        merged: None,
+        text_pairs: HashMap::new(),
+        unsaved_names: HashMap::new(),
         initial_pending: BTreeSet::new(),
         ready_sent: true,
         dep_dependents: BTreeMap::new(),
@@ -2407,6 +2476,7 @@ fn dep_dependents_maps_every_dependent_root() {
             config_errors: Vec::new(),
             config_warnings: Vec::new(),
             last_good: None,
+            analysed_texts: Arc::default(),
             diagnostics: BTreeMap::new(),
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::new(),
@@ -2430,6 +2500,7 @@ fn dep_dependents_maps_every_dependent_root() {
             config_errors: Vec::new(),
             config_warnings: Vec::new(),
             last_good: None,
+            analysed_texts: Arc::default(),
             diagnostics: BTreeMap::new(),
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::new(),
@@ -2592,14 +2663,15 @@ fn two_root_state_with_shared_file(
     let descriptor = |path: &Path| RootDescriptor::from_absolute(path).expect("descriptor");
     let mut state = BackendState {
         roots: BTreeMap::new(),
-        documents: BTreeMap::new(),
+        documents: OpenTexts::default(),
         dynamic_watched_files: false,
         watchers_registered: false,
         registered_watchers_digest: None,
         initialized: true,
         shutting_down: false,
         pending_logs: Vec::new(),
-        merged: None,
+        text_pairs: HashMap::new(),
+        unsaved_names: HashMap::new(),
         initial_pending: BTreeSet::new(),
         ready_sent: true,
         dep_dependents: BTreeMap::new(),
@@ -2621,6 +2693,7 @@ fn two_root_state_with_shared_file(
             config_errors: Vec::new(),
             config_warnings: Vec::new(),
             last_good: None,
+            analysed_texts: Arc::default(),
             diagnostics: BTreeMap::new(),
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::from([(shared.to_path_buf(), vec![diag_a])]),
@@ -2644,6 +2717,7 @@ fn two_root_state_with_shared_file(
             config_errors: Vec::new(),
             config_warnings: Vec::new(),
             last_good: None,
+            analysed_texts: Arc::default(),
             diagnostics: BTreeMap::new(),
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::from([(shared.to_path_buf(), vec![diag_b])]),
@@ -2816,6 +2890,7 @@ fn single_root_state(root: &Path, discovered: Vec<PathBuf>) -> BackendState {
             config_errors: Vec::new(),
             config_warnings: Vec::new(),
             last_good: None,
+            analysed_texts: Arc::default(),
             diagnostics: BTreeMap::new(),
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::new(),
@@ -3082,6 +3157,7 @@ fn every_commit_takes_a_later_ticket() {
                 analysis: None,
                 files: Vec::new(),
                 include_deps: BTreeSet::new(),
+                snapshots: InputSnapshots::default(),
             },
         )
         .ticket
