@@ -21,7 +21,7 @@ fn component_record_net_arrays_preserve_cell_and_recursive_member_offsets() {
     let mut codegen = Codegen::new(&semantic);
     codegen.collect_design().unwrap();
     let mut observed = Vec::new();
-    for node in codegen.design_nodes() {
+    for &node in codegen.design_nodes().iter() {
         if !matches!(database.node_kind(node), NodeKind::ContAssign { .. }) {
             continue;
         }

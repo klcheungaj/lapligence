@@ -23,7 +23,7 @@ impl<'a> Codegen<'a> {
     pub(in super::super) fn collect_design(&mut self) -> Result<Vec<NodeId>, String> {
         self.collect_classes()?;
         self.collect_covergroups()?;
-        for node in self.design_nodes() {
+        for &node in self.design_nodes().iter() {
             let net_type = match self.kind(node) {
                 NodeKind::Net { net_type, .. } => Some(*net_type),
                 NodeKind::Array { .. } => self.db.array_meta(node).and_then(|meta| meta.net_type()),
@@ -866,19 +866,23 @@ impl<'a> Codegen<'a> {
     }
 
     /// Every arena node of the instance tree (top instances + children +
-    /// generate scopes), depth-first, in deterministic order.
-    pub(in super::super) fn design_nodes(&self) -> Vec<NodeId> {
+    /// generate scopes), depth-first, in deterministic order. Walked once.
+    pub(in super::super) fn design_nodes(&self) -> std::rc::Rc<[NodeId]> {
         fn walk(db: &Db, id: NodeId, out: &mut Vec<NodeId>) {
             out.push(id);
             for c in &db.node(id).children {
                 walk(db, *c, out);
             }
         }
-        let mut out = Vec::new();
-        for top in self.db.tops() {
-            walk(self.db, *top, &mut out);
-        }
-        out
+        self.design_nodes
+            .get_or_init(|| {
+                let mut out = Vec::new();
+                for top in self.db.tops() {
+                    walk(self.db, *top, &mut out);
+                }
+                out.into()
+            })
+            .clone()
     }
 
     /// The module instance that owns `node` (walking up the parent chain).

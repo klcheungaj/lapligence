@@ -33,7 +33,7 @@ impl<'a> Codegen<'a> {
     // ── Port links ─────────────────────────────────────────────────────────
 
     pub(in super::super) fn bind_reference_ports(&mut self) -> Result<(), String> {
-        for port in self.design_nodes() {
+        for &port in self.design_nodes().iter() {
             let NodeKind::Port {
                 direction: DbDirection::Ref,
                 high_expr,

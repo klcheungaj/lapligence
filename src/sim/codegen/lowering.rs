@@ -1818,6 +1818,10 @@ struct Codegen<'a> {
     /// statically known calls, built on first use: port collapse and the
     /// process checks both read them (`collection/processes.rs`).
     called_subroutines: std::cell::OnceCell<std::rc::Rc<[(NodeId, NodeId)]>>,
+    design_nodes: std::cell::OnceCell<std::rc::Rc<[NodeId]>>,
+    /// The variables that targets outside a function's own body name
+    /// (`static_return_requires_signal`), collected on first use.
+    outside_targets: std::cell::OnceCell<HashSet<NodeId>>,
     /// The member paths written through a virtual-interface handle, built
     /// on first use: port collapse and the virtual-interface checks both
     /// read them (`collection/virtual_interfaces.rs`).
@@ -2654,6 +2658,8 @@ impl<'a> Codegen<'a> {
             shared_run_slot_bits: collection::MAX_SHARED_RUN_SLOT_BITS,
             port_collapse_exclusions: HashSet::new(),
             called_subroutines: std::cell::OnceCell::new(),
+            design_nodes: std::cell::OnceCell::new(),
+            outside_targets: std::cell::OnceCell::new(),
             virtual_interface_write_paths: std::cell::OnceCell::new(),
             strength_links: Default::default(),
             record_column_types: HashSet::new(),

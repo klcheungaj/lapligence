@@ -76,7 +76,7 @@ impl Codegen<'_> {
         if db.specify_blocks().is_empty() {
             return Ok(());
         }
-        let design = self.design_nodes().into_iter().collect::<HashSet<_>>();
+        let design = self.design_nodes().iter().copied().collect::<HashSet<_>>();
         // Specify facts grouped by instance, in capture order.
         let mut instances: Vec<(NodeId, InstanceSpecify<'_>)> = Vec::new();
         let mut instance_index = HashMap::new();

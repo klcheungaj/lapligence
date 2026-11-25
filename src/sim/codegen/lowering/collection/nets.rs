@@ -1299,7 +1299,7 @@ impl<'a> Codegen<'a> {
         let mut alias_rank: HashMap<AliasBit, u8> = HashMap::new();
         let mut alias_bits: HashSet<AliasBit> = HashSet::new();
         let mut alias_nets: HashSet<NodeId> = HashSet::new();
-        for id in &nodes {
+        for id in nodes.iter() {
             let NodeKind::NetAlias { nets } = self.kind(*id) else {
                 continue;
             };
@@ -1357,7 +1357,7 @@ impl<'a> Codegen<'a> {
                 alias_find(&mut alias_parent, bit);
             }
         }
-        for id in &nodes {
+        for id in nodes.iter() {
             if let NodeKind::Port {
                 direction: DbDirection::Inout,
                 high: h,

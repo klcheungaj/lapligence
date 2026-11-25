@@ -3,6 +3,13 @@
 use super::super::packed_geometry::PackedSelectDim;
 use super::*;
 
+#[cfg(test)]
+thread_local! {
+    /// Calls of [`Codegen::same_storage`].
+    pub(super) static SAME_STORAGE_COMPARISONS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
 /// Widest constant array row whose cells are recorded individually in
 /// writer analysis. A wider row is one flattened cell interval (see
 /// [`Codegen::array_row_write`]), so every row costs one record regardless of
@@ -747,6 +754,8 @@ impl<'a> Codegen<'a> {
     }
 
     pub(super) fn same_storage(&self, read: &IrDependency, write: &IrDependency) -> bool {
+        #[cfg(test)]
+        SAME_STORAGE_COMPARISONS.with(|work| work.set(work.get() + 1));
         if Self::is_array_row_write(read) || Self::is_array_row_write(write) {
             return match (
                 self.array_cell_interval(read),

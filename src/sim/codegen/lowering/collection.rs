@@ -87,6 +87,7 @@ pub(super) use strength_views::{StrengthLinks, StrengthNets};
 pub(super) use switches::PendingSwitch;
 mod subroutine_containers;
 mod virtual_interfaces;
+mod writer_index;
 
 type VirtualInterfaceMemberEntries = Vec<(String, SignalInfo)>;
 type VirtualInterfaceMethodEntries = Vec<(String, usize)>;
