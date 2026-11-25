@@ -123,22 +123,21 @@ fn defparams_of_block_parameters() {
 
 #[test]
 fn illegal_defparams_of_local_parameters_are_rejected() {
-    for (case, message) in [
-        (
-            "neg_defparam_localparam",
-            "neg_defparam_localparam.sv:6:12 'L' is a localparam",
-        ),
-        (
-            "neg_defparam_generate",
-            "neg_defparam_generate.sv:6:12 'P' is a localparam",
-        ),
-        (
-            "neg_defparam_package",
-            "neg_defparam_package.sv:8:12 'P' is a localparam",
-        ),
-    ] {
-        sim_cli::reject_case(SUITE, case, message);
-    }
+    sim_cli::reject_case(
+        SUITE,
+        "neg_defparam_localparam",
+        "neg_defparam_localparam.sv:6:12 'L' is a localparam",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_defparam_generate",
+        "neg_defparam_generate.sv:6:12 'P' is a localparam",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_defparam_package",
+        "neg_defparam_package.sv:8:12 'P' is a localparam",
+    );
 }
 
 #[test]
