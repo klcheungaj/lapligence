@@ -18,7 +18,7 @@ use std::collections::HashMap;
 
 use crate::core::db::{Db, NodeId, NodeKind, StmtKind};
 use crate::core::lint::rules::analysis::{
-    collect_element_writes, driven_bit_interval, port_link_drivers, signal_scope_path, DrivenBits,
+    collect_element_writes, driven_bit_interval, holding_scope_path, port_link_drivers, DrivenBits,
 };
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
@@ -94,7 +94,7 @@ impl LintRule for MultiDriverRule {
                     col: node.col,
                     message: format!(
                         "signal `{name}` in `{}` has {} drivers",
-                        signal_scope_path(db, key.0),
+                        holding_scope_path(db, key.0),
                         drivers[&key].len()
                     ),
                 }

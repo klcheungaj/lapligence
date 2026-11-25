@@ -461,7 +461,7 @@ impl<'a> Codegen<'a> {
                     return Some(self.display_path(&path).to_owned());
                 }
                 NodeKind::ClassDef => return None,
-                _ if self.is_compilation_unit(id) => return Some("$unit".to_owned()),
+                _ if self.is_compilation_unit(id) => return Some(crate::core::db::COMPILATION_UNIT_NAME.to_owned()),
                 _ if self.is_runtime_environment(id) => return Some(self.namespace_path(id)),
                 _ => current = self.node(id).parent,
             }

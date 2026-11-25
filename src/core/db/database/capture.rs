@@ -776,7 +776,7 @@ impl Db {
             }
             if matches!(
                 semantic.kind,
-                SemanticKind::Net | SemanticKind::GenerateScope
+                SemanticKind::Net | SemanticKind::Variable | SemanticKind::GenerateScope
             ) && semantic.is_implicit()
             {
                 implicit_declarations.insert(id);

@@ -15,7 +15,7 @@ use crate::core::db::{ConstraintKind, Db, NodeId, NodeKind, RandQualifier};
 use crate::core::lint::rules::analysis::{
     black_box_connection_signals, collect_driver_writes, collect_reads,
     connected_port_link_drivers, declaration_initializers, extend_virtual_interface_members,
-    gate_terminal_drivers, gate_terminal_reads, is_signal, port_link_reads, signal_scope_path,
+    gate_terminal_drivers, gate_terminal_reads, holding_scope_path, is_signal, port_link_reads,
     subroutine_body, timing_check_activity, top_external_port_signals, unconnected_port_signals,
     virtual_interface_members,
 };
@@ -87,6 +87,7 @@ impl LintRule for UndrivenSignalRule {
                 // A selected member counts for the variable it selects from.
                 || db.is_record_member(id)
                 || db.is_implicit_net(id)
+                || db.is_this_handle(id)
                 // A `rand`/`randc` property is assigned by every call of
                 // `randomize()` (IEEE 1800-2009 18.4, 18.6.1).
                 || db.rand_qualifier(id) != RandQualifier::None
@@ -113,7 +114,7 @@ impl LintRule for UndrivenSignalRule {
                 message: format!(
                     "signal `{}` in `{}` is read but has no known driver",
                     node.name,
-                    signal_scope_path(db, id)
+                    holding_scope_path(db, id)
                 ),
             });
         }
@@ -316,6 +317,60 @@ mod tests {
         assert!(
             implicit.is_empty(),
             "implicit-net owns the implicit declaration: {implicit:?}"
+        );
+    }
+
+    /// `this` (IEEE 1800-2009 8.11) is declared by the language, in the
+    /// methods and constraints of a class that a module, a generate block or
+    /// another class declares; an escaped name of the same spelling is not.
+    #[test]
+    fn this_is_driven() {
+        let diags = run_rule(
+            "module top;\n\
+             \x20 class node;\n    rand int v;\n    int w = 3;\n    node kids[$];\n    static node last;\n\
+             \x20   function node me(); return this; endfunction\n\
+             \x20   function bit same(node o); return o == this; endfunction\n\
+             \x20   function void keep(); last = this; kids.push_back(this); endfunction\n\
+             \x20   function int find(); int q[$]; q = kids.find_index(x) with (x == this); return q.size(); endfunction\n\
+             \x20   function int draw(); return this.randomize() with { v == this.w; }; endfunction\n\
+             \x20   constraint c { v > this.w; }\n\
+             \x20   class inner; function inner me(); return this; endfunction endclass\n    inner i;\n\
+             \x20 endclass\n\
+             \x20 class derived extends node; function node up(); return super.me(); endfunction endclass\n\
+             \x20 if (1) begin : g\n    class c; function c me(); return this; endfunction endclass\n    c h;\n  end\n\
+             \x20 derived d;\n  logic \\this ;\n\
+             \x20 initial begin d = new; d.keep(); $display(d.me(), d.same(d), d.find(), d.draw(), d.up(), \\this ); end\n\
+             \x20 initial begin g.h = new; $display(g.h.me()); d.i = new; $display(d.i.me()); end\nendmodule\n",
+            "top",
+        );
+        let messages: Vec<&str> = diags.iter().map(|diag| diag.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            ["signal `this` in `top` is read but has no known driver"]
+        );
+    }
+
+    #[test]
+    fn a_signal_of_a_class_names_the_class() {
+        let diags = run_rule(
+            "module top;\n\
+             \x20 class c;\n    logic prop;\n\
+             \x20   function void show(); logic own; $display(prop, own); endfunction\n\
+             \x20   class inner; logic deep; function void show(); $display(deep); endfunction endclass\n\
+             \x20   inner i;\n\
+             \x20 endclass\n\
+             \x20 c h;\n  initial begin h = new; h.show(); h.i = new; h.i.show(); end\nendmodule\n",
+            "top",
+        );
+        let mut messages: Vec<&str> = diags.iter().map(|diag| diag.message.as_str()).collect();
+        messages.sort_unstable();
+        assert_eq!(
+            messages,
+            [
+                "signal `deep` in `top.c.inner` is read but has no known driver",
+                "signal `own` in `top.c` is read but has no known driver",
+                "signal `prop` in `top.c` is read but has no known driver",
+            ]
         );
     }
 
