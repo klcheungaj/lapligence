@@ -859,7 +859,7 @@ pub(super) fn analyze_inner_slang(
         .collect();
     let projection_stage = Stage::new("ls.tokens");
     let projection =
-        tokens::project_slang_unless_cancelled(&out.snapshot, &opts.defines, &opts.cancel)?;
+        tokens::project_slang_unless_cancelled(&out.snapshot, None, &opts.defines, &opts.cancel)?;
     drop(projection_stage);
     crate::llg_debug!(
         "event=slang.tokens.end root={} generation={} tokens={} elapsed_us={}",

@@ -166,6 +166,36 @@ fn the_analysis_of_a_large_design_stops_inside_its_loops() {
 }
 
 #[test]
+fn an_isolated_parse_stops_at_each_poll() {
+    let file = hp("/virtual/unit.sv");
+    let text = PARTS.replace("`include \"parts.svh\"", "`define ADD(a, b) ((a) + (b))") + TOP;
+    let parse = |cancel: &CancelToken| {
+        open_document_identifiers(file, &[], &text, &Default::default(), cancel)
+    };
+    let facts = |identifiers: &DocumentIdentifiers| {
+        let (nodes, bindings) = identifiers.parts();
+        let definitions: Vec<_> = nodes
+            .iter()
+            .map(|token| (token, bindings.definition(token)))
+            .collect();
+        format!("{definitions:?}")
+    };
+    let never = CancelToken::at_poll(0);
+    let expected = facts(&parse(&never).expect("not cancelled"));
+    let polls = never.polls();
+    assert!(polls >= 40, "{polls} polls");
+    for poll in 1..=polls {
+        let error = parse(&CancelToken::at_poll(poll)).err();
+        assert!(
+            error.is_some_and(|error| error.cancelled),
+            "poll {poll} of {polls}"
+        );
+    }
+    let later = parse(&CancelToken::default()).expect("not cancelled");
+    assert!(facts(&later) == expected, "a later parse differs");
+}
+
+#[test]
 fn the_recovery_from_a_resource_limit_stops_at_each_poll() {
     let mut opts = options(&[("/virtual/parts.sv", PARTS), ("/virtual/top.sv", TOP)]);
     opts.limits = Limits {

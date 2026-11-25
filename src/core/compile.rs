@@ -4832,6 +4832,7 @@ pub fn parse_only(file: &str, defines: &[String]) -> Result<ParseOnlyOut, Startu
         &[],
         Vec::new(),
         Vec::new(),
+        &CancelToken::default(),
     )
 }
 
@@ -4841,7 +4842,15 @@ pub fn parse_source(
     text: &str,
     defines: &[String],
 ) -> Result<ParseOnlyOut, StartupError> {
-    parse_source_in_context(name, text, defines, &[], Vec::new(), Vec::new())
+    parse_source_in_context(
+        name,
+        text,
+        defines,
+        &[],
+        Vec::new(),
+        Vec::new(),
+        &CancelToken::default(),
+    )
 }
 
 /// Compile one supplied buffer as the only elaborated compilation unit, with
@@ -4853,7 +4862,8 @@ pub fn parse_source(
 /// the buffer needs declarations from (the packages it imports): each is its
 /// own compilation unit, parsed as a library unit of the default library so
 /// its packages resolve without any of its modules becoming a top. Tokens
-/// and bindings are projected for `name` only.
+/// and bindings are projected for `name` only. `cancel` stops it with
+/// [`StartupErrorKind::Cancelled`].
 pub fn parse_source_in_context(
     name: &str,
     text: &str,
@@ -4861,6 +4871,7 @@ pub fn parse_source_in_context(
     include_dirs: &[String],
     includes: Vec<OwnedSource>,
     dependencies: Vec<OwnedSource>,
+    cancel: &CancelToken,
 ) -> Result<ParseOnlyOut, StartupError> {
     parse_owned_in_context(
         OwnedSource::compilation_unit(name, text),
@@ -4868,6 +4879,7 @@ pub fn parse_source_in_context(
         include_dirs,
         includes,
         dependencies,
+        cancel,
     )
 }
 
@@ -4877,6 +4889,7 @@ fn parse_owned_in_context(
     include_dirs: &[String],
     includes: Vec<OwnedSource>,
     dependencies: Vec<OwnedSource>,
+    cancel: &CancelToken,
 ) -> Result<ParseOnlyOut, StartupError> {
     let (name, text) = (source.name.as_str(), source.text.as_str());
     let limits = Limits::default();
@@ -4949,10 +4962,17 @@ fn parse_owned_in_context(
         library_sources,
         editor: true,
         limits,
+        cancel: cancel.clone(),
         ..CompileOpts::default()
     };
     let out = compile_sources(&sources, &opts)?;
-    let projection = crate::core::tokens::project_slang(&out.snapshot, Some(name), defines);
+    let projection = crate::core::tokens::project_slang_unless_cancelled(
+        &out.snapshot,
+        Some(name),
+        defines,
+        cancel,
+    )
+    .map_err(|cancelled| StartupError::new(StartupErrorKind::Cancelled, cancelled.to_string()))?;
     Ok(ParseOnlyOut {
         diagnostics: out.diagnostics,
         tokens: projection.tokens,

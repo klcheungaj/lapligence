@@ -327,14 +327,15 @@ pub fn project_slang(snapshot: &Snapshot, file: Option<&str>, defines: &[String]
     }
 }
 
-/// [`project_slang`] of every file, unless `cancel` stops it.
+/// [`project_slang`], unless `cancel` stops it.
 pub fn project_slang_unless_cancelled(
     snapshot: &Snapshot,
+    file: Option<&str>,
     defines: &[String],
     cancel: &CancelToken,
 ) -> Result<Projection, Cancelled> {
     let mut poller = cancel.poller();
-    project_steps(snapshot, None, defines, || poller.step())
+    project_steps(snapshot, file, defines, || poller.step())
 }
 
 /// [`project_slang`], with `step` called for every token and node.

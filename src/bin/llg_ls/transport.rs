@@ -258,7 +258,8 @@ pub(crate) async fn run(dump_target: Option<std::path::PathBuf>) -> i32 {
             exit: exit.clone(),
         })
         .await;
-    // At the end of the input, too: the runtime waits for a running analysis.
+    // At the end of the input, too, once its requests are answered: the runtime
+    // waits for a running analysis or isolated parse.
     lsp::cancel_analyses();
     if exit.requested() {
         exit.finish_after_serve().await;

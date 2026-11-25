@@ -1743,13 +1743,27 @@ fn an_isolated_parse_never_creates_shadow_state() {
     assert!(!base.exists(), "precondition: shadow base is absent");
 
     // Act
-    let stale = open_document_identifiers_if_current(&document, || false, None);
-    let current = open_document_identifiers_if_current(&document, || true, None);
+    let never = CancelToken::default();
+    let stale = open_document_identifiers_if_current(&document, || false, &never, None);
+    let current = open_document_identifiers_if_current(&document, || true, &never, None);
 
     // Assert
     assert!(stale.is_err(), "stale semantic work must be rejected");
     assert!(current.is_ok_and(|identifiers| identifiers.token_count() > 0));
     assert!(!base.exists(), "an isolated parse created shadow state");
+}
+
+/// The memo keeps no result of it: another parse of the same text is complete.
+#[test]
+fn a_cancelled_isolated_parse_says_nothing_about_its_text() {
+    let document = isolated_document("semantic_cancelled");
+    let cancel = CancelToken::new();
+    cancel.cancel();
+    let cancelled = open_document_identifiers_if_current(&document, || true, &cancel, None);
+    assert!(cancelled.is_err_and(|error| error.transient));
+    let never = CancelToken::default();
+    let parsed = open_document_identifiers_if_current(&document, || true, &never, None);
+    assert!(parsed.is_ok_and(|identifiers| identifiers.token_count() > 0));
 }
 
 /// A project analysis holds the staging lock until it ends, and a token or
@@ -1768,6 +1782,7 @@ fn an_isolated_parse_does_not_wait_for_a_project_analysis() {
         let _ = done.send(open_document_identifiers_if_current(
             &document,
             || true,
+            &CancelToken::default(),
             None,
         ));
     });
@@ -1803,8 +1818,14 @@ fn isolated_tokens(
     defines: &[String],
     includes: &features::IncludeContext,
 ) -> Vec<(u32, u32, u32, u32)> {
-    let identifiers = features::open_document_identifiers(path, defines, source, includes)
-        .expect("isolated semantic parse");
+    let identifiers = features::open_document_identifiers(
+        path,
+        defines,
+        source,
+        includes,
+        &CancelToken::default(),
+    )
+    .expect("isolated semantic parse");
     absolute_semantic_tokens(&identifiers.semantic_tokens())
 }
 

@@ -74,14 +74,14 @@ pub(crate) fn mark_shutdown_requested() {
     cancel_analyses();
 }
 
-/// The parent of every analysis' token.
+/// The token of the isolated parses, and the parent of every analysis' token.
 fn server_token() -> &'static CancelToken {
     static TOKEN: OnceLock<CancelToken> = OnceLock::new();
     TOKEN.get_or_init(CancelToken::new)
 }
 
-/// Cancel every analysis, now and later: the server ends, and its cleanup
-/// waits for the running one.
+/// Cancel every analysis and isolated parse, now and later: the server ends,
+/// and its cleanup waits for the running ones.
 pub(crate) fn cancel_analyses() {
     server_token().cancel();
 }

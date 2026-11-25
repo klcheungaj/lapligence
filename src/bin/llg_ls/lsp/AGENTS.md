@@ -72,8 +72,9 @@ Components: [readme](readme.md), [handlers](handlers/readme.md). Server rules:
 - Record each token request's inputs under the capture lock; a commit that
   changes its stream sends `workspace/semanticTokens/refresh` from a spawned
   task (`ServedTokens` docs), never from a request handler.
-- Shutdown, `exit` and the end of the input cancel the running analysis
-  (`cancel_analyses`), whose end the cleanup waits for.
+- Shutdown, `exit` and the end of the input (once its requests are answered)
+  cancel the running analysis and isolated parse (`cancel_analyses`), whose end
+  the cleanup waits for.
 - Shutdown clears roots, caches, flights, watchers and the private process
   mirror; only the per-process child of the staging root is ever removed
   (`--staging-dir` handling: `main.rs`).

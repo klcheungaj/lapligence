@@ -682,12 +682,9 @@ fn lsp_stdio_a_saved_header_starts_every_root_that_reads_it() {
     session.client.shutdown();
 }
 
-/// The end of the server does not wait for an analysis that takes longer than
-/// these `bound`s.
-#[test]
-fn lsp_stdio_the_end_of_the_server_cancels_the_analysis() {
-    // Several times the design of the other tests.
-    let texts: Vec<_> = (0..8)
+/// Several times the design of the other tests.
+fn slow_files() -> Vec<(String, String)> {
+    (0..8)
         .map(|copy| {
             let name = format!("slow{copy}");
             (
@@ -695,7 +692,14 @@ fn lsp_stdio_the_end_of_the_server_cancels_the_analysis() {
                 slow_module().replace("module slow", &format!("module {name}")),
             )
         })
-        .collect();
+        .collect()
+}
+
+/// The end of the server does not wait for an analysis that takes longer than
+/// these `bound`s.
+#[test]
+fn lsp_stdio_the_end_of_the_server_cancels_the_analysis() {
+    let texts = slow_files();
     let files: Vec<(&str, &str)> = texts
         .iter()
         .map(|(file, text)| (file.as_str(), text.as_str()))
@@ -731,4 +735,44 @@ fn lsp_stdio_the_end_of_the_server_cancels_the_analysis() {
     session.wait_begun(1);
     session.client.close_stdin();
     assert_eq!(session.client.wait_for_exit_code(bound), Some(0));
+}
+
+/// The cleanup of `shutdown` and `exit` waits for the isolated parse of an
+/// edited document, so it is cancelled.
+#[test]
+fn lsp_stdio_the_end_of_the_server_cancels_an_isolated_parse() {
+    // Not more than the default `analysis.max_file_bytes` admits.
+    let edited: String = slow_files()
+        .into_iter()
+        .take(2)
+        .map(|(_, text)| text)
+        .collect();
+    for end in ["shutdown", "exit"] {
+        let name = format!("isolated-{end}");
+        let first = module("top", "");
+        let mut session = Session::ready(&name, &[("top.sv", &first)]);
+        session.open("top.sv", &first);
+        session.change("top.sv", &edited);
+        let document = session.document("top.sv");
+        session
+            .client
+            .send_request("textDocument/semanticTokens/full", document)
+            .expect("send the request");
+        session.wait_logged(&["event=semantic_tokens.parse_lock.end "], 1);
+        if end == "shutdown" {
+            session
+                .client
+                .request("shutdown", Value::Null)
+                .unwrap_or_default();
+        }
+        session
+            .client
+            .send_notification("exit", Value::Null)
+            .expect("exit");
+        let code = session.client.wait_for_exit_code(Duration::from_secs(20));
+        assert_eq!(code, Some(i32::from(end == "exit")), "{end}");
+        let parses = session.logged(&["event=semantic_tokens.open_parse.end "]);
+        let outcomes: Vec<_> = parses.iter().map(|line| field(line, "outcome=")).collect();
+        assert_eq!(outcomes, ["cancelled"], "{end}");
+    }
 }
