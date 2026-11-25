@@ -116,6 +116,10 @@ impl EffectSet {
     }
 }
 
+/// Statements with the mark each was recorded after and whether it has the
+/// effect that is sought.
+pub(in crate::sim) type KnownStatements = HashMap<*const IrStmt, (usize, bool)>;
+
 /// The statements rendered inside the one being rendered that nest others,
 /// with whether they have one effect: the walk of an enclosing statement takes
 /// the answer, so a walk enters a nested statement once however deep it is.
@@ -125,7 +129,7 @@ impl EffectSet {
 /// inside it is still where it was.
 #[derive(Default)]
 pub(in crate::sim) struct NestedEffects {
-    known: HashMap<*const IrStmt, (usize, bool)>,
+    known: KnownStatements,
     /// The recorded statements; a position in it marks when one began.
     recorded: Vec<*const IrStmt>,
 }

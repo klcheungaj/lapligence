@@ -663,7 +663,7 @@ impl<'a, 'm> Frame<'a, 'm> {
         let mut exits = Vec::new();
         let bytes = text.as_bytes();
         // Most lines neither hold a brace nor open a comment.
-        if !self.in_block_comment && first_of(bytes, 0, [b'{', b'}', b'/']).is_none() {
+        if !self.in_block_comment && first_of(bytes, 0, *b"{}/").is_none() {
             return exits;
         }
         let mut index = 0;
@@ -1737,8 +1737,8 @@ fn is_runtime_suspension(text: &str) -> bool {
         "llg_rt_stop_with_level",
     ];
     let bytes = text.as_bytes();
-    let parentheses = std::iter::successors(first_of(bytes, 0, [b'(']), |open| {
-        first_of(bytes, open + 1, [b'('])
+    let parentheses = std::iter::successors(first_of(bytes, 0, *b"("), |open| {
+        first_of(bytes, open + 1, *b"(")
     });
     parentheses.into_iter().any(|open| {
         SUSPENSIONS

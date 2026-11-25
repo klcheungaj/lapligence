@@ -1041,13 +1041,13 @@ mod tests {
     fn the_first_of_several_bytes_is_found_at_every_distance() {
         for length in 0..40 {
             let mut text = vec![0x80_u8; length];
-            text.extend([b'a', b'{', b'b', b'}']);
-            assert_eq!(first_of(&text, 0, [b'}', b'{']), Some(length + 1));
-            assert_eq!(first_of(&text, length + 2, [b'}', b'{']), Some(length + 3));
-            assert_eq!(first_of(&text, 0, [b'?']), None);
+            text.extend(b"a{b}");
+            assert_eq!(first_of(&text, 0, *b"}{"), Some(length + 1));
+            assert_eq!(first_of(&text, length + 2, *b"}{"), Some(length + 3));
+            assert_eq!(first_of(&text, 0, *b"?"), None);
         }
-        assert_eq!(first_of(b"", 0, [b'?']), None);
-        assert_eq!(first_of(b"a", 2, [b'a']), None);
+        assert_eq!(first_of(b"", 0, *b"?"), None);
+        assert_eq!(first_of(b"a", 2, *b"a"), None);
     }
 
     #[test]

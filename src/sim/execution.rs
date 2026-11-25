@@ -16,7 +16,7 @@ pub use analysis::{
 
 pub(in crate::sim) use effects::{EffectSummaries, NestedEffects};
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashSet};
 
 use effects::{is_context_import, EffectSet};
 
@@ -879,7 +879,7 @@ struct CallVisits<'a> {
     callees: Callees<'a>,
     /// Statements whose effects are known, of those recorded since a mark
     /// ([`NestedEffects`]).
-    nested: Option<(&'a HashMap<*const IrStmt, (usize, bool)>, usize)>,
+    nested: Option<(&'a effects::KnownStatements, usize)>,
 }
 
 impl<'a> CallVisits<'a> {

@@ -119,7 +119,7 @@ impl<K: Id, V> IdMap<K, V> {
         K: Ord,
     {
         let mut entries = self.0.iter().collect::<Vec<_>>();
-        entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
+        entries.sort_unstable_by_key(|(key, _)| *key);
         entries
     }
 

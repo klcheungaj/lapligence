@@ -89,7 +89,7 @@ impl Validator<'_> {
         for (call, info) in self.db.randomize_call_entries() {
             let path = format_args!("randomize_calls[{}]", call.0);
             if !matches!(
-                self.node(*call, &path)?.kind,
+                self.node(*call, path)?.kind,
                 NodeKind::SysCall { .. } | NodeKind::MethodCall { .. }
             ) {
                 return self.fail(path, "randomize metadata key is not a call");
@@ -105,7 +105,7 @@ impl Validator<'_> {
         }
         for (pattern, fields) in self.db.conditional_pattern_field_entries() {
             let path = format_args!("conditional_pattern_fields[{}]", pattern.0);
-            self.node(*pattern, &path)?;
+            self.node(*pattern, path)?;
             if self.db.conditional_pattern(*pattern).map(|info| info.kind)
                 != Some(ConditionalPatternKind::Structure)
             {
@@ -202,7 +202,7 @@ impl Validator<'_> {
             let mut current = Some(*class);
             while let Some(id) = current {
                 if !seen.insert(id) {
-                    return self.fail(path.clone(), "class inheritance contains a cycle");
+                    return self.fail(path, "class inheritance contains a cycle");
                 }
                 current = self.db.class_metadata(id).and_then(|entry| entry.base);
             }
@@ -239,7 +239,7 @@ impl Validator<'_> {
 
         for (net, delay) in self.db.net_delays() {
             let path = format_args!("net_delays[{}]", net.0);
-            let node = self.node(*net, &path)?;
+            let node = self.node(*net, path)?;
             // A net array's declaration delay applies to each of its nets.
             let net_array = matches!(node.kind, NodeKind::Array { .. })
                 && self
@@ -283,7 +283,7 @@ impl Validator<'_> {
 
         for (group, info) in self.db.covergroups() {
             let path = format_args!("covergroups[{}]", group.0);
-            self.node(*group, &path)?;
+            self.node(*group, path)?;
             let mut refs = Vec::new();
             refs.extend(info.formals.iter().copied());
             refs.extend(info.sample_formals.iter().copied());
@@ -322,7 +322,7 @@ impl Validator<'_> {
                     .chain(&metadata.options)
                     .chain(&metadata.bins)
                 {
-                    self.node(*reference, &point_path)?;
+                    self.node(*reference, point_path)?;
                 }
                 for bin in &metadata.bins {
                     let Some(bin_info) = self.db.coverage_bin(*bin) else {
@@ -342,7 +342,7 @@ impl Validator<'_> {
 
         for (block, metadata) in self.db.clocking_blocks() {
             let path = format_args!("clocking_blocks[{}]", block.0);
-            let node = self.node(*block, &path)?;
+            let node = self.node(*block, path)?;
             if !matches!(node.kind, NodeKind::Stmt(super::StmtKind::Begin)) {
                 return self.fail(path, "metadata key is not a clocking-block scope");
             }
@@ -384,7 +384,7 @@ impl Validator<'_> {
 
         for (variable, metadata) in self.db.clocking_vars() {
             let path = format_args!("clocking_vars[{}]", variable.0);
-            let node = self.node(*variable, &path)?;
+            let node = self.node(*variable, path)?;
             if !matches!(node.kind, NodeKind::Var { .. }) {
                 return self.fail(path, "metadata key is not a clocking-variable declaration");
             }
@@ -431,7 +431,7 @@ impl Validator<'_> {
 
         for (instance, block) in self.db.default_clockings() {
             let path = format_args!("default_clockings[{}]", instance.0);
-            self.node(*instance, &path)?;
+            self.node(*instance, path)?;
             if !self.db.clocking_blocks().contains_key(block) {
                 return self.fail(path, "default clocking names an unknown clocking block");
             }
@@ -439,19 +439,19 @@ impl Validator<'_> {
 
         for (instance, disable) in self.db.instance_default_disables() {
             let path = format_args!("instance_default_disables[{}]", instance.0);
-            self.node(*instance, &path)?;
+            self.node(*instance, path)?;
             self.node(*disable, format_args!("{path}.expression"))?;
         }
 
         for (port, expression) in self.db.modport_expression_entries() {
             let path = format_args!("modport_expressions[{}]", port.0);
-            let node = self.node(*port, &path)?;
+            let node = self.node(*port, path)?;
             if !matches!(node.kind, NodeKind::ModPort)
                 || self.db.modport_port_direction(*port).is_none()
             {
                 return self.fail(path, "metadata key is not a modport port");
             }
-            let expression_node = self.node(*expression, &path)?;
+            let expression_node = self.node(*expression, path)?;
             if !matches!(expression_node.kind, NodeKind::Expr(_)) {
                 return self.fail(path, "modport port expression is not an expression");
             }
@@ -459,14 +459,14 @@ impl Validator<'_> {
 
         for (port, expression) in self.db.port_expression_entries() {
             let path = format_args!("port_expressions[{}]", port.0);
-            let node = self.node(*port, &path)?;
+            let node = self.node(*port, path)?;
             if !matches!(node.kind, NodeKind::Port { low: None, .. }) {
                 return self.fail(
                     path,
                     "metadata key is not a port without an internal symbol",
                 );
             }
-            let expression_node = self.node(*expression, &path)?;
+            let expression_node = self.node(*expression, path)?;
             if !matches!(expression_node.kind, NodeKind::Expr(_)) {
                 return self.fail(path, "port expression is not an expression");
             }
@@ -474,7 +474,7 @@ impl Validator<'_> {
 
         for (port, components) in self.db.multi_port_entries() {
             let path = format_args!("multi_ports[{}]", port.0);
-            let node = self.node(*port, &path)?;
+            let node = self.node(*port, path)?;
             if !matches!(node.kind, NodeKind::Port { low: None, .. }) {
                 return self.fail(
                     path,
@@ -482,7 +482,7 @@ impl Validator<'_> {
                 );
             }
             for component in components {
-                let component_node = self.node(*component, &path)?;
+                let component_node = self.node(*component, path)?;
                 if !matches!(component_node.kind, NodeKind::Port { .. })
                     || !self.db.multi_port_components(*component).is_empty()
                 {
