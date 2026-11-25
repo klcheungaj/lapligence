@@ -140,6 +140,7 @@ pub fn runtime_sources() -> (&'static str, &'static str) {
             include_str!("scheduler/process_waits.c"),
             include_str!("scheduler/event_waits.c"),
             include_str!("scheduler/nonblocking.c"),
+            include_str!("scheduler/bound_updates.c"),
             include_str!("scheduler/fixed_arrays.c"),
             include_str!("scheduler/stochastic.c"),
             include_str!("scheduler/reference_writes.c"),

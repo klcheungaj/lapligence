@@ -39,9 +39,11 @@ typedef enum {
 static void value_scope_release(llg_value_scope_t* scope);
 static llg_value_scope_t* value_scope_retain_target(const void* target);
 
-// A nonblocking destination inside a native value: its item may move when
-// the whole value is replaced before the NBA region, so it is located again
-// at commit, from a descriptor array element fixed at issue or a value root.
+// What few updates have. A nonblocking destination inside a native value: its
+// item may move when the whole value is replaced before the NBA region, so it
+// is located again at commit, from a descriptor array element fixed at issue
+// or a value root. An update that ends with its issuer names its binding; it
+// alone needs no location.
 typedef struct llg_nba_locator {
     llg_dyn_value_array_t* array;
     llg_value_t* root;
@@ -52,13 +54,12 @@ typedef struct llg_nba_locator {
     // The contents marker of the record `root` belongs to, when a wait
     // observes that record; the commit toggles it.
     sv4_t* marker;
+    struct llg_bound_update* bound;
 } llg_nba_locator_t;
 
 typedef struct llg_nba {
     struct llg_nba* queue_next;
     struct llg_nba* queue_prev;
-    struct llg_nba* owner_next;
-    struct llg_nba* owner_prev;
     sv4_t* target;
     llg_fixed_array_t *fixed_target, *fixed_value;
     llg_value_scope_t* target_scope;
@@ -74,7 +75,6 @@ typedef struct llg_nba {
     uint64_t time;
     uint64_t sequence;
     llg_region_t region;
-    llg_proc_t* owner;
     int32_t is_real;
     int32_t is_event;
     double* real_target;
@@ -113,8 +113,8 @@ typedef struct llg_nba {
     } native;
     // Owned copy of a tagged-member write's commit-time checks, or NULL.
     llg_ref_view_t* tag_view;
-    // Destination inside a native value, resolved at commit; the target
-    // fields above are unused until then.
+    // Destination inside a native value, resolved at commit (the target
+    // fields above are unused until then), or the binding to an issuer.
     struct llg_nba_locator* locator;
 } llg_nba_t;
 
@@ -545,8 +545,15 @@ typedef struct llg_fork_child {
     llg_proc_t* proc;            // NULL once freed by disable_fork
 } llg_fork_child_t;
 
+// Held groups that are no fork: what else ends with the process that issued it
+// (S09-D8). `wait fork` does not wait for them.
+enum {
+    LLG_JOIN_BOUND = 3,  // the process of a timed trigger's event control
+    LLG_JOIN_UPDATE = 4, // a pending update; the group is an llg_bound_update_t
+};
+
 struct llg_fork_group {
-    int32_t join_kind;                // LLG_JOIN / LLG_JOIN_NONE / LLG_JOIN_ANY
+    int32_t join_kind;                // LLG_JOIN* above and in llg_rt.h
     int32_t remaining;                // live children; decremented on done AND on kill
     int32_t resumed;                  // join_any: parent already woken
     int32_t terminal;                 // group was moved to the zombie list
@@ -563,6 +570,14 @@ struct llg_fork_group {
     llg_region_t child_region;    // region inherited by children at the fork site
     llg_activation_t* owner_activation;
 };
+
+// A pending update that ends with its issuer: exactly one of `nba` and
+// `trigger` is set.
+typedef struct llg_bound_update {
+    llg_fork_group_t group; // first: the group lists link and free it
+    llg_nba_t* nba;
+    struct llg_deferred_trigger* trigger;
+} llg_bound_update_t;
 
 typedef enum {
     LLG_FRAME_ALIAS_NONE = 0,
@@ -661,8 +676,6 @@ static llg_value_scope_t* root_value_scopes;
 static llg_value_scope_t* all_value_scopes;
 
 struct llg_proc {
-    llg_nba_t* nba_head;
-    llg_nba_t* nba_tail;
     llg_region_t wait_resume_region;
     int32_t has_wait_resume_region;
     // Flags are bytes so the suspension state below fits the same padding.
@@ -783,7 +796,7 @@ _Static_assert(offsetof(llg_proc_t, chain) + sizeof(llg_co_chain_t) -
 _Static_assert(offsetof(llg_proc_t, chain) + sizeof(llg_co_chain_t) ==
                    sizeof(llg_proc_t),
                "coroutine chain must remain the process record's last member");
-_Static_assert(sizeof(llg_proc_t) == 440,
+_Static_assert(sizeof(llg_proc_t) == 424,
                "64-bit process record size changed; update the layout contract");
 #endif
 
@@ -804,9 +817,13 @@ static int32_t region_can_mutate(const char* action);
 static llg_nba_t* new_nba(uint64_t ticks);
 static llg_nba_t* new_clocking_nba(uint64_t ticks);
 static void enqueue_nba(llg_nba_t* n);
-static void cancel_proc_nbas(llg_proc_t* proc);
-static void nba_owner_release_all(llg_proc_t* proc);
 static void free_all_nbas(void);
+static llg_nba_t* nba_event_queue(llg_event_object_t* target, uint64_t ticks);
+static LLG_OUTLYING void nba_bind(llg_nba_t* n);
+static LLG_OUTLYING void deferred_trigger_bind(struct llg_deferred_trigger* trigger);
+static LLG_OUTLYING void bound_update_queued(llg_bound_update_t* bound, llg_nba_t* n);
+static LLG_OUTLYING void bound_update_end(llg_bound_update_t* bound);
+static LLG_OUTLYING void bound_update_drop(llg_fork_group_t* grp);
 static void promote_delayed_nbas(void);
 static void deferred_trigger_source_change(sv4_t* sig, double* real);
 static void deferred_trigger_event(llg_event_object_t* ev);

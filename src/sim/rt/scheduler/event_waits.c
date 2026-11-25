@@ -505,12 +505,8 @@ static void register_deferred_trigger(const llg_expr_event_spec_t* specs,
         if (action) {
             invoke_deferred_action(action, action_frame);
         } else if (target) {
-            llg_nba_t* nba = new_nba(0);
-            if (nba) {
-                nba->event_target = target;
-                nba->is_event = 1;
-                enqueue_nba(nba);
-            }
+            llg_nba_t* nba = nba_event_queue(target, 0);
+            if (nba) nba_bind(nba);
             if (action_frame) llg_frame_release(action_frame);
         } else if (action_frame) {
             llg_frame_release(action_frame);
@@ -568,11 +564,13 @@ static void register_deferred_trigger(const llg_expr_event_spec_t* specs,
             abort();
         }
     }
+    trigger->prev = g.deferred_trigger_tail;
     if (g.deferred_trigger_tail)
         g.deferred_trigger_tail->next = trigger;
     else
         g.deferred_triggers = trigger;
     g.deferred_trigger_tail = trigger;
+    if (target) deferred_trigger_bind(trigger);
 }
 
 void llg_nba_event_when(const llg_expr_event_spec_t* specs, int32_t n,

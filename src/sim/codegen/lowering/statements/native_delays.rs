@@ -96,6 +96,7 @@ impl EmitCtx<'_, '_> {
             captures,
             action,
             "event_native_nba",
+            IrJoinKind::Detached,
         )?);
         Ok(vec![IrStmt::Block(before)])
     }

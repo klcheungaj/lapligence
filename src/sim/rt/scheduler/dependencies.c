@@ -711,20 +711,33 @@ static void deferred_trigger_fire(llg_deferred_trigger_t* trigger) {
         invoke_deferred_action(trigger->action, frame);
         return;
     }
-    llg_nba_t* n = new_nba(0);
-    if (!n) return;
-    // The retained request is independent of both the issuer and the process
-    // that happened to produce the matching source change.
-    n->owner = NULL;
-    n->event_target = trigger->target;
-    n->is_event = 1;
-    enqueue_nba(n);
+    llg_nba_t* n = nba_event_queue(trigger->target, 0);
+    if (!trigger->bound) return;
+    if (n) bound_update_queued(trigger->bound, n);
+    else bound_update_end(trigger->bound);
+}
+
+static void deferred_trigger_unlink(llg_deferred_trigger_t* trigger) {
+    if (trigger->prev) trigger->prev->next = trigger->next;
+    else g.deferred_triggers = trigger->next;
+    if (trigger->next) trigger->next->prev = trigger->prev;
+    else g.deferred_trigger_tail = trigger->prev;
+}
+
+// One occurrence of `trigger`'s control.
+static void deferred_trigger_matched(llg_deferred_trigger_t* trigger) {
+    if (trigger->remaining > 1) {
+        trigger->remaining--;
+        return;
+    }
+    deferred_trigger_unlink(trigger);
+    deferred_trigger_fire(trigger);
+    free_deferred_trigger(trigger);
 }
 
 static void deferred_trigger_source_change(sv4_t* sig, double* real) {
-    llg_deferred_trigger_t** slot = &g.deferred_triggers;
-    while (*slot) {
-        llg_deferred_trigger_t* trigger = *slot;
+    llg_deferred_trigger_t* next;
+    for (llg_deferred_trigger_t* trigger = g.deferred_triggers; trigger; trigger = next) {
         int32_t matched = 0;
         for (int32_t i = 0; i < trigger->n; i++) {
             if (deferred_expression_update(trigger, i, sig, real)) {
@@ -732,32 +745,15 @@ static void deferred_trigger_source_change(sv4_t* sig, double* real) {
                 break;
             }
         }
-        if (!matched) {
-            slot = &trigger->next;
-            continue;
-        }
-        if (trigger->remaining > 1) {
-            trigger->remaining--;
-            slot = &trigger->next;
-            continue;
-        }
-        *slot = trigger->next;
-        if (g.deferred_trigger_tail == trigger) {
-            g.deferred_trigger_tail = NULL;
-            for (llg_deferred_trigger_t* tail = g.deferred_triggers; tail;
-                 tail = tail->next)
-                g.deferred_trigger_tail = tail;
-        }
-        deferred_trigger_fire(trigger);
-        free_deferred_trigger(trigger);
+        next = trigger->next;
+        if (matched) deferred_trigger_matched(trigger);
     }
 }
 
 static void deferred_trigger_event(llg_event_object_t* ev) {
     if (!ev) return;
-    llg_deferred_trigger_t** slot = &g.deferred_triggers;
-    while (*slot) {
-        llg_deferred_trigger_t* trigger = *slot;
+    llg_deferred_trigger_t* next;
+    for (llg_deferred_trigger_t* trigger = g.deferred_triggers; trigger; trigger = next) {
         int32_t matched = 0;
         for (int32_t i = 0; i < trigger->n; i++) {
             llg_expr_event_spec_t* spec = &trigger->specs[i];
@@ -766,24 +762,8 @@ static void deferred_trigger_event(llg_event_object_t* ev) {
                 break;
             }
         }
-        if (!matched) {
-            slot = &trigger->next;
-            continue;
-        }
-        if (trigger->remaining > 1) {
-            trigger->remaining--;
-            slot = &trigger->next;
-            continue;
-        }
-        *slot = trigger->next;
-        if (g.deferred_trigger_tail == trigger) {
-            g.deferred_trigger_tail = NULL;
-            for (llg_deferred_trigger_t* tail = g.deferred_triggers; tail;
-                 tail = tail->next)
-                g.deferred_trigger_tail = tail;
-        }
-        deferred_trigger_fire(trigger);
-        free_deferred_trigger(trigger);
+        next = trigger->next;
+        if (matched) deferred_trigger_matched(trigger);
     }
 }
 

@@ -45,12 +45,14 @@ static void llg_fork_group_child_done(llg_fork_group_t* grp) {
         // so wait_fork still works. A group whose finished children still
         // hold live descendants is held instead (see "Holding descendants" in
         // process_control.c).
-        fork_group_detach(grp);
-        if (grp->holding) {
-            grp->next_g = parent->held_groups;
-            if (grp->next_g) grp->next_g->prev_g = grp;
-            parent->held_groups = grp;
-        } else {
+        // A bound process's group is in the held list already.
+        if (grp->join_kind != LLG_JOIN_BOUND) {
+            fork_group_detach(grp);
+            if (grp->holding) held_group_link(grp);
+        } else if (!grp->holding) {
+            held_group_unlink(grp);
+        }
+        if (!grp->holding) {
             grp->next_g = g.zombie_groups;
             g.zombie_groups = grp;
         }
@@ -300,13 +302,13 @@ void llg_program_exit(llg_proc_t* self) {
         for (int32_t i = 0; i < g.n_procs; i++) {
             llg_proc_t* proc = g.all_procs[i];
             if (proc && proc->program == origin && !proc->killed &&
-                !proc->completed) {
+                (!proc->completed || proc->held_groups)) {
                 victim = proc;
                 break;
             }
         }
         if (!victim) break;
-        llg_kill_proc_tree(victim);
+        process_end_tree(victim);
     }
     service_program_completions();
     reap_retired_procs();
@@ -314,16 +316,47 @@ void llg_program_exit(llg_proc_t* self) {
     self->chain.exiting = LLG_EXIT_ABANDON;
 }
 
-static int32_t activation_has_disabled_ancestor(llg_activation_t* activation) {
-    for (; activation; activation = activation->parent) {
-        if (activation->disabled) return 1;
-    }
+// Whether `grp` was started in an activation of the target, also one that was
+// left (S09-D9), or is the named fork itself.
+static int32_t fork_group_under_target(const llg_fork_group_t* grp,
+                                       uint32_t declaration, uint32_t instance) {
+    if (grp->has_target && grp->target_declaration == declaration &&
+        grp->target_instance == instance)
+        return 1;
+    for (const llg_activation_t* activation = grp->owner_activation; activation;
+         activation = activation->parent)
+        if (activation->declaration == declaration && activation->instance == instance)
+            return 1;
     return 0;
 }
 
+// A live or held group the disable of the target ends, or NULL. The processes
+// are read again for held groups only when there are any.
+static llg_fork_group_t* fork_group_of_target(uint32_t declaration, uint32_t instance) {
+    for (int32_t i = 0; i < g.n_procs; i++) {
+        const llg_proc_t* proc = g.all_procs[i];
+        if (!proc) continue;
+        for (llg_fork_group_t* grp = proc->fork_groups; grp; grp = grp->next_g)
+            if (fork_group_under_target(grp, declaration, instance)) return grp;
+    }
+    for (int32_t i = 0; g.held_group_count && i < g.n_procs; i++) {
+        const llg_proc_t* proc = g.all_procs[i];
+        if (!proc) continue;
+        for (llg_fork_group_t* grp = proc->held_groups; grp; grp = grp->next_g)
+            if (fork_group_under_target(grp, declaration, instance)) return grp;
+    }
+    return NULL;
+}
+
 static void llg_kill_named_group(llg_fork_group_t* grp) {
-    if (!grp || !grp->parent) return;
     llg_proc_t* parent = grp->parent;
+    if (grp->join_kind == LLG_JOIN_UPDATE) {
+        held_group_unlink(grp);
+        bound_update_drop(grp);
+        proc_tree_released(parent);
+        return;
+    }
+    int32_t held = grp->terminal || grp->join_kind == LLG_JOIN_BOUND;
     llg_fork_child_t* child = grp->children;
     while (child) {
         if (child->proc) {
@@ -336,7 +369,12 @@ static void llg_kill_named_group(llg_fork_group_t* grp) {
     }
     grp->remaining = 0;
     grp->terminal = 1;
-    fork_group_unlink(grp);
+    if (held) {
+        held_group_unlink(grp);
+        proc_tree_released(parent);
+    } else {
+        fork_group_unlink(grp);
+    }
     grp->next_g = g.zombie_groups;
     g.zombie_groups = grp;
 
@@ -369,31 +407,14 @@ void llg_disable_target(llg_proc_t* self, uint32_t declaration,
 
     // Restart after each removal: cancelling a tree can remove other groups
     // and processes from the registry, including the caller's ancestors.
-    for (;;) {
-        llg_fork_group_t* target = NULL;
-        for (int32_t i = 0; i < g.n_procs && !target; i++) {
-            llg_proc_t* proc = g.all_procs[i];
-            if (!proc) continue;
-            for (llg_fork_group_t* group = proc->fork_groups; group;
-                 group = group->next_g) {
-                if ((group->has_target &&
-                     group->target_declaration == declaration &&
-                     group->target_instance == instance) ||
-                    (group->owner_activation &&
-                     activation_has_disabled_ancestor(group->owner_activation))) {
-                    target = group;
-                    break;
-                }
-            }
-        }
-        if (!target) break;
+    for (llg_fork_group_t* target = fork_group_of_target(declaration, instance); target;
+         target = fork_group_of_target(declaration, instance)) {
         matched = 1;
         llg_kill_named_group(target);
     }
 
     // A blocked activation must be detached from every wait list before its
-    // coroutine is scheduled again. Immediate NBAs remain attached to the
-    // process and are therefore committed normally after cancellation.
+    // coroutine is scheduled again.
     if (matched) {
         for (llg_activation_t* activation = g.activations; activation;
              activation = activation->all_next) {
@@ -415,9 +436,7 @@ void llg_disable_target(llg_proc_t* self, uint32_t declaration,
 
 // Free completed/killed fork groups: their child procs that were not already
 // freed by disable_fork, the child list nodes and the group struct.  Called
-// from llg_rt_run after commit_nbas with no coroutine running, so done
-// children's NBAs have been committed and their all_procs slots can be NULLed
-// safely (the next commit_nbas then skips them).
+// from llg_rt_run with no coroutine running.
 static void process_zombie_groups(void) {
     llg_fork_group_t* grp = g.zombie_groups;
     g.zombie_groups = NULL;
@@ -429,7 +448,7 @@ static void process_zombie_groups(void) {
             // A completed child can still own live join_none descendants.
             // Keep its process object until those groups unlink themselves;
             // their completion path dereferences the parent pointer.
-            if (c->proc->fork_groups || c->proc->held_groups || c->proc->nba_head) {
+            if (c->proc->fork_groups || c->proc->held_groups) {
                 deferred = 1;
                 continue;
             }

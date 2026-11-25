@@ -1458,9 +1458,9 @@ LLG_SELFTEST_PROCESS(fj5_parent, 2) {
     LLG_SELFTEST_DONE();
 }
 
-// (6) a killed child's pending NBA is NOT committed: the child records a
+// (6) a killed child's pending NBA commits (S09-D8): the child records a
 // non-blocking assignment, wakes the parent, then is killed before the NBA
-// region runs.  fj6_sig must stay 0.
+// region runs.  fj6_sig becomes 1, and nothing the child would do later runs.
 static sv4_t fj6_go = SV4_EMPTY, fj6_sig = SV4_EMPTY;
 static int32_t fj6_ok;
 
@@ -1468,8 +1468,8 @@ LLG_SELFTEST_PROCESS(fj6_child, 1) {
     LLG_SELFTEST_BEGIN(1);
     llg_nba(&fj6_sig, test_temp(SV4_C(1, 1))); // pending non-blocking assignment
     llg_ba(&fj6_go, test_temp(SV4_C(1, 1)));   // wake the parent before being killed
-    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 100));
-    llg_ba(&fj6_sig, test_temp(SV4_C(1, 1)));  // never reached
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 2));
+    llg_ba(&fj6_sig, test_temp(SV4_C(0, 1)));  // never reached
     LLG_SELFTEST_DONE();
 }
 
@@ -1480,7 +1480,7 @@ LLG_SELFTEST_PROCESS(fj6_parent, 2) {
     LLG_SELFTEST_AWAIT(1, llg_arm_edge(self, &fj6_go, 1));
     llg_disable_fork(self);
     LLG_SELFTEST_AWAIT(2, llg_arm_time(self, 5));
-    fj6_ok = u(fj6_sig) == 0;   // the pending NBA must never be committed
+    fj6_ok = u(fj6_sig) == 1;   // committed, and not cleared by the killed child
     LLG_SELFTEST_FINISH();
 }
 
@@ -1596,7 +1596,7 @@ static void test_fork_join(void) {
     llg_rt_run();
     CHECK(fj5_ok);
 
-    // (6) killed child's pending NBA is not committed
+    // (6) killed child's pending NBA commits
     llg_rt_init();
     fj6_ok = 0;
     llg_spawn(&fj6_parent_desc, "fj6p");

@@ -677,6 +677,26 @@ impl EmitCtx<'_, '_> {
         blocking: bool,
         delay: Option<&IntraControl>,
     ) -> Result<Vec<IrStmt>, String> {
+        let statements = self.lower_timed_assign(h, blocking, delay)?;
+        // An update waiting for an event or cycle control stays pending; the
+        // runtime tells a zero delay from one that leaves the time slot.
+        let same_slot = matches!(delay, None | Some(IntraControl::Delay(_)));
+        if blocking || !same_slot || !self.update_ends_with_issuer(h) {
+            return Ok(statements);
+        }
+        let bind = |operation| IrStmt::Container(Box::new(operation));
+        Ok(std::iter::once(bind(IrContainerStmt::NbaBindOpen))
+            .chain(statements)
+            .chain([bind(IrContainerStmt::NbaBindClose)])
+            .collect())
+    }
+
+    fn lower_timed_assign(
+        &mut self,
+        h: NodeId,
+        blocking: bool,
+        delay: Option<&IntraControl>,
+    ) -> Result<Vec<IrStmt>, String> {
         match delay {
             None => Ok(vec![self.lower_assignment(h, false)?]),
             Some(IntraControl::Delay(delay)) => {

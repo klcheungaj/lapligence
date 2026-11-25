@@ -159,6 +159,27 @@ impl Frame<'_, '_> {
         }
     }
 
+    /// Emit `call`, which queues updates and evaluates nothing.
+    pub(super) fn queue_update(&mut self, call: String) {
+        if self.nba_bound {
+            self.line("llg_nba_bind_begin();");
+        }
+        self.line(call);
+        if self.nba_bound {
+            self.line("llg_nba_bind_end();");
+        }
+    }
+
+    /// Emit `call`, which stores, or with `nba` queues updates, and evaluates
+    /// nothing.
+    fn store_or_queue(&mut self, nba: bool, call: String) {
+        if nba {
+            self.queue_update(call);
+        } else {
+            self.line(call);
+        }
+    }
+
     fn statement_body(&mut self, statement: &IrStmt) -> Result<(), String> {
         let cancellation_mark = self.cancellation_mark();
         let nested_mark = self.nested_exits.mark();
@@ -332,9 +353,10 @@ impl Frame<'_, '_> {
                 } else {
                     format!("llg_ba_from({cell}, &{item}->value.items[_llg_n].value.packed)")
                 };
-                self.line(format!(
-                    "for (uint64_t _llg_n = 0; _llg_n < {total}ULL; ++_llg_n) {store};"
-                ));
+                self.store_or_queue(
+                    *nba,
+                    format!("for (uint64_t _llg_n = 0; _llg_n < {total}ULL; ++_llg_n) {store};"),
+                );
             }
             IrStmt::FixedValueAssign { dst, src, nba } => {
                 // Between two whole arrays nothing runs after the source is
@@ -350,11 +372,15 @@ impl Frame<'_, '_> {
                     _ => self.fixed_value(src, dst.array, dst.total)?,
                 };
                 let target = self.fixed_view(dst)?;
-                self.line(format!(
-                    "llg_fixed_array_copy({target}, {source}, {}, {});",
-                    u8::from(self.ctx.model.array(dst.array).two_state),
-                    u8::from(*nba)
-                ));
+                let two_state = self.ctx.model.array(dst.array).two_state;
+                self.store_or_queue(
+                    *nba,
+                    format!(
+                        "llg_fixed_array_copy({target}, {source}, {}, {});",
+                        u8::from(two_state),
+                        u8::from(*nba)
+                    ),
+                );
             }
             IrStmt::FixedArrayOrder(order) => self.fixed_array_order(order)?,
             IrStmt::RealArrayOrder(order) => self.real_array_order(order)?,
@@ -362,12 +388,15 @@ impl Frame<'_, '_> {
                 let address = self.fixed_array_address(*array)?;
                 let two_state = self.ctx.model.array(*array).two_state;
                 let value = self.expression(value)?;
-                self.line(format!(
-                    "llg_fixed_array_fill({address}, {}, {}, {});",
-                    value.code,
-                    u8::from(two_state),
-                    u8::from(*nba)
-                ));
+                self.store_or_queue(
+                    *nba,
+                    format!(
+                        "llg_fixed_array_fill({address}, {}, {}, {});",
+                        value.code,
+                        u8::from(two_state),
+                        u8::from(*nba)
+                    ),
+                );
                 self.discard(value);
             }
             IrStmt::FixedArrayCopy {
@@ -378,12 +407,15 @@ impl Frame<'_, '_> {
             } => {
                 let dst_address = self.fixed_array_address(*dst)?;
                 let src_address = self.fixed_array_address(*src)?;
-                let dst = self.ctx.model.array(*dst);
-                self.line(format!(
-                    "llg_fixed_array_stream_copy({dst_address}, {src_address}, {}, {}, {slice}u);",
-                    u8::from(dst.two_state),
-                    u8::from(*nba)
-                ));
+                let two_state = self.ctx.model.array(*dst).two_state;
+                self.store_or_queue(
+                    *nba,
+                    format!(
+                        "llg_fixed_array_stream_copy({dst_address}, {src_address}, {}, {}, {slice}u);",
+                        u8::from(two_state),
+                        u8::from(*nba)
+                    ),
+                );
             }
             IrStmt::Container(operation) => self.container_statement(operation)?,
             IrStmt::StreamAssign {
@@ -445,7 +477,7 @@ impl Frame<'_, '_> {
                 }
                 let value = self.string(rhs)?;
                 let ticks = self.delay(ticks)?;
-                self.line(format!(
+                self.queue_update(format!(
                     "llg_string_nba_after({}, {}, {ticks});",
                     binding.address,
                     value.take_string()
@@ -457,10 +489,13 @@ impl Frame<'_, '_> {
                 if binding.automatic {
                     return Err(pending("delayed writes to automatic chandle storage"));
                 }
-                let value = self.chandle(rhs)?;
+                let mut value = self.chandle(rhs)?;
+                if self.nba_bound {
+                    value = self.scalar("void*", value);
+                }
                 let ticks = self.delay(ticks)?;
                 let marker = super::super::objects::chandle_marker(self.ctx.model, target);
-                self.line(format!(
+                self.queue_update(format!(
                     "llg_chandle_nba_after((void**)({}), {value}, {ticks}, {marker});",
                     binding.address
                 ));
@@ -757,12 +792,13 @@ impl Frame<'_, '_> {
             }
             IrStmt::NonblockingEventTrigger { ev, ticks } => {
                 let event = self.event_address(ev)?;
-                let delay = if let Some(ticks) = ticks {
-                    self.delay(ticks)?
-                } else {
-                    "0".to_owned()
-                };
-                self.line(format!("llg_nba_event_after({event}, {delay});"));
+                match ticks {
+                    Some(ticks) => {
+                        let delay = self.delay(ticks)?;
+                        self.line(format!("llg_nba_event_after({event}, {delay});"));
+                    }
+                    None => self.line(format!("llg_nba_event({event});")),
+                }
             }
             IrStmt::EventAssign { target, source } => {
                 let marker = self.event_formal_marker(target);
@@ -791,7 +827,7 @@ impl Frame<'_, '_> {
                     IrJoinKind::Join => "LLG_JOIN",
                     IrJoinKind::Any => "LLG_JOIN_ANY",
                     IrJoinKind::None => "LLG_JOIN_NONE",
-                    IrJoinKind::Detached => {
+                    IrJoinKind::Detached | IrJoinKind::Bound => {
                         return Err("a detached process needs a captured frame".to_owned())
                     }
                 };

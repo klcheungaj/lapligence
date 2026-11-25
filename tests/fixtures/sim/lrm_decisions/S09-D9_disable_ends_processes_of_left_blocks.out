@@ -1,0 +1,16 @@
+by instance        0 1
+left block         n=0 others=1
+earlier iterations n=1 others=2
+earlier calls      n=0 others=2
+below a finished   n=0 others=0
+through a function n=0 others=0
+two processes      n=0 others=0
+outer task         n=0 others=0
+inner block        n=0 others=0
+outer goes on      n=0 others=1
+fork left          n=0 others=1
+wait fork returned at 233
+wait fork          n=0 others=0
+await returned: KILLED
+await              n=0 others=0
+by a child         n=0 others=0

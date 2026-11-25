@@ -916,7 +916,7 @@ fn render_stmt_scoped(
                 IrJoinKind::Join => "LLG_JOIN",
                 IrJoinKind::None => "LLG_JOIN_NONE",
                 IrJoinKind::Any => "LLG_JOIN_ANY",
-                IrJoinKind::Detached => {
+                IrJoinKind::Detached | IrJoinKind::Bound => {
                     return Err("detached processes require the owned emitter".to_owned())
                 }
             };
@@ -950,7 +950,7 @@ fn render_stmt_scoped(
                 IrJoinKind::Join => "LLG_JOIN",
                 IrJoinKind::None => "LLG_JOIN_NONE",
                 IrJoinKind::Any => "LLG_JOIN_ANY",
-                IrJoinKind::Detached => {
+                IrJoinKind::Detached | IrJoinKind::Bound => {
                     return Err("detached processes require the owned emitter".to_owned())
                 }
             };
