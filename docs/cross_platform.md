@@ -309,6 +309,10 @@ DPI-C and VPI DLLs:
   user before the cache save.
 - On musl, root `build.rs` and `mimalloc_shim.c` wrap C `malloc`/`free` for every
   binary ([executables](../src/bin/readme.md)).
+- On glibc, `llg` keeps its pipeline thread on the process's first heap
+  (`ffi::process_memory::share_one_heap`). What a second thread still costs
+  there is glibc's locking of slow-path allocations, about 0.5 % of a compile's
+  instructions; mimalloc has no such path.
 - Compiler versions: GCC 11 (Rocky Linux 9, Ubuntu 22.04 lint job) reports
   `-Wmaybe-uninitialized` at `-O2`/`-O3` for a local filled through an inlined
   out-parameter that the callee writes only on success, even when the caller

@@ -255,6 +255,7 @@ impl<'model> CheckedModel<'model> {
 
 struct Validator<'model> {
     model: CheckedModel<'model>,
+    stack_floor: crate::stack::StackFloor,
     max_width: Cell<u128>,
     /// Lexical bindings introduced by fixed-array method maps, innermost last.
     reduction_bindings: RefCell<Vec<(String, u32, bool)>>,

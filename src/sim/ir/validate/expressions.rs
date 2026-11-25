@@ -9,7 +9,7 @@ impl Validator<'_> {
         formals: &[IrFormal],
         path: IrPath<'_>,
     ) -> ValidationResult {
-        if crate::stack::exhausted() {
+        if self.stack_floor.reached() {
             return self.fail(path, crate::stack::EXHAUSTED);
         }
         self.max_width
@@ -60,14 +60,71 @@ impl Validator<'_> {
                 self.validate_expr(base_idx, formals, format_args!("{path}.base_idx"))?;
                 self.validate_expr(width_expr, formals, format_args!("{path}.width_expr"))?;
             }
-            _ => self.validate_operation(expr, formals, path)?,
+            IrExprKind::Const(value) => {
+                self.validate_const(value, format_args!("{path}.const"))?;
+                if value.width != expr.width
+                    || value.signed != expr.signed
+                    || value.fill != expr.fill
+                {
+                    return self.fail(
+                        path,
+                        format!(
+                            "constant payload type disagrees with expression type: payload width={} signed={} fill={:?}, expression width={} signed={} fill={:?}",
+                            value.width,
+                            value.signed,
+                            value.fill,
+                            expr.width,
+                            expr.signed,
+                            expr.fill
+                        ),
+                    );
+                }
+            }
+            IrExprKind::SigRead(idx) => {
+                let signal = self.model.signals.get(*idx).ok_or_else(|| {
+                    IrValidationError::new(path, format!("signal index {idx} is out of bounds"))
+                })?;
+                if matches!(signal.ty, IrType::Real { .. }) != expr.is_real()
+                    || signal.ty.width() != expr.width
+                    || signal.ty.signed() != expr.signed
+                {
+                    return self.fail(path, "signal type disagrees with expression type");
+                }
+            }
+            IrExprKind::LocalRead(name) => {
+                if let Some((_, width, signed)) = self
+                    .reduction_bindings
+                    .borrow()
+                    .iter()
+                    .rev()
+                    .find(|(binding, _, _)| binding == name)
+                {
+                    if (expr.width, expr.signed) != (*width, *signed) || expr.fill.is_some() {
+                        return self.fail(path, "fixed-array iterator read has the wrong shape");
+                    }
+                }
+            }
+            IrExprKind::FormalRead(idx) => {
+                let formal = formals.get(*idx).ok_or_else(|| {
+                    IrValidationError::new(path, format!("formal index {idx} is out of bounds"))
+                })?;
+                if formal.chandle
+                    || formal.event
+                    || formal.real != expr.is_real()
+                    || formal.width != expr.width
+                    || formal.signed != expr.signed
+                {
+                    return self.fail(path, "formal type disagrees with expression type");
+                }
+            }
+            _ => return self.validate_operation(expr, formals, path),
         }
         Ok(())
     }
 
-    /// [`Self::validate_expr`] for the forms that are no plain operator. The
-    /// operators of a chain recurse without a frame of this function, which
-    /// holds the values of every form (`crate::stack`).
+    /// [`Self::validate_expr`] for the forms that are no plain operator or
+    /// read. The operators of a chain recurse without a frame of this
+    /// function, which holds the values of every form (`crate::stack`).
     fn validate_operation(
         &self,
         expr: &IrExpr,
@@ -279,37 +336,6 @@ impl Validator<'_> {
                     }
                 }
             }
-            IrExprKind::Const(value) => {
-                self.validate_const(value, format_args!("{path}.const"))?;
-                if value.width != expr.width
-                    || value.signed != expr.signed
-                    || value.fill != expr.fill
-                {
-                    return self.fail(
-                        path,
-                        format!(
-                            "constant payload type disagrees with expression type: payload width={} signed={} fill={:?}, expression width={} signed={} fill={:?}",
-                            value.width,
-                            value.signed,
-                            value.fill,
-                            expr.width,
-                            expr.signed,
-                            expr.fill
-                        ),
-                    );
-                }
-            }
-            IrExprKind::SigRead(idx) => {
-                let signal = self.model.signals.get(*idx).ok_or_else(|| {
-                    IrValidationError::new(path, format!("signal index {idx} is out of bounds"))
-                })?;
-                if matches!(signal.ty, IrType::Real { .. }) != expr.is_real()
-                    || signal.ty.width() != expr.width
-                    || signal.ty.signed() != expr.signed
-                {
-                    return self.fail(path, "signal type disagrees with expression type");
-                }
-            }
             IrExprKind::FixedValueCompare { left, right, .. } => {
                 let left = self.validate_fixed_value(left, formals, path)?;
                 let right = self.validate_fixed_value(right, formals, path)?;
@@ -339,32 +365,6 @@ impl Validator<'_> {
             }
             IrExprKind::FixedArrayReduce(reduction) => {
                 self.validate_fixed_array_reduction(reduction, expr, formals, path)?;
-            }
-            IrExprKind::LocalRead(name) => {
-                if let Some((_, width, signed)) = self
-                    .reduction_bindings
-                    .borrow()
-                    .iter()
-                    .rev()
-                    .find(|(binding, _, _)| binding == name)
-                {
-                    if (expr.width, expr.signed) != (*width, *signed) || expr.fill.is_some() {
-                        return self.fail(path, "fixed-array iterator read has the wrong shape");
-                    }
-                }
-            }
-            IrExprKind::FormalRead(idx) => {
-                let formal = formals.get(*idx).ok_or_else(|| {
-                    IrValidationError::new(path, format!("formal index {idx} is out of bounds"))
-                })?;
-                if formal.chandle
-                    || formal.event
-                    || formal.real != expr.is_real()
-                    || formal.width != expr.width
-                    || formal.signed != expr.signed
-                {
-                    return self.fail(path, "formal type disagrees with expression type");
-                }
             }
             IrExprKind::CallFn(call) => self.validate_call_value(expr, call, formals, path)?,
             IrExprKind::MatchCall(action) => {
@@ -971,7 +971,11 @@ impl Validator<'_> {
             | IrExprKind::Mux { .. }
             | IrExprKind::BitSel { .. }
             | IrExprKind::PartSel { .. }
-            | IrExprKind::IdxPartSel { .. } => {}
+            | IrExprKind::IdxPartSel { .. }
+            | IrExprKind::Const(_)
+            | IrExprKind::SigRead(_)
+            | IrExprKind::LocalRead(_)
+            | IrExprKind::FormalRead(_) => {}
         }
         Ok(())
     }

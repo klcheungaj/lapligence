@@ -6,6 +6,7 @@ impl Validator<'_> {
     pub(super) fn new(model: &IrModel) -> Validator<'_> {
         Validator {
             model: CheckedModel::new(model),
+            stack_floor: crate::stack::StackFloor::current(),
             max_width: Cell::new(0),
             reduction_bindings: RefCell::new(Vec::new()),
             fixed_activations: RefCell::new(Vec::new()),

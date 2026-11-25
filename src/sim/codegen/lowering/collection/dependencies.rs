@@ -55,16 +55,31 @@ struct CallWalk {
     taints: usize,
 }
 
-/// One step of [`Codegen::walk_process_writes`].
-enum WriteStep {
-    Node(NodeId),
-    /// The end of the body of `callee`, entered with `bound` bindings when
-    /// `taints` taints were counted.
-    Return {
-        callee: NodeId,
-        bound: bool,
-        taints: usize,
-    },
+impl CallWalk {
+    /// The walk is past the end of `body`.
+    fn leave(&mut self, body: WriteBody) {
+        let Some(callee) = body.callee else {
+            return;
+        };
+        self.active.remove(&callee);
+        if !body.bindings.is_empty() {
+            self.bound.remove(&callee);
+        } else if self.taints == body.taints {
+            self.walked.insert(callee);
+        }
+    }
+}
+
+/// The root or the subroutine body [`Codegen::walk_process_writes`] is in.
+#[derive(Default)]
+struct WriteBody {
+    callee: Option<NodeId>,
+    /// How many of the nodes still to visit belong to the bodies around it.
+    outside: usize,
+    /// What the `ref` formals of `callee` are bound to.
+    bindings: HashMap<NodeId, IrDependency>,
+    /// The taints counted when the body was entered.
+    taints: usize,
 }
 
 impl<'a> Codegen<'a> {
@@ -952,8 +967,8 @@ impl<'a> Codegen<'a> {
     }
 
     /// The storage `root` writes, with the bodies of the subroutines it calls
-    /// inlined. The steps still to take are a list, not the thread's stack:
-    /// a chain of calls is as long as the design makes it.
+    /// inlined. The nodes still to visit are a list, not the thread's stack: a
+    /// chain of calls is as long as the design makes it.
     fn walk_process_writes(
         &self,
         root: NodeId,
@@ -961,49 +976,23 @@ impl<'a> Codegen<'a> {
     ) -> Result<HashSet<IrDependency>, String> {
         let mut writes = HashSet::new();
         let mut calls = CallWalk::default();
-        // The `ref` bindings of each body on the call path, innermost last.
-        let mut scopes = vec![HashMap::<NodeId, IrDependency>::new()];
-        let mut steps = vec![WriteStep::Node(root)];
-        let children = |node| {
-            self.node(node)
-                .children
-                .iter()
-                .rev()
-                .copied()
-                .map(WriteStep::Node)
-        };
-        while let Some(step) = steps.pop() {
-            let node = match step {
-                WriteStep::Node(node) => node,
-                WriteStep::Return {
-                    callee,
-                    bound,
-                    taints,
-                } => {
-                    scopes.pop();
-                    calls.active.remove(&callee);
-                    if bound {
-                        calls.bound.remove(&callee);
-                    } else if calls.taints == taints {
-                        calls.walked.insert(callee);
-                    }
-                    continue;
-                }
+        let mut nodes = vec![root];
+        let mut body = WriteBody::default();
+        let mut outer = Vec::new();
+        loop {
+            let node = if nodes.len() > body.outside {
+                nodes.pop()
+            } else {
+                None
             };
-            let Some(bindings) = scopes.last() else {
-                break;
+            let Some(node) = node else {
+                let Some(caller) = outer.pop() else {
+                    return Ok(writes);
+                };
+                calls.leave(std::mem::replace(&mut body, caller));
+                continue;
             };
-            if self.is_process_self_call(node) {
-                continue;
-            }
-            if self.is_semaphore_constructor_call(node) {
-                steps.extend(children(node));
-                continue;
-            }
-            if self.is_mailbox_constructor_call(node) {
-                steps.extend(children(node));
-                continue;
-            }
+            let children = &self.node(node).children;
             match self.kind(node) {
                 NodeKind::Stmt(StmtKind::Force { lhs, rhs })
                     if mode != ProcessWriteMode::Sensitivity =>
@@ -1011,26 +1000,26 @@ impl<'a> Codegen<'a> {
                     // The generic children can also contain Slang's assignment
                     // wrapper. Visit only the typed operands so that wrapper does
                     // not reclassify the override as an ordinary variable write.
-                    steps.extend([WriteStep::Node(*rhs), WriteStep::Node(*lhs)]);
+                    nodes.extend([*rhs, *lhs]);
                     continue;
                 }
                 NodeKind::Stmt(StmtKind::Release { lhs } | StmtKind::Deassign { lhs })
                     if mode != ProcessWriteMode::Sensitivity =>
                 {
-                    steps.push(WriteStep::Node(*lhs));
+                    nodes.push(*lhs);
                     continue;
                 }
                 NodeKind::Stmt(StmtKind::Assign { .. })
                 | NodeKind::Stmt(StmtKind::ProcContAssign { .. })
                 | NodeKind::Stmt(StmtKind::Force { .. })
                 | NodeKind::ContAssign { .. } => {
-                    if let Some(lhs) = self.node(node).children.first() {
-                        self.add_process_lhs_write_bound(*lhs, &mut writes, bindings);
+                    if let Some(lhs) = children.first() {
+                        self.add_process_lhs_write_bound(*lhs, &mut writes, &body.bindings);
                     }
                 }
                 NodeKind::Stmt(StmtKind::Release { lhs })
                 | NodeKind::Stmt(StmtKind::Deassign { lhs }) => {
-                    self.add_process_lhs_write_bound(*lhs, &mut writes, bindings);
+                    self.add_process_lhs_write_bound(*lhs, &mut writes, &body.bindings);
                     continue;
                 }
                 NodeKind::Stmt(StmtKind::VariableDecl { declaration }) => {
@@ -1047,9 +1036,13 @@ impl<'a> Codegen<'a> {
                         }
                     }) {
                         if mode == ProcessWriteMode::ContinuousConflict {
-                            self.add_process_lhs_write_bound(*declaration, &mut writes, bindings);
+                            self.add_process_lhs_write_bound(
+                                *declaration,
+                                &mut writes,
+                                &body.bindings,
+                            );
                         }
-                        steps.push(WriteStep::Node(initializer));
+                        nodes.push(initializer);
                     }
                     continue;
                 }
@@ -1066,7 +1059,7 @@ impl<'a> Codegen<'a> {
                     ..
                 }) => {
                     if let Some(lhs) = operands.first() {
-                        self.add_process_lhs_write_bound(*lhs, &mut writes, bindings);
+                        self.add_process_lhs_write_bound(*lhs, &mut writes, &body.bindings);
                     }
                 }
                 NodeKind::MethodCall {
@@ -1074,8 +1067,12 @@ impl<'a> Codegen<'a> {
                     receiver: Some(receiver),
                     ..
                 } if Self::mutating_container_method(name) => {
-                    self.add_process_lhs_write_bound(*receiver, &mut writes, bindings);
+                    self.add_process_lhs_write_bound(*receiver, &mut writes, &body.bindings);
                 }
+                NodeKind::FuncCall { .. } if self.is_process_self_call(node) => continue,
+                NodeKind::FuncCall { .. }
+                    if self.is_semaphore_constructor_call(node)
+                        || self.is_mailbox_constructor_call(node) => {}
                 NodeKind::FuncCall {
                     name,
                     is_task,
@@ -1090,8 +1087,7 @@ impl<'a> Codegen<'a> {
                     if recursive && calls.bound.contains(&ft) {
                         calls.taints += 1;
                     }
-                    for ((formal, is_out), actual) in formals.iter().zip(&self.node(node).children)
-                    {
+                    for ((formal, is_out), actual) in formals.iter().zip(children) {
                         let is_ref = matches!(
                             self.kind(*formal),
                             NodeKind::FuncArg {
@@ -1102,12 +1098,15 @@ impl<'a> Codegen<'a> {
                         let actual = self.unwrap_output_actual(*actual);
                         if is_ref
                             && recursive
-                            && self.packed_storage_prefix_bound(actual, bindings).is_some()
+                            && self
+                                .packed_storage_prefix_bound(actual, &body.bindings)
+                                .is_some()
                         {
                             calls.taints += 1;
                         }
                         if is_ref && !recursive {
-                            if let Some(prefix) = self.packed_storage_prefix_bound(actual, bindings)
+                            if let Some(prefix) =
+                                self.packed_storage_prefix_bound(actual, &body.bindings)
                             {
                                 callee_bindings.insert(*formal, prefix);
                             } else if !matches!(
@@ -1117,7 +1116,11 @@ impl<'a> Codegen<'a> {
                                     ..
                                 }
                             ) {
-                                self.add_process_lhs_write_bound(actual, &mut writes, bindings);
+                                self.add_process_lhs_write_bound(
+                                    actual,
+                                    &mut writes,
+                                    &body.bindings,
+                                );
                             }
                         } else if *is_out
                             || (is_ref
@@ -1129,7 +1132,7 @@ impl<'a> Codegen<'a> {
                                     }
                                 ))
                         {
-                            self.add_process_lhs_write_bound(actual, &mut writes, bindings);
+                            self.add_process_lhs_write_bound(actual, &mut writes, &body.bindings);
                         }
                     }
                     let bound = !callee_bindings.is_empty();
@@ -1140,23 +1143,27 @@ impl<'a> Codegen<'a> {
                         if bound {
                             calls.bound.insert(ft);
                         }
-                        // The body runs before the call's other children.
-                        steps.extend(children(node));
-                        steps.push(WriteStep::Return {
-                            callee: ft,
-                            bound,
+                        // The body is walked before the call's other children.
+                        for child in children.iter().rev() {
+                            nodes.push(*child);
+                        }
+                        let entered = WriteBody {
+                            callee: Some(ft),
+                            outside: nodes.len(),
+                            bindings: callee_bindings,
                             taints: calls.taints,
-                        });
-                        steps.extend(self.func_body(ft).map(WriteStep::Node));
-                        scopes.push(callee_bindings);
+                        };
+                        nodes.extend(self.func_body(ft));
+                        outer.push(std::mem::replace(&mut body, entered));
                         continue;
                     }
                 }
                 _ => {}
             }
-            steps.extend(children(node));
+            for child in children.iter().rev() {
+                nodes.push(*child);
+            }
         }
-        Ok(writes)
     }
 
     fn mutating_container_method(name: &str) -> bool {

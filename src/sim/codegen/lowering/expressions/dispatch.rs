@@ -2,8 +2,17 @@
 
 use super::*;
 
-/// One way of lowering an expression node; `None` leaves it to the next.
-type ExprForm<'a> = fn(&mut Codegen<'a>, &str, NodeId) -> Result<Option<IrExpr>, String>;
+/// Return what `form` makes of an expression node unless it leaves the node to
+/// the forms after it (`None`).
+macro_rules! try_form {
+    ($form:expr) => {
+        match $form {
+            Ok(None) => {}
+            Ok(Some(value)) => return Ok(value),
+            Err(error) => return Err(error),
+        }
+    };
+}
 
 /// `value`, read after `statements` have run.
 fn after_statements(statements: Vec<IrStmt>, value: IrExpr) -> IrExpr {
@@ -369,50 +378,43 @@ impl<'a> Codegen<'a> {
             .map_err(|error| self.locate_error(h, error))
     }
 
-    /// The forms that replace an expression's own lowering, in the order
-    /// they are tried: each yields the value, or `None` for the next.
-    const EXPR_FORMS: [ExprForm<'a>; 25] = [
-        |cg, scope_path, h| cg.substituted_read(scope_path, h),
-        Self::lower_with_call_operands,
-        Self::lower_with_receiver_root,
-        Self::lower_with_staged_members,
-        // The iterator declaration of a generated method loop stands for its
-        // current element index or key (see `inline_element_path`).
-        |cg, _, h| Ok(cg.inline_key_read(h)),
-        // Covergroup queries and `ref` covergroup arguments (SIM-044).
-        Self::lower_coverage_expr,
-        |cg, scope_path, h| cg.overload_current_read(scope_path, h).transpose(),
-        Self::native_tagged_expr,
-        Self::lower_native_member_read,
-        Self::lower_record_call_select,
-        Self::lower_native_call_select,
-        Self::virtual_interface_array_element_expr,
-        Self::lower_packed_element_member,
-        Self::lower_parameter_elements,
-        Self::fixed_activation_read,
-        Self::fixed_pattern_value,
-        Self::lower_aggregate_bitstream,
-        Self::packed_formal_read,
-        Self::lower_fixed_array_reduction,
-        Self::lower_container_query,
-        Self::lower_object_query,
-        Self::virtual_interface_member_expr,
-        Self::class_field_expr,
-        Self::lower_enum_method,
-        Self::lower_method_value,
-    ];
-
     /// [`Self::lower_expr`] before its failure is located at `h`.
     ///
     /// Every nesting level of the source keeps one frame of this function on
-    /// the stack (`crate::stack`), so it holds no more than one result: the
-    /// forms and the arms of the match live in functions of their own.
+    /// the stack (`crate::stack`), so it holds no more than the results of the
+    /// forms that replace an expression's own lowering: those forms and the
+    /// arms of the match live in functions of their own.
     fn lower_expr_node(&mut self, scope_path: &str, h: NodeId) -> Result<IrExpr, String> {
-        for form in Self::EXPR_FORMS {
-            if let Some(value) = form(self, scope_path, h)? {
-                return Ok(value);
-            }
+        try_form!(self.substituted_read(scope_path, h));
+        try_form!(self.lower_with_call_operands(scope_path, h));
+        try_form!(self.lower_with_receiver_root(scope_path, h));
+        try_form!(self.lower_with_staged_members(scope_path, h));
+        // The iterator declaration of a generated method loop stands for its
+        // current element index or key (see `inline_element_path`).
+        if let Some(key) = self.inline_key_read(h) {
+            return Ok(key);
         }
+        // Covergroup queries and `ref` covergroup arguments (SIM-044).
+        try_form!(self.lower_coverage_expr(scope_path, h));
+        try_form!(self.overload_current_read(scope_path, h).transpose());
+        try_form!(self.native_tagged_expr(scope_path, h));
+        try_form!(self.lower_native_member_read(scope_path, h));
+        try_form!(self.lower_record_call_select(scope_path, h));
+        try_form!(self.lower_native_call_select(scope_path, h));
+        try_form!(self.virtual_interface_array_element_expr(scope_path, h));
+        try_form!(self.lower_packed_element_member(scope_path, h));
+        try_form!(self.lower_parameter_elements(scope_path, h));
+        try_form!(self.fixed_activation_read(scope_path, h));
+        try_form!(self.fixed_pattern_value(scope_path, h));
+        try_form!(self.lower_aggregate_bitstream(scope_path, h));
+        try_form!(self.packed_formal_read(scope_path, h));
+        try_form!(self.lower_fixed_array_reduction(scope_path, h));
+        try_form!(self.lower_container_query(scope_path, h));
+        try_form!(self.lower_object_query(scope_path, h));
+        try_form!(self.virtual_interface_member_expr(scope_path, h));
+        try_form!(self.class_field_expr(scope_path, h));
+        try_form!(self.lower_enum_method(scope_path, h));
+        try_form!(self.lower_method_value(scope_path, h));
         match self.kind(h) {
             NodeKind::Expr(ExprKind::TaggedUnion { member, value }) => {
                 self.lower_tagged_union_constructor(scope_path, h, member, *value)
@@ -692,12 +694,13 @@ impl<'a> Codegen<'a> {
         if let Some(comparison) = self.recover_folded_real_parameter_comparison(h) {
             return Ok(comparison);
         }
-        let c = self.const_of_node(h)?;
+        let constant = self.const_of_node(h)?;
+        let (width, signed, fill) = (constant.width, constant.signed, constant.fill);
         Ok(IrExpr::new(
-            IrExprKind::Const(c.clone()),
-            c.width,
-            c.signed,
-            c.fill,
+            IrExprKind::Const(constant),
+            width,
+            signed,
+            fill,
         ))
     }
 

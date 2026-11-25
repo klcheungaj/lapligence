@@ -132,6 +132,19 @@ pub fn install_native_limit(
     })
 }
 
+/// Let every thread allocate from the heap the process started with, for a
+/// process whose work is all on one thread other than the main one. The GNU C
+/// library gives each further thread a heap of its own by default, which grows
+/// by a system call for each few pages and frees on a longer path. Other C
+/// libraries have no such setting. Call it before that thread starts.
+pub fn share_one_heap() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    // SAFETY: `mallopt` takes two integers and no pointer. It sets one word of
+    // the allocator's state under the allocator's lock; a thread creating its
+    // heap at the same time reads the old limit or the new one.
+    let _ = unsafe { libc::mallopt(libc::M_ARENA_MAX, 1) };
+}
+
 /// Write directly to the process' standard-error handle without taking the
 /// Rust stderr lock or allocating.  Intended only for the terminal watchdog
 /// path.

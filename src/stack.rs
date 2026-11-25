@@ -10,7 +10,7 @@
 //! - A walk that also follows what the source only names (the body a call
 //!   enters, the class a constructor builds) is as deep as a chain of such
 //!   names. Those walks keep their steps in a list where they can and ask
-//!   [`exhausted`] where they cannot.
+//!   [`StackFloor`] where they cannot.
 //!
 //! # Margin
 //!
@@ -21,6 +21,7 @@
 
 use std::cell::Cell;
 use std::fmt;
+use std::marker::PhantomData;
 
 /// Nesting depth at which a source is refused: the recursive constructs open
 /// at a token, plus the operators, selections and dimensions that chain onto
@@ -32,17 +33,18 @@ pub const MAX_NESTING_DEPTH: u32 = 4096;
 /// hundred KiB of it.
 pub const PIPELINE_STACK_BYTES: usize = 1 << 30;
 
-/// Stack below which a walk stops following names ([`exhausted`]), so every
+/// Stack below which a walk stops following names ([`StackFloor`]), so every
 /// helper it calls still holds a tree of [`MAX_NESTING_DEPTH`].
 const HEADROOM_BYTES: usize = PIPELINE_STACK_BYTES / 4;
 
-/// What a walk that met [`exhausted`] reports at the node it stopped at.
+/// What a walk that reached its [`StackFloor`] reports at the node it stopped
+/// at.
 pub const EXHAUSTED: &str =
     "the design nests too deeply here with the calls and declarations it names followed";
 
 thread_local! {
-    /// Address under which the current thread is [`exhausted`]; 0 on a thread
-    /// that runs no pipeline.
+    /// The current thread's [`StackFloor`]; 0 on a thread that runs no
+    /// pipeline.
     static FLOOR: Cell<usize> = const { Cell::new(0) };
 }
 
@@ -74,7 +76,8 @@ pub fn run_pipeline<T: Send>(work: impl FnOnce() -> T + Send) -> Result<T, Pipel
     run_on_stack(PIPELINE_STACK_BYTES, HEADROOM_BYTES, work).map_err(PipelineStartError)
 }
 
-/// [`run_pipeline`] on a stack of `bytes`, [`exhausted`] below `headroom`.
+/// [`run_pipeline`] on a stack of `bytes` whose [`StackFloor`] leaves
+/// `headroom`.
 pub(crate) fn run_on_stack<T: Send>(
     bytes: usize,
     headroom: usize,
@@ -95,11 +98,32 @@ pub(crate) fn run_on_stack<T: Send>(
     })
 }
 
-/// Whether a pipeline thread has too little stack left to follow another
-/// name. Never true within the depth one source may nest.
-#[inline]
-pub fn exhausted() -> bool {
-    stack_address() < FLOOR.get()
+/// The address at which a thread has too little stack left to follow another
+/// name. A walk asks for it once and keeps it, because reading the
+/// thread-local at every node of a design would cost more than the walk needs
+/// to spend on it. It belongs to the thread that asked.
+#[derive(Clone, Copy, Debug)]
+pub struct StackFloor {
+    address: usize,
+    _thread: PhantomData<*const ()>,
+}
+
+impl StackFloor {
+    /// The current thread's floor, which a thread that runs no pipeline never
+    /// reaches.
+    pub fn current() -> Self {
+        Self {
+            address: FLOOR.get(),
+            _thread: PhantomData,
+        }
+    }
+
+    /// Whether the stack has come down to the floor. Never true within the
+    /// depth one source may nest.
+    #[inline]
+    pub fn reached(self) -> bool {
+        stack_address() < self.address
+    }
 }
 
 /// The address of a local of the caller. Every supported target's stack grows
@@ -107,7 +131,7 @@ pub fn exhausted() -> bool {
 #[inline]
 fn stack_address() -> usize {
     let local = 0_u8;
-    std::ptr::addr_of!(local).addr()
+    &raw const local as usize
 }
 
 #[cfg(test)]
@@ -115,12 +139,12 @@ mod tests {
     use super::*;
 
     /// A frame of about 4 KiB per level; returns the level it stopped at.
-    fn descend(level: usize) -> usize {
+    fn descend(floor: StackFloor, level: usize) -> usize {
         let frame = std::hint::black_box([level; 512]);
-        if exhausted() {
+        if floor.reached() {
             return level;
         }
-        let reached = descend(level + 1);
+        let reached = descend(floor, level + 1);
         std::hint::black_box(&frame);
         reached
     }
@@ -129,7 +153,8 @@ mod tests {
     fn a_walk_stops_before_the_reservation_ends() {
         const BYTES: usize = 8 << 20;
         const HEADROOM: usize = 2 << 20;
-        let reached = run_on_stack(BYTES, HEADROOM, || descend(0)).expect("pipeline thread");
+        let reached = run_on_stack(BYTES, HEADROOM, || descend(StackFloor::current(), 0))
+            .expect("pipeline thread");
         let used = reached * 512 * std::mem::size_of::<usize>();
         assert!(
             used > BYTES / 4 && used < BYTES - HEADROOM,
@@ -138,10 +163,10 @@ mod tests {
     }
 
     #[test]
-    fn other_threads_are_never_exhausted() {
-        assert!(!exhausted());
-        run_pipeline(|| assert!(!exhausted())).expect("pipeline thread");
-        assert!(!exhausted());
+    fn other_threads_never_reach_a_floor() {
+        assert!(!StackFloor::current().reached());
+        run_pipeline(|| assert!(!StackFloor::current().reached())).expect("pipeline thread");
+        assert!(!StackFloor::current().reached());
     }
 
     #[test]

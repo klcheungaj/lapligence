@@ -103,7 +103,7 @@ impl Frame<'_, '_> {
     }
 
     pub(super) fn statement(&mut self, statement: &IrStmt) -> Result<(), String> {
-        check_stack()?;
+        self.check_stack()?;
         let touches = self.pending_touches.len();
         self.statement_depth += 1;
         let rendered = self.statement_body(statement);

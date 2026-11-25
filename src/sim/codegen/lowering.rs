@@ -1655,6 +1655,7 @@ type PathPair = (NodeId, u32, u32);
 struct Codegen<'a> {
     origins: Vec<crate::sim::semantic::Origin>,
     db: &'a Db,
+    stack_floor: crate::stack::StackFloor,
     /// Ordinary values use 2009 time-literal rounding. Delay expressions
     /// temporarily disable it so their complete expression rounds once.
     round_time_literals: bool,
@@ -2612,6 +2613,7 @@ impl<'a> Codegen<'a> {
         Codegen {
             origins: semantic.origins().to_vec(),
             db: semantic.db(),
+            stack_floor: crate::stack::StackFloor::current(),
             round_time_literals: db.edition() == LanguageEdition::SystemVerilog2009,
             vpi_return_signals: false,
             user_system_functions: HashSet::new(),

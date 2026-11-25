@@ -80,16 +80,17 @@ impl Validator<'_> {
 
     pub(super) fn validate_stmt(
         &self,
-        stmt: &IrStmt,
+        mut stmt: &IrStmt,
         formals: &[IrFormal],
         path: IrPath<'_>,
     ) -> ValidationResult {
-        if crate::stack::exhausted() {
+        if self.stack_floor.reached() {
             return self.fail(path, crate::stack::EXHAUSTED);
         }
-        self.validate_stmt_timing(stmt, formals, path)?;
+        while let IrStmt::Located { statement, .. } = stmt {
+            stmt = statement;
+        }
         match stmt {
-            IrStmt::Located { statement, .. } => self.validate_stmt(statement, formals, path)?,
             IrStmt::Block(body) | IrStmt::Forever { body } => {
                 self.validate_stmts(body, formals, format_args!("{path}.body"))?;
             }
@@ -108,9 +109,12 @@ impl Validator<'_> {
                     self.validate_stmts(els, formals, format_args!("{path}.else"))?;
                 }
             }
-            IrStmt::While { cond, body }
-            | IrStmt::Repeat { count: cond, body }
-            | IrStmt::WaitCond { cond, body, .. } => {
+            IrStmt::While { cond, body } | IrStmt::Repeat { count: cond, body } => {
+                self.validate_expr(cond, formals, format_args!("{path}.cond"))?;
+                self.validate_stmts(body, formals, format_args!("{path}.body"))?;
+            }
+            IrStmt::WaitCond { cond, body, .. } => {
+                self.validate_stmt_timing(stmt, formals, path)?;
                 self.validate_expr(cond, formals, format_args!("{path}.cond"))?;
                 self.validate_stmts(body, formals, format_args!("{path}.body"))?;
             }
@@ -164,7 +168,12 @@ impl Validator<'_> {
                     )?;
                 }
             }
-            _ => self.validate_operation_stmt(stmt, formals, path)?,
+            IrStmt::Assign { lhs, rhs, .. }
+            | IrStmt::DelayedAssign { lhs, rhs, .. }
+            | IrStmt::InertialAssign { lhs, rhs, .. } => {
+                return self.validate_assignment(stmt, lhs, rhs, formals, path);
+            }
+            _ => return self.validate_operation_stmt(stmt, formals, path),
         }
         Ok(())
     }
@@ -176,56 +185,72 @@ impl Validator<'_> {
         formals: &[IrFormal],
         path: IrPath<'_>,
     ) -> ValidationResult {
+        match stmt {
+            IrStmt::WaitAny { sens, .. } | IrStmt::WaitCond { sens, .. } => {
+                self.validate_wait_dependencies(sens, path)
+            }
+            IrStmt::Delay { ticks }
+            | IrStmt::DelayedAssign { ticks, .. }
+            | IrStmt::ClockingDrive { ticks, .. }
+            | IrStmt::DelayedStringAssign { ticks, .. }
+            | IrStmt::DelayedChandleAssign { ticks, .. } => {
+                self.validate_delays([ticks], formals, path)
+            }
+            IrStmt::InertialAssign {
+                delay: crate::sim::ir::IrInertialDelay::Runtime(delay),
+                ..
+            } => self.validate_delays(delay.values(), formals, path),
+            IrStmt::SetNetDelay { group, delay } => {
+                if *group >= self.model.net_groups.len() {
+                    return self.fail(path, "net delay update names no net group");
+                }
+                self.validate_delays(delay.values(), formals, path)
+            }
+            IrStmt::InertialEnable(enable) => match &enable.delay {
+                crate::sim::ir::IrInertialDelay::Runtime(delay) => {
+                    self.validate_delays(delay.values(), formals, path)
+                }
+                _ => Ok(()),
+            },
+            _ => Ok(()),
+        }
+    }
+
+    fn validate_wait_dependencies(
+        &self,
+        sens: &[IrDependency],
+        path: IrPath<'_>,
+    ) -> ValidationResult {
         // A native-access dependency is resolved each time its wait arms.
-        if let IrStmt::WaitAny { sens, .. } | IrStmt::WaitCond { sens, .. } = stmt {
-            for (index, dependency) in sens.iter().enumerate() {
-                if matches!(
-                    dependency,
-                    IrDependency::NativeAccess(_) | IrDependency::InterfaceInstance { .. }
-                ) && !self.valid_dependency(dependency)
-                {
-                    return self.fail(
-                        format_args!("{path}.sens[{index}]"),
-                        "native-access dependency must name a class property or interface member",
-                    );
-                }
-                if matches!(dependency, IrDependency::NativeValue(_))
-                    && !self.valid_dependency(dependency)
-                {
-                    return self.fail(
-                        format_args!("{path}.sens[{index}]"),
-                        "native-value dependency must name a model-lifetime value with a marker",
-                    );
-                }
+        for (index, dependency) in sens.iter().enumerate() {
+            if matches!(
+                dependency,
+                IrDependency::NativeAccess(_) | IrDependency::InterfaceInstance { .. }
+            ) && !self.valid_dependency(dependency)
+            {
+                return self.fail(
+                    format_args!("{path}.sens[{index}]"),
+                    "native-access dependency must name a class property or interface member",
+                );
+            }
+            if matches!(dependency, IrDependency::NativeValue(_))
+                && !self.valid_dependency(dependency)
+            {
+                return self.fail(
+                    format_args!("{path}.sens[{index}]"),
+                    "native-value dependency must name a model-lifetime value with a marker",
+                );
             }
         }
-        let mut delays: Vec<&IrDelay> = Vec::new();
-        if let IrStmt::Delay { ticks }
-        | IrStmt::DelayedAssign { ticks, .. }
-        | IrStmt::ClockingDrive { ticks, .. }
-        | IrStmt::DelayedStringAssign { ticks, .. }
-        | IrStmt::DelayedChandleAssign { ticks, .. } = stmt
-        {
-            delays.push(ticks);
-        }
-        if let IrStmt::InertialAssign {
-            delay: crate::sim::ir::IrInertialDelay::Runtime(delay),
-            ..
-        }
-        | IrStmt::SetNetDelay { delay, .. } = stmt
-        {
-            delays.extend(delay.values());
-        }
-        if let IrStmt::InertialEnable(enable) = stmt {
-            if let crate::sim::ir::IrInertialDelay::Runtime(delay) = &enable.delay {
-                delays.extend(delay.values());
-            }
-        }
-        if let IrStmt::SetNetDelay { group, .. } = stmt {
-            if *group >= self.model.net_groups.len() {
-                return self.fail(path, "net delay update names no net group");
-            }
-        }
+        Ok(())
+    }
+
+    fn validate_delays<'d>(
+        &self,
+        delays: impl IntoIterator<Item = &'d IrDelay>,
+        formals: &[IrFormal],
+        path: IrPath<'_>,
+    ) -> ValidationResult {
         for ticks in delays {
             if let IrDelay::Runtime {
                 value,
@@ -242,15 +267,83 @@ impl Validator<'_> {
         Ok(())
     }
 
-    /// [`Self::validate_stmt`] for the statements that nest no others. The
-    /// levels of nested statements recurse without a frame of this function,
-    /// which holds the values of every form (`crate::stack`).
+    fn validate_assignment(
+        &self,
+        stmt: &IrStmt,
+        lhs: &IrLhs,
+        rhs: &IrExpr,
+        formals: &[IrFormal],
+        path: IrPath<'_>,
+    ) -> ValidationResult {
+        self.validate_stmt_timing(stmt, formals, path)?;
+        if matches!(stmt, IrStmt::Assign { nba: true, .. }) && self.has_transient_target(lhs) {
+            return self.fail(
+                path,
+                "nonblocking assignment requires persistent target storage",
+            );
+        }
+        if let IrStmt::InertialAssign {
+            delay: crate::sim::ir::IrInertialDelay::Annotated(slot),
+            ..
+        } = stmt
+        {
+            if *slot as usize >= self.model.sdf_gate_delays.len() {
+                return self.fail(path, "annotated gate delay slot out of range");
+            }
+        }
+        if let IrStmt::InertialAssign {
+            delay: crate::sim::ir::IrInertialDelay::Runtime(delay),
+            ..
+        } = stmt
+        {
+            // The delays in use and the last evaluated values.
+            if delay
+                .writable
+                .is_some_and(|slot| slot as usize + 1 >= self.model.sdf_gate_delays.len())
+            {
+                return self.fail(path, "writable gate delay slots out of range");
+            }
+        }
+        if matches!(stmt, IrStmt::InertialAssign { .. }) {
+            let packed_driver = match lhs {
+                IrLhs::Whole(index)
+                | IrLhs::Bit(index, ..)
+                | IrLhs::Part(index, ..)
+                | IrLhs::IdxPart(index, ..) => self
+                    .model
+                    .signals
+                    .get(*index)
+                    .is_some_and(|signal| matches!(signal.ty, IrType::Packed { .. })),
+                IrLhs::ArrayElem { arr, .. } => {
+                    self.model.arrays.get(*arr).is_some_and(|array| !array.real)
+                }
+                _ => false,
+            };
+            if !packed_driver || rhs.is_real() {
+                return self.fail(
+                    path,
+                    "inertial update requires a persistent packed target and packed value",
+                );
+            }
+        }
+        if matches!(stmt, IrStmt::DelayedAssign { .. }) && self.has_transient_target(lhs) {
+            return self.fail(path, "delayed NBA requires persistent target storage");
+        }
+        self.validate_lhs(lhs, formals, format_args!("{path}.lhs"))?;
+        self.validate_expr(rhs, formals, format_args!("{path}.rhs"))
+    }
+
+    /// [`Self::validate_stmt`] for the statements that nest no others and are
+    /// no assignment. The levels of nested statements recurse without a frame
+    /// of this function, which holds the values of every form
+    /// (`crate::stack`).
     fn validate_operation_stmt(
         &self,
         stmt: &IrStmt,
         formals: &[IrFormal],
         path: IrPath<'_>,
     ) -> ValidationResult {
+        self.validate_stmt_timing(stmt, formals, path)?;
         match stmt {
             IrStmt::ModulePathStamp { set } => {
                 if *set >= self.model.module_paths.len() {
@@ -1035,66 +1128,6 @@ impl Validator<'_> {
                 }
                 if !persistent(lhs) {
                     return self.fail(path, "clocking drive requires persistent target storage");
-                }
-                self.validate_lhs(lhs, formals, format_args!("{path}.lhs"))?;
-                self.validate_expr(rhs, formals, format_args!("{path}.rhs"))?;
-            }
-            IrStmt::Assign { lhs, rhs, .. }
-            | IrStmt::DelayedAssign { lhs, rhs, .. }
-            | IrStmt::InertialAssign { lhs, rhs, .. } => {
-                if matches!(stmt, IrStmt::Assign { nba: true, .. })
-                    && self.has_transient_target(lhs)
-                {
-                    return self.fail(
-                        path,
-                        "nonblocking assignment requires persistent target storage",
-                    );
-                }
-                if let IrStmt::InertialAssign {
-                    delay: crate::sim::ir::IrInertialDelay::Annotated(slot),
-                    ..
-                } = stmt
-                {
-                    if *slot as usize >= self.model.sdf_gate_delays.len() {
-                        return self.fail(path, "annotated gate delay slot out of range");
-                    }
-                }
-                if let IrStmt::InertialAssign {
-                    delay: crate::sim::ir::IrInertialDelay::Runtime(delay),
-                    ..
-                } = stmt
-                {
-                    // The delays in use and the last evaluated values.
-                    if delay.writable.is_some_and(|slot| {
-                        slot as usize + 1 >= self.model.sdf_gate_delays.len()
-                    }) {
-                        return self.fail(path, "writable gate delay slots out of range");
-                    }
-                }
-                if matches!(stmt, IrStmt::InertialAssign { .. }) {
-                    let packed_driver = match lhs {
-                        IrLhs::Whole(index)
-                        | IrLhs::Bit(index, ..)
-                        | IrLhs::Part(index, ..)
-                        | IrLhs::IdxPart(index, ..) => self
-                            .model
-                            .signals
-                            .get(*index)
-                            .is_some_and(|signal| matches!(signal.ty, IrType::Packed { .. })),
-                        IrLhs::ArrayElem { arr, .. } => {
-                            self.model.arrays.get(*arr).is_some_and(|array| !array.real)
-                        }
-                        _ => false,
-                    };
-                    if !packed_driver || rhs.is_real() {
-                        return self.fail(
-                            path,
-                            "inertial update requires a persistent packed target and packed value",
-                        );
-                    }
-                }
-                if matches!(stmt, IrStmt::DelayedAssign { .. }) && self.has_transient_target(lhs) {
-                    return self.fail(path, "delayed NBA requires persistent target storage");
                 }
                 self.validate_lhs(lhs, formals, format_args!("{path}.lhs"))?;
                 self.validate_expr(rhs, formals, format_args!("{path}.rhs"))?;
@@ -1947,8 +1980,11 @@ impl Validator<'_> {
             // Checked by `validate_stmt_timing`.
             | IrStmt::SetNetDelay { .. }
             | IrStmt::Nop => {}
-            // Nested statements: `validate_stmt`.
+            // `validate_stmt`.
             IrStmt::Located { .. }
+            | IrStmt::Assign { .. }
+            | IrStmt::DelayedAssign { .. }
+            | IrStmt::InertialAssign { .. }
             | IrStmt::Block(_)
             | IrStmt::Forever { .. }
             | IrStmt::ActivationScope { .. }

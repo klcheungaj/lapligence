@@ -6,7 +6,7 @@ owned APIs to the rest of the library.
 | Component | Responsibility |
 | --- | --- |
 | `slang.rs` and `slang/` | C ABI requests (`LLG_SLANG_ABI_VERSION`), the capture-stream receivers (`slang/stream.rs`), bounded error owners, layout/tag validation, exact value/text copies and RAII destruction. |
-| `process_memory.rs` | Platform process-memory counters and native resource limits. |
+| `process_memory.rs` | Platform process-memory counters, native resource limits and the choice of allocator heaps. |
 | `secure_fs` | Handle-relative filesystem admission and identity/race protection. |
 
 The wrapper streams its finished capture table by table into one

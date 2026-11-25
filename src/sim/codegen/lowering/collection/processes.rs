@@ -2048,7 +2048,7 @@ impl<'a> Codegen<'a> {
     /// Refuse to follow `node` on a stack that holds no more of them
     /// (`crate::stack`). Syntax alone never gets there.
     pub(in super::super) fn check_stack(&self, node: NodeId) -> Result<(), String> {
-        if crate::stack::exhausted() {
+        if self.stack_floor.reached() {
             return Err(self.locate_error(node, crate::stack::EXHAUSTED));
         }
         Ok(())

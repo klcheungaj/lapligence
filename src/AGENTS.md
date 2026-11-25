@@ -34,7 +34,7 @@ event, wake or callback in its region
 
 - Compile, import, lint, lower or emit a design only inside `stack::run_pipeline`.
 - A recursive walk is as deep as the source nests, which the parser bounds, or
-  asks `stack::exhausted` where it follows names. Unoptimized frames count: keep
+  asks `stack::StackFloor` where it follows names. Unoptimized frames count: keep
   the arms of a large recursive `match` in functions of their own.
 
 ## Platform code

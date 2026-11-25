@@ -162,6 +162,7 @@ struct DeferredDeclaration {
 
 pub(super) struct Frame<'a, 'm> {
     ctx: &'a RCtx<'m>,
+    stack_floor: crate::stack::StackFloor,
     code: String,
     fixed_arrays: HashMap<usize, String>,
     /// Activation native values bound in this frame (`llg_value_t*` expressions).
@@ -334,15 +335,6 @@ fn ambiguous_predicate(predicate: &IrExpr) -> bool {
     predicate.width != 0 && !known_predicate(predicate)
 }
 
-/// Refuse to emit a nested operation on a stack that holds no more of them
-/// (`crate::stack`). Syntax alone never gets there.
-fn check_stack() -> Result<(), String> {
-    if crate::stack::exhausted() {
-        return Err(crate::stack::EXHAUSTED.to_owned());
-    }
-    Ok(())
-}
-
 fn pending(feature: &str) -> String {
     format!("P05 ownership emission is not yet implemented for {feature}; no C model was emitted")
 }
@@ -357,6 +349,15 @@ impl<'a, 'm> Frame<'a, 'm> {
 
     pub(super) fn new(ctx: &'a RCtx<'m>) -> Self {
         Self::with_storage(ctx, FrameStorage::CStack)
+    }
+
+    /// Refuse to emit a nested operation on a stack that holds no more of
+    /// them (`crate::stack`). Syntax alone never gets there.
+    fn check_stack(&self) -> Result<(), String> {
+        if self.stack_floor.reached() {
+            return Err(crate::stack::EXHAUSTED.to_owned());
+        }
+        Ok(())
     }
 
     pub(super) fn new_coframe(
@@ -512,6 +513,7 @@ impl<'a, 'm> Frame<'a, 'm> {
     fn with_storage(ctx: &'a RCtx<'m>, storage: FrameStorage) -> Self {
         Self {
             ctx,
+            stack_floor: crate::stack::StackFloor::current(),
             code: String::new(),
             fixed_arrays: HashMap::new(),
             native_values: HashMap::new(),

@@ -33,14 +33,15 @@ pub(in super::super) struct CallShape {
     pub(in super::super) native_refs: Vec<usize>,
 }
 
-/// A body [`Codegen::call_shape`] is inside.
+/// A body [`Codegen::call_shape`] is in.
 struct CallShapeBody {
     function: NodeId,
     inst: NodeId,
     /// The call that entered it.
     call: Option<NodeId>,
+    /// How many of the nodes still to visit belong to the bodies around it.
+    outside: usize,
     formals: Vec<(NodeId, bool)>,
-    pending: Vec<NodeId>,
     shape: CallShape,
 }
 
@@ -888,50 +889,62 @@ impl<'a> Codegen<'a> {
 
     /// How calls to a subroutine reach its body.
     pub(in super::super) fn call_shape(&self, ft: NodeId, inst: NodeId) -> CallShape {
-        // The bodies on the call path are a list, not the thread's stack: a
-        // chain of calls is as long as the design makes it.
+        // The nodes still to visit and the bodies on the call path are lists,
+        // not the thread's stack: a chain of calls is as long as the design
+        // makes it.
+        let mut nodes = Vec::with_capacity(32);
         let mut outer = Vec::new();
-        let mut body = self.call_shape_body(ft, inst, None);
+        let mut body = self.call_shape_body(ft, inst, None, &mut nodes);
         loop {
-            if let Some(node) = body.pending.pop() {
-                body.pending
-                    .extend(self.node(node).children.iter().rev().copied());
-                let Some((function, owner)) = self.call_shape_node(node, &mut body) else {
-                    continue;
-                };
-                // A recursive call adds nothing its outer activation does not.
-                let active = |walk: &CallShapeBody| walk.function == function;
-                if !active(&body) && !outer.iter().any(active) {
-                    let callee = self.call_shape_body(function, owner, Some(node));
-                    outer.push(std::mem::replace(&mut body, callee));
-                }
-                continue;
-            }
-            let mut shape = body.shape;
-            shape.static_refs.sort_unstable();
-            shape.static_refs.dedup();
-            shape.native_refs.sort_unstable();
-            shape.native_refs.dedup();
-            let (Some(call), Some(mut caller)) = (body.call, outer.pop()) else {
-                return shape;
+            let node = if nodes.len() > body.outside {
+                nodes.pop()
+            } else {
+                None
             };
-            self.forward_call_shape(call, shape, &mut caller);
-            body = caller;
+            let Some(node) = node else {
+                let mut shape = body.shape;
+                shape.static_refs.sort_unstable();
+                shape.static_refs.dedup();
+                shape.native_refs.sort_unstable();
+                shape.native_refs.dedup();
+                let (Some(call), Some(mut caller)) = (body.call, outer.pop()) else {
+                    return shape;
+                };
+                self.forward_call_shape(call, shape, &mut caller);
+                body = caller;
+                continue;
+            };
+            for child in self.node(node).children.iter().rev() {
+                nodes.push(*child);
+            }
+            let Some((function, owner)) = self.call_shape_node(node, &mut body) else {
+                continue;
+            };
+            // A recursive call adds nothing its outer activation does not.
+            let active = |walk: &CallShapeBody| walk.function == function;
+            if !active(&body) && !outer.iter().any(active) {
+                let callee = self.call_shape_body(function, owner, Some(node), &mut nodes);
+                outer.push(std::mem::replace(&mut body, callee));
+            }
         }
     }
 
+    /// Enter the body of `function`, whose nodes join those to visit.
     fn call_shape_body(
         &self,
         function: NodeId,
         inst: NodeId,
         call: Option<NodeId>,
+        nodes: &mut Vec<NodeId>,
     ) -> CallShapeBody {
+        let outside = nodes.len();
+        nodes.extend(self.func_body(function));
         CallShapeBody {
             function,
             inst,
             call,
+            outside,
             formals: self.func_formals(function),
-            pending: self.func_body(function).into_iter().collect(),
             shape: CallShape::default(),
         }
     }
