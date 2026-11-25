@@ -2231,9 +2231,9 @@ static vpiHandle rts_runtime_handle(int32_t type, llg_vpi_slot_t* slot) {
             /* A handle of its own: releasing it leaves the call's
              * vpiSysTfCall handle valid. */
             vpiHandle handle;
-            llg_vpi_slot_t* slot = alloc_slot(SLOT_CALL, &handle);
-            if (!slot) return NULL;
-            slot->pointer = g_vpi.active_call->site;
+            llg_vpi_slot_t* call = alloc_slot(SLOT_CALL, &handle);
+            if (!call) return NULL;
+            call->pointer = g_vpi.active_call->site;
             return handle;
         }
         if (type == vpiOrigin) {
