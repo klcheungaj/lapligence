@@ -1069,7 +1069,7 @@ fn opened_buffer_client_side_block_shadows_module_signal() {
         .open(&path, EDIT_BASE_SV)
         .expect("open baseline buffer");
     client
-        .change(&path, 2, EDIT_BUFFER_SV)
+        .change_and_save(&path, 2, EDIT_BUFFER_SV)
         .expect("add inner block client-side");
 
     // Wait until the staged-buffer analysis carries the NEW inner-binding row

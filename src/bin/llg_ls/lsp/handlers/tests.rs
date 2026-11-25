@@ -79,6 +79,7 @@ fn empty_backend_state() -> BackendState {
         discovery: Default::default(),
         client_order: Default::default(),
         semantic_tokens_refresh: false,
+        ..BackendState::default()
     }
 }
 
@@ -661,6 +662,8 @@ fn oversized_compile_job_publishes_limit_and_retains_last_good_snapshot() {
             scheduler: SchedulerState::default(),
             analysis_epoch: 0,
             served_tokens: Default::default(),
+            running: None,
+            analysed: None,
         },
     );
     let state = Arc::new(Mutex::new(BackendState {
@@ -681,6 +684,7 @@ fn oversized_compile_job_publishes_limit_and_retains_last_good_snapshot() {
         discovery: Default::default(),
         client_order: Default::default(),
         semantic_tokens_refresh: false,
+        ..BackendState::default()
     }));
     let job = RootJob {
         key: root.clone(),
@@ -692,9 +696,12 @@ fn oversized_compile_job_publishes_limit_and_retains_last_good_snapshot() {
         open_documents: BTreeMap::new(),
         lint_config: LintConfig::default(),
         config,
+        cancel: CancelToken::default(),
     };
 
-    let result = Backend::compile_job(&state, job).expect("size-limit result");
+    let JobEnd::Completed(result) = Backend::compile_job(&state, job) else {
+        panic!("size-limit result");
+    };
     let message = result
         .analysis
         .as_ref()
@@ -704,7 +711,7 @@ fn oversized_compile_job_publishes_limit_and_retains_last_good_snapshot() {
         .clone();
     assert!(message.contains("input-size-limit"));
     assert!(message.contains(&source.display().to_string()));
-    let outcome = Backend::commit_job(&state, &root, 1, result);
+    let outcome = Backend::commit_job(&state, &root, 1, *result);
     assert!(!outcome.valid_commit);
     assert!(outcome.publications.iter().any(|(uri, diagnostics)| {
         uri == &Url::from_file_path(&source).expect("source URI")
@@ -751,6 +758,7 @@ fn open_token_freshness_barrier_rejects_stale_revision_before_admission() {
         discovery: Default::default(),
         client_order: Default::default(),
         semantic_tokens_refresh: false,
+        ..BackendState::default()
     }));
     let registry = Arc::new(OpenTokenFlightRegistry::new());
 
@@ -1098,6 +1106,8 @@ fn commit_job_publishes_fileless_diagnostics_on_an_open_compiled_file() {
             scheduler: SchedulerState::default(),
             analysis_epoch: 0,
             served_tokens: Default::default(),
+            running: None,
+            analysed: None,
         },
     );
     let state = Arc::new(Mutex::new(BackendState {
@@ -1118,6 +1128,7 @@ fn commit_job_publishes_fileless_diagnostics_on_an_open_compiled_file() {
         discovery: Default::default(),
         client_order: Default::default(),
         semantic_tokens_refresh: false,
+        ..BackendState::default()
     }));
     let mut analysis = features::empty_analysis();
     analysis.diagnostics.push(Diag {
@@ -1210,6 +1221,8 @@ fn commit_job_serves_features_from_partial_analyses() {
             scheduler: SchedulerState::default(),
             analysis_epoch: 0,
             served_tokens: Default::default(),
+            running: None,
+            analysed: None,
         },
     );
     let state = Arc::new(Mutex::new(BackendState {
@@ -1230,6 +1243,7 @@ fn commit_job_serves_features_from_partial_analyses() {
         discovery: Default::default(),
         client_order: Default::default(),
         semantic_tokens_refresh: false,
+        ..BackendState::default()
     }));
     let commit = |generation: u64, analysis: Option<Analysis>| {
         state
@@ -1371,6 +1385,8 @@ fn commit_job_publishes_closed_files_and_suppresses_unchanged_payloads() {
             scheduler: SchedulerState::default(),
             analysis_epoch: 0,
             served_tokens: Default::default(),
+            running: None,
+            analysed: None,
         },
     );
     let state = Arc::new(Mutex::new(BackendState {
@@ -1392,6 +1408,7 @@ fn commit_job_publishes_closed_files_and_suppresses_unchanged_payloads() {
         discovery: Default::default(),
         client_order: Default::default(),
         semantic_tokens_refresh: false,
+        ..BackendState::default()
     }));
 
     let files = vec![
@@ -2157,6 +2174,7 @@ fn watcher_options_cover_config_sources_and_include_deps() {
         discovery: Default::default(),
         client_order: Default::default(),
         semantic_tokens_refresh: false,
+        ..BackendState::default()
     };
     state.roots.insert(
         root.clone(),
@@ -2177,6 +2195,8 @@ fn watcher_options_cover_config_sources_and_include_deps() {
             scheduler: SchedulerState::default(),
             analysis_epoch: 0,
             served_tokens: Default::default(),
+            running: None,
+            analysed: None,
         },
     );
     let options = watcher_options_from_state(&state);
@@ -2223,6 +2243,7 @@ fn reload_keeps_last_valid_config_on_malformed_reload() {
         discovery: Default::default(),
         client_order: Default::default(),
         semantic_tokens_refresh: false,
+        ..BackendState::default()
     };
     state.roots.insert(
         root.clone(),
@@ -2245,6 +2266,8 @@ fn reload_keeps_last_valid_config_on_malformed_reload() {
             scheduler: SchedulerState::default(),
             analysis_epoch: 0,
             served_tokens: Default::default(),
+            running: None,
+            analysed: None,
         },
     );
     // A malformed reload must retain the last-valid config.
@@ -2350,6 +2373,7 @@ fn dep_dependents_maps_every_dependent_root() {
         discovery: Default::default(),
         client_order: Default::default(),
         semantic_tokens_refresh: false,
+        ..BackendState::default()
     };
     state.roots.insert(
         root_a.clone(),
@@ -2370,6 +2394,8 @@ fn dep_dependents_maps_every_dependent_root() {
             scheduler: SchedulerState::default(),
             analysis_epoch: 0,
             served_tokens: Default::default(),
+            running: None,
+            analysed: None,
         },
     );
     state.roots.insert(
@@ -2391,6 +2417,8 @@ fn dep_dependents_maps_every_dependent_root() {
             scheduler: SchedulerState::default(),
             analysis_epoch: 0,
             served_tokens: Default::default(),
+            running: None,
+            analysed: None,
         },
     );
     rebuild_dep_dependents(&mut state);
@@ -2559,6 +2587,7 @@ fn two_root_state_with_shared_file(
         discovery: Default::default(),
         client_order: Default::default(),
         semantic_tokens_refresh: false,
+        ..BackendState::default()
     };
     state.roots.insert(
         root_a.clone(),
@@ -2579,6 +2608,8 @@ fn two_root_state_with_shared_file(
             scheduler: SchedulerState::default(),
             analysis_epoch: 0,
             served_tokens: Default::default(),
+            running: None,
+            analysed: None,
         },
     );
     state.roots.insert(
@@ -2600,6 +2631,8 @@ fn two_root_state_with_shared_file(
             scheduler: SchedulerState::default(),
             analysis_epoch: 0,
             served_tokens: Default::default(),
+            running: None,
+            analysed: None,
         },
     );
     rebuild_dep_dependents(&mut state);
@@ -2770,6 +2803,8 @@ fn single_root_state(root: &Path, discovered: Vec<PathBuf>) -> BackendState {
             scheduler: SchedulerState::default(),
             analysis_epoch: 0,
             served_tokens: Default::default(),
+            running: None,
+            analysed: None,
         },
     );
     state
@@ -3143,7 +3178,12 @@ fn a_job_of_a_replaced_root_does_not_release_the_new_roots_slot() {
     let state = Arc::new(Mutex::new(initial));
 
     let old_generation = 3;
-    assert!(!Backend::finish_root_run(&state, &root, old_generation));
+    assert!(!Backend::finish_root_run(
+        &state,
+        &root,
+        old_generation,
+        false
+    ));
     assert_eq!(
         state
             .lock()
@@ -3153,7 +3193,7 @@ fn a_job_of_a_replaced_root_does_not_release_the_new_roots_slot() {
             .expect("root")
             .scheduler
             .trigger(),
-        TriggerDecision::Coalesce,
+        TriggerDecision::CancelRunning,
         "the replacement's job is still running"
     );
     // The owner of the slot releases it and owes the follow-up its dirty mark
@@ -3161,7 +3201,8 @@ fn a_job_of_a_replaced_root_does_not_release_the_new_roots_slot() {
     assert!(Backend::finish_root_run(
         &state,
         &root,
-        replacement_generation
+        replacement_generation,
+        false
     ));
 }
 

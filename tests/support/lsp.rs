@@ -374,6 +374,7 @@ impl LspProcess {
                         "semanticTokens": { "refreshSupport": token_refresh }
                     },
                     "textDocument": {
+                        "synchronization": { "didSave": true },
                         "publishDiagnostics": { "relatedInformation": true },
                         "semanticTokens": { "dynamicRegistration": false, "requests": { "range": true, "full": true }, "tokenTypes": [], "tokenModifiers": [], "formats": ["relative"] }
                     }
@@ -406,6 +407,26 @@ impl LspProcess {
                 "contentChanges": [{ "text": text }]
             }),
         )
+    }
+
+    /// Tell the server that the document was saved. The file itself is the
+    /// caller's to write.
+    pub(crate) fn save(&mut self, path: &Path) -> Result<(), String> {
+        self.send_notification(
+            "textDocument/didSave",
+            json!({ "textDocument": { "uri": file_uri(path) } }),
+        )
+    }
+
+    /// An edit and its save, which starts an analysis.
+    pub(crate) fn change_and_save(
+        &mut self,
+        path: &Path,
+        version: i64,
+        text: &str,
+    ) -> Result<(), String> {
+        self.change(path, version, text)?;
+        self.save(path)
     }
 
     pub(crate) fn send_watch_event(&mut self, path: &Path, event_type: u8) -> Result<(), String> {

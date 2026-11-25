@@ -99,7 +99,7 @@ fn lsp_stdio_reports_a_config_that_selects_no_files() {
     client.open(&path, text).unwrap();
     for version in 2..5 {
         client
-            .change(&path, version, &format!("{text}// {version}\n"))
+            .change_and_save(&path, version, &format!("{text}// {version}\n"))
             .unwrap();
         client.send_watch_event(&path, 2).unwrap();
     }
@@ -220,7 +220,7 @@ fn lsp_stdio_lints_standalone_files_without_a_workspace_folder() {
     );
 
     client
-        .change(&path_a, 2, lint_a)
+        .change_and_save(&path_a, 2, lint_a)
         .expect("repair standalone syntax and introduce lint finding");
     let linted_a = wait_for_diagnostics(&mut client, &uri_a, |params| {
         !has_severity_1(params) && has_lint_rule(params, "unused-signal")
@@ -236,7 +236,7 @@ fn lsp_stdio_lints_standalone_files_without_a_workspace_folder() {
     assert!(has_lint_rule(&linted_b, "unused-signal"));
 
     client
-        .change(&path_a, 3, recovered)
+        .change_and_save(&path_a, 3, recovered)
         .expect("remove standalone lint finding");
     let recovered_diagnostics = wait_for_diagnostics(&mut client, &uri_a, |params| {
         !has_severity_1(params) && !has_lint_rule(params, "unused-signal")
@@ -514,7 +514,7 @@ fn lsp_stdio_config_reload_without_restart() {
         fs::read_to_string(&path).expect("read lint source")
     );
     client
-        .change(&path, 2, &retained_text)
+        .change_and_save(&path, 2, &retained_text)
         .expect("nudge open buffer");
     let retained = wait_for_diagnostics(&mut client, &uri, |p| {
         lint_severity(p, "unused-signal") == Some(1)

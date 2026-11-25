@@ -364,6 +364,19 @@ impl Storm {
             .expect("watch event");
     }
 
+    /// Save an open document, with the watcher's event of the write or without.
+    fn save(&mut self, fuzz: &mut Fuzz, file: usize) {
+        let path = self.path(file);
+        fs::write(&path, self.text(file).expect("an open file")).expect("save");
+        if fuzz.chance(1, 4) {
+            self.watched(&path, 2);
+        }
+        self.client.save(&path).expect("didSave");
+        if fuzz.chance(1, 2) {
+            self.watched(&path, 2);
+        }
+    }
+
     fn run_step(&mut self, fuzz: &mut Fuzz) {
         self.step += 1;
         let file = fuzz.index(FILES.len());
@@ -372,6 +385,9 @@ impl Storm {
             0..=21 => {
                 let text = variant(fuzz, FILES[file].1, FILES[file].0);
                 self.set_text(file, text);
+                if fuzz.chance(2, 5) {
+                    self.save(fuzz, file);
+                }
             }
             22..=26 if self.text(file).is_some() => {
                 self.history[file].push((self.step, None));
@@ -664,6 +680,7 @@ fn a_document_whose_file_is_deleted_is_answered_from_its_text() {
     let edited = format!("// one\n{}", FILES[1].1);
     storm.step += 1;
     storm.set_text(1, edited.clone());
+    storm.client.save(&storm.path(1)).expect("didSave");
     let params = json!({
         "textDocument": { "uri": file_uri(&storm.path(1)) },
         "position": position_at(&edited, "leaf_wire", 0),

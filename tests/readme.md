@@ -889,6 +889,13 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   watched fixes and stale-diagnostic clearing. New lint rules need triggering and
   nearby quiet controls with identical stable IDs in CLI JSON and LSP
   publication/config tests.
+- `lsp_stdio/analysis_triggers.rs`: saves, opens, closes, watched-file events and
+  configurations start one analysis when the newest one read other texts, and
+  edits none; a rename waits for the save and its analysis; newer triggers, root
+  removal, shutdown, `exit` and the end of the input cancel the running one,
+  whose results never show; continuous saves let one finish. Decisions are read
+  from the lifecycle log, and the client answers the server's requests while it
+  waits. Unit sweeps in `features/tests/cancellation.rs` cancel at every poll.
 - Failed compiles keep last-good navigation. Non-syntax errors with surviving data
   keep features; syntax-broken roots keep declaration symbols/hover where
   possible, fatal-only roots do not. Watched fixes upgrade analysis. A

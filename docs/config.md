@@ -627,12 +627,40 @@ reduced analysis starts.
 An analysis also takes longer the more nodes and tokens it has: about 2 s for
 the UVM 1.2 package and 5 s for the 996,900 nodes of the third row (optimized
 build, x86-64 Linux, single runs on one host). The server keeps answering
-meanwhile. The analysis runs in the background, one per root. It starts 300 ms
-after a change and takes in every change made until then; changes during an
-analysis lead to one more. Navigation is answered from the last valid analysis,
-where the edited text still has the identifier. The tokens and definitions of
-an edited file come from an isolated parse of its current text, or from the
-last valid analysis when that parse is refused or fails.
+meanwhile. The analysis runs in the background, one per root. Navigation is
+answered from the last valid analysis, where the edited text still has the
+identifier. The tokens and definitions of an edited file come from an isolated
+parse of its current text, or from the last valid analysis when that parse is
+refused or fails.
+
+### When an analysis starts
+
+An analysis reads the editor's text of every open file, saved or not, and the
+other files from the disk. These events start one:
+
+- The client reports a save, an open or a close, or a watched-file event reports
+  a write, a new file or a removed one, and the newest analysis (the running one,
+  else the last that finished) read something else than the root has now. The
+  several notifications of one save therefore start one analysis, and opening or
+  closing an unchanged file starts none.
+- A changed `llg.toml`, and every change of the workspace folders.
+
+An edit starts none: its diagnostics, lint findings, symbols and hover values
+appear after the save, and a rename is refused until then. The one exception is
+a change that brings an open file to a text which another program wrote and a
+watched-file event reported before; it stands for that event.
+
+The analysis starts 300 ms after the first of these events and takes in every
+event until then. An event that comes while one runs cancels it and one more
+follows; the results of a cancelled analysis are dropped and those of the one
+before it stay. After three cancelled analyses in a row the next one is left to
+finish, so that saving more often than an analysis takes still shows results.
+
+The server asks for `textDocument/didSave` notifications (without the text). An
+edit made in a client that sends none is analysed when a watched-file event
+reports its write to the disk. Without such events either, only opening and
+closing files and changes of the workspace folders start an analysis. The log
+tells when a client does not announce `textDocument.synchronization.didSave`.
 
 ## LSP duplicate definitions
 

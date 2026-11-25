@@ -73,7 +73,7 @@ fn lsp_stdio_bursty_edits_debounce_into_bounded_fresh_analyses() {
     // inputs are the latest buffer.
     for i in 0..10 {
         client
-            .change(
+            .change_and_save(
                 &top_path,
                 100 + i,
                 &format!("module top; // storm_a_{i}\nendmodule\n"),
@@ -87,7 +87,7 @@ fn lsp_stdio_bursty_edits_debounce_into_bounded_fresh_analyses() {
     // none may create an immediately-racing job.
     for i in 0..40 {
         client
-            .change(
+            .change_and_save(
                 &top_path,
                 1000 + i,
                 &format!("module top; // storm_b_{i}\nendmodule\n"),
@@ -97,7 +97,7 @@ fn lsp_stdio_bursty_edits_debounce_into_bounded_fresh_analyses() {
     }
     // Final edit: proves no lost updates once quiescence returns.
     client
-        .change(
+        .change_and_save(
             &top_path,
             2000,
             &format!("module top;\n  logic {FINAL_MARKER};\nendmodule\n"),
@@ -430,7 +430,9 @@ fn lsp_stdio_repeats_identical_hover_requests_from_memo_cache() {
         "endmodule\n",
         "\x20 logic sig2;\n\x20 assign sig2 = 1'b1;\nendmodule\n",
     );
-    client.change(&path, 2, &edited).expect("edit adds sig2");
+    client
+        .change_and_save(&path, 2, &edited)
+        .expect("edit adds sig2");
     memo_wait_for_epoch_bump(&mut client, &uri, &clk_use, misses_cold);
 
     let sig2_decl_start = position_at(&edited, "logic sig2", 6);
@@ -445,7 +447,7 @@ fn lsp_stdio_repeats_identical_hover_requests_from_memo_cache() {
     // Restoring the original text invalidates again; the same query as at the
     // start returns exactly the original answer (never a stale intermediate).
     client
-        .change(&path, 3, text)
+        .change_and_save(&path, 3, text)
         .expect("restore original text");
     let (_, misses_before_restore) = memo_cache_stats(&mut client, &uri);
     memo_wait_for_epoch_bump(&mut client, &uri, &clk_use, misses_before_restore);
@@ -460,7 +462,9 @@ fn lsp_stdio_repeats_identical_hover_requests_from_memo_cache() {
     // If suppression ever breaks, the scheduled re-run commits a new epoch and
     // the very next request shows up as a MISS instead.
     let (hits_before_noop, misses_before_noop) = memo_cache_stats(&mut client, &uri);
-    client.change(&path, 4, text).expect("identical re-send");
+    client
+        .change_and_save(&path, 4, text)
+        .expect("identical re-send");
     let deadline = Instant::now() + Duration::from_secs(8);
     loop {
         let warm_noop = memo_hover(&mut client, &uri, &clk_use);

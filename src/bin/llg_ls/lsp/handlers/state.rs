@@ -1,5 +1,6 @@
 //! Owned backend and per-root state.
 
+use super::inputs::{AnalysisInputs, RunningAnalysis};
 use super::*;
 
 pub(super) struct RootState {
@@ -49,10 +50,19 @@ pub(super) struct RootState {
     /// Debounce + latest-wins coalescing for this root's analysis runs (see
     /// [`SchedulerState`]); mutated only under the backend state lock.
     pub(super) scheduler: SchedulerState,
+    /// The analysis of the running job, until it commits.
+    pub(super) running: Option<RunningAnalysis>,
+    /// What the last committed analysis read.
+    pub(super) analysed: Option<AnalysisInputs>,
 }
+#[derive(Default)]
 pub(super) struct BackendState {
     pub(super) roots: BTreeMap<RootKey, RootState>,
     pub(super) documents: BTreeMap<Url, SharedText>,
+    /// What a watched-file event found on the disk for an open document that
+    /// holds another text. The client loads such a file with a change
+    /// notification, which then stands for the event.
+    pub(super) reloads: BTreeMap<Url, features::SourceFingerprint>,
     pub(super) dynamic_watched_files: bool,
     pub(super) watchers_registered: bool,
     /// Digest of the watcher options sent with the last successful
@@ -174,7 +184,33 @@ pub(super) struct RootJob {
     pub(super) open_documents: OpenDocuments,
     pub(super) lint_config: LintConfig,
     pub(super) config: LlgConfig,
+    /// The token of the root's [`RunningAnalysis`].
+    pub(super) cancel: CancelToken,
 }
+
+/// How a job ended.
+pub(super) enum JobEnd {
+    Completed(Box<CompileResult>),
+    /// A newer trigger, the removal of the root or a shutdown cancelled it.
+    Cancelled,
+    /// The root is gone or a newer job took it over.
+    Stale,
+}
+
+impl JobEnd {
+    pub(super) fn completed(result: CompileResult) -> Self {
+        Self::Completed(Box::new(result))
+    }
+
+    pub(super) fn log_outcome(&self) -> &'static str {
+        match self {
+            Self::Completed(_) => "completed",
+            Self::Cancelled => "cancelled",
+            Self::Stale => "stale",
+        }
+    }
+}
+
 pub(super) struct CompileResult {
     pub(super) analysis: Option<Analysis>,
     pub(super) files: Vec<(PathBuf, String)>,
@@ -389,25 +425,7 @@ impl Backend {
     pub fn new(client: Client) -> Self {
         Self {
             client,
-            state: Arc::new(Mutex::new(BackendState {
-                roots: BTreeMap::new(),
-                documents: BTreeMap::new(),
-                dynamic_watched_files: false,
-                watchers_registered: false,
-                registered_watchers_digest: None,
-                initialized: false,
-                shutting_down: false,
-                pending_logs: Vec::new(),
-                merged: None,
-                initial_pending: BTreeSet::new(),
-                ready_sent: false,
-                dep_dependents: BTreeMap::new(),
-                published_shared: BTreeMap::new(),
-                next_generation: 0,
-                discovery: DiscoveryOrder::default(),
-                client_order: ClientOrder::default(),
-                semantic_tokens_refresh: false,
-            })),
+            state: Arc::default(),
             hover_cache: MemoCache::new(NAVIGATION_CACHE_CAPACITY),
             references_cache: MemoCache::new(NAVIGATION_CACHE_CAPACITY),
             open_token_cache: Arc::new(MemoCache::new(TOKEN_CACHE_CAPACITY)),
@@ -669,6 +687,8 @@ impl Backend {
                 generation: 0,
                 pending_parent_id: None,
                 scheduler: SchedulerState::default(),
+                running: None,
+                analysed: None,
                 analysis_epoch: 0,
                 served_tokens: ServedTokens::default(),
             },

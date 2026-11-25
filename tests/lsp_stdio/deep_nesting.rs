@@ -89,7 +89,7 @@ endmodule
     // Above the limit the source is refused where it exceeds it, and the
     // server goes on.
     client
-        .change(&path, 2, &nested(limit + 16))
+        .change_and_save(&path, 2, &nested(limit + 16))
         .expect("nest deeper");
     let refused = wait_for_diagnostics(&mut client, &uri, has_severity_1);
     assert!(
@@ -98,7 +98,9 @@ endmodule
             .contains("language constructs are too deeply nested"),
         "{refused}"
     );
-    client.change(&path, 3, &deep).expect("restore the source");
+    client
+        .change_and_save(&path, 3, &deep)
+        .expect("restore the source");
     wait_for_diagnostics(&mut client, &uri, has_no_severity_1);
     wait_for_definition(&mut client);
     client.shutdown();

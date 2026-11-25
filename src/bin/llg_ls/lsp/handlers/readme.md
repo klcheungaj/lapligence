@@ -5,6 +5,8 @@ Blocking Slang work and filesystem isolation stay in scheduling/staging.
 
 - `state`: owned root snapshots and synchronous queries/updates.
 - `scheduling`: jobs, debounce, rescans, config reloads and watchers.
+- `inputs`: the files the newest analysis of a root read, and the rules that
+  decide from them whether an event starts another one.
 - `identifiers`: the one table that answers a document's semantic-token and
   definition requests; which positions of the committed analysis hold in the
   current text of a document (`answers_at`, `current_locations`). In an edited

@@ -21,33 +21,34 @@ use crate::request_cache::{
 };
 use crate::scheduler::{FireDecision, SchedulerState, TriggerDecision};
 use crate::workspace::{self, RootDescriptor};
+use llg::cancel::CancelToken;
+use llg::core::compile::CompileOpts;
 use llg::core::lint::LintConfig;
+use llg::profile::Stage;
 
 mod diagnostics;
 mod identifiers;
+mod inputs;
 mod scheduling;
 mod staging;
 mod state;
 
 use diagnostics::*;
 use identifiers::DocumentTable;
+use inputs::FileWrite;
 #[cfg(test)]
 use scheduling::*;
 use staging::*;
 pub(crate) use staging::{emergency_shadow_cleanup, emergency_shadow_cleanup_and_exit};
 pub(crate) use state::Backend;
-#[cfg(test)]
-use state::RootState;
 use state::{
-    stream_digest, BackendState, CommitOutcome, CompileResult, DiscoveryOutcome, RescanResult,
-    RootJob,
+    stream_digest, BackendState, CommitOutcome, CompileResult, DiscoveryOutcome, JobEnd,
+    RescanResult, RootJob, RootState,
 };
 
-/// Trailing-edge quiet period for root re-analyses.  Bursts of didOpen/
-/// didChange/didClose and watched-file events collapse into ONE scheduled
-/// run per root; while a run executes, triggers only mark the root dirty and
-/// exactly one debounced follow-up observes the latest state (see
-/// `crate::scheduler`).
+/// Delay between the first trigger of an idle root and its analysis. Later
+/// triggers join the run and do not restart the delay, so a burst of events
+/// (a workspace-wide save, a checkout) costs one run (see `crate::scheduler`).
 const RECOMPILE_DEBOUNCE: Duration = Duration::from_millis(300);
 const WATCH_REGISTRATION_ID: &str = "llg-watched-files";
 /// The client-to-server initialization protocol version this server accepts.
@@ -56,8 +57,8 @@ type RootKey = PathBuf;
 type SharedText = Arc<String>;
 type OpenDocuments = BTreeMap<PathBuf, SharedText>;
 /// Set once the client's `shutdown` request has been handled; read by the
-/// lifecycle interceptor in `main.rs` to pick the spec-mandated process exit
-/// code (0 after `shutdown`, otherwise 1).
+/// lifecycle interceptor in `transport.rs` to pick the spec-mandated process
+/// exit code (0 after `shutdown`, otherwise 1).
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 /// Whether the client already sent (and this server answered) `shutdown`.
@@ -70,6 +71,19 @@ pub(crate) fn shutdown_requested() -> bool {
 /// never reaches [`LanguageServer::shutdown`] through tower-lsp 0.20).
 pub(crate) fn mark_shutdown_requested() {
     SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
+    cancel_analyses();
+}
+
+/// The parent of every analysis' token.
+fn server_token() -> &'static CancelToken {
+    static TOKEN: OnceLock<CancelToken> = OnceLock::new();
+    TOKEN.get_or_init(CancelToken::new)
+}
+
+/// Cancel every analysis, now and later: the server ends, and its cleanup
+/// waits for the running one.
+pub(crate) fn cancel_analyses() {
+    server_token().cancel();
 }
 
 struct ModuleExplorerTaskResult {
@@ -217,6 +231,13 @@ impl LanguageServer for Backend {
             .and_then(|workspace| workspace.did_change_watched_files.as_ref())
             .and_then(|watched| watched.dynamic_registration)
             .unwrap_or(false);
+        let announces_saves = params
+            .capabilities
+            .text_document
+            .as_ref()
+            .and_then(|document| document.synchronization.as_ref())
+            .and_then(|synchronization| synchronization.did_save)
+            .unwrap_or(false);
         let semantic_tokens_refresh = params
             .capabilities
             .workspace
@@ -242,12 +263,25 @@ impl LanguageServer for Backend {
             state.semantic_tokens_refresh = semantic_tokens_refresh;
             state.pending_logs.extend(warnings);
         }
+        if !announces_saves {
+            crate::llg_info!(
+                "event=initialize.client did_save=false: an edited file is analysed when a watched-file event reports its write"
+            );
+        }
         request.set_root(|| format!("roots={root_count}"));
         let _ = self.rescan().await;
         let result = InitializeResult {
             capabilities: ServerCapabilities {
-                text_document_sync: Some(TextDocumentSyncCapability::Kind(
-                    TextDocumentSyncKind::FULL,
+                text_document_sync: Some(TextDocumentSyncCapability::Options(
+                    TextDocumentSyncOptions {
+                        open_close: Some(true),
+                        change: Some(TextDocumentSyncKind::FULL),
+                        save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
+                            // The client's text is the one of its last change.
+                            include_text: Some(false),
+                        })),
+                        ..Default::default()
+                    },
                 )),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
@@ -432,8 +466,8 @@ impl LanguageServer for Backend {
             });
         notification.set_root(|| "workspace".to_owned());
         let mut config_roots = BTreeSet::new();
-        let mut source_roots = BTreeSet::new();
-        let mut dep_roots = BTreeSet::new();
+        let mut writes = Vec::new();
+        let mut sources = false;
         for event in params.changes {
             let Some(path) = Self::uri_to_path(&event.uri) else {
                 continue;
@@ -453,11 +487,12 @@ impl LanguageServer for Backend {
             // Tracked include dependencies are routed FIRST: resolved deps of
             // any extension must refresh their dependent roots even when the
             // path classifies as `Other` (.inc, .mem, ...).
-            dep_roots.extend(self.dependent_roots_for_dep(&path));
+            let mut readers = self.dependent_roots_for_dep(&path);
             match workspace::classify_source_file_event(&path) {
                 workspace::SourceFileEvent::Source(_) => {
                     if let Some(root) = self.source_root(&path) {
-                        source_roots.insert(root);
+                        sources = true;
+                        readers.insert(root);
                     }
                 }
                 workspace::SourceFileEvent::Config => {
@@ -477,6 +512,13 @@ impl LanguageServer for Backend {
                         }
                     }
                 }
+            }
+            if !readers.is_empty() {
+                writes.push(FileWrite {
+                    path,
+                    created: event.typ == FileChangeType::CREATED,
+                    readers,
+                });
             }
         }
         let mut reloaded = BTreeSet::new();
@@ -517,32 +559,31 @@ impl LanguageServer for Backend {
                 ));
             }
         }
-        if !source_roots.is_empty() || !config_roots.is_empty() {
+        let mut schedule = reloaded;
+        if sources || !config_roots.is_empty() {
             // Source/config events can change discovery; rescan first.
-            let mut schedule = self.rescan().await;
+            let rescanned = self.rescan().await;
             // The diagnostics of a config include that it selects no files.
-            if !config_roots.is_empty() || !schedule.is_empty() {
+            if !config_roots.is_empty() || !rescanned.is_empty() {
                 self.publish_config_diagnostics().await;
             }
-            schedule.extend(source_roots);
-            schedule.extend(config_roots);
-            schedule.extend(dep_roots);
-            let schedule: Vec<_> = schedule.into_iter().collect();
-            let schedule_count = schedule.len();
-            self.schedule_roots_with_parent(schedule, Some(notification.id()));
-            self.register_watchers();
-            self.flush_logs().await;
-            notification.complete("ok", schedule_count);
-        } else if !dep_roots.is_empty() {
-            // Dependency-only events do not change discovery.
-            let schedule: Vec<_> = dep_roots.into_iter().collect();
-            let schedule_count = schedule.len();
-            self.schedule_roots_with_parent(schedule, Some(notification.id()));
-            self.flush_logs().await;
-            notification.complete("ok", schedule_count);
-        } else {
-            notification.complete("no-op", 0);
+            let state = self.lock_state();
+            schedule.extend(rescanned.into_iter().filter(|key| state.units_changed(key)));
         }
+        schedule.extend(self.roots_outdated_by(writes).await);
+        let schedule_count = schedule.len();
+        if schedule_count != 0 {
+            let schedule = schedule.into_iter().collect();
+            self.schedule_roots_with_parent(schedule, Some(notification.id()));
+        }
+        if sources || !config_roots.is_empty() {
+            self.register_watchers();
+        }
+        self.flush_logs().await;
+        notification.complete(
+            if schedule_count != 0 { "ok" } else { "no-op" },
+            schedule_count,
+        );
     }
 
     async fn did_change_configuration(&self, _params: DidChangeConfigurationParams) {
@@ -607,11 +648,8 @@ impl LanguageServer for Backend {
             let admission =
                 Self::admit_document_text(&mut state, uri.clone(), params.text_document.text, true);
             let cached_diagnostics = match (root.as_ref(), path.as_ref()) {
-                (Some(root), Some(path)) => state
-                    .roots
-                    .get(root)
-                    .and_then(|root| root.all_diagnostics.get(path).cloned()),
-                _ => None,
+                (Some(root), Some(path)) => retained_diagnostics(&state, root, path),
+                _ => Vec::new(),
             };
             // Opening a document starts a new client-side lifecycle for this
             // URI. Ensure the following root commit republishes its current
@@ -646,14 +684,24 @@ impl LanguageServer for Backend {
                         &self.client,
                         &self.state,
                         ticket,
-                        vec![(uri.clone(), cached_diagnostics.unwrap_or_default())],
+                        vec![(uri.clone(), cached_diagnostics)],
                     )
                     .await;
-                    if let Some(root) = root {
-                        self.schedule_roots_with_parent(vec![root], Some(notification.id()));
-                    }
                 }
-                notification.complete(if initialized { "scheduled" } else { "deferred" }, 1);
+                let schedule = root.filter(|root| {
+                    initialized && (root_added || !self.lock_state().document_covered(root, &uri))
+                });
+                notification.complete(
+                    match (initialized, &schedule) {
+                        (false, _) => "deferred",
+                        (true, Some(_)) => "scheduled",
+                        (true, None) => "covered",
+                    },
+                    1,
+                );
+                if let Some(root) = schedule {
+                    self.schedule_roots_with_parent(vec![root], Some(notification.id()));
+                }
             }
             Err(limit) => {
                 limit.log_rejection();
@@ -678,7 +726,7 @@ impl LanguageServer for Backend {
         if let Some(root) = &root {
             notification.set_root(|| root.to_string_lossy().into_owned());
         }
-        let (initialized, admission) = {
+        let (admission, reload) = {
             let mut state = self.lock_state();
             let admission = params
                 .content_changes
@@ -687,7 +735,12 @@ impl LanguageServer for Backend {
                 .map_or(Ok(false), |change| {
                     Self::admit_document_text(&mut state, uri.clone(), change.text, false)
                 });
-            (state.initialized, admission)
+            let reload = root.filter(|root| {
+                matches!(admission, Ok(true))
+                    && state.take_reload(&uri)
+                    && !state.document_covered(root, &uri)
+            });
+            (admission, reload)
         };
         let changed = match admission {
             Ok(changed) => changed,
@@ -703,23 +756,76 @@ impl LanguageServer for Backend {
                 return;
             }
         };
-        // Identical full-text changes carry no information: scheduling a run
-        // for them would only churn the analysis (and with it the request
-        // memoization epochs) without changing any input.
-        if initialized && changed {
-            if let Some(root) = root {
-                self.schedule_roots_with_parent(vec![root], Some(notification.id()));
-            }
-        }
+        // An edit is analysed when the user saves; until then the isolated
+        // parse of the document answers for it (`identifiers.rs`).
         notification.complete(
-            if initialized && changed {
-                "scheduled"
-            } else if changed {
-                "deferred"
-            } else {
-                "unchanged"
+            match (changed, &reload) {
+                (true, Some(_)) => "reloaded",
+                (true, None) => "admitted",
+                (false, _) => "unchanged",
             },
             usize::from(changed),
+        );
+        if let Some(root) = reload {
+            self.schedule_roots_with_parent(vec![root], Some(notification.id()));
+        }
+    }
+
+    async fn did_save(&self, params: DidSaveTextDocumentParams) {
+        let mut notification =
+            crate::logging::LifecycleSpan::notification("textDocument/didSave", || {
+                Self::log_uri_identity(&params.text_document.uri)
+            });
+        let uri = params.text_document.uri;
+        let Some(path) = Self::uri_to_path(&uri) else {
+            return;
+        };
+        let owner = self.source_root(&path);
+        if let Some(root) = &owner {
+            notification.set_root(|| root.to_string_lossy().into_owned());
+        }
+        let (initialized, open, mut schedule) = {
+            let mut state = self.lock_state();
+            state.reloads.remove(&uri);
+            let schedule: BTreeSet<RootKey> = owner
+                .iter()
+                .filter(|root| !state.documents_covered(root))
+                .cloned()
+                .collect();
+            let open = state.documents.contains_key(&uri);
+            (state.initialized, open, schedule)
+        };
+        if !initialized {
+            notification.complete("deferred", 0);
+            return;
+        }
+        // At once: it also cancels the analysis of the older texts.
+        let parent_id = Some(notification.id());
+        self.schedule_roots_with_parent(schedule.iter().cloned().collect(), parent_id);
+        // Other roots read their include dependencies from the disk.
+        let mut readers = self.dependent_roots_for_dep(&path);
+        if let Some(owner) = owner {
+            if open {
+                readers.remove(&owner);
+            } else {
+                readers.insert(owner);
+            }
+        }
+        let write = FileWrite {
+            path,
+            created: false,
+            readers,
+        };
+        let outdated = self.roots_outdated_by(vec![write]).await;
+        self.schedule_roots_with_parent(outdated.iter().cloned().collect(), parent_id);
+        schedule.extend(outdated);
+        notification.complete(
+            if schedule.is_empty() {
+                "covered"
+            } else {
+                "scheduled"
+            },
+            schedule.len(),
         );
     }
 
@@ -737,6 +843,7 @@ impl LanguageServer for Backend {
         let (initialized, shadow) = {
             let mut state = self.lock_state();
             state.documents.remove(&uri);
+            state.reloads.remove(&uri);
             // Forget the last aggregated union so a still-tracked shared file
             // is republished from the post-close recompile.
             state.published_shared.remove(&uri);
@@ -746,22 +853,40 @@ impl LanguageServer for Backend {
                 .map(|root| root.shadow.clone());
             (state.initialized, shadow)
         };
-        if let (Some(shadow), Some(real)) = (shadow, real.as_ref()) {
-            let _staging = shadow_staging_lock()
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            shadow.remove(real);
+        if let (Some(shadow), Some(real)) = (shadow, real.clone()) {
+            // Beside this message: the lock is held while an analysis runs.
+            tokio::task::spawn_blocking(move || {
+                let _staging = shadow_staging_lock()
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                shadow.remove(&real);
+            });
         }
         // No immediate clear here: diagnostics are published project-wide,
-        // so the closed URI keeps its last known findings until the
-        // rescheduled recompile below refreshes them from on-disk state
-        // (unchanged payloads are suppressed by digest).
-        if initialized {
-            if let Some(root) = root {
-                self.schedule_roots_with_parent(vec![root], Some(notification.id()));
+        // so the closed URI keeps its last known findings until a recompile
+        // refreshes them from on-disk state (unchanged payloads are
+        // suppressed by digest).
+        let schedule = match (initialized, root, real) {
+            (true, Some(root), Some(path)) => {
+                let write = FileWrite {
+                    path,
+                    created: false,
+                    readers: BTreeSet::from([root]),
+                };
+                self.roots_outdated_by(vec![write]).await
             }
-        }
-        notification.complete(if initialized { "scheduled" } else { "deferred" }, 1);
+            _ => BTreeSet::new(),
+        };
+        notification.complete(
+            match (initialized, schedule.is_empty()) {
+                (false, _) => "deferred",
+                (true, false) => "scheduled",
+                (true, true) => "covered",
+            },
+            1,
+        );
+        let schedule = schedule.into_iter().collect();
+        self.schedule_roots_with_parent(schedule, Some(notification.id()));
     }
 
     async fn semantic_tokens_full(
@@ -1318,11 +1443,13 @@ impl LanguageServer for Backend {
 }
 
 /// The answer to a request whose document the committed analysis has not
-/// compiled yet; the client asks again.
+/// compiled yet; its save starts the analysis that does.
 fn content_modified() -> tower_lsp::jsonrpc::Error {
     tower_lsp::jsonrpc::Error {
         code: tower_lsp::jsonrpc::ErrorCode::ContentModified,
-        message: "the analysis has not read the current text yet".into(),
+        message: "the current text is not analysed yet: save the edited files, without syntax \
+                  errors, and try again"
+            .into(),
         data: None,
     }
 }

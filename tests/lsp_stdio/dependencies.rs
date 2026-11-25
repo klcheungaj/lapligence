@@ -335,7 +335,7 @@ fn lsp_stdio_watchers_reregister_after_dep_resolution_changes_digest() {
          endmodule\n"
     );
     client
-        .change(&top, 2, &resolved_text)
+        .change_and_save(&top, 2, &resolved_text)
         .expect("resolve include dependency via didChange");
     let deadline = Instant::now() + REQUEST_TIMEOUT;
     loop {

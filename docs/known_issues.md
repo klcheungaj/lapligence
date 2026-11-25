@@ -4132,23 +4132,25 @@ position answer for the current text only.
 
 ### Symptom
 
-`textDocument/documentSymbol` and `workspace/symbol` that follow an edit at once
-list the symbols and ranges of the analysis before the edit. An editor asks for
-the outline after each change, so it can show the old one until the next change.
+`textDocument/documentSymbol` and `workspace/symbol` list the symbols and ranges
+of the last analysis, which an edit does not start. An editor asks for the outline
+after each change, so it shows the old one until the first change after the edit
+was saved and analysed.
 
 ### Cause
 
-Both answer from `last_good` at once. Dropping the symbols whose text moved would
-leave the outline empty while an edit is analysed, and nothing asks the editor to
-read it again.
+Both answer from `last_good`. Dropping the symbols whose text moved would leave the
+outline empty until the save, and nothing asks the editor to read it again after
+the analysis.
 
 ### Intended direction
 
-Let the two requests wait until the analysis of the current texts is committed or
-refused (a notification of the root's commits, with the request's cancellation and
-a bound), then answer from it.
+Answer `documentSymbol` for an edited document from its isolated parse, as tokens
+and definitions are, and let a request that follows a save wait for the analysis
+(a notification of the root's commits, with the request's cancellation and a
+bound).
 
 ### Reproduce
 
 Open a file with a module, send `textDocument/didChange` with a line inserted above
-it and `textDocument/documentSymbol` right behind it.
+it and `textDocument/documentSymbol`.

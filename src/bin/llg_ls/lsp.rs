@@ -6,6 +6,6 @@
 mod handlers;
 
 pub(crate) use handlers::{
-    emergency_shadow_cleanup, emergency_shadow_cleanup_and_exit, mark_shutdown_requested,
-    shutdown_requested, Backend,
+    cancel_analyses, emergency_shadow_cleanup, emergency_shadow_cleanup_and_exit,
+    mark_shutdown_requested, shutdown_requested, Backend,
 };
