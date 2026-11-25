@@ -475,7 +475,10 @@ pub(crate) fn canonical_messages(stderr: &str) -> String {
 }
 
 /// Whether a child process ended through the C library's `abort()`: killed
-/// by `SIGABRT` on Unix, exit status 3 from the Microsoft C runtime.
+/// by `SIGABRT` on Unix. The Microsoft C runtime's `abort` ends the process
+/// in one of two ways: it calls the error reporting handler (`__fastfail`,
+/// status 0xC0000409) unless `_set_abort_behavior` cleared
+/// `_CALL_REPORTFAULT`, which the runtime does not, and else `_exit(3)`.
 pub(crate) fn ended_by_abort(status: &ExitStatus) -> bool {
     #[cfg(unix)]
     {
@@ -485,7 +488,10 @@ pub(crate) fn ended_by_abort(status: &ExitStatus) -> bool {
     }
     #[cfg(not(unix))]
     {
-        status.code() == Some(3)
+        const STATUS_STACK_BUFFER_OVERRUN: u32 = 0xC000_0409;
+        status
+            .code()
+            .is_some_and(|code| code == 3 || code.cast_unsigned() == STATUS_STACK_BUFFER_OVERRUN)
     }
 }
 
