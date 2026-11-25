@@ -271,7 +271,7 @@ impl Frame<'_, '_> {
         if self.formal_overrides.len() >= PURE_CALL_LIMIT {
             return Err(pending("recursive or excessively deep evaluator callbacks"));
         }
-        let function = self.ctx.model.func(call.f).clone();
+        let function = self.ctx.model.func(call.f);
         if !function.automatic && function.ret.is_some() && !function.callback_return_independent {
             return Err(pending(
                 "side-effect-capable evaluator expressions: static callback result depends on persistent return state",

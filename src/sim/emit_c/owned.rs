@@ -8,13 +8,16 @@
 use super::constants::{c_string_literal, emit_const, periodic_constant, round_shortreal};
 use super::context::RCtx;
 use super::frame_layout::{declaration, FrameLayout, FrameStorage};
+use super::names::{identifier_spans, identifier_spans_in_comments};
 use crate::sim::execution::{CallMechanism, CoroutineId, ExecutionAnalysis, SuspensionOperation};
 use crate::sim::ir::*;
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
-/// The coroutine functions a frame outside a coroutine calls as such: none.
-static NO_COROUTINES: BTreeSet<usize> = BTreeSet::new();
+// A frame outside a coroutine has no coroutine callees.
+static NO_FUNCTIONS: BTreeSet<usize> = BTreeSet::new();
+static NO_INTERFACE_METHODS: BTreeSet<(usize, usize)> = BTreeSet::new();
+static NO_UPPER_BOUNDS: BTreeMap<usize, usize> = BTreeMap::new();
 
 mod activations;
 mod assertion_tasks;
@@ -245,7 +248,7 @@ pub(super) struct Frame<'a, 'm> {
     resume_probe: bool,
     pending_sites: VecDeque<PendingSite>,
     resume_numbers: Vec<u32>,
-    frame_upper_bounds: BTreeMap<usize, usize>,
+    frame_upper_bounds: &'a BTreeMap<usize, usize>,
     coroutine_functions: &'a BTreeSet<usize>,
     cached_fields: cached_fields::CachedFields,
     net_batches: net_batches::ProcessTables,
@@ -258,9 +261,9 @@ pub(super) struct Frame<'a, 'm> {
     recursive_targets: BTreeSet<crate::sim::execution::CallTarget>,
     /// Class virtual slots with a suspending implementation; dispatch through
     /// them is an arena call site (SIM-011).
-    suspendable_slots: BTreeSet<usize>,
+    suspendable_slots: &'a BTreeSet<usize>,
     /// Virtual-interface methods whose dispatch may suspend (SIM-012).
-    suspendable_interface_methods: BTreeSet<(usize, usize)>,
+    suspendable_interface_methods: &'a BTreeSet<(usize, usize)>,
     /// A recursive subprogram's coroutine, run by a synchronous driver: it
     /// keeps plain-function exit semantics and numbers its resume points
     /// (all arena calls) during emission.
@@ -346,13 +349,13 @@ impl<'a, 'm> Frame<'a, 'm> {
         ctx: &'a RCtx<'m>,
         analysis: &'a ExecutionAnalysis,
         owner: CoroutineId,
-        frame_upper_bounds: &BTreeMap<usize, usize>,
+        frame_upper_bounds: &'a BTreeMap<usize, usize>,
     ) -> Result<Self, String> {
         let mut frame = Self::with_storage(ctx, FrameStorage::CoFrame);
-        frame.frame_upper_bounds = frame_upper_bounds.clone();
+        frame.frame_upper_bounds = frame_upper_bounds;
         frame.coroutine_functions = analysis.coroutine_functions();
-        frame.suspendable_slots = analysis.suspendable_dispatch_slots().clone();
-        frame.suspendable_interface_methods = analysis.suspendable_interface_methods().clone();
+        frame.suspendable_slots = analysis.suspendable_dispatch_slots();
+        frame.suspendable_interface_methods = analysis.suspendable_interface_methods();
         let mut sites = analysis
             .sites(owner)
             .into_iter()
@@ -381,8 +384,8 @@ impl<'a, 'm> Frame<'a, 'm> {
     ) -> Result<Self, String> {
         let mut frame = Self::with_storage(ctx, FrameStorage::CoFrame);
         frame.coroutine_functions = analysis.coroutine_functions();
-        frame.suspendable_slots = analysis.suspendable_dispatch_slots().clone();
-        frame.suspendable_interface_methods = analysis.suspendable_interface_methods().clone();
+        frame.suspendable_slots = analysis.suspendable_dispatch_slots();
+        frame.suspendable_interface_methods = analysis.suspendable_interface_methods();
         frame.recursive_targets = analysis
             .effects()
             .call_targets(function)
@@ -544,16 +547,16 @@ impl<'a, 'm> Frame<'a, 'm> {
             resume_probe: false,
             pending_sites: VecDeque::new(),
             resume_numbers: Vec::new(),
-            frame_upper_bounds: BTreeMap::new(),
-            coroutine_functions: &NO_COROUTINES,
+            frame_upper_bounds: &NO_UPPER_BOUNDS,
+            coroutine_functions: &NO_FUNCTIONS,
             cached_fields: cached_fields::CachedFields::default(),
             net_batches: net_batches::ProcessTables::default(),
             batch_owner: None,
             cell_eligibility: frame_cells::CellEligibility::default(),
             stack_cells: String::new(),
             recursive_targets: BTreeSet::new(),
-            suspendable_slots: BTreeSet::new(),
-            suspendable_interface_methods: BTreeSet::new(),
+            suspendable_slots: &NO_FUNCTIONS,
+            suspendable_interface_methods: &NO_INTERFACE_METHODS,
             synchronous: false,
             scope_fields: false,
             storage_names: None,
@@ -618,36 +621,8 @@ impl<'a, 'm> Frame<'a, 'm> {
     }
 
     fn mark_continuation_fields(&mut self, text: &str) {
-        let bytes = text.as_bytes();
-        let mut index = 0;
-        let mut quoted = None;
-        let mut escaped = false;
-        while index < bytes.len() {
-            if let Some(quote) = quoted {
-                let byte = bytes[index];
-                index += 1;
-                if escaped {
-                    escaped = false;
-                } else if byte == b'\\' {
-                    escaped = true;
-                } else if byte == quote {
-                    quoted = None;
-                }
-            } else if matches!(bytes[index], b'\'' | b'"') {
-                quoted = Some(bytes[index]);
-                index += 1;
-            } else if bytes[index] == b'_' || bytes[index].is_ascii_alphabetic() {
-                let start = index;
-                index += 1;
-                while index < bytes.len()
-                    && (bytes[index] == b'_' || bytes[index].is_ascii_alphanumeric())
-                {
-                    index += 1;
-                }
-                self.layout.mark_hot(&text[start..index]);
-            } else {
-                index += 1;
-            }
+        for span in identifier_spans_in_comments(text) {
+            self.layout.mark_hot(&text[span]);
         }
     }
 
@@ -685,15 +660,13 @@ impl<'a, 'm> Frame<'a, 'm> {
                 }
                 continue;
             }
-            if bytes[index..].starts_with(b"//") {
-                break;
-            }
-            if bytes[index..].starts_with(b"/*") {
-                self.in_block_comment = true;
-                index += 2;
-                continue;
-            }
             match bytes[index] {
+                b'/' if bytes.get(index + 1) == Some(&b'/') => break,
+                b'/' if bytes.get(index + 1) == Some(&b'*') => {
+                    self.in_block_comment = true;
+                    index += 2;
+                    continue;
+                }
                 b'\'' | b'"' => quoted = Some(bytes[index]),
                 b'(' | b'[' => paren_depth += 1,
                 b')' | b']' => paren_depth = paren_depth.saturating_sub(1),
@@ -757,67 +730,42 @@ impl<'a, 'm> Frame<'a, 'm> {
         }
     }
 
-    fn rewrite_frame_accesses(&self, text: &str) -> String {
+    fn rewrite_frame_accesses<'t>(&self, text: &'t str) -> Cow<'t, str> {
+        let coframe = self.layout.storage() == FrameStorage::CoFrame;
+        // A C-stack body has no frame fields.
+        if !coframe && !text.contains("self") {
+            return Cow::Borrowed(text);
+        }
         let bytes = text.as_bytes();
         let mut out = String::with_capacity(text.len() + 16);
-        let mut index = 0;
-        let mut quoted = None;
-        let mut escaped = false;
-        while index < bytes.len() {
-            let start = index;
-            if let Some(quote) = quoted {
-                let ch = text[index..].chars().next().unwrap_or('\0');
-                out.push(ch);
-                index += ch.len_utf8();
-                if escaped {
-                    escaped = false;
-                } else if ch == '\\' {
-                    escaped = true;
-                } else if ch == quote {
-                    quoted = None;
-                }
-            } else if matches!(bytes[index], b'\'' | b'"') {
-                let quote = bytes[index] as char;
-                out.push(quote);
-                index += 1;
-                quoted = Some(quote);
-            } else if bytes[index] == b'_' || bytes[index].is_ascii_alphabetic() {
-                index += 1;
-                while index < bytes.len()
-                    && (bytes[index] == b'_' || bytes[index].is_ascii_alphanumeric())
-                {
-                    index += 1;
-                }
-                let ident = &text[start..index];
-                let member_access = start > 0 && matches!(bytes[start - 1], b'.' | b'>');
-                if ident == "self" && !member_access {
-                    out.push_str(
-                        if self.layout.storage() == FrameStorage::CoFrame && !self.synchronous {
-                            "LLG_CO_OWNER(ch, llg_proc_t)"
-                        } else {
-                            "llg_current()"
-                        },
-                    );
-                } else if let Some(access) = self
-                    .layout
-                    .field_access(ident)
-                    .filter(|_| !member_access && !self.cached_fields.is_cached(ident))
-                {
-                    out.push_str("F->");
-                    out.push_str(access);
-                } else {
-                    out.push_str(ident);
-                }
-            } else {
-                let ch = text[index..]
-                    .chars()
-                    .next()
-                    .expect("index remains within the generated text");
-                out.push(ch);
-                index += ch.len_utf8();
+        let mut copied = 0;
+        for span in identifier_spans_in_comments(text) {
+            if span.start > 0 && matches!(bytes[span.start - 1], b'.' | b'>') {
+                continue;
             }
+            let ident = &text[span.clone()];
+            let (prefix, replacement) = if ident == "self" {
+                (
+                    "",
+                    if coframe && !self.synchronous {
+                        "LLG_CO_OWNER(ch, llg_proc_t)"
+                    } else {
+                        "llg_current()"
+                    },
+                )
+            } else {
+                match self.layout.field_access(ident) {
+                    Some(access) if !self.cached_fields.is_cached(ident) => ("F->", access),
+                    _ => continue,
+                }
+            };
+            out.push_str(&text[copied..span.start]);
+            out.push_str(prefix);
+            out.push_str(replacement);
+            copied = span.end;
         }
-        out
+        out.push_str(&text[copied..]);
+        Cow::Owned(out)
     }
     fn name(&mut self, purpose: &str) -> String {
         let result = format!("_llg_{purpose}_{}", self.next_name);
@@ -1476,10 +1424,9 @@ impl<'a, 'm> Frame<'a, 'm> {
         {
             Err(error)
         } else {
-            for (original, flattened) in self.layout.finalize_paths()? {
-                self.code = self
-                    .code
-                    .replace(&format!("F->{original}"), &format!("F->{flattened}"));
+            let flattened = self.layout.finalize_paths()?;
+            if !flattened.is_empty() {
+                self.code = rewrite_call_paths(&self.code, &flattened);
             }
             let overlays = self.layout.overlay_paths();
             let mut poisoned = String::with_capacity(self.code.len());
@@ -1569,7 +1516,13 @@ impl<'a, 'm> Frame<'a, 'm> {
     fn resolve_local_uses(&self, code: &str) -> Result<String, String> {
         const PREFIX: &str = "/*__llg_local_use_";
         const SUFFIX: &str = "__*/";
-        let uses = identifier_counts(code);
+        let locals = self
+            .declarations
+            .iter()
+            .map(|record| record.name.as_str())
+            .filter(|name| self.layout.field_access(name).is_none())
+            .collect::<HashSet<_>>();
+        let uses = identifier_counts(code, &locals);
         let mut output = String::with_capacity(code.len());
         let mut rest = code;
         while let Some(start) = rest.find(PREFIX) {
@@ -1585,7 +1538,7 @@ impl<'a, 'm> Frame<'a, 'm> {
                 .declarations
                 .get(index)
                 .ok_or_else(|| format!("unknown deferred coroutine local use {index}"))?;
-            if self.layout.field_access(&record.name).is_none()
+            if locals.contains(record.name.as_str())
                 && uses.get(record.name.as_str()).copied().unwrap_or(0) <= 1
             {
                 output.push_str("\n    (void)sizeof(");
@@ -1606,98 +1559,80 @@ const NATIVE_USE_MARKER_END: &str = " */\n";
 /// names the local, a `(void)sizeof` use when nothing does. Names are unique
 /// within a frame, so any later occurrence is this local.
 fn resolve_native_uses(code: &str) -> String {
+    let markers = code
+        .match_indices(NATIVE_USE_MARKER)
+        .filter_map(|(start, _)| {
+            let start = start + NATIVE_USE_MARKER.len();
+            let end = start + code[start..].find(NATIVE_USE_MARKER_END)?;
+            Some(&code[start..end])
+        })
+        .collect::<HashSet<_>>();
+    let mut last_uses = HashMap::with_capacity(markers.len());
+    for span in identifier_spans(code) {
+        if let Some(name) = markers.get(&code[span.clone()]) {
+            last_uses.insert(*name, span.start);
+        }
+    }
     let mut output = String::with_capacity(code.len());
-    let mut rest = code;
-    while let Some(start) = rest.find(NATIVE_USE_MARKER) {
-        output.push_str(&rest[..start]);
-        let marker = &rest[start + NATIVE_USE_MARKER.len()..];
-        let Some((name, after)) = marker.split_once(NATIVE_USE_MARKER_END) else {
-            output.push_str(&rest[start..]);
+    let mut copied = 0;
+    while let Some(start) = code[copied..].find(NATIVE_USE_MARKER) {
+        let start = copied + start;
+        output.push_str(&code[copied..start]);
+        let name_start = start + NATIVE_USE_MARKER.len();
+        let Some((name, _)) = code[name_start..].split_once(NATIVE_USE_MARKER_END) else {
+            output.push_str(&code[start..]);
             return output;
         };
-        if !names_identifier(after, name) {
+        if last_uses.get(name).is_none_or(|last| *last < start) {
             output.push_str("    (void)sizeof(");
             output.push_str(name);
             output.push_str(");\n");
         }
-        rest = after;
+        copied = name_start + name.len() + NATIVE_USE_MARKER_END.len();
     }
-    output.push_str(rest);
+    output.push_str(&code[copied..]);
     output
 }
 
-/// Whether `text` holds `name` as a whole identifier outside C literals.
-fn names_identifier(text: &str, name: &str) -> bool {
-    let bytes = text.as_bytes();
-    let mut index = 0;
-    let mut quoted = None;
-    let mut escaped = false;
-    while index < bytes.len() {
-        if let Some(quote) = quoted {
-            let byte = bytes[index];
-            index += 1;
-            if escaped {
-                escaped = false;
-            } else if byte == b'\\' {
-                escaped = true;
-            } else if byte == quote {
-                quoted = None;
-            }
-        } else if matches!(bytes[index], b'\'' | b'"') {
-            quoted = Some(bytes[index]);
-            index += 1;
-        } else if bytes[index] == b'_' || bytes[index].is_ascii_alphabetic() {
-            let start = index;
-            index += 1;
-            while index < bytes.len()
-                && (bytes[index] == b'_' || bytes[index].is_ascii_alphanumeric())
-            {
-                index += 1;
-            }
-            if &text[start..index] == name {
-                return true;
-            }
-        } else {
-            index += 1;
-        }
-    }
-    false
-}
-
-fn identifier_counts(text: &str) -> HashMap<&str, usize> {
-    let bytes = text.as_bytes();
+/// How often `code` names each of `names` outside C literals.
+fn identifier_counts<'n>(code: &str, names: &HashSet<&'n str>) -> HashMap<&'n str, usize> {
     let mut counts = HashMap::new();
-    let mut index = 0;
-    let mut quoted = None;
-    let mut escaped = false;
-    while index < bytes.len() {
-        if let Some(quote) = quoted {
-            let byte = bytes[index];
-            index += 1;
-            if escaped {
-                escaped = false;
-            } else if byte == b'\\' {
-                escaped = true;
-            } else if byte == quote {
-                quoted = None;
+    if !names.is_empty() {
+        for span in identifier_spans_in_comments(code) {
+            if let Some(name) = names.get(&code[span]) {
+                *counts.entry(*name).or_insert(0) += 1;
             }
-        } else if matches!(bytes[index], b'\'' | b'"') {
-            quoted = Some(bytes[index]);
-            index += 1;
-        } else if bytes[index] == b'_' || bytes[index].is_ascii_alphabetic() {
-            let start = index;
-            index += 1;
-            while index < bytes.len()
-                && (bytes[index] == b'_' || bytes[index].is_ascii_alphanumeric())
-            {
-                index += 1;
-            }
-            *counts.entry(&text[start..index]).or_insert(0) += 1;
-        } else {
-            index += 1;
         }
     }
     counts
+}
+
+/// Replace the structural path of each call slot that `flattened` lists by
+/// its final one, after every `F->`.
+fn rewrite_call_paths(code: &str, flattened: &HashMap<String, String>) -> String {
+    const FRAME: &str = "F->";
+    let mut output = String::with_capacity(code.len());
+    let mut copied = 0;
+    for (start, _) in code.match_indices(FRAME) {
+        let start = start + FRAME.len();
+        let length = code[start..]
+            .bytes()
+            .take_while(|byte| matches!(byte, b'.' | b'_') || byte.is_ascii_alphanumeric())
+            .count();
+        // Members of the callee's frame may follow the slot.
+        let mut path = &code[start..start + length];
+        while !path.is_empty() {
+            if let Some(replacement) = flattened.get(path) {
+                output.push_str(&code[copied..start]);
+                output.push_str(replacement);
+                copied = start + path.len();
+                break;
+            }
+            path = path.rsplit_once('.').map_or("", |(parent, _)| parent);
+        }
+    }
+    output.push_str(&code[copied..]);
+    output
 }
 
 fn is_structural_block_open(segment: &str) -> bool {
@@ -1758,21 +1693,24 @@ fn resume_state(text: &str) -> Option<u32> {
 }
 
 fn is_runtime_suspension(text: &str) -> bool {
-    [
-        "LLG_CO_AWAIT(",
-        "LLG_CO_CALL(",
-        "LLG_CO_CALL_ANCHOR(",
-        "LLG_CO_CALL_ARENA(",
-        "llg_join(",
-        "llg_process_suspend(",
-        "llg_process_await(",
-        "llg_semaphore_get(",
-        "llg_mailbox_get_value(",
-        "llg_mailbox_put_value(",
-        "llg_rt_stop_with_level(",
-    ]
-    .into_iter()
-    .any(|needle| text.contains(needle))
+    const SUSPENSIONS: [&str; 11] = [
+        "LLG_CO_AWAIT",
+        "LLG_CO_CALL",
+        "LLG_CO_CALL_ANCHOR",
+        "LLG_CO_CALL_ARENA",
+        "llg_join",
+        "llg_process_suspend",
+        "llg_process_await",
+        "llg_semaphore_get",
+        "llg_mailbox_get_value",
+        "llg_mailbox_put_value",
+        "llg_rt_stop_with_level",
+    ];
+    text.match_indices('(').any(|(open, _)| {
+        SUSPENSIONS
+            .iter()
+            .any(|suspension| text[..open].ends_with(suspension))
+    })
 }
 
 #[cfg(test)]

@@ -255,8 +255,8 @@ impl Frame<'_, '_> {
             return Err(pending("subprogram calls in declaration initialization"));
         }
         let touches = self.pending_touches.len();
-        let function = self.ctx.model.func(f).clone();
-        if model::inline_template(&function) {
+        let function = self.ctx.model.func(f);
+        if model::inline_template(function) {
             return Err("template calls must select a specialization before C emission".to_owned());
         }
         if self.read_only_callback {
@@ -1545,7 +1545,7 @@ impl Frame<'_, '_> {
 
     pub(super) fn call_statement(&mut self, call: &IrCall) -> Result<(), String> {
         self.begin_block(&[]);
-        let function = self.ctx.model.func(call.f).clone();
+        let function = self.ctx.model.func(call.f);
         for (name, index, initial) in &call.temps {
             let formal = &function.formals[*index];
             let default = formal.fixed_default.as_ref().map(|value| {
