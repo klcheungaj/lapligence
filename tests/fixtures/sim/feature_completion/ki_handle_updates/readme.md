@@ -37,6 +37,13 @@ signal here and assigns at once, so `h2[1][2]` differs there until the edge.
 `strings.sv`: arrays of strings, whose nonblocking assignments the other
 simulator refuses.
 
+## Operand order
+
+`operand_order.sv`: the delay before the value and the value before the
+selectors of the target; under an event control the selectors, the value and
+then the repeat count. 10.4.2 leaves the order open; the other simulator has it
+for the forms it supports.
+
 ## Ended issuers
 
 `static_ends.sv`: decision

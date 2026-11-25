@@ -65,17 +65,6 @@ fn deferred_report_limits_are_explicit() {
 }
 
 #[test]
-fn helper_lists_reject_an_event_handle_that_is_not_a_named_event() {
-    sim_cli::reject_case_with_id(
-        SUITE,
-        "neg_helper_event_handle",
-        "CODEGEN-002",
-        Some("17:13"),
-        "an event handle other than a declared named event cannot share an event control",
-    );
-}
-
-#[test]
 fn class_keyed_locator_index_and_effectful_compound_key_are_located_limits() {
     sim_cli::reject_case_with_id(
         SUITE,

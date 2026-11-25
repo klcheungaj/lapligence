@@ -69,3 +69,14 @@ fn a_handle_in_an_object_is_no_nonblocking_target() {
         "neg_class_property.sv:9:5: [CODEGEN-002] nonblocking assignment to class property `next` in `tb` is illegal (IEEE 1800-2009 6.21",
     );
 }
+
+#[test]
+fn operands_are_evaluated_like_those_of_a_packed_element() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "operand_order",
+        include_str!("../fixtures/sim/feature_completion/ki_handle_updates/operand_order.out"),
+        &[],
+        &[],
+    );
+}

@@ -42,6 +42,7 @@ impl Codegen<'_> {
         if let Some((target, dst_start, count)) = target {
             self.require_persistent_view(path, target)?;
             let mut statements = Vec::new();
+            let dst_start = dst_start.map(|start| self.issue_position(lhs, start, &mut statements));
             let (src, src_start) = match self.fixed_view_slice(path, rhs)? {
                 Some((src, start, _)) => (src, start),
                 None => match self.container_of(self.p30_unwrap_cast(rhs)) {
@@ -110,23 +111,47 @@ impl Codegen<'_> {
         self.require_persistent_view(path, target)?;
         let temporary = self.container_temporary_like(target);
         self.model.containers[temporary].initial_size = None;
-        let declare = IrStmt::Container(Box::new(IrContainerStmt::Declare(temporary)));
-        let value = self.lower_container_source_values(path, temporary, vec![rhs])?;
         let index = self.lower_container_top_index(path, target, indices[0])?;
         let width = index.width.max(32) + 1;
         let index = IrExpr::convert_to(index, width, true);
-        Ok(Some(IrStmt::Block(vec![
-            declare,
-            value,
-            IrStmt::Container(Box::new(IrContainerStmt::Nonblocking {
-                target,
-                dst_start: Some(index),
-                src: temporary,
-                src_start: zero(),
-                count: 1,
-                delay,
-            })),
-        ])))
+        let mut statements = Vec::new();
+        let index = self.issue_position(lhs, index, &mut statements);
+        statements.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
+            temporary,
+        ))));
+        statements.push(self.lower_container_source_values(path, temporary, vec![rhs])?);
+        statements.push(IrStmt::Container(Box::new(IrContainerStmt::Nonblocking {
+            target,
+            dst_start: Some(index),
+            src: temporary,
+            src_start: zero(),
+            count: 1,
+            delay,
+        })));
+        Ok(Some(IrStmt::Block(statements)))
+    }
+
+    /// The position in the target of an assignment that evaluates its
+    /// selectors before its value.
+    fn issue_position(
+        &self,
+        target: NodeId,
+        position: IrExpr,
+        statements: &mut Vec<IrStmt>,
+    ) -> IrExpr {
+        if !self.native_select_at_issue || matches!(position.kind(), IrExprKind::Const(_)) {
+            return position;
+        }
+        let name = format!("_np{}", target.0);
+        let (width, signed) = (position.width, position.signed);
+        statements.push(IrStmt::DeclLocal {
+            name: name.clone(),
+            width,
+            signed,
+            two_state: false,
+            init: Some(Box::new(position)),
+        });
+        IrExpr::new(IrExprKind::LocalRead(name), width, signed, None)
     }
 
     pub(in super::super) fn require_persistent_view(

@@ -855,11 +855,18 @@ impl EmitCtx<'_, '_> {
             );
         }
         self.reject_class_property_nba(lhs)?;
-        if let Some(statement) =
-            self.cg
-                .lower_fixed_view_nba(&self.path, lhs, rhs, Some(scaled_ticks.clone()))?
+        let mut timed = Vec::new();
+        let ticks = super::native_delays::capture_delay(
+            scaled_ticks.clone(),
+            &format!("_nd{}", h.0),
+            &mut timed,
+        );
+        if let Some(statement) = self
+            .cg
+            .lower_fixed_view_nba(&self.path, lhs, rhs, Some(ticks))?
         {
-            return Ok(vec![statement]);
+            timed.push(statement);
+            return Ok(vec![IrStmt::Block(timed)]);
         }
         // A run-time member select queues one branch's write, as a record
         // queues one write per leaf.
@@ -1460,7 +1467,7 @@ impl EmitCtx<'_, '_> {
             .map(|count| self.lower_repeat_count(count))
             .transpose()?;
         if blocking {
-            let wait = self.process_event_plan(h, specs)?.blocking();
+            let wait = self.process_event_plan(h, specs)?.blocking()?;
             let wait = match count {
                 Some(count) => IrStmt::Repeat {
                     count,
@@ -1553,8 +1560,6 @@ impl EmitCtx<'_, '_> {
                 ));
             }
         }
-        let count =
-            count.map(|count| self.capture_event_assignment_expr(frame, &mut captures, count));
         let plan = self.process_event_plan(h, specs)?;
         if plan.arm.iter().any(|arm| arm.native.is_some()) {
             return Err(format!(
@@ -1562,6 +1567,30 @@ impl EmitCtx<'_, '_> {
                 self.cg.source_path(&self.path)
             ));
         }
+        let mut hold = Vec::new();
+        let mut count = count;
+        if let (Some(value), false) = (&mut count, plan.events.is_empty()) {
+            let name = format!("_llg_evc{}", h.0);
+            let read = IrExpr::new(
+                IrExprKind::LocalRead(name.clone()),
+                value.width,
+                value.signed,
+                None,
+            );
+            hold.push(IrStmt::DeclLocal {
+                name,
+                width: value.width,
+                signed: value.signed,
+                init: Some(Box::new(std::mem::replace(value, read))),
+                two_state: false,
+            });
+        }
+        for event in &plan.events {
+            hold.extend(event.hold(count.as_ref())?);
+            self.capture_handle_local(frame, &mut captures, &event.local);
+        }
+        let count =
+            count.map(|count| self.capture_event_assignment_expr(frame, &mut captures, count));
         let armed = plan
             .arm
             .iter()
@@ -1580,10 +1609,16 @@ impl EmitCtx<'_, '_> {
             captures: captures.clone(),
             body,
         });
-        Ok(IrStmt::CapturedFork {
+        let spawn = IrStmt::CapturedFork {
             join_kind,
             branches: vec![IrCapturedBranch::new(name, label, frame, captures)],
             target: None,
+        };
+        Ok(if hold.is_empty() {
+            spawn
+        } else {
+            hold.push(spawn);
+            IrStmt::Block(hold)
         })
     }
 
@@ -1750,6 +1785,28 @@ impl EmitCtx<'_, '_> {
                 format!("unsupported intra-assignment timing in `{}`", self.path),
             )),
         }
+    }
+
+    /// Capture the handle in `local`. A process on `frame` reads it under the
+    /// same name.
+    pub(super) fn capture_handle_local(
+        &self,
+        frame: FrameId,
+        captures: &mut Vec<IrCapture>,
+        local: &str,
+    ) {
+        let storage = StorageRef::new(
+            frame,
+            captures.len() as u32,
+            StorageLifetime::Automatic,
+            StorageOwnership::Owned,
+        )
+        .with_kind(StorageKind::Opaque);
+        let handle = IrObjectQuery::HandleCapture(IrChandleExpr::LocalRead(local.to_owned()));
+        captures.push(IrCapture::new(
+            storage,
+            IrExpr::new(IrExprKind::ObjectQuery(Box::new(handle)), 1, false, None),
+        ));
     }
 
     pub(super) fn capture_event_assignment_expr(

@@ -219,7 +219,9 @@ impl Validator<'_> {
                     IrObjectQuery::Coverage(query) => Some(query.result_type()),
                     IrObjectQuery::StringInside { .. } => Some((1, false)),
                     IrObjectQuery::StringPacked(..) => None,
-                    IrObjectQuery::StringDigest(..) => Some((64, false)),
+                    IrObjectQuery::StringDigest(..) | IrObjectQuery::EventTriggerCount(..) => {
+                        Some((64, false))
+                    }
                     IrObjectQuery::ProcessStatus(..) => Some((32, true)),
                     IrObjectQuery::VirtualInterfaceInstance { .. } => Some((32, false)),
                     IrObjectQuery::MailboxNum(..)
@@ -407,10 +409,6 @@ impl Validator<'_> {
             }
             IrExprKind::RuntimeQuery(query) => {
                 let width = match query {
-                    IrRuntimeQuery::EventTriggerCount(event) => {
-                        self.validate_event_ref(&IrEventRef::Static(*event), formals, path)?;
-                        64
-                    }
                     IrRuntimeQuery::WaitRefreshed
                     | IrRuntimeQuery::CheckerAssume { .. }
                     | IrRuntimeQuery::InitialTimeStep

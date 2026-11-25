@@ -21,6 +21,7 @@ feature_completion/g1_05/owner_publication_snapshot.sv	mixed-assignments	9:5
 feature_completion/g1_19/nba_issue_capture.sv	mixed-assignments	10:5
 feature_completion/g1_19/nba_ordered_updates.sv	mixed-assignments	20:5
 feature_completion/ki_event_updates/clocking.sv	mixed-assignments	33:3
+feature_completion/ki_event_updates/event_objects.sv	mixed-assignments	44:3
 feature_completion/ki_handle_updates/delays.sv	mixed-assignments	17:3
 feature_completion/ki_handle_updates/elements.sv	mixed-assignments	43:3
 feature_completion/ki_handle_updates/kinds.sv	mixed-assignments	28:3

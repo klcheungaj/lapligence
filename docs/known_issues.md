@@ -1833,7 +1833,7 @@ in the private evaluator, and allow helper output effects (about a day).
 
 ## Effectful helpers in runtime-callback evaluators
 
-**Status:** narrowed by RTL-007b; two list forms remain.
+**Status:** narrowed by RTL-007b; one list form remains.
 
 Legal helpers with visible writes, persistent static state or descriptor-array
 formals now run in processes for blocking, intra-assignment, nonblocking and
@@ -1844,9 +1844,7 @@ helper reject there by SV 4.4.2.9).
 ### Symptom
 
 Still rejected: a named event in the same list as such a helper whose
-sensitivity includes unpacked-array, container or string storage, and event
-handles other than declared named events in such a list or as the target of
-such a `->>`. Stores a `$monitor`/`$strobe` helper makes to its own static
+sensitivity includes unpacked-array, container or string storage. Stores a `$monitor`/`$strobe` helper makes to its own static
 storage publish no event, so a hierarchical wait on that storage does not
 wake. A `force` whose right-hand side calls a function that uses a system task
 other than an immediate display task, `$info`, `$warning` or `$error` (for
@@ -1855,20 +1853,17 @@ example `$finish`) is an error.
 ### Cause
 
 The atomic mixed wait has no source form for unpacked-array, container or
-string markers, and the helper process names only declared named events. The
-private Postponed evaluation publishes no change events.
+string markers. The private Postponed evaluation publishes no change events.
 
 ### Intended direction
 
-Give the mixed wait source forms for those markers and event-handle operands;
-publish the private evaluation's static stores.
+Give the mixed wait source forms for those markers; publish the private
+evaluation's static stores.
 
 ### Reproduce
 
 [`neg_named_event_array.sv`](../tests/fixtures/sim/feature_completion/rtl_007b/neg_named_event_array.sv)
-(a named event beside a helper that reads array storage) and
-`tests/fixtures/sim/feature_completion/ki_audit/neg_helper_event_handle.sv`
-(an event handle other than a declared named event in a helper's list),
+(a named event beside a helper that reads array storage),
 [`neg_force_finish_helper.sv`](../tests/fixtures/sim/feature_completion/sim_023/neg_force_finish_helper.sv).
 
 ## Waited `ref` formals with unobservable actuals
@@ -1925,41 +1920,30 @@ Pass a native record's leaf markers with the record value.
 `neg_ref_wait_record_property_real.sv`;
 `sim_008/record_ref_interface_element_waits.sv` with `-D N=16`.
 
-## Initializers of named events are ignored
+## Initializers of arrays of events
 
-**Status:** open, a silent wrong result; found by the probes of event-controlled
-updates.
+**Status:** open.
 
 ### Symptom
 
-`event a = ev;` and `event n = null;` in a module, package or block leave the
-variable a separate event: a trigger of `ev` does not wake `@(a)`, and `n ==
-null` is false. The initializer of an event array stops the import with an
-internal error (ELAB-002), that of a class property of type `event` is a located
-error. An assignment (`a = ev;`) works.
+A declaration initializer of a fixed array, dynamic array, queue or associative
+array of events (`event ea[2] = '{a, null}`, `event q[$] = '{a, b}`) stops the
+import: "named-event arrays cannot have declaration initializers" (ELAB-002,
+without a location). Initializers of scalar events and assignments of elements
+work.
 
 ### Cause
 
-The import records no initializer for a named-event declaration.
+`CoreDb` records an array of events without an initializer and refuses one.
 
 ### Intended direction
 
-Record it and lower it like an event assignment, in the order of the other
-initializers of its scope (6.8, 15.5.5.1). Estimate: one day.
+Keep the initializer and lower it as assignments of the elements, like that of
+a scalar event (6.8).
 
 ### Reproduce
 
-```systemverilog
-module tb;
-  event ev;
-  event a = ev;
-  initial begin
-    fork @(a) $display("woken"); join_none
-    #1 ->ev;
-    #1 $finish;
-  end
-endmodule
-```
+`event a; event ea[2] = '{a, null}; initial $display("%b", ea[0] == a);`
 
 ## Level waits on the identity of an event variable reject
 

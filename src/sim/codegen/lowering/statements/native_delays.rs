@@ -313,18 +313,8 @@ impl EventNbaSplit<'_, '_, '_> {
 
     fn capture_handle(&mut self, name: &str) {
         self.captured.insert(name.to_owned());
-        let capture = IrCapture::new(
-            self.storage(StorageKind::Opaque),
-            IrExpr::new(
-                IrExprKind::ObjectQuery(Box::new(IrObjectQuery::HandleCapture(
-                    IrChandleExpr::LocalRead(name.to_owned()),
-                ))),
-                1,
-                false,
-                None,
-            ),
-        );
-        self.captures.push(capture);
+        self.ctx
+            .capture_handle_local(self.frame, &mut self.captures, name);
     }
 
     /// `value` as a read of a local evaluated at issue.
@@ -535,7 +525,7 @@ impl EventNbaSplit<'_, '_, '_> {
 
 /// Evaluate a runtime delay once into a local so several queued leaves
 /// share it.
-fn capture_delay(ticks: IrDelay, name: &str, before: &mut Vec<IrStmt>) -> IrDelay {
+pub(super) fn capture_delay(ticks: IrDelay, name: &str, before: &mut Vec<IrStmt>) -> IrDelay {
     match ticks {
         IrDelay::Runtime {
             value,

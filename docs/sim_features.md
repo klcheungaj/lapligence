@@ -1145,7 +1145,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   not unrelated body reads. Helpers with visible writes, persistent static state
   or descriptor-array formals are evaluated by the waiting process when the
   control is reached and after each dependency change (§9), including lists
-  with declared named events (trigger counts) and real values (IEEE bit
+  with named events (trigger counts) and real values (IEEE bit
   patterns). Event controls and level waits on class properties (`@(h.x)`,
   `hs[i].x`, `n.next.x`, `posedge h.w[0]`, string and handle properties
   `@(h.s)`, `wait (h.nxt != null)`), static class properties, class storage
@@ -1161,7 +1161,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   `exists`, `len`, …) are admitted
   ([sim_013](../tests/fixtures/sim/feature_completion/sim_013/readme.md)).
   Real edges (SV §6.12.1), chandles (§6.14) and functions with output/ref
-  formals (§13.4) reject as language rules. Event handles or array-reading
+  formals (§13.4) reject as language rules. Array-reading
   helpers in named-event lists with process-evaluated sources, virtual
   methods and helper forms outside §9 reject. A wait or event control on the
   identity of event variables (`wait (k == g)`, `@(k == g)`) rejects at the
@@ -1255,8 +1255,6 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   assignments, comparisons, Boolean tests, event controls and input event
   actuals (`event_function_results`). `.triggered` of such a call rejects
   (SV 15.5.3).
-  Event handles other than declared named events in process-evaluated lists
-  reject.
   V §9.7.3; SV §15.5 **[1995/SV-2005]**.
 - 🟨 **Cycle delays** — Procedural `##N` repeats the resolved default clocking
   event, including irregular periods; `##0` continues in a step where the

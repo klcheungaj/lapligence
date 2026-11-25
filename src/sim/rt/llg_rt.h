@@ -3267,9 +3267,12 @@ void llg_event_trigger(llg_event_t* ev);
 // Return whether the synchronization object was triggered in the current
 // simulation time slot. A null handle is never triggered.
 int32_t llg_event_triggered(const llg_event_t* ev);
-// Number of triggers of the object `ev` currently names since the runtime was
-// initialized. A null handle reports zero. Read-only and allocation-free.
-uint64_t llg_event_trigger_count(const llg_event_t* ev);
+// The object of an event that a wait starts on. A null event reports a null
+// event access, ends the simulation and returns NULL.
+llg_event_object_t* llg_event_waited_object(const llg_event_t* ev);
+// Number of triggers of `object` since the runtime was initialized; zero of
+// null. Read-only and allocation-free.
+uint64_t llg_event_trigger_count(const llg_event_object_t* object);
 /* Make the concurrent assertion just registered (a cover of every match of
  * a sequence instance) the sequence endpoint `index`, numbered from zero in
  * registration order (IEEE 1800-2009 16.9.11, 16.14.5-16.14.6, 9.4.2.4). Each

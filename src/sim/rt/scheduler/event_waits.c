@@ -162,8 +162,11 @@ int32_t llg_event_triggered(const llg_event_t* ev) {
     return 1;
 }
 
-uint64_t llg_event_trigger_count(const llg_event_t* ev) {
-    llg_event_object_t* object = ev ? ev->object : NULL;
+llg_event_object_t* llg_event_waited_object(const llg_event_t* ev) {
+    return event_control_null(ev) ? NULL : ev->object;
+}
+
+uint64_t llg_event_trigger_count(const llg_event_object_t* object) {
     return object ? object->trigger_count : 0;
 }
 
