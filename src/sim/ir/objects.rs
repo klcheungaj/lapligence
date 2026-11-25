@@ -1054,18 +1054,12 @@ impl IrStringExpr {
         self.visit_expressions(true, visit);
     }
 
-    /// Visit every packed or real operand; `typed_call_args` includes the
-    /// arguments of typed calls, which may legitimately be real or carry
-    /// native leaves and so are not string-operation operands.
     /// Whether an operand of this string operation is real. A format takes
-    /// real arguments, wherever a concatenation or conditional nests one.
+    /// real arguments; the parts of a concatenation and the arms of a
+    /// conditional are validated as operations of their own.
     fn has_real_operand(&self) -> bool {
         match self {
-            Self::Format { .. } => false,
-            Self::Concat(parts) => parts.iter().any(Self::has_real_operand),
-            Self::Conditional {
-                then, otherwise, ..
-            } => then.has_real_operand() || otherwise.has_real_operand(),
+            Self::Format { .. } | Self::Concat(_) | Self::Conditional { .. } => false,
             _ => {
                 let mut real = false;
                 self.visit_expressions(false, &mut |expr| real |= expr.is_real());
@@ -1074,6 +1068,9 @@ impl IrStringExpr {
         }
     }
 
+    /// Visit every packed or real operand; `typed_call_args` includes the
+    /// arguments of typed calls, which may legitimately be real or carry
+    /// native leaves and so are not string-operation operands.
     fn visit_expressions(&self, typed_call_args: bool, visit: &mut impl FnMut(&IrExpr)) {
         match self {
             Self::Literal(_)

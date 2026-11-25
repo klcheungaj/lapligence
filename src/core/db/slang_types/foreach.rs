@@ -1,7 +1,7 @@
 //! Preserve foreach dimensions before the type graph becomes a storage shape.
 
-use crate::IdSet;
 use super::*;
+use crate::IdSet;
 
 impl SlangTypeProjector<'_> {
     /// Project exactly the source iterator slots, including omitted slots.

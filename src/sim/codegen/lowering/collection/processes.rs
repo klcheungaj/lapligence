@@ -1,10 +1,10 @@
 //! Processes.
 
-use crate::IdSet;
 use super::super::containers::PatternAssignmentKind;
 use super::writer_index::WriterIndex;
 use super::*;
 use crate::sim::codegen::error::located;
+use crate::IdSet;
 
 #[cfg(test)]
 mod tests;

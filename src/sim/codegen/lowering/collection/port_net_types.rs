@@ -27,7 +27,8 @@ impl Codegen<'_> {
     }
 
     fn array_net_owner(&self, array: usize) -> Result<NodeId, String> {
-        sorted_node_ids(&self.array_globals)
+        self.array_globals
+            .sorted_keys()
             .into_iter()
             .find(|owner| self.array_globals[owner].ir == array)
             .ok_or_else(|| "port-connected net array has no owned declaration".into())

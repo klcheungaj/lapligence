@@ -72,7 +72,7 @@ impl Codegen<'_> {
         let mut roots = self
             .db
             .var_initializers()
-            .iter()
+            .unordered()
             .filter(|(declaration, _)| {
                 self.db.variable_lifetime(**declaration) == VariableLifetime::Static
             })

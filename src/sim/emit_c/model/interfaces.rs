@@ -1,7 +1,7 @@
 //! Interfaces.
 
-use crate::IdSet;
 use super::*;
+use crate::IdSet;
 
 /// Runtime environment for one virtual-interface specialization. Handles are
 /// opaque pointers to these records; member slots point at the concrete

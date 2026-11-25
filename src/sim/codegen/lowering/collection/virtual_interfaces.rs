@@ -1,8 +1,8 @@
 //! Virtual interfaces.
 
-use crate::IdSet;
 use super::*;
 use crate::sim::codegen::error::located;
+use crate::IdSet;
 
 impl<'a> Codegen<'a> {
     /// Return the leaf virtual-interface spelling of a declaration. Fixed

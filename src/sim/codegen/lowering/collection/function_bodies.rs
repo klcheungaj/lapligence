@@ -1,8 +1,8 @@
 //! Function bodies.
 
-use crate::IdSet;
 use super::*;
 use crate::sim::ir::{IrVpiAutoStorage, IrVpiAutomatic};
+use crate::IdSet;
 
 impl<'a> Codegen<'a> {
     /// Emit one static C function for a function/task definition.  The body

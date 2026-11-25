@@ -473,7 +473,7 @@ impl Codegen<'_> {
             }
         }
         let mut owners = HashMap::new();
-        for owner in sorted_node_ids(&self.array_globals) {
+        for owner in self.array_globals.sorted_keys() {
             owners.entry(self.array_globals[&owner].ir).or_insert(owner);
         }
         for (array, element) in cell_sources.keys() {

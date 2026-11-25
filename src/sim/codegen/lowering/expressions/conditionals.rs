@@ -1,11 +1,11 @@
 //! Conditional values retain array element boundaries across payload flattening.
-use crate::IdSet;
 use super::super::collection::{RecordColumn, RecordValue};
 use super::*;
 use crate::core::db::ConditionalPatternKind;
 use crate::sim::ir::{
     IrNativeBinding, IrNativeLeafExpr, IrPatternCheck, IrPatternExpr, IrPatternMatchKind,
 };
+use crate::IdSet;
 use std::collections::HashSet;
 
 fn supported_fixed_integral_value(descriptor: &TypeDescriptor) -> bool {

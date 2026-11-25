@@ -112,7 +112,7 @@ impl Codegen<'_> {
     pub(super) fn plan_net_cells(&self, nodes: &[NodeId]) -> Result<NetCellPlan, String> {
         let mut plan = NetCellPlan::default();
         let mut cells = 0usize;
-        for owner in sorted_node_ids(&self.array_globals) {
+        for owner in self.array_globals.sorted_keys() {
             let info = &self.array_globals[&owner];
             if plan.by_ir.contains_key(&info.ir)
                 || self

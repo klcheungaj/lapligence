@@ -602,21 +602,20 @@ impl<'a> Codegen<'a> {
                     }) {
                     (target, index)
                 } else {
-                    let mut found = None;
-                    for base_index in (0..parts.len()).rev() {
+                    // Each part of a scope path is behind a separator, so a
+                    // path of more parts than any scope has names none.
+                    let scopes = parts
+                        .len()
+                        .min(self.aggregate_scope_separators.saturating_add(1));
+                    (0..scopes).rev().find_map(|base_index| {
                         let mut scope = self.design_name.clone();
-                        if base_index != 0 {
+                        for part in &parts[..base_index] {
                             scope.push('.');
-                            scope.push_str(&parts[..base_index].join("."));
+                            scope.push_str(part);
                         }
-                        found = self
-                            .aggregate_declared_in(&scope, &parts[base_index])
-                            .map(|target| (target, base_index));
-                        if found.is_some() {
-                            break;
-                        }
-                    }
-                    found?
+                        self.aggregate_declared_in(&scope, &parts[base_index])
+                            .map(|target| (target, base_index))
+                    })?
                 };
                 let path = parts
                     .iter()

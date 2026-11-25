@@ -1,8 +1,8 @@
 //! Captures.
 
-use crate::IdSet;
 use super::*;
 use crate::sim::ir::*;
+use crate::IdSet;
 
 impl<'a> Codegen<'a> {
     pub(in super::super) fn capture_source(&self, target: NodeId) -> Option<CaptureSource> {

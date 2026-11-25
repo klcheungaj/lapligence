@@ -1,6 +1,7 @@
 //! Expression import.
 
 use super::*;
+use crate::IdMap;
 use std::sync::Arc;
 
 fn source_spelling(snapshot: &SlangSnapshot, node: &SemanticNode) -> Option<String> {
@@ -534,12 +535,12 @@ struct SourcePositionFile<'a> {
 }
 
 pub(super) struct SourcePositions<'a> {
-    files: HashMap<u64, SourcePositionFile<'a>>,
+    files: IdMap<u64, SourcePositionFile<'a>>,
 }
 
 impl<'a> SourcePositions<'a> {
     pub(super) fn new(snapshot: &'a SlangSnapshot) -> Self {
-        let mut files = HashMap::with_capacity(snapshot.files.len());
+        let mut files = IdMap::new();
         for file in &snapshot.files {
             files.entry(file.id).or_insert(SourcePositionFile {
                 file,

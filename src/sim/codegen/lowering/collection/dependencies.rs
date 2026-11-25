@@ -1,8 +1,8 @@
 //! Dependencies.
 
-use crate::IdSet;
 use super::super::packed_geometry::PackedSelectDim;
 use super::*;
+use crate::IdSet;
 
 #[cfg(test)]
 thread_local! {

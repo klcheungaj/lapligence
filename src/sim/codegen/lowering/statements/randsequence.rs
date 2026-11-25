@@ -19,13 +19,13 @@
 //! Random stability and the order of draws are decisions S16-D1..D10 in
 //! `docs/lrm_decisions.md`.
 
-use crate::IdSet;
 use super::*;
 use crate::core::db::{CaseItem, ProductionDecl, ProductionItem, ProductionKind, ProductionRule};
 use crate::sim::ir::{
     IrContainer, IrContainerElement, IrContainerExpr, IrContainerKind, IrContainerStmt,
     IrStringExpr,
 };
+use crate::IdSet;
 
 /// A production generated from more than one place is expanded at each
 /// place while its expansion has at most this many production-list elements;

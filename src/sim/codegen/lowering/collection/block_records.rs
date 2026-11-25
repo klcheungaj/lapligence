@@ -8,11 +8,11 @@
 //! its leaves. Static records keep their value and initialize once in the
 //! static schedule (SV 6.21, 10.5); automatic records are reset to their
 //! default-uninitialized value and initialized at every block entry.
-use crate::IdSet;
 use super::record_defaults::LeafDefault;
 use super::*;
 use crate::core::db::JoinKind;
 use crate::sim::ir::{IrContainerKind, IrContainerStmt};
+use crate::IdSet;
 
 impl Codegen<'_> {
     /// Collect the leaf storage of every procedural-block record of

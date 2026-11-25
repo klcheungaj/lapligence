@@ -1,8 +1,8 @@
 //! References.
 
-use crate::IdSet;
 use super::*;
 use crate::sim::ir::IrPackedSelect;
+use crate::IdSet;
 
 impl<'a> Codegen<'a> {
     /// Resolve module references to canonical storage with selection steps

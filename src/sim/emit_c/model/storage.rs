@@ -1,7 +1,7 @@
 //! Storage.
 
-use crate::IdSet;
 use super::*;
+use crate::IdSet;
 
 /// Net records declared by one C declaration; only the text width changes.
 const NET_DECLARATIONS_PER_LINE: usize = 8;

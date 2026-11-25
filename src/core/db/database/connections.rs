@@ -1,7 +1,7 @@
 //! Connections.
 
-use crate::IdSet;
 use super::*;
+use crate::IdSet;
 
 pub(super) fn peel_gate_terminal(
     snapshot: &SlangSnapshot,

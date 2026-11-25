@@ -1,7 +1,7 @@
 //! Force descriptors borrow only persistent targets; evaluators publish owners.
-use crate::IdSet;
 use super::stores::Selection;
 use super::*;
+use crate::IdSet;
 
 impl Frame<'_, '_> {
     fn force_parts(

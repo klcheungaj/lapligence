@@ -1,6 +1,5 @@
 //! Projection of Slang's typed snapshot records into owned database metadata.
 
-use crate::IdSet;
 use super::{
     AggregateKind, AggregateLayout, AggregateMember, ArrayKind, AssociativeIndex, DpiOpenType,
     ElaboratedTypeRanges, NodeId, PackedMember, PackedRange, TypeDescriptor, TypeId, TypeShape,
@@ -9,7 +8,9 @@ use crate::core::model::TypeInfo;
 use crate::ffi::slang::{
     Snapshot, Type as SlangType, TypeKind, TypeMember, TypeRange, TypeRangeKind,
 };
-use std::collections::{HashMap, HashSet};
+use crate::IdMap;
+use crate::IdSet;
+use std::collections::HashMap;
 
 mod foreach;
 
@@ -39,7 +40,7 @@ pub(super) struct TypeProjection {
 
 /// Indexed, reusable view over the snapshot's validated type tables.
 pub(super) struct SlangTypeProjector<'a> {
-    types: HashMap<u64, &'a SlangType>,
+    types: IdMap<u64, &'a SlangType>,
     ranges: &'a [TypeRange],
     members: &'a [TypeMember],
     constants: &'a [crate::ffi::slang::Constant],
@@ -51,7 +52,7 @@ impl<'a> SlangTypeProjector<'a> {
             .types
             .iter()
             .map(|ty| (ty.id, ty))
-            .collect::<HashMap<_, _>>();
+            .collect::<IdMap<_, _>>();
         if types.len() != snapshot.types.len() {
             return Err("duplicate Slang type id".to_owned());
         }
@@ -70,9 +71,9 @@ impl<'a> SlangTypeProjector<'a> {
         let packed_dimensions = self.packed_dimensions(packed_owner)?;
         let packed_base = self.packed_base(packed_owner)?;
         let packed_members = self.packed_members(packed_base)?;
-        let mut visiting = HashSet::new();
+        let mut visiting = IdSet::new();
         let aggregate_layout = self.aggregate_layout(packed_base, &mut visiting)?;
-        let descriptor = self.descriptor(ty, &mut HashSet::new())?;
+        let descriptor = self.descriptor(ty, &mut IdSet::new())?;
         let array = self.array(ty)?;
         let dpi_open = self.dpi_open(ty)?;
         Ok(TypeProjection {
@@ -94,9 +95,9 @@ impl<'a> SlangTypeProjector<'a> {
         let mut unpacked = Vec::new();
         let mut current = ty;
         let mut open = false;
-        let mut seen = IdSet::new();
+        let mut steps = self.types.len();
         loop {
-            if !seen.insert(current.id) {
+            if !take_step(&mut steps) {
                 return Err(format!("cycle in Slang DPI array type {}", current.id));
             }
             match current.kind {
@@ -126,7 +127,7 @@ impl<'a> SlangTypeProjector<'a> {
         Ok(Some(DpiOpenType {
             unpacked,
             packed_open,
-            element: self.descriptor(current, &mut HashSet::new())?,
+            element: self.descriptor(current, &mut IdSet::new())?,
         }))
     }
 
@@ -135,7 +136,7 @@ impl<'a> SlangTypeProjector<'a> {
         if ty.kind != TypeKind::PackedArray {
             return Ok(None);
         }
-        self.descriptor(self.element_type(ty, "packed array")?, &mut HashSet::new())
+        self.descriptor(self.element_type(ty, "packed array")?, &mut IdSet::new())
             .map(Some)
     }
 
@@ -143,14 +144,13 @@ impl<'a> SlangTypeProjector<'a> {
     /// resolved `T`, keyed by the class type identity.
     pub fn mailbox_elements(&self) -> Result<HashMap<TypeId, TypeDescriptor>, String> {
         self.types
-            .values()
+            .sorted()
+            .into_iter()
+            .map(|(_, ty)| ty)
             .filter(|ty| ty.kind == TypeKind::Class && ty.element_type_id.is_some())
             .map(|ty| {
                 let element = self.element_type(ty, "mailbox")?;
-                Ok((
-                    TypeId(ty.id),
-                    self.descriptor(element, &mut HashSet::new())?,
-                ))
+                Ok((TypeId(ty.id), self.descriptor(element, &mut IdSet::new())?))
             })
             .collect()
     }
@@ -161,7 +161,7 @@ impl<'a> SlangTypeProjector<'a> {
     /// element structure that VPI typespecs expose (IEEE 1800-2009 37.23).
     pub fn packed_array_elements(&self) -> Result<HashMap<TypeId, TypeDescriptor>, String> {
         let mut elements = HashMap::new();
-        for ty in self.types.values() {
+        for (_, ty) in self.types.sorted() {
             if ty.kind != TypeKind::PackedArray
                 || !matches!(
                     self.packed_base(ty)?.kind,
@@ -171,17 +171,14 @@ impl<'a> SlangTypeProjector<'a> {
                 continue;
             }
             let element = self.element_type(ty, "packed array")?;
-            elements.insert(
-                TypeId(ty.id),
-                self.descriptor(element, &mut HashSet::new())?,
-            );
+            elements.insert(TypeId(ty.id), self.descriptor(element, &mut IdSet::new())?);
         }
         Ok(elements)
     }
 
     fn unpacked_element(&self, ty: &'a SlangType) -> Result<&'a SlangType, String> {
         let mut current = ty;
-        let mut seen = IdSet::new();
+        let mut steps = self.types.len();
         while matches!(
             current.kind,
             TypeKind::FixedUnpackedArray
@@ -189,7 +186,7 @@ impl<'a> SlangTypeProjector<'a> {
                 | TypeKind::AssociativeArray
                 | TypeKind::Queue
         ) {
-            if !seen.insert(current.id) {
+            if !take_step(&mut steps) {
                 return Err(format!("cycle in Slang unpacked array type {}", current.id));
             }
             current = self.element_type(current, "unpacked array")?;
@@ -223,7 +220,7 @@ impl<'a> SlangTypeProjector<'a> {
             .ok_or_else(|| format!("unknown Slang type id {id}"))
     }
 
-    fn type_info(&self, ty: &SlangType) -> Result<TypeInfo, String> {
+    fn type_info(&self, ty: &'a SlangType) -> Result<TypeInfo, String> {
         let builtin_integral = matches!(ty.kind, TypeKind::Integral)
             .then(|| {
                 let spelling = ty
@@ -250,7 +247,7 @@ impl<'a> SlangTypeProjector<'a> {
             TypeKind::UnpackedStruct => "struct".to_owned(),
             TypeKind::UnpackedUnion => "union".to_owned(),
             TypeKind::Enum => "enum".to_owned(),
-            TypeKind::PackedArray => self.type_info(self.element_type(ty, "packed array")?)?.kind,
+            TypeKind::PackedArray => self.type_info(self.packed_base(ty)?)?.kind,
             TypeKind::FixedUnpackedArray
             | TypeKind::DynamicArray
             | TypeKind::AssociativeArray
@@ -339,9 +336,9 @@ impl<'a> SlangTypeProjector<'a> {
     fn packed_dimensions(&self, ty: &SlangType) -> Result<Vec<PackedRange>, String> {
         let mut dimensions = Vec::new();
         let mut current = ty;
-        let mut seen = IdSet::new();
+        let mut steps = self.types.len();
         while matches!(current.kind, TypeKind::PackedArray | TypeKind::Enum) {
-            if !seen.insert(current.id) {
+            if !take_step(&mut steps) {
                 return Err(format!("cycle in Slang packed type {}", current.id));
             }
             if current.kind == TypeKind::Enum {
@@ -360,9 +357,9 @@ impl<'a> SlangTypeProjector<'a> {
 
     fn packed_base(&self, ty: &'a SlangType) -> Result<&'a SlangType, String> {
         let mut current = ty;
-        let mut seen = IdSet::new();
+        let mut steps = self.types.len();
         while current.kind == TypeKind::PackedArray {
-            if !seen.insert(current.id) {
+            if !take_step(&mut steps) {
                 return Err(format!("cycle in Slang packed array type {}", current.id));
             }
             current = self.element_type(current, "packed array")?;
@@ -398,7 +395,7 @@ impl<'a> SlangTypeProjector<'a> {
     fn aggregate_layout(
         &self,
         ty: &SlangType,
-        visiting: &mut HashSet<u64>,
+        visiting: &mut IdSet<u64>,
     ) -> Result<Option<AggregateLayout>, String> {
         let kind = match ty.kind {
             TypeKind::PackedStruct => AggregateKind::PackedStruct,
@@ -466,7 +463,7 @@ impl<'a> SlangTypeProjector<'a> {
     fn descriptor(
         &self,
         ty: &SlangType,
-        visiting: &mut HashSet<u64>,
+        visiting: &mut IdSet<u64>,
     ) -> Result<TypeDescriptor, String> {
         if visiting.len() >= MAX_RECURSIVE_TYPE_DEPTH {
             return Err(format!(
@@ -503,9 +500,9 @@ impl<'a> SlangTypeProjector<'a> {
             TypeKind::FixedUnpackedArray => {
                 let mut dimensions = Vec::new();
                 let mut current = ty;
-                let mut seen = IdSet::new();
+                let mut steps = self.types.len();
                 while current.kind == TypeKind::FixedUnpackedArray {
-                    if !seen.insert(current.id) {
+                    if !take_step(&mut steps) {
                         return Err(format!("cycle in Slang unpacked array type {}", current.id));
                     }
                     let range = self.one_range(current, TypeRangeKind::Unpacked)?;
@@ -565,9 +562,9 @@ impl<'a> SlangTypeProjector<'a> {
             TypeKind::FixedUnpackedArray => {
                 let mut dimensions = Vec::new();
                 let mut current = ty;
-                let mut seen = IdSet::new();
+                let mut steps = self.types.len();
                 while current.kind == TypeKind::FixedUnpackedArray {
-                    if !seen.insert(current.id) {
+                    if !take_step(&mut steps) {
                         return Err(format!("cycle in Slang unpacked array type {}", current.id));
                     }
                     let range = self.one_range(current, TypeRangeKind::Unpacked)?;
@@ -667,6 +664,14 @@ impl<'a> SlangTypeProjector<'a> {
 
 /// Whether a class type is one of the `std` classes, whose objects the
 /// runtime owns outside the class heap.
+/// Whether a walk along element types that can pass `steps` more types may
+/// pass another. One that passed as many as there are passed one twice.
+fn take_step(steps: &mut usize) -> bool {
+    let left = steps.checked_sub(1);
+    *steps = left.unwrap_or_default();
+    left.is_some()
+}
+
 fn is_builtin_class(display_name: &str) -> bool {
     let name = display_name.trim();
     let name = name.strip_prefix("std::").unwrap_or(name);

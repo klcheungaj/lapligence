@@ -1,11 +1,11 @@
 //! Calls.
 
-use crate::IdSet;
 use super::super::collection::{
     member_select_statement, CallWriteback, RecordRefDispatch, RecordRefPin, RecordRefSelect,
     TargetSelectors,
 };
 use super::*;
+use crate::IdSet;
 
 impl EmitCtx<'_, '_> {
     /// A waited record `ref` actual with neither a binding nor a marker.

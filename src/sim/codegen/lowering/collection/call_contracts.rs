@@ -1,7 +1,7 @@
 //! Call contracts.
 
-use crate::IdSet;
 use super::*;
+use crate::IdSet;
 
 #[cfg(test)]
 mod tests;

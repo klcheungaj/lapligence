@@ -24,9 +24,9 @@
 //! (`with_interface_reads`, decision S99-D7); a read it cannot follow is a
 //! located error.
 
-use crate::IdSet;
 use super::*;
 use crate::sim::ir::{IrElementRefKind, IrElementRoot, IrNativeAccessKind};
+use crate::IdSet;
 
 mod report_plan;
 
@@ -206,9 +206,9 @@ impl Codegen<'_> {
             if let Some(callee) = self.called_subroutine(node) {
                 let watched = self.calls_virtual_method(node)
                     || self.class_method_call(node).is_some()
-                    || self.func_body(callee).is_some_and(|body| {
-                        self.reads_dynamic_storage_in(body, &mut IdSet::new())
-                    });
+                    || self
+                        .func_body(callee)
+                        .is_some_and(|body| self.reads_dynamic_storage_in(body, &mut IdSet::new()));
                 if watched && !self.report_call_binds(node, callee) {
                     return ReportReadPlan::EverySlot;
                 }

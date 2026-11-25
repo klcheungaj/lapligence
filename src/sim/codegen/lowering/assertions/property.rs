@@ -7,9 +7,9 @@
 //! engine. Sequence operands become ordinary sequence automata on the leading
 //! clock; a single-tick Boolean operand becomes a sampled atom.
 
-use crate::IdSet;
 use super::*;
 use crate::sim::ir::{IrProperty, IrPropertyBinaryOp, IrPropertyClock, IrPropertyNode};
+use crate::IdSet;
 
 /// Nested property-instance expansion limit. Recursive properties never
 /// reach it: the frontend expands a recursion once and the re-entry becomes

@@ -330,7 +330,9 @@ impl<'a> Codegen<'a> {
         let ((array, element), bits) = self
             .array_net_selection(expression)?
             .ok_or_else(|| self.alias_error(alias, "has an unsupported net-array projection"))?;
-        let owner = sorted_node_ids(&self.array_globals)
+        let owner = self
+            .array_globals
+            .sorted_keys()
             .into_iter()
             .find(|owner| self.array_globals[owner].ir == array)
             .ok_or_else(|| {
@@ -1272,7 +1274,7 @@ impl<'a> Codegen<'a> {
         let mut array_endpoints: HashMap<(usize, u64), Vec<Option<AliasBit>>> = HashMap::new();
         // Undriven net-array cells never enter the bit-level graph below.
         let cell_plan = self.plan_net_cells(&nodes)?;
-        for node in sorted_node_ids(&self.array_globals) {
+        for node in self.array_globals.sorted_keys() {
             let info = &self.array_globals[&node];
             // Every fixed net-array cell needs a canonical alias view.  The
             // view is also the per-element driver boundary for ordinary
@@ -1405,7 +1407,9 @@ impl<'a> Codegen<'a> {
                     }
                     if let Some((endpoint, actual_bits)) = self.array_net_selection(*actual)? {
                         let width = self.model.arrays[endpoint.0].elem_width;
-                        let owner = sorted_node_ids(&self.array_globals)
+                        let owner = self
+                            .array_globals
+                            .sorted_keys()
                             .into_iter()
                             .find(|owner| self.array_globals[owner].ir == endpoint.0)
                             .ok_or("array inout endpoint has no owned array")?;
@@ -1703,8 +1707,9 @@ impl<'a> Codegen<'a> {
         for ((array, element), peers) in &array_endpoints {
             let owner = self
                 .array_globals
-                .iter()
-                .find_map(|(owner, info)| (info.ir == *array).then_some(*owner))
+                .unordered()
+                .filter_map(|(owner, info)| (info.ir == *array).then_some(*owner))
+                .min_by_key(|owner| owner.index())
                 .ok_or("net-array owner is missing")?;
             for (bit, peer) in peers.iter().enumerate() {
                 if peer.is_none() {

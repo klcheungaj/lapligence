@@ -9,10 +9,10 @@
 //! Each runtime thread owns its copy of every local, so overlapping attempts
 //! and the branches of one attempt initialize and copy out independently.
 
-use crate::IdSet;
 use super::*;
 use crate::sim::codegen::lowering::collection::Select;
 use crate::sim::ir::IrMutationExpr;
+use crate::IdSet;
 
 /// One local variable formal of an instance and the actual bound to it.
 #[derive(Clone, Copy)]

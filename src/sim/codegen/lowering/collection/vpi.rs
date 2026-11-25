@@ -1537,7 +1537,7 @@ impl Codegen<'_> {
         // subroutine).
         let static_locals = self
             .proc_local_instances
-            .iter()
+            .unordered()
             .filter_map(|((_, node), info)| info.static_signal.as_ref().map(|s| (*node, s.ir)))
             .chain(
                 self.static_formals

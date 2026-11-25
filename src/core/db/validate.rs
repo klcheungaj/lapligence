@@ -184,7 +184,7 @@ impl Validator<'_> {
             matches!(kind, NodeKind::ClassDef)
         })?;
 
-        for (class, metadata) in self.db.class_metadata_entries() {
+        for (class, metadata) in self.db.class_metadata_entries().unordered() {
             let path = format_args!("class_metadata[{}]", class.0);
             if !self.db.classes().contains(class) {
                 return self.fail(path, "metadata key is not a class root");
@@ -208,7 +208,7 @@ impl Validator<'_> {
             }
         }
 
-        for (array, metadata) in self.db.arrays() {
+        for (array, metadata) in self.db.arrays().unordered() {
             let node = self.node(*array, format_args!("arrays[{}]", array.0))?;
             if !matches!(node.kind, NodeKind::Array { .. }) {
                 return self.fail(
@@ -221,7 +221,7 @@ impl Validator<'_> {
             }
         }
 
-        for (event, metadata) in self.db.event_arrays() {
+        for (event, metadata) in self.db.event_arrays().unordered() {
             let node = self.node(*event, format_args!("event_arrays[{}]", event.0))?;
             if !matches!(node.kind, NodeKind::NamedEvent) {
                 return self.fail(
@@ -259,7 +259,7 @@ impl Validator<'_> {
             }
         }
 
-        for (variable, init) in self.db.var_initializers() {
+        for (variable, init) in self.db.var_initializers().unordered() {
             let node = self.node(*variable, format_args!("vars_init[{}]", variable.0))?;
             if !matches!(node.kind, NodeKind::Var { .. }) {
                 return self.fail(
@@ -541,7 +541,7 @@ impl Validator<'_> {
             )?;
         }
 
-        for variable in self.db.variable_lifetime_nodes().keys() {
+        for (variable, _) in self.db.variable_lifetime_nodes().unordered() {
             let node = self.node(
                 *variable,
                 format_args!("variable_lifetimes[{}]", variable.0),

@@ -35,8 +35,8 @@
 //! differs; when it has a declaration initializer the port collapses only if
 //! no such observer exists (see [`Codegen::collapse_variable_ports`]).
 
-use crate::IdSet;
 use super::*;
+use crate::IdSet;
 
 /// Sampled-value system functions: their time-zero value of the formal is
 /// its own initial value under a copy (decision T0-D5).
@@ -741,7 +741,7 @@ impl Codegen<'_> {
                 info.global = signals[target].c_name.clone();
             }
         };
-        for info in self.sig_globals.values_mut() {
+        for info in self.sig_globals.values_mut_unordered() {
             canonicalize(info);
         }
         for info in &mut self.signals {

@@ -1,7 +1,7 @@
 //! Classes.
 
-use crate::IdSet;
 use super::*;
+use crate::IdSet;
 
 impl Codegen<'_> {
     pub(in super::super) fn class_field_target(&self, node: NodeId) -> Option<NodeId> {
@@ -1444,7 +1444,7 @@ impl Codegen<'_> {
             let class = self.class_nodes[&class_node];
             let mut fields = self
                 .class_fields
-                .iter()
+                .unordered()
                 .filter(|(_, (owner, _))| *owner == class)
                 .map(|(node, (_, index))| (*node, *index))
                 .collect::<Vec<_>>();
@@ -1452,7 +1452,7 @@ impl Codegen<'_> {
             // their declaration: they initialize in field order with the rest.
             let containers = self
                 .container_globals
-                .iter()
+                .unordered()
                 .filter_map(|(node, info)| {
                     let storage = &self.model.containers[info.ir];
                     match storage.class_field {

@@ -13,8 +13,8 @@
 //! Followed-by keeps the clock flowing into it. The assertion is registered
 //! on its semantic leading clock (16.17.1).
 
-use crate::IdSet;
 use super::*;
+use crate::IdSet;
 
 /// Semantic leading clocks of a sequence or property (16.17.1): the explicit
 /// clocks, and whether a leading position inherits the clock flowing in.

@@ -812,7 +812,7 @@ impl Codegen<'_> {
         let mut statics: Vec<Vec<IrVpiStatic>> = vec![Vec::new(); model.classes.len()];
         let mut nodes: Vec<(NodeId, usize)> = self
             .class_nodes
-            .iter()
+            .unordered()
             .map(|(node, index)| (*node, *index))
             .collect();
         nodes.sort_by_key(|(_, index)| *index);

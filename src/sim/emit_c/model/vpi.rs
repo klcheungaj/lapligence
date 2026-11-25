@@ -1,7 +1,7 @@
 //! Vpi.
 
-use crate::IdSet;
 use super::*;
+use crate::IdSet;
 
 mod dynamic;
 pub(in crate::sim::emit_c) mod pack;

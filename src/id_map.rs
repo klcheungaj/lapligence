@@ -123,6 +123,21 @@ impl<K: Id, V> IdMap<K, V> {
         entries
     }
 
+    /// The keys by ascending value.
+    pub(crate) fn sorted_keys(&self) -> Vec<K>
+    where
+        K: Ord,
+    {
+        let mut keys = self.0.keys().copied().collect::<Vec<_>>();
+        keys.sort_unstable();
+        keys
+    }
+
+    /// The values in no order, for changes that do not depend on one another.
+    pub(crate) fn values_mut_unordered(&mut self) -> impl Iterator<Item = &mut V> {
+        self.0.values_mut()
+    }
+
     /// The entries in no order, for a result that has none either: a count, a
     /// test, another map or set, or a list that is sorted before it is used.
     pub(crate) fn unordered(&self) -> impl Iterator<Item = (&K, &V)> {
@@ -184,16 +199,6 @@ impl<K: Id> IdSet<K> {
 
     pub(crate) fn remove(&mut self, key: &K) -> bool {
         self.0.remove(key)
-    }
-
-    /// The ids by ascending value.
-    pub(crate) fn sorted(&self) -> Vec<K>
-    where
-        K: Ord,
-    {
-        let mut ids = self.0.iter().copied().collect::<Vec<_>>();
-        ids.sort_unstable();
-        ids
     }
 
     /// The ids in no order; see [`IdMap::unordered`].

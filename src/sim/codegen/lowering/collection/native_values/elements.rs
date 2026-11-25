@@ -192,6 +192,9 @@ impl Codegen<'_> {
             else {
                 return None;
             };
+            // Of the indices only the last is a child: the others belong to
+            // the selects below.
+            let index = inner.last();
             // The element select shares the flattened select's base; a
             // member array below a record element (`q[i].a[j]`) does not.
             let (child, consumed) =
@@ -202,12 +205,12 @@ impl Codegen<'_> {
                         NodeKind::Expr(ExprKind::ArraySelect {
                             base: child_base,
                             indices,
-                        }) if child_base == base && !inner.contains(child) => {
+                        }) if child_base == base && index != Some(child) => {
                             Some((*child, indices.len()))
                         }
                         NodeKind::Expr(ExprKind::BitSelect {
                             base: child_base, ..
-                        }) if child_base == base && !inner.contains(child) => Some((*child, 1)),
+                        }) if child_base == base && index != Some(child) => Some((*child, 1)),
                         _ => None,
                     })?;
             if let Some(selection) = self.record_element_of(child) {
@@ -238,14 +241,16 @@ impl Codegen<'_> {
         let staged = self.staged_container_types.get(&typed).cloned();
         let declaration = self
             .container_globals
-            .iter()
-            .find(|(_, info)| info.ir == typed)
+            .unordered()
+            .filter(|(_, info)| info.ir == typed)
             .map(|(node, _)| *node)
+            .min_by_key(|node| node.index())
             .or_else(|| {
                 self.subroutine_containers
-                    .iter()
-                    .find(|(_, ir)| **ir == typed)
+                    .unordered()
+                    .filter(|(_, ir)| **ir == typed)
                     .map(|((_, node), _)| *node)
+                    .min_by_key(|node| node.index())
             });
         let mut descriptor = match staged {
             Some(descriptor) => descriptor,

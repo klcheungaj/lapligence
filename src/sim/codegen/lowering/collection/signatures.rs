@@ -1,7 +1,7 @@
 //! Signatures.
 
-use crate::IdSet;
 use super::*;
+use crate::IdSet;
 
 impl<'a> Codegen<'a> {
     // ── Functions and tasks ───────────────────────────────────────────────

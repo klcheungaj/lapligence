@@ -240,6 +240,7 @@
 //!   processes launch in Reactive and `$exit` remains a typed runtime
 //!   operation.
 
+use crate::IdMap;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -1252,7 +1253,7 @@ impl<'a> Codegen<'a> {
     /// Rebuild the reverse index after `ir` fields change in place.
     fn rebuild_sig_global_index(&mut self) {
         self.sig_global_by_ir.clear();
-        for (&node, info) in &self.sig_globals {
+        for (&node, info) in self.sig_globals.unordered() {
             self.sig_global_by_ir
                 .entry(info.ir)
                 .or_default()
@@ -1767,7 +1768,7 @@ struct Codegen<'a> {
     /// All lowered signals, in collection order (deterministic emission).
     signals: Vec<SignalInfo>,
     /// Net/Var arena node → lowered signal info (all instances + gen scopes).
-    sig_globals: HashMap<NodeId, SignalInfo>,
+    sig_globals: IdMap<NodeId, SignalInfo>,
     /// Reverse index of `sig_globals`: lowered signal → its nodes, ordered by
     /// node index. Reverse lookups take the first (lowest-index) node, which
     /// keeps them deterministic without sorting every global per lookup.
@@ -1845,10 +1846,10 @@ struct Codegen<'a> {
     port_start_checks: Vec<(NodeId, usize)>,
     /// The sink declarations of the storage-sharing `port_aliases`.
     port_alias_sinks: HashSet<NodeId>,
-    object_globals: HashMap<NodeId, usize>,
+    object_globals: IdMap<NodeId, usize>,
     scope_object_names: HashMap<String, HashMap<String, usize>>,
     /// Nominal class declaration → execution-IR layout index.
-    class_nodes: HashMap<NodeId, usize>,
+    class_nodes: IdMap<NodeId, usize>,
     /// Class method declaration → virtual dispatch slot.
     method_virtual_slots: HashMap<NodeId, usize>,
     /// The methods of each virtual slot with their classes, in class order
@@ -1861,7 +1862,7 @@ struct Codegen<'a> {
     disable_targets: std::cell::OnceCell<HashSet<NodeId>>,
     /// Class property declaration → `(layout index, field index)` for
     /// non-static properties.
-    class_fields: HashMap<NodeId, (usize, usize)>,
+    class_fields: IdMap<NodeId, (usize, usize)>,
     /// Class-property and interface-member reads of the expression whose
     /// wait dependencies are being collected (`with_dynamic_reads`), or the
     /// virtual-interface member reads of an implicit sensitivity
@@ -1877,8 +1878,8 @@ struct Codegen<'a> {
     dynamic_read_errors: HashMap<NodeId, String>,
     /// Static class properties use ordinary model storage and retain their
     /// declaration identity here.
-    class_static_signals: HashMap<NodeId, SignalInfo>,
-    class_static_objects: HashMap<NodeId, usize>,
+    class_static_signals: IdMap<NodeId, SignalInfo>,
+    class_static_objects: IdMap<NodeId, usize>,
     /// Class variables with declaration-time `new(...)` initializers are
     /// deferred until class methods have prototypes and can be called.
     class_object_initializers: Vec<(NodeId, usize, NodeId, String)>,
@@ -1954,6 +1955,8 @@ struct Codegen<'a> {
     /// The same aggregates by scope path and declared name
     /// (`aggregate_declared_in`).
     aggregates_by_scope: HashMap<String, HashMap<&'a str, Vec<NodeId>>>,
+    /// The most separators in one of those scope paths.
+    aggregate_scope_separators: usize,
     /// Synthetic owned string objects for recursive aggregate leaves. The
     /// key uses declaration identity and canonical member/index path, never a
     /// display spelling or frontend pointer.
@@ -1981,7 +1984,7 @@ struct Codegen<'a> {
     native_storage: HashMap<(NodeId, NodeId), usize>,
     /// Container storage of subroutine formals, results and locals, keyed by
     /// (instance, declaration).
-    subroutine_containers: HashMap<(NodeId, NodeId), usize>,
+    subroutine_containers: IdMap<(NodeId, NodeId), usize>,
     /// Set while lowering a container-result call whose result storage the
     /// caller appends (`lower_container_result_into`).
     container_result_call: bool,
@@ -2045,7 +2048,7 @@ struct Codegen<'a> {
     /// are `ref_rooted` when that formal's values are.
     whole_ref_actuals: Vec<(usize, NodeId)>,
     /// Native declarations of the subroutine instance being lowered.
-    native_roots: HashMap<NodeId, usize>,
+    native_roots: IdMap<NodeId, usize>,
     /// Native record `ref` formals of the specialization being lowered, each
     /// bound to declaration-owned record storage (SIM-008).
     record_ref_aliases: HashMap<NodeId, RecordRefBinding>,
@@ -2080,7 +2083,7 @@ struct Codegen<'a> {
     /// Procedural declaration node → automatic C local or hidden static signal.
     /// Procedural declaration node -> automatic C local or hidden static
     /// signal for the currently lowered process context.
-    proc_locals: HashMap<NodeId, ProcLocalInfo>,
+    proc_locals: IdMap<NodeId, ProcLocalInfo>,
     /// Automatic string locals used by foreach string-key iterators. Native
     /// strings have a distinct C representation and therefore do not fit the
     /// packed/real `ProcLocalInfo` table.
@@ -2111,11 +2114,11 @@ struct Codegen<'a> {
     /// Hidden static process-local storage keyed by elaborated instance and
     /// declaration. A declaration node is shared by module instances, while
     /// its static lifetime is per elaborated instance.
-    proc_local_instances: HashMap<(NodeId, NodeId), ProcLocalInfo>,
+    proc_local_instances: IdMap<(NodeId, NodeId), ProcLocalInfo>,
     /// Parent-declaration bindings active while one fork branch is lowered.
     /// The typed storage descriptor remains the semantic identity; `local` is
     /// only the branch emitter's private C spelling.
-    capture_locals: HashMap<NodeId, CaptureBinding>,
+    capture_locals: IdMap<NodeId, CaptureBinding>,
     /// Legacy storage for scalar declaration-initializer fills that need a
     /// collapsed-net driver slot. True-net declarations now lower as
     /// continuous processes, so ordinary wire/tri entries do not use it.
@@ -2128,10 +2131,10 @@ struct Codegen<'a> {
     /// All lowered arrays, in collection order (deterministic emission).
     arrays: Vec<ArrayInfo>,
     /// Array arena node → lowered array info.
-    array_globals: HashMap<NodeId, ArrayInfo>,
+    array_globals: IdMap<NodeId, ArrayInfo>,
     /// Dynamic arrays, queues, and associative arrays use owned runtime
     /// storage and never alias fixed unpacked-array storage.
-    container_globals: HashMap<NodeId, ContainerInfo>,
+    container_globals: IdMap<NodeId, ContainerInfo>,
     /// Declared `[left:right]` range of one-dimensional fixed handle arrays
     /// stored as fixed-size container views, keyed by container index. Their
     /// HDL indices are normalized to storage positions at every access.
@@ -2183,7 +2186,7 @@ struct Codegen<'a> {
     sampled_cell_arrays: std::collections::BTreeSet<usize>,
     /// Lexical bindings for fixed-array reduction maps, keyed by declaration
     /// identity so nested `with` expressions can retain outer iterators.
-    fixed_method_iterators: HashMap<NodeId, FixedMethodIterator>,
+    fixed_method_iterators: IdMap<NodeId, FixedMethodIterator>,
     /// Method callback helpers are discovered while expression lowering, but
     /// attach to the owning process/function only after its body is complete.
     pending_container_pre_fns: Vec<crate::sim::ir::IrPreFn>,
@@ -2662,7 +2665,7 @@ impl<'a> Codegen<'a> {
             static_task_chandle_locals: HashMap::new(),
             continuous_lowering: false,
             signals: Vec::new(),
-            sig_globals: HashMap::new(),
+            sig_globals: IdMap::new(),
             sig_global_by_ir: HashMap::new(),
             signal_names: Default::default(),
             clocking_samples: HashMap::new(),
@@ -2691,19 +2694,19 @@ impl<'a> Codegen<'a> {
             port_alias_sinks: HashSet::new(),
             reference_arrays: HashMap::new(),
             reference_objects: HashMap::new(),
-            object_globals: HashMap::new(),
+            object_globals: IdMap::new(),
             scope_object_names: HashMap::new(),
-            class_nodes: HashMap::new(),
+            class_nodes: IdMap::new(),
             method_virtual_slots: HashMap::new(),
             virtual_slot_methods: HashMap::new(),
             methods_by_name: std::cell::OnceCell::new(),
             disable_targets: std::cell::OnceCell::new(),
-            class_fields: HashMap::new(),
+            class_fields: IdMap::new(),
             dynamic_reads: HashMap::new(),
             dynamic_read_walk: false,
             dynamic_read_errors: HashMap::new(),
-            class_static_signals: HashMap::new(),
-            class_static_objects: HashMap::new(),
+            class_static_signals: IdMap::new(),
+            class_static_objects: IdMap::new(),
             class_object_initializers: Vec::new(),
             semaphore_initializers: Vec::new(),
             string_object_initializers: Vec::new(),
@@ -2731,6 +2734,7 @@ impl<'a> Codegen<'a> {
             coverage_ref_actuals: HashMap::new(),
             unpacked_aggregates: HashMap::new(),
             aggregates_by_scope: HashMap::new(),
+            aggregate_scope_separators: 0,
             aggregate_objects: HashMap::new(),
             record_columns: false,
             activation_records: HashMap::new(),
@@ -2740,7 +2744,7 @@ impl<'a> Codegen<'a> {
             record_binding_declarations: None,
             native_layouts: HashMap::new(),
             native_storage: HashMap::new(),
-            subroutine_containers: HashMap::new(),
+            subroutine_containers: IdMap::new(),
             container_result_call: false,
             container_call_prelude: None,
             mailbox_statement_prelude: None,
@@ -2760,7 +2764,7 @@ impl<'a> Codegen<'a> {
             native_temporaries: HashSet::new(),
             ref_rooted_values: HashSet::new(),
             whole_ref_actuals: Vec::new(),
-            native_roots: HashMap::new(),
+            native_roots: IdMap::new(),
             record_ref_aliases: HashMap::new(),
             record_ref_cells: HashMap::new(),
             record_ref_native_layouts: HashMap::new(),
@@ -2773,7 +2777,7 @@ impl<'a> Codegen<'a> {
             element_nba_target: None,
             native_select_at_issue: false,
             native_call_prelude: None,
-            proc_locals: HashMap::new(),
+            proc_locals: IdMap::new(),
             proc_string_locals: HashMap::new(),
             proc_mailbox_locals: HashMap::new(),
             proc_mailbox_static_objects: HashMap::new(),
@@ -2782,14 +2786,14 @@ impl<'a> Codegen<'a> {
             proc_semaphore_locals: HashMap::new(),
             detached_function_branch: false,
             proc_semaphore_static_objects: HashMap::new(),
-            proc_local_instances: HashMap::new(),
-            capture_locals: HashMap::new(),
+            proc_local_instances: IdMap::new(),
+            capture_locals: IdMap::new(),
             net_inits: Vec::new(),
             delayed_driver_inits: Vec::new(),
             runtime_net_delays: Vec::new(),
             arrays: Vec::new(),
-            array_globals: HashMap::new(),
-            container_globals: HashMap::new(),
+            array_globals: IdMap::new(),
+            container_globals: IdMap::new(),
             fixed_view_ranges: HashMap::new(),
             fixed_view_dims: HashMap::new(),
             container_initializers: Vec::new(),
@@ -2804,7 +2808,7 @@ impl<'a> Codegen<'a> {
             sampled_real_signals: std::collections::BTreeSet::new(),
             sampled_value_signals: std::collections::BTreeSet::new(),
             sampled_cell_arrays: std::collections::BTreeSet::new(),
-            fixed_method_iterators: HashMap::new(),
+            fixed_method_iterators: IdMap::new(),
             pending_container_pre_fns: Vec::new(),
             array_initializers: Vec::new(),
             record_initializers: Vec::new(),

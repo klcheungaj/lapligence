@@ -1166,11 +1166,11 @@ pub fn subroutine_formal_defaults(db: &Db, id: NodeId) -> Vec<NodeId> {
 pub fn declaration_initializers(db: &Db) -> impl Iterator<Item = (NodeId, NodeId)> + '_ {
     let variables = db
         .var_initializers()
-        .iter()
+        .unordered()
         .map(|(signal, init)| (*signal, *init));
     let arrays = db
         .arrays()
-        .iter()
+        .unordered()
         .filter_map(|(signal, meta)| meta.init.map(|init| (*signal, init)));
     variables
         .chain(arrays)
