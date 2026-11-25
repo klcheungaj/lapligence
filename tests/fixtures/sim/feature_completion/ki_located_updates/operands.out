@@ -1,0 +1,19 @@
+element member: v 1 w 0 x 0
+element string: v 1 w 2 x 0
+element real: v 3 w 2 x 100
+element: v 4 w 5 x 101
+nested operands: v 6 w 0 x 101
+0  3.5 | 7 s5 1.5 | 0  0.0
+element parts: v 13 w 11 x 101
+element record: v 14 w 14 x 101
+8 s8 000a 1020 11 s11 2 14 14 s14
+variables: v 27 w 25 x 101
+16 s16 18 s18 0004 21 s21 s22 24 25 s25 26 27
+inner parts: v 27 w 25 x 101
+28 300 inner30 29.0 outer30
+delay: v 2 w 31 x 101
+s31
+inner delay: v 1 w 31 x 102
+32 320
+replaced: v 1 w 31 x 102
+33 kept 0028 empty

@@ -859,9 +859,8 @@ impl<'a, 'm> Frame<'a, 'm> {
             binding.shortreal,
         );
         self.line(format!("if ({}) {{", target.valid));
-        let bound = nba && self.nba_bound;
-        if bound {
-            self.line("llg_nba_bind_begin();");
+        if nba {
+            self.open_updates();
         }
         if let Some(reference) = &target.reference {
             if nba && target.reference_scopes.is_empty() {
@@ -1046,8 +1045,8 @@ impl<'a, 'm> Frame<'a, 'm> {
                 ),
             });
         }
-        if bound {
-            self.line("llg_nba_bind_end();");
+        if nba {
+            self.close_updates();
         }
         self.line("}");
         self.discard(value);

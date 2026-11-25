@@ -3682,9 +3682,9 @@ enum {
 };
 void llg_container_nba_after(int32_t kind, void* target, const void* src, uint64_t ticks);
 // A write that takes its value and selectors now and is queued later
-// (`t <= @(e) v`, SV 9.4.5). Between `open` and `close` every nonblocking
-// write builds its update into the hold, which owns it for the GC and for
-// cleanup. `release` queues them as if issued now, `ticks` later, and ends the
+// (`t <= @(e) v`, SV 9.4.5). Between `open` and `close`, where no other
+// statement runs, every nonblocking write builds its update into the hold,
+// which owns it for the GC and for cleanup. `release` queues them as if issued now, `ticks` later, and ends the
 // hold; a process killed while it waits leaves the hold to cleanup.
 void* llg_nba_hold_new(void);
 void llg_nba_hold_open(void* held);
@@ -3697,7 +3697,8 @@ void llg_nba_bind_end(void);
 // The next NBA queued writes the item at `items` of a value, found when it
 // commits rather than at the address the NBA call names: an element of `array`
 // at `indices` (fixed here), or `root`. Copies its arguments.
-// `llg_nba_locate_end` ends the request if no NBA was queued.
+// `llg_nba_locate_end` ends the request if no NBA was queued; no other
+// statement runs in between.
 void llg_nba_locate_element(struct llg_dyn_value_array_t* array,
                             const sv4_t* indices, size_t index_count,
                             const uint32_t* items, size_t item_count);
