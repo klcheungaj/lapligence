@@ -32,7 +32,7 @@ The expected values rest on IEEE 1800-2009 11.4.11
 | --- | --- | --- |
 | `cond_chain_packed.sv` | 32-bit priority chains of 4, 8, 16 and 32 levels as a continuous assignment, in a procedure and in a function, and a two-state chain; one predicate true, X or Z at every position, X followed by a true or a Z predicate, none, all X, and all alternatives equal. | industry-standard behaviour |
 | `cond_chain_effects.sv` | The same depths with predicates and alternatives that are function calls recording their order; short-circuit operators as predicates. | industry-standard behaviour |
-| `cond_chain_types.sv` | Chains of 8 over 33-, 64-, 65-, 128- and 200-bit vectors, signed and mixed-sign operands of different widths, two-state and mixed-state operands, reals, a real among integers, strings, an enumeration and a packed structure. | industry-standard behaviour |
+| `cond_chain_types.sv` | Chains of 8 over 33-, 64-, 65-, 128- and 200-bit vectors, signed and mixed-sign operands of different widths, two-state and mixed-state operands, reals, a real among integers, strings, an enumeration and a packed structure; `'0`, `'1`, `'x` and `'z` alternatives at 65 and 128 bits. | industry-standard behaviour |
 | `cond_chain_shapes.sv` | Conditionals nested in the first alternative (4 to 32 levels), in both alternatives (a 32-leaf tree), in the predicate, and alternatives of different widths and signs along one chain. | industry-standard behaviour |
 | `cond_chain_clause.sv` | Chains of 8 over unpacked arrays, an unpacked structure, class handles and reals, and increments in alternatives. | the clause text, below |
 
