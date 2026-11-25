@@ -952,7 +952,15 @@ void llg_frame_release(llg_frame_t* frame) {
     if (frame->refs != 0) return;
     *frame->all_prev_link = frame->all_next;
     if (frame->all_next) frame->all_next->all_prev_link = frame->all_prev_link;
-    for (size_t i = 0; i < frame->nslots; i++) frame_clear_alias(&frame->slots[i]);
+    for (size_t i = 0; i < frame->nslots; i++) {
+        llg_frame_slot_t* slot = &frame->slots[i];
+        // A write of this turn may still wait for its check.
+        if (slot->alias_kind == LLG_FRAME_ALIAS_NONE && slot->kind == LLG_FRAME_PACKED)
+            llg_clocking_forget_signal(&slot->value.packed);
+        if (slot->alias_kind == LLG_FRAME_ALIAS_NONE && slot->kind == LLG_FRAME_REAL)
+            llg_clocking_forget_signal((sv4_t*)&slot->value.real);
+        frame_clear_alias(slot);
+    }
     free(frame->slots);
     free(frame);
 }

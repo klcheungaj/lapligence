@@ -15,3 +15,14 @@ fn a_clocking_event_queues_updates() {
         &[],
     );
 }
+
+#[test]
+fn a_captured_loop_variable_ends_with_its_last_write() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "loop_variable",
+        include_str!("../fixtures/sim/feature_completion/ki_event_updates/loop_variable.out"),
+        &[],
+        &[],
+    );
+}

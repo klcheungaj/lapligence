@@ -1,6 +1,6 @@
 # Nonblocking assignments under an event control
 
-The task module (`sim_feature_completion/ki_event_updates.rs`) runs the fixture
+The task module (`sim_feature_completion/ki_event_updates.rs`) runs the fixtures
 through the public CLI in both HDL optimizer modes. Order and endings under
 other controls are decision S09-D11. Clause lines are from
 `SystemVerilog-1800-2009.txt`.
@@ -14,3 +14,9 @@ update from the active events that follow; queued in the Observed region
 itself it was an error at the event. Local, interface and virtual interface
 clocking blocks, `repeat`, `iff`, packed, real, string, handle and element
 targets. An industry-standard simulator does not support such a control.
+
+## Captured loop variables
+
+`loop_variable.sv`: the storage of a loop variable that forked processes
+captured ends with the loop, in the turn of its last write, whose check at the
+end of the turn read the freed storage. Only the sanitizer lane shows the defect.
