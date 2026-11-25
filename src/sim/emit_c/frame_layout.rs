@@ -310,6 +310,11 @@ impl FrameLayout {
         self.field_entry(name)?.access.as_deref()
     }
 
+    /// A set that holds the names of the fields.
+    pub(super) fn field_names(&self) -> NameFilter {
+        self.field_filter
+    }
+
     fn field_entry(&self, name: &str) -> Option<&FieldEntry> {
         self.field_filter
             .may_hold(name)

@@ -1927,7 +1927,11 @@ fn validate_model_abi_for(
 ) -> Result<(), BuildError> {
     for (name, source) in extra {
         let mut abi = None;
-        for value in lines_after(source, "#define LLG_MODEL_VALUE_ABI ") {
+        let defines = lines_after(source, "#define LLG_MODEL_").collect::<Vec<_>>();
+        for value in defines
+            .iter()
+            .filter_map(|line| line.strip_prefix("VALUE_ABI "))
+        {
             let value = value.trim();
             let parsed = value.parse::<u32>().ok();
             if parsed != Some(config.backend.abi()) || abi.is_some() {
@@ -1936,16 +1940,13 @@ fn validate_model_abi_for(
             abi = parsed;
         }
         for (guard, expected) in [
-            (
-                "#define LLG_MODEL_VALUE_BACKEND ",
-                config.backend.selector(),
-            ),
-            (
-                "#define LLG_MODEL_COMPACT_KERNELS ",
-                config.kernel.selector(),
-            ),
+            ("VALUE_BACKEND ", config.backend.selector()),
+            ("COMPACT_KERNELS ", config.kernel.selector()),
         ] {
-            let values = lines_after(source, guard).collect::<Vec<_>>();
+            let values = defines
+                .iter()
+                .filter_map(|line| line.strip_prefix(guard))
+                .collect::<Vec<_>>();
             if values.len() > 1
                 || values
                     .first()
@@ -1960,7 +1961,7 @@ fn validate_model_abi_for(
                 && values.is_empty()
             {
                 return Err(BuildError::InvalidValueConfig(format!(
-                    "missing {guard} in {name}; regenerate model"
+                    "missing #define LLG_MODEL_{guard} in {name}; regenerate model"
                 )));
             }
         }

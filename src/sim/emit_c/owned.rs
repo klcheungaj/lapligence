@@ -8,7 +8,9 @@
 use super::constants::{c_string_literal, emit_const, periodic_constant, round_shortreal};
 use super::context::RCtx;
 use super::frame_layout::{declaration, FrameLayout, FrameStorage};
-use super::names::{identifier_spans, identifier_spans_in_comments, NameFilter};
+use super::names::{
+    first_of, identifier_spans_in_comments, named_spans, named_spans_in_comments, NameFilter,
+};
 use crate::sim::execution::{
     CallMechanism, CoroutineId, ExecutionAnalysis, NestedEffects, SuspensionOperation,
 };
@@ -659,6 +661,10 @@ impl<'a, 'm> Frame<'a, 'm> {
     fn track_frame_blocks(&mut self, text: &str) -> Vec<usize> {
         let mut exits = Vec::new();
         let bytes = text.as_bytes();
+        // Most lines neither hold a brace nor open a comment.
+        if !self.in_block_comment && first_of(bytes, 0, [b'{', b'}', b'/']).is_none() {
+            return exits;
+        }
         let mut index = 0;
         let mut segment_start = 0;
         let mut paren_depth = 0usize;
@@ -765,7 +771,9 @@ impl<'a, 'm> Frame<'a, 'm> {
         let bytes = text.as_bytes();
         let mut out = String::with_capacity(text.len() + 16);
         let mut copied = 0;
-        for span in identifier_spans_in_comments(text) {
+        let mut names = self.layout.field_names();
+        names.insert("self");
+        for span in named_spans_in_comments(text, names) {
             if span.start > 0 && matches!(bytes[span.start - 1], b'.' | b'>') {
                 continue;
             }
@@ -1592,7 +1600,8 @@ fn resolve_native_uses(code: &str) -> String {
         })
         .collect::<HashSet<_>>();
     let mut last_uses = HashMap::with_capacity(markers.len());
-    for span in identifier_spans(code) {
+    let filter = markers.iter().copied().collect::<NameFilter>();
+    for span in named_spans(code, filter) {
         if let Some(name) = markers.get(&code[span.clone()]) {
             last_uses.insert(*name, span.start);
         }
@@ -1623,12 +1632,8 @@ fn identifier_counts<'n>(code: &str, names: &HashSet<&'n str>) -> HashMap<&'n st
     let mut counts = HashMap::new();
     if !names.is_empty() {
         let filter = names.iter().copied().collect::<NameFilter>();
-        for span in identifier_spans_in_comments(code) {
-            let identifier = &code[span];
-            if !filter.may_hold(identifier) {
-                continue;
-            }
-            if let Some(name) = names.get(identifier) {
+        for span in named_spans_in_comments(code, filter) {
+            if let Some(name) = names.get(&code[span]) {
                 *counts.entry(*name).or_insert(0) += 1;
             }
         }
@@ -1736,11 +1741,13 @@ fn is_runtime_suspension(text: &str) -> bool {
         "llg_rt_stop_with_level",
     ];
     let bytes = text.as_bytes();
-    bytes.iter().enumerate().any(|(open, byte)| {
-        *byte == b'('
-            && SUSPENSIONS
-                .iter()
-                .any(|suspension| bytes[..open].ends_with(suspension.as_bytes()))
+    let parentheses = std::iter::successors(first_of(bytes, 0, [b'(']), |open| {
+        first_of(bytes, open + 1, [b'('])
+    });
+    parentheses.into_iter().any(|open| {
+        SUSPENSIONS
+            .iter()
+            .any(|suspension| bytes[..open].ends_with(suspension.as_bytes()))
     })
 }
 

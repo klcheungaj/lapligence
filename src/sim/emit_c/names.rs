@@ -212,7 +212,37 @@ fn spans<const SKIP_COMMENTS: bool>(
 /// literals and comments included.
 pub(super) fn identifiers_anywhere(text: &str, shortest: usize) -> impl Iterator<Item = &str> {
     let mut names = LongNames::new(shortest);
-    std::iter::from_fn(move || names.next::<false>(text.as_bytes()).map(|span| &text[span]))
+    std::iter::from_fn(move || {
+        names
+            .next::<false, false>(text.as_bytes())
+            .map(|span| &text[span])
+    })
+}
+
+/// The spans of the identifiers of emitter-produced C that the set of `names`
+/// may hold, excluding literals and comments.
+pub(super) fn named_spans(
+    text: &str,
+    names: NameFilter,
+) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
+    spans_held::<true>(text, names)
+}
+
+/// [`named_spans`] with those in comments, excluding literals only.
+pub(super) fn named_spans_in_comments(
+    text: &str,
+    names: NameFilter,
+) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
+    spans_held::<false>(text, names)
+}
+
+fn spans_held<const SKIP_COMMENTS: bool>(
+    text: &str,
+    names: NameFilter,
+) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
+    let mut long = LongNames::new(names.shortest());
+    std::iter::from_fn(move || long.next::<true, SKIP_COMMENTS>(text.as_bytes()))
+        .filter(move |span| names.may_hold(&text[span.clone()]))
 }
 
 /// Finds the identifiers of at least a certain length. Such a name covers one
@@ -234,10 +264,13 @@ impl LongNames {
         }
     }
 
-    /// The span of the next name in `bytes`, with `CODE_ONLY` of those outside
-    /// literals and comments. Only bytes behind the last name are read, so a
+    /// The span of the next name in `bytes`, of those outside literals and
+    /// comments as the parameters say. Only bytes behind the last name are read, so a
     /// caller may rewrite the others between calls.
-    fn next<const CODE_ONLY: bool>(&mut self, bytes: &[u8]) -> Option<std::ops::Range<usize>> {
+    fn next<const SKIP_LITERALS: bool, const SKIP_COMMENTS: bool>(
+        &mut self,
+        bytes: &[u8],
+    ) -> Option<std::ops::Range<usize>> {
         loop {
             let probe = self.at + self.shortest - 1;
             if !is_c_identifier_byte(*bytes.get(probe)?) {
@@ -258,9 +291,9 @@ impl LongNames {
             {
                 continue;
             }
-            if CODE_ONLY {
+            if SKIP_LITERALS || SKIP_COMMENTS {
                 while self.opaque.end <= start && self.opaque.start < bytes.len() {
-                    self.opaque = next_opaque(bytes, self.opaque.end);
+                    self.opaque = next_opaque::<SKIP_COMMENTS>(bytes, self.opaque.end);
                 }
                 if self.opaque.start < end {
                     continue;
@@ -271,10 +304,10 @@ impl LongNames {
     }
 }
 
-/// The first literal or comment of `bytes` at or after `at`; behind the last
-/// one an empty span at the end.
-fn next_opaque(bytes: &[u8], mut at: usize) -> std::ops::Range<usize> {
-    while let Some(start) = next_opening(bytes, at) {
+/// The first literal, or comment if those are skipped, of `bytes` at or after
+/// `at`; behind the last one an empty span at the end.
+fn next_opaque<const SKIP_COMMENTS: bool>(bytes: &[u8], mut at: usize) -> std::ops::Range<usize> {
+    while let Some(start) = next_opening::<SKIP_COMMENTS>(bytes, at) {
         match opaque_end(bytes, start) {
             Some(end) => return start..end,
             None => at = start + 1,
@@ -310,27 +343,39 @@ fn opaque_end(bytes: &[u8], start: usize) -> Option<usize> {
     }
 }
 
-/// The first quote or slash of `bytes` at or after `at`, looked for in several
-/// bytes at a time: generated code holds few.
-fn next_opening(bytes: &[u8], mut at: usize) -> Option<usize> {
+/// The first quote, or slash if comments are skipped, of `bytes` at or after
+/// `at`.
+fn next_opening<const SKIP_COMMENTS: bool>(bytes: &[u8], at: usize) -> Option<usize> {
+    let slash = if SKIP_COMMENTS { b'/' } else { b'"' };
+    first_of(bytes, at, [b'"', b'\'', slash])
+}
+
+/// The first of `wanted` in `bytes` at or after `at`, looked for in several
+/// bytes at a time: for bytes that generated code holds few of.
+pub(super) fn first_of<const N: usize>(
+    bytes: &[u8],
+    mut at: usize,
+    wanted: [u8; N],
+) -> Option<usize> {
     const LOW: u64 = 0x0101_0101_0101_0101;
     const HIGH: u64 = 0x8080_8080_8080_8080;
-    // A byte of `word` that equals `byte` becomes zero; subtracting one from
-    // it borrows from a top bit the byte itself does not have.
-    let holds = |word: u64, byte: u8| {
-        let difference = word ^ (LOW * u64::from(byte));
-        difference.wrapping_sub(LOW) & !difference & HIGH != 0
-    };
     while let Some((word, _)) = bytes.get(at..)?.split_first_chunk() {
         let word = u64::from_le_bytes(*word);
-        if holds(word, b'"') || holds(word, b'\'') || holds(word, b'/') {
+        let mut found = 0;
+        for byte in wanted {
+            // A byte of `word` that equals `byte` becomes zero; subtracting one
+            // from it borrows from a top bit the byte itself does not have.
+            let difference = word ^ (LOW * u64::from(byte));
+            found |= difference.wrapping_sub(LOW) & !difference;
+        }
+        if found & HIGH != 0 {
             break;
         }
         at += std::mem::size_of_val(&word);
     }
     bytes[at..]
         .iter()
-        .position(|byte| matches!(byte, b'"' | b'\'' | b'/'))
+        .position(|byte| wanted.contains(byte))
         .map(|offset| at + offset)
 }
 
@@ -369,6 +414,11 @@ impl NameFilter {
             self.last |= last;
             self.lengths |= length;
         }
+    }
+
+    /// A length that no name of the set is shorter than.
+    fn shortest(&self) -> usize {
+        self.lengths.trailing_zeros() as usize
     }
 
     /// Whether the set may hold `name`.
@@ -455,11 +505,28 @@ fn next_identifier<const SKIP_COMMENTS: bool>(
 /// Rewrite identifiers in emitted C without touching user-visible text.
 pub(super) fn rewrite_identifiers<S: AsRef<str>>(
     text: &str,
+    rename: impl FnMut(&str) -> Option<S>,
+) -> String {
+    rewrite_spans(text, identifier_spans(text), rename)
+}
+
+/// [`rewrite_identifiers`] for the names that the set of `names` may hold.
+pub(super) fn rewrite_names<S: AsRef<str>>(
+    text: &str,
+    names: NameFilter,
+    rename: impl FnMut(&str) -> Option<S>,
+) -> String {
+    rewrite_spans(text, named_spans(text, names), rename)
+}
+
+fn rewrite_spans<S: AsRef<str>>(
+    text: &str,
+    spans: impl Iterator<Item = std::ops::Range<usize>>,
     mut rename: impl FnMut(&str) -> Option<S>,
 ) -> String {
     let mut out = String::with_capacity(text.len());
     let mut copied = 0;
-    for span in identifier_spans(text) {
+    for span in spans {
         if let Some(replacement) = rename(&text[span.clone()]) {
             out.push_str(&text[copied..span.start]);
             out.push_str(replacement.as_ref());
@@ -489,7 +556,7 @@ pub(super) fn rewrite_identifiers_in_place(
     let mut bytes = text.into_bytes();
     let mut names = LongNames::new(shortest);
     let (mut write, mut copied) = (0, 0);
-    while let Some(span) = names.next::<true>(&bytes) {
+    while let Some(span) = names.next::<true, true>(&bytes) {
         // Identifiers are ASCII, so every span is valid UTF-8.
         let replacement = std::str::from_utf8(&bytes[span.clone()])
             .ok()
@@ -599,7 +666,7 @@ pub(super) fn bound_identifiers(
     let mut occupied = std::collections::HashSet::new();
     let mut oversized = std::collections::HashSet::new();
     let mut names = LongNames::new(MAX_C_IDENTIFIER_LEN);
-    while let Some(span) = names.next::<true>(source.as_bytes()) {
+    while let Some(span) = names.next::<true, true>(source.as_bytes()) {
         let name = &source[span];
         if name.len() == MAX_C_IDENTIFIER_LEN {
             occupied.insert(name);
@@ -946,6 +1013,54 @@ mod tests {
         assert_eq!(registry_index(35), "z");
         assert_eq!(registry_index(36), "10");
         assert_eq!(registry_index(1296), "100");
+    }
+
+    #[test]
+    fn the_first_of_several_bytes_is_found_at_every_distance() {
+        for length in 0..40 {
+            let mut text = vec![0x80_u8; length];
+            text.extend([b'a', b'{', b'b', b'}']);
+            assert_eq!(first_of(&text, 0, [b'}', b'{']), Some(length + 1));
+            assert_eq!(first_of(&text, length + 2, [b'}', b'{']), Some(length + 3));
+            assert_eq!(first_of(&text, 0, [b'?']), None);
+        }
+        assert_eq!(first_of(b"", 0, [b'?']), None);
+        assert_eq!(first_of(b"a", 2, [b'a']), None);
+    }
+
+    #[test]
+    fn filtered_spans_are_the_spans_the_filter_may_hold() {
+        // Random strings of pieces that open, close and nest literals and
+        // comments.
+        let pieces = ["ab", "abc", " ", "\"", "'", "\\", "/", "*", "\n", "1", "é"];
+        let names = ["abc", "bab", "abab", "ab1"];
+        let mut filters = names.map(|name| NameFilter::from_iter([name])).to_vec();
+        filters.push(NameFilter::from_iter(names));
+        filters.push(NameFilter::default());
+        let mut digits = [0; 7];
+        let mut seed = 1_u32;
+        for _ in 0..20_000 {
+            for digit in &mut digits {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                *digit = (seed >> 16) as usize % pieces.len();
+            }
+            let text = digits.map(|digit| pieces[digit]).concat();
+            for filter in &filters {
+                let held = |span: &std::ops::Range<usize>| filter.may_hold(&text[span.clone()]);
+                assert_eq!(
+                    named_spans(&text, *filter).collect::<Vec<_>>(),
+                    identifier_spans(&text).filter(held).collect::<Vec<_>>(),
+                    "{text}"
+                );
+                assert_eq!(
+                    named_spans_in_comments(&text, *filter).collect::<Vec<_>>(),
+                    identifier_spans_in_comments(&text)
+                        .filter(held)
+                        .collect::<Vec<_>>(),
+                    "{text}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -6,7 +6,8 @@ use super::constants::{
 use super::context::RCtx;
 use super::expressions::{coerce_two_state, packed_default};
 use super::names::{
-    bound_identifiers, identifiers_anywhere, rewrite_identifiers, BoundedIdentifiers, NameFilter,
+    bound_identifiers, identifiers_anywhere, rewrite_identifiers, rewrite_names,
+    BoundedIdentifiers, NameFilter,
 };
 use super::statements::{render_stmt_impl as render_stmt, wait_any_text_in_region};
 use super::EmitError;
@@ -1116,11 +1117,8 @@ fn share_frame_types(
         }
         artifact.frame_type = names[group].clone();
         if !renamed.is_empty() {
-            artifact.source = rewrite_identifiers(&artifact.source, |identifier| {
-                filter
-                    .may_hold(identifier)
-                    .then(|| renamed.get(identifier))
-                    .flatten()
+            artifact.source = rewrite_names(&artifact.source, filter, |identifier| {
+                renamed.get(identifier)
             });
         }
     }

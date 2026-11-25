@@ -65,26 +65,53 @@ impl Nesting {
 /// Nodes with something recorded about each, for walks from a node outwards
 /// through those that hold it.
 pub(super) struct Enclosing<T> {
-    /// Ordered as in the [`Nesting`]; with each node the index of the next
-    /// entry outwards.
-    entries: Vec<(NodeId, Option<u32>, T)>,
+    /// Ordered as in the [`Nesting`].
+    entries: Vec<Entry<T>>,
+}
+
+struct Entry<T> {
+    node: NodeId,
+    value: T,
+    /// The next entry outwards.
+    outer: Option<u32>,
+    /// How many entries are outwards of this one.
+    depth: u32,
+    /// One of them, chosen so that the entries passed outwards by jumps and
+    /// single steps grow with the logarithm of those between.
+    jump: u32,
 }
 
 impl<T> Enclosing<T> {
     pub(super) fn new(nesting: &Nesting, mut nodes: Vec<(NodeId, T)>) -> Self {
         nodes.sort_by_key(|(node, _)| nesting.first[node.index()]);
         let mut open = Vec::<u32>::new();
-        let mut entries: Vec<(NodeId, Option<u32>, T)> = Vec::with_capacity(nodes.len());
+        let mut entries: Vec<Entry<T>> = Vec::with_capacity(nodes.len());
         for (node, value) in nodes {
             while open
                 .last()
-                .is_some_and(|outer| !nesting.contains(entries[*outer as usize].0, node))
+                .is_some_and(|outer| !nesting.contains(entries[*outer as usize].node, node))
             {
                 open.pop();
             }
             let outer = open.last().copied();
+            let (depth, jump) = match outer {
+                None => (0, entries.len() as u32),
+                Some(outer) => {
+                    let near = &entries[outer as usize];
+                    let middle = &entries[near.jump as usize];
+                    let far = &entries[middle.jump as usize];
+                    let equal = near.depth - middle.depth == middle.depth - far.depth;
+                    (near.depth + 1, if equal { middle.jump } else { outer })
+                }
+            };
             open.push(entries.len() as u32);
-            entries.push((node, outer, value));
+            entries.push(Entry {
+                node,
+                value,
+                outer,
+                depth,
+                jump,
+            });
         }
         Self { entries }
     }
@@ -98,15 +125,27 @@ impl<T> Enclosing<T> {
         let at = nesting.first[node.index()];
         let before = self
             .entries
-            .partition_point(|(entry, ..)| nesting.first[entry.index()] < at);
+            .partition_point(|entry| nesting.first[entry.node.index()] < at);
+        // The entry before `node` holds it or ends before it, and of those
+        // around that entry the outer ones hold what the inner ones do.
         let mut next = before.checked_sub(1);
-        std::iter::from_fn(move || loop {
+        while let Some(index) = next {
             crate::work::count(crate::work::Work::EnclosingSteps, 1);
-            let (entry, outer, value) = &self.entries[next?];
-            next = outer.map(|outer| outer as usize);
-            if nesting.contains(*entry, node) {
-                return Some((*entry, value));
+            let entry = &self.entries[index];
+            if nesting.contains(entry.node, node) {
+                break;
             }
+            let jump = entry.jump as usize;
+            next = if jump != index && !nesting.contains(self.entries[jump].node, node) {
+                Some(jump)
+            } else {
+                entry.outer.map(|outer| outer as usize)
+            };
+        }
+        std::iter::from_fn(move || {
+            let entry = &self.entries[next?];
+            next = entry.outer.map(|outer| outer as usize);
+            Some((entry.node, &entry.value))
         })
     }
 }
