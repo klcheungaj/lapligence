@@ -702,31 +702,22 @@ static void wait_payload_release(llg_wait_t* wait) {
             break;
         case W_EVENTS:
             free(wait->payload.expression.specs);
-            sv4_destroy_array(wait->payload.expression.last,
-                              wait->payload.expression.last
-                                  ? (size_t)wait->payload.expression.n
-                                  : 0);
-            free(wait->payload.expression.last);
-            break;
+            goto snapshots;
         case W_DEPS:
             if (wait_retained_of(wait)) break;
             free(wait->payload.expression.dependencies);
-            sv4_destroy_array(wait->payload.expression.last,
-                              wait->payload.expression.last
-                                  ? (size_t)wait->payload.expression.n
-                                  : 0);
-            free(wait->payload.expression.last);
-            break;
+            goto snapshots;
         case W_EXPR:
             free_expression_wait(wait);
-            sv4_destroy_array(wait->payload.expression.last,
-                              wait->payload.expression.last
-                                  ? (size_t)wait->payload.expression.n
-                                  : 0);
-            free(wait->payload.expression.last);
             free(wait->payload.expression.real_last);
             free(wait->payload.expression.gate_open);
             free(wait->payload.expression.evs);
+        snapshots:
+            sv4_destroy_array(wait->payload.expression.last,
+                              wait->payload.expression.last
+                                  ? (size_t)wait->payload.expression.n
+                                  : 0);
+            free(wait->payload.expression.last);
             break;
         case W_EVENT:
             if (wait->payload.event.evs != &wait->payload.event.inline_ev)

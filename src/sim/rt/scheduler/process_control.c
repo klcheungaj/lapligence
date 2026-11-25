@@ -581,9 +581,8 @@ llg_semaphore_t* llg_semaphore_new(sv4_t key_count) {
 }
 
 void llg_semaphore_put(llg_semaphore_t* semaphore, sv4_t key_count) {
-    if (!region_can_mutate("semaphore put") ||
-        !semaphore)
-        return;
+    receiver_given(semaphore);
+    if (!region_can_mutate("semaphore put")) return;
     uint64_t keys = 0;
     if (!semaphore_key_count(key_count, &keys) || keys == 0) return;
     if (keys > UINT64_MAX - semaphore->available) {
@@ -646,9 +645,8 @@ llg_co_arm_t llg_arm_semaphore_get(llg_proc_t* self,
 }
 
 int32_t llg_semaphore_try_get(llg_semaphore_t* semaphore, sv4_t key_count) {
-    if (!region_can_mutate("semaphore try_get") ||
-        !semaphore)
-        return 0;
+    receiver_given(semaphore);
+    if (!region_can_mutate("semaphore try_get")) return 0;
     uint64_t keys = 0;
     if (!semaphore_key_count(key_count, &keys)) return 0;
     if (keys == 0) return 1;

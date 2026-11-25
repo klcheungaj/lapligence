@@ -168,6 +168,27 @@ struct DeferredDeclaration {
     standalone: bool,
 }
 
+/// How code leaves after an access failed (SV 8.4).
+#[derive(Clone, Copy)]
+enum FailedAccessExit {
+    /// The report ended the run, also where no process runs.
+    Stopped,
+    /// Through the cleanup of a function that returns normally.
+    Plain,
+    /// Through the exit of the coroutine.
+    Coroutine,
+}
+
+impl FailedAccessExit {
+    /// The statement that leaves whether or not a process is exiting.
+    fn leave(self) -> &'static str {
+        match self {
+            Self::Stopped | Self::Plain => "goto _llg_return;",
+            Self::Coroutine => "return LLG_CO_EXIT;",
+        }
+    }
+}
+
 pub(super) struct Frame<'a, 'm> {
     ctx: &'a RCtx<'m>,
     stack_floor: crate::stack::StackFloor,
@@ -469,25 +490,38 @@ impl<'a, 'm> Frame<'a, 'm> {
     /// Checking the failed value keeps the success path to one register
     /// compare.
     fn exit_on_failed_access(&mut self, failed: &str) {
+        let Some(leave) = self.failed_access_exit() else {
+            return;
+        };
+        self.line(match leave {
+            FailedAccessExit::Stopped => {
+                format!("if (LLG_CO_UNLIKELY({failed})) goto _llg_return;")
+            }
+            FailedAccessExit::Plain => format!(
+                "if (LLG_CO_UNLIKELY({failed})) {{ if (llg_rt_exiting()) goto _llg_return; }}"
+            ),
+            FailedAccessExit::Coroutine => {
+                format!("if (LLG_CO_UNLIKELY({failed})) LLG_CO_EXIT_CHECK(ch);")
+            }
+        });
+    }
+
+    /// How code leaves after an access failed, where it can.
+    fn failed_access_exit(&self) -> Option<FailedAccessExit> {
         // A failed access in a report evaluator already ended the run (SV
         // 8.4): the evaluator stops and the report prints nothing, and the
         // update of an event-controlled assignment writes nothing.
         if (self.postponed_reader || self.event_update) && !self.quiet_receivers {
-            self.line(format!("if (LLG_CO_UNLIKELY({failed})) goto _llg_return;"));
-            return;
+            return Some(FailedAccessExit::Stopped);
         }
         if !self.has_exit_path() || self.read_only_callback || self.quiet_receivers {
-            return;
+            return None;
         }
-        if self.plain_exits() {
-            self.line(format!(
-                "if (LLG_CO_UNLIKELY({failed}) && llg_rt_exiting()) goto _llg_return;"
-            ));
+        Some(if self.plain_exits() {
+            FailedAccessExit::Plain
         } else {
-            self.line(format!(
-                "if (LLG_CO_UNLIKELY({failed})) LLG_CO_EXIT_CHECK(ch);"
-            ));
-        }
+            FailedAccessExit::Coroutine
+        })
     }
 
     /// Leave at once after a plain call (one that returns instead of
@@ -883,7 +917,23 @@ impl<'a, 'm> Frame<'a, 'm> {
         self.line(format!("LLG_CO_AWAIT(co, ch, {resume}, {});", arm.as_ref()));
         Ok(())
     }
-    /// [`Self::await_arm`] of a wait on events, which a null one fails.
+    /// [`Self::await_arm`] of an arm that also exits when the handle it
+    /// operates on is null: that is reported as `failure` at `site`, a C
+    /// literal.
+    fn await_handle_arm(
+        &mut self,
+        operation: SuspensionOperation,
+        arm: &str,
+        failure: &str,
+        site: &str,
+    ) -> Result<(), String> {
+        let resume = self.take_resume(operation)?;
+        self.line(format!(
+            "LLG_CO_AWAIT_OR(co, ch, {resume}, {arm}, llg_rt_failed_access(\"{failure}\", {site}));"
+        ));
+        Ok(())
+    }
+    /// [`Self::await_handle_arm`] of a wait on events.
     fn await_event_arm(
         &mut self,
         operation: SuspensionOperation,
@@ -894,13 +944,11 @@ impl<'a, 'm> Frame<'a, 'm> {
             Some(origin) => format!("{access}\u{1f}{}", origin.location()),
             None => access.to_owned(),
         };
-        self.await_arm(
+        self.await_handle_arm(
             operation,
-            format!(
-                "llg_arm_at({}, \"null event handle access\", {})",
-                arm.as_ref(),
-                c_string_literal(&site)
-            ),
+            arm.as_ref(),
+            "null event handle access",
+            &c_string_literal(&site),
         )
     }
     fn dispatch(&self) -> String {
@@ -1738,6 +1786,7 @@ fn has_statement_boundary(text: &str) -> bool {
 fn resume_state(text: &str) -> Option<u32> {
     [
         "LLG_CO_AWAIT(",
+        "LLG_CO_AWAIT_OR(",
         "LLG_CO_CALL(",
         "LLG_CO_CALL_ANCHOR(",
         "LLG_CO_CALL_ARENA(",
@@ -1753,8 +1802,9 @@ fn resume_state(text: &str) -> Option<u32> {
 }
 
 fn is_runtime_suspension(text: &str) -> bool {
-    const SUSPENSIONS: [&str; 11] = [
+    const SUSPENSIONS: [&str; 12] = [
         "LLG_CO_AWAIT",
+        "LLG_CO_AWAIT_OR",
         "LLG_CO_CALL",
         "LLG_CO_CALL_ANCHOR",
         "LLG_CO_CALL_ARENA",

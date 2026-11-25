@@ -2062,13 +2062,6 @@ static inline void* llg_rt_require(void* handle, const char* failure, const char
     if (LLG_CO_UNLIKELY(!handle)) llg_rt_failed_access(failure, site);
     return handle;
 }
-/* The outcome `arm` of a blocking operation, which exits without having ended
- * its process when the handle it operates on is null: that is reported. */
-LLG_COLD void llg_rt_failed_arm(const char* failure, const char* site);
-static inline llg_co_arm_t llg_arm_at(llg_co_arm_t arm, const char* failure, const char* site) {
-    if (LLG_CO_UNLIKELY(arm == LLG_CO_ARM_EXIT)) llg_rt_failed_arm(failure, site);
-    return arm;
-}
 // Immediate assertion default-failure and successful-cover callbacks. The
 // identity is retained at the call boundary for future per-assertion APIs.
 void llg_assertion_failure(int32_t kind, uint64_t identity, const char* label,

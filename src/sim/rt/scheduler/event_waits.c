@@ -136,7 +136,7 @@ void llg_event_watch_remove(llg_event_object_t* ev) {
 // The outcome of waiting on a null event is undefined (SV 15.5.5.2); like an
 // access through a null class handle (8.4) it ends the simulation (S14-D8).
 // `.triggered` of one is false (15.5.3).
-// The wait's statement reports it (llg_arm_at).
+// The wait's statement reports it, on the arm's exit.
 static inline int32_t event_control_null(const llg_event_t* ev) {
     return LLG_CO_UNLIKELY(!ev || !ev->object) ? 1 : 0;
 }
@@ -422,14 +422,11 @@ llg_co_arm_t llg_arm_expressions(llg_proc_t* self,
     // Adopt every descriptor/context before invoking user code. An evaluator
     // can finish the process on its first call; teardown must also discover
     // contexts belonging to later entries which have not been evaluated yet.
-    for (int32_t i = 0; i < n; i++) {
-        if (specs[i].event) {
-            if (event_control_null(specs[i].event)) {
-                event_unlink(w);
-                wait_payload_release(w);
-                return LLG_CO_ARM_EXIT;
-            }
-            llg_event_object_t* object = specs[i].event->object;
+    int32_t armed = 0;
+    for (; armed < n; armed++) {
+        if (specs[armed].event) {
+            if (event_control_null(specs[armed].event)) break;
+            llg_event_object_t* object = specs[armed].event->object;
             int32_t seen = 0;
             for (int32_t j = 0; j < expression->n_evs; j++)
                 if (expression->evs[j] == object) seen = 1;
@@ -438,22 +435,22 @@ llg_co_arm_t llg_arm_expressions(llg_proc_t* self,
                 event_list_add(object, self,
                                &expression->event_slots[expression->n_evs++]);
             }
-        } else if (specs[i].real || specs[i].real_eval || specs[i].real_sig) {
-            if (specs[i].real_eval)
-                specs[i].real_eval(&expression->real_last[i], specs[i].eval_context);
-            else if (specs[i].real_sig)
-                expression->real_last[i] = *specs[i].real_sig;
+        } else if (specs[armed].real || specs[armed].real_eval || specs[armed].real_sig) {
+            if (specs[armed].real_eval)
+                specs[armed].real_eval(&expression->real_last[armed], specs[armed].eval_context);
+            else if (specs[armed].real_sig)
+                expression->real_last[armed] = *specs[armed].real_sig;
             else abort();
-        } else if (specs[i].eval) {
-            specs[i].eval(&expression->last[i], specs[i].eval_context);
-        } else if (specs[i].sig) {
-            expression->last[i] = sv4_clone(specs[i].sig);
+        } else if (specs[armed].eval) {
+            specs[armed].eval(&expression->last[armed], specs[armed].eval_context);
+        } else if (specs[armed].sig) {
+            expression->last[armed] = sv4_clone(specs[armed].sig);
         } else {
             abort();
         }
         if (self->chain.exiting) break;
     }
-    if (self->chain.exiting) {
+    if (LLG_CO_UNLIKELY(armed < n)) {
         event_unlink(w);
         wait_payload_release(w);
         return LLG_CO_ARM_EXIT;

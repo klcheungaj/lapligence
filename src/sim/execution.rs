@@ -3079,12 +3079,15 @@ fn collect_chandle_effects(
             effects.push(ExecutionEffect::ImmediateStore)
         }
         IrChandleExpr::Required { handle, .. }
-        | IrChandleExpr::RequiredSynchronization { handle, .. }
         | IrChandleExpr::VirtualInterfaceNested { handle, .. } => {
             // A null handle is a fatal run-time error: the process stops
             // after the statement instead of running on.
             effects.push(ExecutionEffect::Terminate);
             collect_chandle_effects(ir, handle, effects, visited_calls);
+        }
+        // The method it is the receiver of leaves at once.
+        IrChandleExpr::RequiredSynchronization { handle, .. } => {
+            collect_chandle_effects(ir, handle, effects, visited_calls)
         }
         IrChandleExpr::Mailbox(mailbox) => {
             collect_mailbox_expr_effects(ir, mailbox, effects, visited_calls)

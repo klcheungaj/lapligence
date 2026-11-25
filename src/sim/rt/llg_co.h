@@ -464,18 +464,25 @@ size_t llg_co_backtrace(const llg_co_chain_t* ch, llg_co_visit_fn visit,
 
 /* Arm once; suspend if needed; continue after the wake. The runtime delivers
  * the result (key, message, order flag) before waking, so no re-arm. */
-#define LLG_CO_AWAIT(co, ch, n, arm_expr)                  \
-    do {                                                   \
-        llg_co_arm_t llg_co_r_ = (arm_expr);               \
-        (void)(ch);                                        \
-        if (llg_co_r_ == LLG_CO_ARM_SUSPEND) {             \
-            (co)->state = (n);                             \
-            return LLG_CO_PENDING;                         \
-        }                                                  \
-        if (LLG_CO_UNLIKELY(llg_co_r_ == LLG_CO_ARM_EXIT)) \
-            return LLG_CO_EXIT;                            \
-    } while (0);                                           \
-    llg_co_resume_##n:                                     \
+#define LLG_CO_AWAIT(co, ch, n, arm_expr) \
+    LLG_CO_AWAIT_OR(co, ch, n, arm_expr, (void)0)
+
+/* LLG_CO_AWAIT of an arm that exits also when it cannot operate on what it is
+ * given: `on_exit` reports that. */
+#define LLG_CO_AWAIT_OR(co, ch, n, arm_expr, on_exit)        \
+    do {                                                     \
+        llg_co_arm_t llg_co_r_ = (arm_expr);                 \
+        (void)(ch);                                          \
+        if (llg_co_r_ == LLG_CO_ARM_SUSPEND) {               \
+            (co)->state = (n);                               \
+            return LLG_CO_PENDING;                           \
+        }                                                    \
+        if (LLG_CO_UNLIKELY(llg_co_r_ == LLG_CO_ARM_EXIT)) { \
+            on_exit;                                         \
+            return LLG_CO_EXIT;                              \
+        }                                                    \
+    } while (0);                                             \
+    llg_co_resume_##n:                                       \
     (void)0
 
 /* Re-arm after every wake until READY, for a future operation that cannot

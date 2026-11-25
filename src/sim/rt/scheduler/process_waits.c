@@ -551,7 +551,7 @@ llg_co_arm_t llg_arm_any_events(llg_proc_t* self,
     payload->n = n;
     payload->specs = (llg_event_spec_t*)llg_checked_malloc(
         (size_t)n, sizeof(llg_event_spec_t), "edge wait specifications");
-    payload->last = (sv4_t*)llg_checked_calloc(
+    payload->last = (sv4_t*)llg_checked_malloc(
         (size_t)n, sizeof(sv4_t), "edge wait snapshots");
     for (int32_t i = 0; i < n; i++) {
         payload->specs[i].sig = specs[i].sig;

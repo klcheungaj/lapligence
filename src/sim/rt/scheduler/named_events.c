@@ -1,21 +1,22 @@
 
 // ── Named events ──────────────────────────────────────────────────────────────
 
-// Grow one event waiter table to hold at least `needed` entries. The grown
-// copy is completed before it replaces the old table, so an allocation failure
-// aborts without leaving a partially rebound event. Only `used` entries are
-// copied; the rest of a freshly allocated table is unspecified.
-static void event_table_reserve(llg_proc_t*** table, size_t* capacity,
-                                int32_t needed, int32_t used, const char* what) {
-    if (needed < 0 || (size_t)needed <= *capacity) return;
-    size_t next = *capacity ? *capacity : 8u;
-    while (next < (size_t)needed) {
-        if (next > SIZE_MAX / 2u) {
-            llg_msg(LLG_MSG_INTERNAL, NULL, "%s capacity overflow", what);
-            abort();
-        }
-        next *= 2u;
+// The entry of a full event waiter table of `used` entries grown by one more.
+// The grown copy is completed before it replaces the old table, so an
+// allocation failure aborts without leaving a partially rebound event. The
+// rest of the grown table is unspecified.
+LLG_COLD LLG_NOINLINE static void event_table_grow(llg_proc_t*** table, size_t* capacity,
+                                                   int32_t used, const char* what) {
+    if (used == INT_MAX) {
+        llg_msg(LLG_MSG_INTERNAL, NULL, "%s count overflow", what);
+        abort();
     }
+    size_t next = *capacity ? *capacity : 4u;
+    if (next > SIZE_MAX / 2u) {
+        llg_msg(LLG_MSG_INTERNAL, NULL, "%s capacity overflow", what);
+        abort();
+    }
+    next *= 2u;
     llg_proc_t** grown = (llg_proc_t**)llg_checked_malloc(
         next, sizeof(*grown), what);
     if (*table && used > 0) memcpy(grown, *table, (size_t)used * sizeof(*grown));
@@ -160,13 +161,9 @@ static int32_t* event_wait_slot(llg_wait_t* w, llg_event_object_t* ev, int32_t i
 // Register `p` on `ev`'s waiter table, growing it with checked allocation.
 static void event_list_add(llg_event_object_t* ev, llg_proc_t* p, int32_t* slot) {
     if (!ev) return;
-    if (ev->n_waiters == INT_MAX) {
-        llg_msg(LLG_MSG_INTERNAL, NULL, "named-event waiter count overflow");
-        abort();
-    }
-    event_table_reserve(&ev->waiters, &ev->waiters_capacity,
-                        ev->n_waiters + 1, ev->n_waiters,
-                        "named-event waiters");
+    if (LLG_CO_UNLIKELY((size_t)ev->n_waiters >= ev->waiters_capacity))
+        event_table_grow(&ev->waiters, &ev->waiters_capacity, ev->n_waiters,
+                         "named-event waiter");
     *slot = ev->n_waiters;
     ev->waiters[ev->n_waiters++] = p;
 }
@@ -176,13 +173,9 @@ static void event_list_add(llg_event_object_t* ev, llg_proc_t* p, int32_t* slot)
 // edge-triggered and never observes a trigger that happened before it parked.
 static void event_triggered_list_add(llg_event_object_t* ev, llg_proc_t* p) {
     if (!ev) return;
-    if (ev->n_triggered_waiters == INT_MAX) {
-        llg_msg(LLG_MSG_INTERNAL, NULL, "named-event triggered waiter count overflow");
-        abort();
-    }
-    event_table_reserve(&ev->triggered_waiters, &ev->triggered_waiters_capacity,
-                        ev->n_triggered_waiters + 1, ev->n_triggered_waiters,
-                        "named-event triggered waiters");
+    if (LLG_CO_UNLIKELY((size_t)ev->n_triggered_waiters >= ev->triggered_waiters_capacity))
+        event_table_grow(&ev->triggered_waiters, &ev->triggered_waiters_capacity,
+                         ev->n_triggered_waiters, "named-event triggered waiter");
     p->wait.payload.event.inline_slot = ev->n_triggered_waiters;
     ev->triggered_waiters[ev->n_triggered_waiters++] = p;
 }

@@ -258,8 +258,9 @@ LLG_NOINLINE static void mailbox_deliver_owned(llg_mailbox_value_t* value,
 }
 
 static llg_mailbox_message_t* mailbox_message_new(llg_mailbox_value_t value) {
-    llg_mailbox_message_t* message = (llg_mailbox_message_t*)llg_checked_calloc(
+    llg_mailbox_message_t* message = (llg_mailbox_message_t*)llg_checked_malloc(
         1, sizeof(*message), "mailbox message");
+    message->link.next = NULL;
     message->value = value;
     return message;
 }
@@ -446,7 +447,7 @@ LLG_COLD LLG_NOINLINE static void mailbox_service_mismatch(llg_mailbox_t* mailbo
 // Service only FIFO heads. Unlinking/granting cannot execute a resumed
 // continuation inline, so list ownership stays with this service loop.
 static void mailbox_service_waiters(llg_mailbox_t* mailbox) {
-    while (mailbox && !g.finish) {
+    while (!g.finish) {
         if (mailbox->head && mailbox->get_head) {
             llg_wait_t* get = mailbox->get_head;
             llg_wait_mailbox_get_payload_t* payload =
@@ -512,6 +513,19 @@ void llg_mailbox_trace(llg_value_visit_fn visit, void* context) {
     }
 }
 
+// Generated code tests the receiver of a method before the call, where it
+// reports a null one.
+static inline void receiver_given(const void* handle) {
+#ifdef LLG_CO_DEBUG
+    if (!handle) {
+        llg_msg(LLG_MSG_INTERNAL, NULL, "a method of a null handle was called");
+        abort();
+    }
+#else
+    (void)handle;
+#endif
+}
+
 llg_mailbox_t* llg_mailbox_new(sv4_t bound, int32_t kind, uint32_t width,
                                int32_t is_signed, int32_t two_state, int32_t shortreal) {
     if (sv4_is_unknown(bound)) {
@@ -574,7 +588,8 @@ sv4_t* llg_mailbox_dependency(llg_mailbox_t* mailbox) {
 }
 
 uint64_t llg_mailbox_num(const llg_mailbox_t* mailbox) {
-    return mailbox ? mailbox->length : 0;
+    receiver_given(mailbox);
+    return mailbox->length;
 }
 
 llg_co_arm_t llg_arm_mailbox_put_value(llg_proc_t* self,
@@ -620,10 +635,7 @@ llg_co_arm_t llg_arm_mailbox_put_value(llg_proc_t* self,
 
 int32_t llg_mailbox_try_put_value(llg_mailbox_t* mailbox,
                               llg_mailbox_value_t value) {
-    if (!mailbox) {
-        mailbox_value_destroy(&value);
-        return 0;
-    }
+    receiver_given(mailbox);
     if (!mailbox_message_kind_matches(mailbox, &value)) {
         mailbox_value_destroy(&value);
         return 0;
@@ -649,7 +661,7 @@ LLG_COLD LLG_NOINLINE static int32_t mailbox_take_mismatch(llg_mailbox_t* mailbo
 // A failed conversion never changes either the message or the destination.
 static int32_t mailbox_take_value(llg_mailbox_t* mailbox,
                                   const llg_mailbox_target_t* target, int32_t peek) {
-    if (!mailbox || !mailbox->head) return 0;
+    if (!mailbox->head) return 0;
     if (!mailbox_target_matches(&mailbox->head->value, target))
         return mailbox_take_mismatch(mailbox, target, peek);
     llg_mailbox_message_t* message = mailbox_message_take(mailbox, peek);
@@ -700,6 +712,6 @@ llg_co_arm_t llg_arm_mailbox_get_value(llg_proc_t* self,
 
 int32_t llg_mailbox_try_get_value(llg_mailbox_t* mailbox,
                               llg_mailbox_target_t target, int32_t peek) {
-    if (!mailbox) return 0;
+    receiver_given(mailbox);
     return mailbox_take_value(mailbox, &target, peek);
 }
