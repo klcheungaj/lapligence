@@ -208,6 +208,36 @@ fn spans<const SKIP_COMMENTS: bool>(
     std::iter::from_fn(move || next_identifier::<SKIP_COMMENTS>(bytes, &mut index))
 }
 
+/// The first bytes of a set of identifiers. Most identifiers of a generated
+/// body are not in the set, and their first byte tells it without hashing.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct FirstBytes(u128);
+
+impl FirstBytes {
+    pub(super) fn insert(&mut self, name: &str) {
+        if let Some(&first) = name.as_bytes().first() {
+            self.0 |= 1 << (first & 0x7f);
+        }
+    }
+
+    /// Whether the set may hold `name`.
+    pub(super) fn may_hold(self, name: &str) -> bool {
+        name.as_bytes()
+            .first()
+            .is_some_and(|first| self.0 >> (first & 0x7f) & 1 != 0)
+    }
+}
+
+impl<'n> FromIterator<&'n str> for FirstBytes {
+    fn from_iter<I: IntoIterator<Item = &'n str>>(names: I) -> Self {
+        let mut first = Self::default();
+        for name in names {
+            first.insert(name);
+        }
+        first
+    }
+}
+
 /// What a byte outside literals and comments begins.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ByteClass {
@@ -321,9 +351,13 @@ pub(super) fn rewrite_identifiers_in_place(
     {
         return rewrite_identifiers(&text, |name| renamed.get(name).map(String::as_str));
     }
+    let shortest = renamed.keys().map(String::len).min().unwrap_or(0);
     let mut bytes = text.into_bytes();
     let (mut read, mut write, mut copied) = (0, 0, 0);
     while let Some(span) = next_identifier::<true>(&bytes, &mut read) {
+        if span.len() < shortest {
+            continue;
+        }
         // Identifiers are ASCII, so every span is valid UTF-8.
         let replacement = std::str::from_utf8(&bytes[span.clone()])
             .ok()

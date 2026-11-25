@@ -4,6 +4,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::sim::execution::CallMechanism;
 
+use super::names::FirstBytes;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FrameStorage {
     CStack,
@@ -107,6 +109,7 @@ pub(super) struct FrameLayout {
     current: usize,
     /// The declared fields by name.
     fields: HashMap<String, FieldEntry>,
+    field_first_bytes: FirstBytes,
     /// The paths of the call slots.
     call_paths: BTreeSet<String>,
     calls: Vec<CallSlot>,
@@ -124,6 +127,7 @@ impl FrameLayout {
             blocks: vec![Block::default()],
             current: 0,
             fields: HashMap::new(),
+            field_first_bytes: FirstBytes::default(),
             call_paths: BTreeSet::new(),
             calls: Vec::new(),
             paths_finalized: false,
@@ -279,6 +283,7 @@ impl FrameLayout {
         let (size, align) = lp64_layout(ty, self.value_backend)?;
         // The final path depends on whether sibling blocks retain any frame
         // storage. Defer constructing it until the whole block tree is known.
+        self.field_first_bytes.insert(name);
         let fields = &mut self.blocks[self.current].fields;
         self.fields.insert(
             name.to_owned(),
@@ -302,12 +307,19 @@ impl FrameLayout {
     }
 
     pub(super) fn field_access(&self, name: &str) -> Option<&str> {
-        self.fields.get(name)?.access.as_deref()
+        self.field_entry(name)?.access.as_deref()
+    }
+
+    fn field_entry(&self, name: &str) -> Option<&FieldEntry> {
+        self.field_first_bytes
+            .may_hold(name)
+            .then(|| self.fields.get(name))
+            .flatten()
     }
 
     pub(super) fn mark_hot(&mut self, name: &str) {
-        if let Some(entry) = self.fields.get(name) {
-            self.blocks[entry.block].fields[entry.index].hot = true;
+        if let Some(&FieldEntry { block, index, .. }) = self.field_entry(name) {
+            self.blocks[block].fields[index].hot = true;
         }
     }
 
