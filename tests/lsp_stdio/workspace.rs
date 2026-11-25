@@ -308,7 +308,7 @@ fn lsp_stdio_keeps_navigation_snapshot_during_syntax_error_and_recovers() {
     );
 
     client
-        .change(&path, 2, &invalid)
+        .change_and_save(&path, 2, &invalid)
         .expect("introduce syntax error");
     let syntax_diagnostics = wait_for_diagnostics(&mut client, &uri, has_severity_1);
     assert!(
@@ -344,7 +344,7 @@ fn lsp_stdio_keeps_navigation_snapshot_during_syntax_error_and_recovers() {
     );
 
     client
-        .change(&path, 3, &valid)
+        .change_and_save(&path, 3, &valid)
         .expect("recover snapshot source");
     let recovered_diagnostics = wait_for_diagnostics(&mut client, &uri, has_no_severity_1);
     assert!(
@@ -378,7 +378,7 @@ fn lsp_stdio_rejects_include_escape_and_keeps_last_good_navigation() {
         "`include \"../../outside.svh\"\nmodule SnapshotTop;",
     );
     client
-        .change(&path, 2, &relative_escape)
+        .change_and_save(&path, 2, &relative_escape)
         .expect("introduce relative include escape");
     let relative_diagnostics = wait_for_diagnostics(&mut client, &uri, |params| {
         params
@@ -417,7 +417,7 @@ fn lsp_stdio_rejects_include_escape_and_keeps_last_good_navigation() {
     assert_has_name(&stale_symbols, "SnapshotTop");
 
     client
-        .change(&path, 3, &valid)
+        .change_and_save(&path, 3, &valid)
         .expect("recover after relative include failure");
     wait_for_diagnostics(&mut client, &uri, has_no_severity_1);
 
@@ -429,7 +429,7 @@ fn lsp_stdio_rejects_include_escape_and_keeps_last_good_navigation() {
         ),
     );
     client
-        .change(&path, 4, &absolute_escape)
+        .change_and_save(&path, 4, &absolute_escape)
         .expect("introduce absolute include escape");
     let absolute_diagnostics = wait_for_diagnostics(&mut client, &uri, |params| {
         params

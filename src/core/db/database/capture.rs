@@ -8,6 +8,16 @@ impl Db {
     ///
     /// This conversion never reads source files and retains no native owner.
     pub fn from_slang(snapshot: &SlangSnapshot) -> Result<Self, DbError> {
+        Self::from_slang_unless_cancelled(snapshot, &CancelToken::default())
+    }
+
+    /// [`Self::from_slang`], unless `cancel` stops it with
+    /// [`DbError::Cancelled`].
+    pub fn from_slang_unless_cancelled(
+        snapshot: &SlangSnapshot,
+        cancel: &CancelToken,
+    ) -> Result<Self, DbError> {
+        let mut poller = cancel.poller();
         let type_projector = SlangTypeProjector::new(snapshot)?;
         let ids = SemanticIds::new(&snapshot.semantic_nodes)?;
         let mut source_positions = SourcePositions::new(snapshot);
@@ -37,6 +47,7 @@ impl Db {
         let mut virtual_interface_call_scopes = HashMap::<NodeId, Vec<(u32, String)>>::new();
         let mut forward_typedefs = HashMap::new();
         for semantic in &snapshot.semantic_nodes {
+            poller.step()?;
             let id = NodeId::from_index(semantic.id as usize);
             if semantic.detail.as_str() == "TypeAlias"
                 && semantic.auxiliary & crate::ffi::slang::TYPEDEF_BUILTIN != 0
@@ -127,6 +138,7 @@ impl Db {
             }
         }
 
+        cancel.check()?;
         let mut nodes = Vec::with_capacity(snapshot.semantic_nodes.len());
         // Placeholder until hierarchical names are assigned after the node
         // loop; one shared value avoids a temporary allocation per node.
@@ -172,6 +184,7 @@ impl Db {
             })?;
         }
         let semantic_details = semantic_details.finish();
+        cancel.check()?;
         let mut conditional_patterns = snapshot
             .semantic_nodes
             .iter()
@@ -352,6 +365,7 @@ impl Db {
                 }
             }
         }
+        cancel.check()?;
         let source_libraries = snapshot
             .source_libraries
             .iter()
@@ -449,7 +463,9 @@ impl Db {
                 ancestor = node.parent_id();
             }
         }
+        cancel.check()?;
         let source_map = super::super::SourceMap::from_slang(snapshot)?;
+        cancel.check()?;
         let legacy_directives = legacy_directives(snapshot, &mut source_positions)?;
         let unconnected_drives = snapshot
             .semantic_nodes
@@ -476,6 +492,7 @@ impl Db {
             instance_definitions(snapshot, &ids, &mut source_positions, &instance_configs)?;
         let (default_time_scale_elements, declared_time_scale_element) =
             time_scale_elements(snapshot, &mut source_positions)?;
+        cancel.check()?;
         let attributes = attribute_instances(snapshot, &ids, &mut source_positions)?;
         let primitive_array_positions = primitive_array_positions(snapshot);
         let instance_array_ranges = instance_array_ranges(snapshot);
@@ -491,6 +508,7 @@ impl Db {
             .filter_map(|node| node.target_id())
             .map(|symbol| semantic_id(&ids, symbol))
             .collect::<Result<HashSet<_>, _>>()?;
+        cancel.check()?;
         let mut arrays = IdMap::new();
         let mut event_arrays = IdMap::new();
         let mut subroutine_arrays = IdMap::new();
@@ -609,6 +627,7 @@ impl Db {
             })
             .collect::<HashMap<_, _>>();
         for semantic in &snapshot.semantic_nodes {
+            poller.step()?;
             let id = NodeId::from_index(semantic.id as usize);
             let edges = semantic_edges(snapshot, semantic)?;
             let mut children = Vec::new();
@@ -1444,6 +1463,7 @@ impl Db {
         // but not the declaration subkind used above. Reuse the declaration
         // metadata by range/name so lowering can select sampled storage for
         // both static and dynamically-held virtual interfaces.
+        cancel.check()?;
         let clocking_declarations = clocking_vars
             .iter()
             .filter_map(|(id, info)| {
@@ -1581,6 +1601,7 @@ impl Db {
                 port_expressions.insert(port, internal);
             }
         }
+        cancel.check()?;
         let mut virtual_interface_targets = HashMap::new();
         for variable in vars_init.sorted_keys() {
             if let Some(instance) = virtual_interface_instance_from_slang(snapshot, &ids, variable)?
@@ -1589,10 +1610,13 @@ impl Db {
             }
         }
 
+        cancel.check()?;
         assign_semantic_full_names(&mut nodes)?;
+        cancel.check()?;
         hoist_procedural_checkers(&mut nodes, &checker_instances);
         let mut elaborated_type_ranges = Vec::new();
         for (index, semantic) in snapshot.semantic_nodes.iter().enumerate() {
+            poller.step()?;
             let id = NodeId::from_index(index);
             let Some(type_id) = semantic.type_id() else {
                 continue;
@@ -1656,6 +1680,7 @@ impl Db {
         // neither its static initializers nor anything else of it is part
         // of the model, as for the block's other members, which the owned
         // children already leave out.
+        cancel.check()?;
         let uninstantiated_nodes = uninstantiated_nodes(snapshot)?;
         let elaborated_classes: Vec<&SemanticNode> = snapshot
             .semantic_nodes
@@ -1713,7 +1738,9 @@ impl Db {
             .values()
             .filter_map(|pattern| pattern.binding)
             .collect();
+        cancel.check()?;
         let fsm_tables = fsm::FsmTables::from_slang(snapshot, &nodes, &mut source_positions)?;
+        cancel.check()?;
         let db = Self {
             nodes,
             edition: snapshot.edition(),
@@ -1829,7 +1856,7 @@ impl Db {
             fsms: fsm_tables.fsms,
             fsm_pragma_errors: fsm_tables.errors,
         };
-        db.validate().map_err(DbError::InvalidDatabase)?;
+        db.validate_unless_cancelled(cancel)?;
         Ok(db)
     }
 }

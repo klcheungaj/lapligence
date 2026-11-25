@@ -652,28 +652,20 @@ pub fn analyze(opts: &CompileOpts) -> Analysis {
 /// itself does not carry the config.  Same guarantees as [`analyze`].
 ///
 pub fn analyze_with_config(opts: &CompileOpts, lint_cfg: &LintConfig) -> Analysis {
-    analyze_with_config_context(opts, lint_cfg, "-", 0)
+    analyze_with_config_context_parent(opts, lint_cfg, "-", 0, None)
+        .unwrap_or_else(|cancelled| Analysis::fatal_preflight(cancelled.to_string()))
 }
 
-/// Analyze with root/generation metadata used only for lifecycle logging.
-pub(crate) fn analyze_with_config_context(
-    opts: &CompileOpts,
-    lint_cfg: &LintConfig,
-    root: &str,
-    generation: u64,
-) -> Analysis {
-    analyze_with_config_context_parent(opts, lint_cfg, root, generation, None)
-}
-
-/// Analyze with an optional parent lifecycle ID supplied by the LSP job
-/// scheduler. The parent is metadata only.
+/// Analyze with root/generation metadata used only for lifecycle logging, and
+/// an optional parent lifecycle ID supplied by the LSP job scheduler. Fails
+/// once `opts.cancel` is cancelled.
 pub(crate) fn analyze_with_config_context_parent(
     opts: &CompileOpts,
     lint_cfg: &LintConfig,
     root: &str,
     generation: u64,
     parent_id: Option<u64>,
-) -> Analysis {
+) -> Result<Analysis, Cancelled> {
     let mut analysis_span = crate::logging::LifecycleSpan::analysis_with_parent(
         "workspace",
         || root.to_owned(),
@@ -702,13 +694,20 @@ pub(crate) fn analyze_with_config_context_parent(
     wait_span.outcome("ok");
     drop(wait_span);
     let parent_id = Some(analysis_span.id());
-    let analysis = llg::stack::run_pipeline(|| {
-        analyze_inner_slang(opts, lint_cfg, root, generation, parent_id)
-    })
-    .unwrap_or_else(|error| {
-        crate::llg_error!("event=pipeline.start outcome=error error={error}");
-        Analysis::fatal_preflight(error.to_string())
-    });
+    // Another root's analysis may have held the lock for long.
+    let analysis = opts
+        .cancel
+        .check()
+        .and_then(|()| {
+            llg::stack::run_pipeline(|| {
+                analyze_inner_slang(opts, lint_cfg, root, generation, parent_id)
+            })
+            .unwrap_or_else(|error| {
+                crate::llg_error!("event=pipeline.start outcome=error error={error}");
+                Ok(Analysis::fatal_preflight(error.to_string()))
+            })
+        })
+        .inspect_err(|_| analysis_span.outcome("cancelled"))?;
     analysis_span.complete(
         match analysis.outcome {
             AnalysisOutcome::Valid => "ok",
@@ -716,7 +715,7 @@ pub(crate) fn analyze_with_config_context_parent(
         },
         analysis.diagnostics.len() + analysis.lint.len() + analysis.design.len(),
     );
-    analysis
+    Ok(analysis)
 }
 
 /// Private workspace used for admitted buffer mirrors and lifecycle cleanup.
@@ -730,7 +729,7 @@ pub(super) fn analyze_inner_slang(
     root: &str,
     generation: u64,
     parent_id: Option<u64>,
-) -> Analysis {
+) -> Result<Analysis, Cancelled> {
     let files = opts.files.len()
         + opts
             .sources
@@ -748,7 +747,18 @@ pub(super) fn analyze_inner_slang(
     let out = match compile::compile(opts) {
         Ok(out) => out,
         Err(error) => {
-            crate::llg_debug!("event=slang.compile.end outcome=error root={} generation={} elapsed_us={} error={}", root, generation, started.elapsed().as_micros(), bounded_log_text(&error.to_string(), 512));
+            let cancelled = error.kind() == compile::StartupErrorKind::Cancelled;
+            crate::llg_debug!(
+                "event=slang.compile.end outcome={} root={} generation={} elapsed_us={} error={}",
+                if cancelled { "cancelled" } else { "error" },
+                root,
+                generation,
+                started.elapsed().as_micros(),
+                bounded_log_text(&error.to_string(), 512)
+            );
+            if cancelled {
+                return Err(Cancelled);
+            }
             if error.kind() == compile::StartupErrorKind::LimitExceeded {
                 crate::llg_error!(
                     "event=slang.resource_limit root={} generation={} library_units={} max_source_bytes={} max_output_bytes={} max_semantic_nodes={} error={} advice={}",
@@ -778,12 +788,18 @@ pub(super) fn analyze_inner_slang(
             } else {
                 error.to_string()
             };
-            return Analysis::fatal_preflight(message);
+            return Ok(Analysis::fatal_preflight(message));
         }
     };
     crate::llg_debug!("event=slang.compile.end outcome={} root={} generation={} diagnostics={} semantic_nodes={} lexical_tokens={} elapsed_us={}", if out.ok() { "ok" } else { "error" }, root, generation, out.diagnostics.len(), out.snapshot.semantic_nodes.len(), out.snapshot.lexical_tokens.len(), started.elapsed().as_micros());
     let mut out = out;
-    let database = (!opts.library_units).then(|| llg::core::db::Db::from_slang(&out.snapshot));
+    opts.cancel.check()?;
+    let database = (!opts.library_units).then(|| {
+        let _stage = Stage::new("db.import");
+        llg::core::db::Db::from_slang_unless_cancelled(&out.snapshot, &opts.cancel)
+    });
+    opts.cancel.check()?;
+    let protected_stage = Stage::new("ls.protected");
     let protected = ProtectedSource::new(&out.snapshot);
     let protected_view = (!protected.is_empty()).then(|| {
         let texts: HashMap<_, _> = out
@@ -834,13 +850,17 @@ pub(super) fn analyze_inner_slang(
         });
     }
 
+    drop(protected_stage);
     let source_texts: Vec<_> = out
         .snapshot
         .files
         .iter()
         .map(|source| (source.name.as_str(), source.text.as_str()))
         .collect();
-    let projection = tokens::project_slang(&out.snapshot, None, &opts.defines);
+    let projection_stage = Stage::new("ls.tokens");
+    let projection =
+        tokens::project_slang_unless_cancelled(&out.snapshot, None, &opts.defines, &opts.cancel)?;
+    drop(projection_stage);
     crate::llg_debug!(
         "event=slang.tokens.end root={} generation={} tokens={} elapsed_us={}",
         root,
@@ -848,6 +868,7 @@ pub(super) fn analyze_inner_slang(
         out.snapshot.lexical_tokens.len(),
         started.elapsed().as_micros()
     );
+    let diagnostics_stage = Stage::new("ls.diagnostics");
     let mut frontend_diagnostics = project_snapshot_diagnostics(
         &out.snapshot
             .files
@@ -871,19 +892,28 @@ pub(super) fn analyze_inner_slang(
                     Severity::Fatal | Severity::Syntax | Severity::Error
                 )
             }));
+    drop(diagnostics_stage);
+    let graph_stage = Stage::new("ls.module_graph");
     let module_graph = module_graph_from_slang(
         &out.snapshot,
         &source_texts,
         database.as_ref().and_then(|result| result.as_ref().ok()),
-    );
+        &opts.cancel,
+    )?;
+    drop(graph_stage);
     let (model, lint_diags, design_diags, db_error) = match database {
         Some(Ok(db)) => {
             // `compile.timescale` is the server's only default time scale.
             let design_diags: Vec<_> = design_checks::mixed_time_scale(&db, Reporter::Server)
                 .into_iter()
                 .collect();
+            let model_stage = Stage::new("ls.model");
             let model = DesignModel::from_db(&db);
-            let mut lint_diags = lint::lint_with_config(&db, &model, lint_cfg);
+            drop(model_stage);
+            let _lint_stage = Stage::new("lint");
+            let lint_ctx = lint::LintCtx::new(&db, &model).cancelled_by(opts.cancel.clone());
+            let mut lint_diags = LintRegistry::default_rules().lint(&lint_ctx, lint_cfg);
+            opts.cancel.check()?;
             if !protected_extents.is_empty() {
                 lint_diags.retain(|finding| !inside_extents(&protected_extents, finding));
             }
@@ -927,6 +957,8 @@ pub(super) fn analyze_inner_slang(
     } else {
         AnalysisOutcome::Valid
     };
+    let _index_stage = Stage::new("ls.index");
+    opts.cancel.check()?;
     let source_maps = FeatureSourceMaps::from_sources(&source_texts);
     let mut analysis = Analysis::new_with_outcome_and_sources(
         outcome,
@@ -950,7 +982,7 @@ pub(super) fn analyze_inner_slang(
         .iter()
         .map(|file| (file.name.clone(), SourceFingerprint::of(&file.text)))
         .collect();
-    analysis
+    Ok(analysis)
 }
 
 /// File name and 1-based inclusive line/column bounds of one protected
@@ -999,7 +1031,7 @@ fn analyze_library_units_after_limit(
     generation: u64,
     parent_id: Option<u64>,
     failure: String,
-) -> Analysis {
+) -> Result<Analysis, Cancelled> {
     let recovery_opts = CompileOpts {
         sources: opts.sources.clone(),
         top: None,
@@ -1009,6 +1041,7 @@ fn analyze_library_units_after_limit(
         editor: opts.editor,
         compilation_unit_mode: opts.compilation_unit_mode,
         limits: opts.limits,
+        cancel: opts.cancel.clone(),
         ..CompileOpts::default()
     };
     crate::llg_debug!(
@@ -1022,7 +1055,7 @@ fn analyze_library_units_after_limit(
             .count(),
         bounded_log_text(&failure, 512)
     );
-    let mut analysis = analyze_inner_slang(&recovery_opts, lint_cfg, root, generation, parent_id)
+    let mut analysis = analyze_inner_slang(&recovery_opts, lint_cfg, root, generation, parent_id)?
         .with_configured_top(opts.top.clone());
     if !analysis.has_feature_data() {
         crate::llg_debug!(
@@ -1030,10 +1063,10 @@ fn analyze_library_units_after_limit(
             root,
             generation
         );
-        return Analysis::fatal_preflight(format!(
+        return Ok(Analysis::fatal_preflight(format!(
             "{failure}. {}",
             crate::config::FRONTEND_LIMIT_GUIDANCE
-        ));
+        )));
     }
     analysis.outcome = AnalysisOutcome::Compile;
     analysis.diagnostics.push(Diag {
@@ -1058,7 +1091,7 @@ fn analyze_library_units_after_limit(
         analysis.index.decls.len(),
         analysis.module_graph.definitions.len()
     );
-    analysis
+    Ok(analysis)
 }
 
 /// Return an empty compile-outcome snapshot for backend failure recovery.

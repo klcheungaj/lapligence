@@ -477,6 +477,7 @@ pub(super) fn open_token_cache_key(
 pub(super) fn open_document_identifiers_if_current(
     document: &OpenTokenDocument,
     current: impl Fn() -> bool,
+    cancel: &CancelToken,
     parent_id: Option<u64>,
 ) -> OpenTokenResult {
     let OpenTokenDocument {
@@ -525,24 +526,29 @@ pub(super) fn open_document_identifiers_if_current(
     // Slang consumes the admitted buffer and never reads this path. The
     // snapshot keeps the real document identity, so includes resolve beside
     // the real file exactly as in the project compile. A frontend refusal is
-    // as much a function of the inputs as a table is.
+    // as much a function of the inputs as a table is; the end of the server,
+    // whose cleanup waits for the parse, is not.
     let result = real
         .to_str()
         .ok_or_else(|| OpenTokenError::transient("semantic source path is not UTF-8"))
         .and_then(|path| {
             llg::stack::run_pipeline(|| {
-                features::open_document_identifiers(path, defines, text, includes)
+                features::open_document_identifiers(path, defines, text, includes, cancel)
             })
             .map_err(|error| OpenTokenError::transient(error.to_string()))?
             .map(Arc::new)
             .map_err(|error| OpenTokenError {
                 message: error.to_string(),
-                transient: false,
+                transient: error.cancelled,
             })
         });
     crate::llg_debug!(
         "event=semantic_tokens.open_parse.end outcome={} file={} token_count={} elapsed_us={}",
-        if result.is_ok() { "ok" } else { "error" },
+        match &result {
+            Ok(_) => "ok",
+            Err(_) if cancel.is_cancelled() => "cancelled",
+            Err(_) => "error",
+        },
         real.display(),
         result
             .as_ref()

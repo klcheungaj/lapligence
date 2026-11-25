@@ -7,6 +7,7 @@ use llg::core::model::{GenScopeModel, TypeInfo};
 use llg::core::tokens;
 
 mod bindings;
+mod cancellation;
 mod completion;
 mod connection_tokens;
 mod coordinates;

@@ -1,11 +1,13 @@
 //! Owned lexical tokens and exact semantic bindings captured by Slang.
 
+use crate::cancel::{CancelToken, Cancelled};
 use crate::core::macros::MacroTable;
 use crate::ffi::slang::{
     LexicalKind, LexicalRole, LexicalTargetRef, LexicalToken, SemanticDefinitionKind, SemanticKind,
     SemanticNode, Snapshot, SourceRange,
 };
 use std::collections::{HashMap, HashSet};
+use std::convert::Infallible;
 
 pub const TOKEN_SLANG_MODULE: i32 = -1;
 pub const TOKEN_SLANG_INTERFACE: i32 = -2;
@@ -319,6 +321,30 @@ pub fn from_slang_snapshot(snapshot: &Snapshot, file: Option<&str>) -> Vec<FileT
 /// with `defines`. With `file`, only that file's tokens are projected; their
 /// targets may lie in any admitted file.
 pub fn project_slang(snapshot: &Snapshot, file: Option<&str>, defines: &[String]) -> Projection {
+    match project_steps(snapshot, file, defines, || Ok::<_, Infallible>(())) {
+        Ok(projection) => projection,
+        Err(never) => match never {},
+    }
+}
+
+/// [`project_slang`], unless `cancel` stops it.
+pub fn project_slang_unless_cancelled(
+    snapshot: &Snapshot,
+    file: Option<&str>,
+    defines: &[String],
+    cancel: &CancelToken,
+) -> Result<Projection, Cancelled> {
+    let mut poller = cancel.poller();
+    project_steps(snapshot, file, defines, || poller.step())
+}
+
+/// [`project_slang`], with `step` called for every token and node.
+fn project_steps<E>(
+    snapshot: &Snapshot,
+    file: Option<&str>,
+    defines: &[String],
+    mut step: impl FnMut() -> Result<(), E>,
+) -> Result<Projection, E> {
     let sources = SnapshotSources::new(snapshot);
     let macros = MacroTable::from_slang(snapshot, &sources, defines);
     let written = WrittenNames::new(snapshot);
@@ -335,6 +361,7 @@ pub fn project_slang(snapshot: &Snapshot, file: Option<&str>, defines: &[String]
     let lexical = &snapshot.lexical_tokens;
     let mut start = 0;
     while start < lexical.len() {
+        step()?;
         // A header of several trees has one token per tree at each range.
         let range = lexical[start].range;
         let mut end = start + 1;
@@ -374,6 +401,7 @@ pub fn project_slang(snapshot: &Snapshot, file: Option<&str>, defines: &[String]
 
     let mut details = DeclDetails::new();
     for node in &snapshot.semantic_nodes {
+        step()?;
         let Some((source, line, col)) = written.range(node).and_then(|range| sources.start(range))
         else {
             continue;
@@ -388,13 +416,13 @@ pub fn project_slang(snapshot: &Snapshot, file: Option<&str>, defines: &[String]
                 .or_insert(detail);
         }
     }
-    Projection {
+    Ok(Projection {
         tokens,
         bindings,
         macros,
         details,
         declarations,
-    }
+    })
 }
 
 /// One token's kind and what it names, before its copies in other syntax

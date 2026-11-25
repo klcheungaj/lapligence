@@ -27,7 +27,13 @@ fn module_graph_from_slang_deduplicates_definitions_and_uses_utf16_columns() {
         .expect("top definition");
     out.snapshot.semantic_nodes.push(definition);
 
-    let graph = module_graph_from_slang(&out.snapshot, &[(name, source)], Some(&database));
+    let graph = module_graph_from_slang(
+        &out.snapshot,
+        &[(name, source)],
+        Some(&database),
+        &CancelToken::default(),
+    )
+    .expect("not cancelled");
     assert_eq!(graph.definitions.len(), 1);
     let top = &graph.definitions[0];
     assert_eq!(top.name, "top");

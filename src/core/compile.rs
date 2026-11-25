@@ -3,6 +3,7 @@
 //! The native compiler receives in-memory source buffers and returns an owned
 //! snapshot. No native Slang object escapes the FFI call.
 
+use crate::cancel::CancelToken;
 use crate::core::macros::MacroTable;
 use crate::core::tokens::{Bindings, FileTokens};
 use crate::ffi::secure_fs::{self, AdmittedTarget, FileIdentity, OpenedPath};
@@ -225,6 +226,9 @@ pub struct CompileOpts {
     /// `missing-timescale` lint rule reports.
     pub default_time_scale: Option<SemanticTimeScale>,
     pub limits: Limits,
+    /// Stops the compile, which then fails with
+    /// [`StartupErrorKind::Cancelled`].
+    pub cancel: CancelToken,
 }
 
 /// Frontend-neutral diagnostic class retained by Rust consumers.
@@ -310,6 +314,8 @@ pub(crate) fn attach_logical_positions(diagnostics: &mut [Diag], snapshot: &Snap
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum StartupErrorKind {
+    /// The caller stopped the compile: no statement about the sources.
+    Cancelled,
     InvalidArgument,
     Input,
     LimitExceeded,
@@ -1270,6 +1276,7 @@ fn compile_source_groups(
         default_time_scale: opts.default_time_scale,
         edition: opts.edition,
         limits: opts.limits,
+        cancel: opts.cancel.clone(),
     };
     let mut snapshot = slang::compile(&CompileRequest {
         sources: &borrowed,
@@ -1277,6 +1284,7 @@ fn compile_source_groups(
         options: &options,
     })
     .map_err(startup_from_slang)?;
+    let _diagnostics_stage = crate::profile::Stage::new("frontend.diagnostics");
     library_configs::restore_source_text(&mut snapshot.files, map_originals, map_work)?;
     let mut diagnostics = project_diagnostics(&snapshot);
     let edition_diagnostics = edition_diagnostics(
@@ -4824,6 +4832,7 @@ pub fn parse_only(file: &str, defines: &[String]) -> Result<ParseOnlyOut, Startu
         &[],
         Vec::new(),
         Vec::new(),
+        &CancelToken::default(),
     )
 }
 
@@ -4833,7 +4842,15 @@ pub fn parse_source(
     text: &str,
     defines: &[String],
 ) -> Result<ParseOnlyOut, StartupError> {
-    parse_source_in_context(name, text, defines, &[], Vec::new(), Vec::new())
+    parse_source_in_context(
+        name,
+        text,
+        defines,
+        &[],
+        Vec::new(),
+        Vec::new(),
+        &CancelToken::default(),
+    )
 }
 
 /// Compile one supplied buffer as the only elaborated compilation unit, with
@@ -4845,7 +4862,8 @@ pub fn parse_source(
 /// the buffer needs declarations from (the packages it imports): each is its
 /// own compilation unit, parsed as a library unit of the default library so
 /// its packages resolve without any of its modules becoming a top. Tokens
-/// and bindings are projected for `name` only.
+/// and bindings are projected for `name` only. `cancel` stops it with
+/// [`StartupErrorKind::Cancelled`].
 pub fn parse_source_in_context(
     name: &str,
     text: &str,
@@ -4853,6 +4871,7 @@ pub fn parse_source_in_context(
     include_dirs: &[String],
     includes: Vec<OwnedSource>,
     dependencies: Vec<OwnedSource>,
+    cancel: &CancelToken,
 ) -> Result<ParseOnlyOut, StartupError> {
     parse_owned_in_context(
         OwnedSource::compilation_unit(name, text),
@@ -4860,6 +4879,7 @@ pub fn parse_source_in_context(
         include_dirs,
         includes,
         dependencies,
+        cancel,
     )
 }
 
@@ -4869,6 +4889,7 @@ fn parse_owned_in_context(
     include_dirs: &[String],
     includes: Vec<OwnedSource>,
     dependencies: Vec<OwnedSource>,
+    cancel: &CancelToken,
 ) -> Result<ParseOnlyOut, StartupError> {
     let (name, text) = (source.name.as_str(), source.text.as_str());
     let limits = Limits::default();
@@ -4941,10 +4962,17 @@ fn parse_owned_in_context(
         library_sources,
         editor: true,
         limits,
+        cancel: cancel.clone(),
         ..CompileOpts::default()
     };
     let out = compile_sources(&sources, &opts)?;
-    let projection = crate::core::tokens::project_slang(&out.snapshot, Some(name), defines);
+    let projection = crate::core::tokens::project_slang_unless_cancelled(
+        &out.snapshot,
+        Some(name),
+        defines,
+        cancel,
+    )
+    .map_err(|cancelled| StartupError::new(StartupErrorKind::Cancelled, cancelled.to_string()))?;
     Ok(ParseOnlyOut {
         diagnostics: out.diagnostics,
         tokens: projection.tokens,
@@ -4987,6 +5015,7 @@ fn parse_override(value: &str) -> Result<ParameterOverride, StartupError> {
 fn startup_from_slang(error: slang::SlangError) -> StartupError {
     use slang::SlangErrorKind;
     let kind = match error.kind() {
+        SlangErrorKind::Cancelled => StartupErrorKind::Cancelled,
         SlangErrorKind::InvalidArgument => StartupErrorKind::InvalidArgument,
         SlangErrorKind::LimitExceeded => StartupErrorKind::LimitExceeded,
         SlangErrorKind::Frontend => StartupErrorKind::Frontend,

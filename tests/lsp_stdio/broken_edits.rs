@@ -144,11 +144,15 @@ fn lsp_stdio_broken_edits_keep_the_rest_of_the_workspace_analysed() {
         );
         assert_navigation(&mut client, &leaf_uri, &top_uri, &broken);
 
-        client.change(&top_path, 2, TOP).expect("repair top.sv");
+        client
+            .change_and_save(&top_path, 2, TOP)
+            .expect("repair top.sv");
         wait_for_diagnostics(&mut client, &top_uri, has_no_severity_1);
         assert_navigation(&mut client, &leaf_uri, &top_uri, TOP);
 
-        client.change(&top_path, 3, &broken).expect("break top.sv");
+        client
+            .change_and_save(&top_path, 3, &broken)
+            .expect("break top.sv");
         let published = wait_for_diagnostics(&mut client, &top_uri, has_severity_1);
         assert!(
             !published.to_string().contains("semantic database"),

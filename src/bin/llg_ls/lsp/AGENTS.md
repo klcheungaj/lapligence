@@ -7,6 +7,7 @@ Components: [readme](readme.md), [handlers](handlers/readme.md). Server rules:
 ## Directory map
 
 - `handlers/state.rs`: backend/root state, `DiscoveryOrder`, `ClientOrder`.
+- `handlers/inputs.rs`: which events start an analysis (module docs).
 - `handlers/scheduling.rs`: rescans, jobs, debounce, reloads, watchers.
 - `handlers/identifiers.rs`: the table that answers a document's token and
   definition requests.
@@ -20,6 +21,14 @@ Components: [readme](readme.md), [handlers](handlers/readme.md). Server rules:
 
 - Build Slang, DB, model and indexes in one `spawn_blocking` closure. Hold no
   backend lock across discovery, cleanup, admission or compilation.
+- An event starts an analysis only through the content comparisons of
+  `inputs.rs`; a change only admits its text
+  ([user rules](../../../../docs/config.md#when-an-analysis-starts)).
+- A job asks its token (`RootJob::cancel`) after each wait and stage. A cancelled
+  one returns `JobEnd::Cancelled`: it publishes nothing, leaves `last_good` and
+  `analysed` alone and has one `event=root_job.end outcome=cancelled` line.
+- No handler takes the staging lock on the async runtime: a job holds it for a
+  whole analysis, and its handler would keep the save that cancels it waiting.
 - tower-lsp runs notifications concurrently: apply a discovery only when no
   later-started one was applied, discard stale generations, and only the job
   holding the root's current generation releases its running slot.
@@ -63,6 +72,9 @@ Components: [readme](readme.md), [handlers](handlers/readme.md). Server rules:
 - Record each token request's inputs under the capture lock; a commit that
   changes its stream sends `workspace/semanticTokens/refresh` from a spawned
   task (`ServedTokens` docs), never from a request handler.
+- Shutdown, `exit` and the end of the input (once its requests are answered)
+  cancel the running analysis and isolated parse (`cancel_analyses`), whose end
+  the cleanup waits for.
 - Shutdown clears roots, caches, flights, watchers and the private process
   mirror; only the per-process child of the staging root is ever removed
   (`--staging-dir` handling: `main.rs`).

@@ -17,6 +17,7 @@ use super::{
 use crate::work::{count, Work};
 use crate::{IdMap, IdSet};
 
+use crate::cancel::{CancelToken, Cancelled};
 use crate::core::elab::Val;
 use crate::core::model::TypeInfo;
 use crate::core::value::ValueData;
@@ -167,6 +168,8 @@ pub enum DbError {
     InvalidSnapshot(String),
     /// The captured owned graph violated an internal database invariant.
     InvalidDatabase(DbValidationError),
+    /// The caller stopped the import.
+    Cancelled,
 }
 
 impl fmt::Display for DbError {
@@ -174,6 +177,7 @@ impl fmt::Display for DbError {
         match self {
             Self::InvalidSnapshot(detail) => f.write_str(detail),
             Self::InvalidDatabase(error) => error.fmt(f),
+            Self::Cancelled => Cancelled.fmt(f),
         }
     }
 }
@@ -182,7 +186,7 @@ impl Error for DbError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::InvalidDatabase(error) => Some(error),
-            Self::InvalidSnapshot(_) => None,
+            Self::InvalidSnapshot(_) | Self::Cancelled => None,
         }
     }
 }
@@ -190,6 +194,18 @@ impl Error for DbError {
 impl From<String> for DbError {
     fn from(detail: String) -> Self {
         Self::InvalidSnapshot(detail)
+    }
+}
+
+impl From<DbValidationError> for DbError {
+    fn from(error: DbValidationError) -> Self {
+        Self::InvalidDatabase(error)
+    }
+}
+
+impl From<Cancelled> for DbError {
+    fn from(_: Cancelled) -> Self {
+        Self::Cancelled
     }
 }
 

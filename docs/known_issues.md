@@ -4120,27 +4120,63 @@ Two files that both define `module dup_top;` with
 ## Symbol lists of the last analysis (llg_ls)
 
 **Status:** found by FIN-002 step 4 (failure matrix); not fixed. Requests by
-position answer for the current text only.
+position: [positions below an unsaved edit](#positions-below-an-unsaved-edit-llg_ls).
 
 ### Symptom
 
-`textDocument/documentSymbol` and `workspace/symbol` that follow an edit at once
-list the symbols and ranges of the analysis before the edit. An editor asks for
-the outline after each change, so it can show the old one until the next change.
+`textDocument/documentSymbol` and `workspace/symbol` list the symbols and ranges
+of the last analysis, which an edit does not start. An editor asks for the outline
+after each change, so it shows the old one until the first change after the edit
+was saved and analysed.
 
 ### Cause
 
-Both answer from `last_good` at once. Dropping the symbols whose text moved would
-leave the outline empty while an edit is analysed, and nothing asks the editor to
-read it again.
+Both answer from `last_good`. Dropping the symbols whose text moved would leave the
+outline empty until the save, and nothing asks the editor to read it again after
+the analysis.
 
 ### Intended direction
 
-Let the two requests wait until the analysis of the current texts is committed or
-refused (a notification of the root's commits, with the request's cancellation and
-a bound), then answer from it.
+Answer `documentSymbol` for an edited document from its isolated parse, as tokens
+and definitions are, and let a request that follows a save wait for the analysis
+(a notification of the root's commits, with the request's cancellation and a
+bound).
 
 ### Reproduce
 
 Open a file with a module, send `textDocument/didChange` with a line inserted above
-it and `textDocument/documentSymbol` right behind it.
+it and `textDocument/documentSymbol`.
+
+## Positions below an unsaved edit (llg_ls)
+
+**Status:** found while analyses were made to start on a save; not fixed.
+
+### Symptom
+
+After a line is inserted, until the file is saved and analysed, below that line:
+
+- `textDocument/hover` and `textDocument/references` answer nothing, or, where the
+  last analysis has a token of the same name at that very position, answer for that
+  token, whose declaration may be another one. Moving `function int f(int v)` to the
+  line that `function int g(bit v)` had shows `bit v` for the `v` of `f`.
+- References asked for elsewhere leave out those below the line without saying so.
+
+Definitions and semantic tokens are those of the current text.
+
+### Cause
+
+The last analysis answers by the positions of its own text. `answers_at` and
+`current_locations` (`lsp/handlers/identifiers.rs`) compare the name at the same
+position of both texts; they do not map a position from one text to the other.
+
+### Intended direction
+
+Keep the analysed text of an open document, map lines that an edit left alone to
+where they are now (a line diff, made on the first request after an edit), and ask
+the analysis at the mapped position. A position in a changed line stays unanswered.
+
+### Reproduce
+
+Analyse a module with the two functions above on successive lines, each returning
+`v`, insert a line above them with `textDocument/didChange` and hover over the `v`
+that `f` returns.
