@@ -137,6 +137,8 @@ impl Validator<'_> {
                 .native_activations
                 .borrow()
                 .iter()
+                // Most uses are of what the scopes nearest to them declare.
+                .rev()
                 .any(|scope| scope.contains(&index))
         {
             return self.fail(path, "native value is used outside its declaration scope");

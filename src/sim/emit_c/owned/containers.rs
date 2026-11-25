@@ -74,9 +74,7 @@ impl Frame<'_, '_> {
         }
         let local = |name: &str| {
             self.native_bindings
-                .iter()
-                .rev()
-                .find_map(|scope| scope.get(name))
+                .get(name)
                 .filter(|binding| binding.kind == NativeKind::Chandle)
                 .map(|binding| format!("*({})", binding.address))
                 .ok_or_else(|| format!("class property receiver `{name}` has no handle storage"))

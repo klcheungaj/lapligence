@@ -1599,7 +1599,8 @@ configuration reloads with requests of every kind in flight.
 
 The nesting limit (`src/stack.rs`) has its own suite, `deep_nesting` of the
 `general` binary: every construct just below and just above the limit, lists
-that are long but not deep, and chains of names. `lsp_stdio::deep_nesting` holds
+that are long but not deep, chains of names, and classes, interfaces, modules
+and checkers that name themselves without end. `lsp_stdio::deep_nesting` holds
 the language server's part, `fin_002e::deeply_nested_constructs_build_and_run`
 (`sim_feature_completion`) a built model. The unoptimized `quick` profile has
 the largest stack frames: run them there after a change to a recursive walk.

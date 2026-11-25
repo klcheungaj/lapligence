@@ -62,8 +62,9 @@ impl Codegen<'_> {
             if array.is_net && self.array_net_endpoint(target).is_none() {
                 let owner = self
                     .array_globals
-                    .iter()
-                    .find_map(|(owner, info)| (info.ir == array.ir).then_some(*owner))?;
+                    .unordered()
+                    .filter_map(|(owner, info)| (info.ir == array.ir).then_some(*owner))
+                    .min_by_key(|owner| owner.index())?;
                 return Some(
                     self.array_net_target_elements(target)
                         .ok()??
@@ -363,7 +364,7 @@ impl Codegen<'_> {
         if let Some((array, _)) = self.array_net_target_parts(target) {
             owners.extend(
                 self.array_globals
-                    .iter()
+                    .unordered()
                     .filter_map(|(owner, info)| (info.ir == array.ir).then_some(*owner)),
             );
         }

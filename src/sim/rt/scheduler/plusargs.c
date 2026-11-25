@@ -137,10 +137,10 @@ static int32_t llg_plusarg_decimal(const char* text, size_t length, sv4_t* outpu
     size_t digits = 0;
     for (size_t i = start; i < length; ++i) {
         if (text[i] == '_') continue;
-        int32_t state = llg_plusarg_unknown_digit((uint8_t)text[i]);
-        if (state) unknown = state;
-        else if (llg_plusarg_digit((uint8_t)text[i], 10) < 0) return 0;
         ++digits;
+        if (llg_plusarg_digit((uint8_t)text[i], 10) >= 0) continue;
+        unknown = llg_plusarg_unknown_digit((uint8_t)text[i]);
+        if (!unknown) return 0;
     }
     if (!digits) return 0;
     if (unknown) {
@@ -179,13 +179,10 @@ static int32_t llg_plusarg_based(const char* text, size_t length, int32_t base,
         if (digit < 0 && !state) return 0;
         if (state) unknown = 1;
         ++digits;
+        // The enclosing parser supplies a zeroed, exact-destination-width owner.
         for (int32_t j = 0; j < bits_per_digit; ++j) {
-            if (state != 0) {
-                llg_plusarg_set_bit(output, bit + (uint32_t)j, state);
-            } else {
-                llg_plusarg_set_bit(output, bit + (uint32_t)j,
-                                    (digit >> j) & 1);
-            }
+            int32_t digit_bit = state ? state : (digit >> j) & 1;
+            if (digit_bit) llg_plusarg_set_bit(output, bit + (uint32_t)j, digit_bit);
         }
         if (bit <= UINT32_MAX - (uint32_t)bits_per_digit) bit += (uint32_t)bits_per_digit;
     }
@@ -208,8 +205,11 @@ static int32_t llg_plusarg_real_value(const char* text, size_t length,
         return 1;
     }
     // strtod also accepts hexadecimal numbers, infinities and NaNs.
-    for (size_t i = 0; i < length; ++i)
-        if (!memchr("0123456789+-.eE", text[i], 15)) return 0;
+    for (size_t i = 0; i < length; ++i) {
+        char c = text[i];
+        if (!((c >= '0' && c <= '9') || c == '.' || c == 'e' || c == 'E' || c == '+' || c == '-'))
+            return 0;
+    }
     char* copy = llg_checked_malloc(length + 1, 1, "plusarg real value");
     memcpy(copy, text, length);
     copy[length] = '\0';

@@ -13,12 +13,13 @@
 //! of its target, which the Single Assignment Rule keeps disjoint (IEEE
 //! 1800-2009 17.7.1). A member array counts per variable, because its node
 //! belongs to the record type: `a.m[i]` and `b.m[i]` drive different objects.
+//! A port link to a member is not counted.
 
 use std::collections::HashMap;
 
 use crate::core::db::{Db, NodeId, NodeKind, StmtKind};
 use crate::core::lint::rules::analysis::{
-    collect_element_writes, driven_bit_interval, port_link_drivers, signal_scope_path, DrivenBits,
+    collect_element_writes, driven_bit_interval, holding_scope_path, port_link_drivers, DrivenBits,
 };
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
@@ -38,6 +39,11 @@ impl LintRule for MultiDriverRule {
         let db = ctx.db;
         let mut drivers: HashMap<(NodeId, Vec<String>), Vec<DrivenBits>> = HashMap::new();
         for (signal, bits) in port_link_drivers(db) {
+            // A link to a member names the declaration every variable of the
+            // record type shares.
+            if db.is_record_member(signal) {
+                continue;
+            }
             drivers.entry((signal, Vec::new())).or_default().push(bits);
         }
         for &id in ctx.nodes() {
@@ -94,7 +100,7 @@ impl LintRule for MultiDriverRule {
                     col: node.col,
                     message: format!(
                         "signal `{name}` in `{}` has {} drivers",
-                        signal_scope_path(db, key.0),
+                        holding_scope_path(db, key.0),
                         drivers[&key].len()
                     ),
                 }
@@ -125,7 +131,7 @@ fn assignments(db: &Db, process: NodeId) -> Vec<NodeId> {
             found.push(node);
             continue;
         }
-        stack.extend(db.node(node).children.iter().copied());
+        stack.extend(db.walk_children(node));
     }
     found
 }
@@ -169,6 +175,21 @@ mod tests {
             rule_diags(&diags, "mixed-assignments").is_empty(),
             "{diags:?}"
         );
+    }
+
+    #[test]
+    fn port_links_to_members_of_different_elements_are_separate() {
+        let diags = lint_design(
+            "typedef struct { logic [3:0] lo; logic [3:0] hi[2]; } in_t;\n\
+             module ch(output logic [3:0] o, output logic [3:0] row[2]); endmodule\n\
+             module md;\n\
+             \x20 struct { in_t in[2]; } s;\n\
+             \x20 ch c0(.o(s.in[1].lo), .row(s.in[0].hi));\n\
+             \x20 ch c1(.o(s.in[0].lo), .row(s.in[1].hi));\n\
+             endmodule\n",
+            "md",
+        );
+        assert!(rule_diags(&diags, "multi-driver").is_empty(), "{diags:?}");
     }
 
     #[test]

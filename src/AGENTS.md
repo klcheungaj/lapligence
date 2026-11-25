@@ -19,6 +19,9 @@ Module ownership is in the `lib.rs` crate docs; child guides own their contracts
   `ffi/process_memory.rs`. User variables: [readme](../readme.md).
 - `profile.rs`: opt-in `LLG_PROFILE_STAGES=1` stage markers (module docs;
   scaling runs in [perf](../perf/README.md)).
+- `work.rs`: work counters of unit tests (module docs). A walk whose cost could
+  grow faster than the design gets a case in `sim/scaling_tests.rs`.
+- `id_map.rs`: the maps and sets keyed by ids, and their hasher (module docs).
 
 ## Event scheduling
 

@@ -16,12 +16,13 @@
 //! - `collect_driver_writes` is the active-driver variant used by rules that
 //!   must distinguish `force` from `release`/`deassign`.
 
+use crate::IdSet;
 use std::collections::{HashMap, HashSet};
 
 use crate::core::db::Operation;
 use crate::core::db::{
     AggregateKind, AlwaysKind, Db, Direction, ExprKind, IntraControl, NodeId, NodeKind,
-    ProductionKind, StmtKind, TypeShape,
+    ProductionKind, StmtKind, TypeShape, COMPILATION_UNIT_NAME,
 };
 use crate::core::value::ValueData;
 
@@ -427,7 +428,7 @@ fn bits_needed(v: u128) -> u32 {
 /// `release`/`deassign` read nothing.
 pub fn collect_reads(db: &Db, root: NodeId) -> Vec<NodeId> {
     let mut out = Vec::new();
-    let mut seen = HashSet::new();
+    let mut seen = IdSet::new();
     walk_reads(db, root, &mut seen, &mut out);
     out
 }
@@ -437,7 +438,7 @@ pub fn collect_reads(db: &Db, root: NodeId) -> Vec<NodeId> {
 /// deduped, in first-encounter order.
 pub fn collect_writes(db: &Db, root: NodeId) -> Vec<NodeId> {
     let mut out = Vec::new();
-    let mut seen = HashSet::new();
+    let mut seen = IdSet::new();
     walk_writes(db, root, LhsTargets::Whole, &mut seen, &mut out);
     out
 }
@@ -449,7 +450,7 @@ pub fn collect_writes(db: &Db, root: NodeId) -> Vec<NodeId> {
 /// their established behavior.
 pub fn collect_writes_with_members(db: &Db, root: NodeId) -> Vec<NodeId> {
     let mut out = Vec::new();
-    let mut seen = HashSet::new();
+    let mut seen = IdSet::new();
     walk_writes(db, root, LhsTargets::Members, &mut seen, &mut out);
     out
 }
@@ -460,7 +461,7 @@ pub fn collect_writes_with_members(db: &Db, root: NodeId) -> Vec<NodeId> {
 /// flow (`combinational-loop`) keeps its established behavior.
 pub fn collect_element_writes(db: &Db, root: NodeId) -> Vec<ElementWrite> {
     let mut targets = Vec::new();
-    let mut seen = HashSet::new();
+    let mut seen = IdSet::new();
     walk_writes(db, root, LhsTargets::Nodes, &mut seen, &mut targets);
     let mut seen = HashSet::new();
     let mut out = Vec::new();
@@ -551,12 +552,12 @@ fn element_signal_of_lhs(db: &Db, id: NodeId) -> Option<NodeId> {
 /// `call_written_actuals`).
 pub fn collect_driver_writes(db: &Db, root: NodeId) -> Vec<NodeId> {
     let mut out = Vec::new();
-    let mut seen = HashSet::new();
+    let mut seen = IdSet::new();
     walk_driver_writes(db, root, &mut seen, &mut out);
     out
 }
 
-fn walk_reads(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {
+fn walk_reads(db: &Db, node: NodeId, seen: &mut IdSet<NodeId>, out: &mut Vec<NodeId>) {
     match db.node_kind(node) {
         NodeKind::Stmt(StmtKind::DelayControl { delay })
         | NodeKind::Stmt(StmtKind::Assign {
@@ -604,8 +605,8 @@ fn walk_reads(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<N
         _ => {}
     }
     add_read(db, node, seen, out);
-    for c in &db.node(node).children {
-        walk_reads(db, *c, seen, out);
+    for child in db.walk_children(node) {
+        walk_reads(db, child, seen, out);
     }
 }
 
@@ -615,7 +616,7 @@ fn walk_reads(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<N
 /// an element select (`s[i].f`) keeps that select among its references, and
 /// each member of a concatenation, streaming or pattern target selects
 /// through its own operands.
-fn walk_lhs_select_reads(db: &Db, lhs: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {
+fn walk_lhs_select_reads(db: &Db, lhs: NodeId, seen: &mut IdSet<NodeId>, out: &mut Vec<NodeId>) {
     match db.node_kind(lhs) {
         NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
             walk_lhs_select_reads(db, *base, seen, out);
@@ -679,7 +680,7 @@ fn walk_lhs_select_reads(db: &Db, lhs: NodeId, seen: &mut HashSet<NodeId>, out: 
     }
 }
 
-fn add_read(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {
+fn add_read(db: &Db, node: NodeId, seen: &mut IdSet<NodeId>, out: &mut Vec<NodeId>) {
     // Reading a clockvar bound to a computed expression reads its operands.
     let clockvar = match db.node_kind(node) {
         NodeKind::Expr(ExprKind::Ref { target: Some(t) } | ExprKind::ScopeRef { target: t }) => {
@@ -741,7 +742,7 @@ fn walk_writes(
     db: &Db,
     node: NodeId,
     targets: LhsTargets,
-    seen: &mut HashSet<NodeId>,
+    seen: &mut IdSet<NodeId>,
     out: &mut Vec<NodeId>,
 ) {
     match db.node_kind(node) {
@@ -768,12 +769,12 @@ fn walk_writes(
         }
         _ => {}
     }
-    for c in &db.node(node).children {
-        walk_writes(db, *c, targets, seen, out);
+    for child in db.walk_children(node) {
+        walk_writes(db, child, targets, seen, out);
     }
 }
 
-fn walk_driver_writes(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {
+fn walk_driver_writes(db: &Db, node: NodeId, seen: &mut IdSet<NodeId>, out: &mut Vec<NodeId>) {
     match db.node_kind(node) {
         NodeKind::Stmt(StmtKind::ProcContAssign { lhs, .. } | StmtKind::Force { lhs, .. }) => {
             add_driver_lhs_write(db, *lhs, seen, out);
@@ -855,8 +856,8 @@ fn walk_driver_writes(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &m
         _ => {}
     }
     // Calls nest inside assignment right-hand sides, conditions and actuals.
-    for c in &db.node(node).children {
-        walk_driver_writes(db, *c, seen, out);
+    for child in db.walk_children(node) {
+        walk_driver_writes(db, child, seen, out);
     }
 }
 
@@ -982,7 +983,7 @@ fn add_lhs_write(
     db: &Db,
     lhs: NodeId,
     targets: LhsTargets,
-    seen: &mut HashSet<NodeId>,
+    seen: &mut IdSet<NodeId>,
     out: &mut Vec<NodeId>,
 ) {
     let sig = match targets {
@@ -1011,7 +1012,7 @@ fn add_lhs_members(
     db: &Db,
     lhs: NodeId,
     resolve: fn(&Db, NodeId) -> [Option<NodeId>; 2],
-    seen: &mut HashSet<NodeId>,
+    seen: &mut IdSet<NodeId>,
     out: &mut Vec<NodeId>,
 ) {
     match db.node_kind(lhs) {
@@ -1064,7 +1065,7 @@ pub fn driver_signal_of_lhs(db: &Db, id: NodeId) -> Option<NodeId> {
     }
 }
 
-fn add_driver_lhs_write(db: &Db, lhs: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {
+fn add_driver_lhs_write(db: &Db, lhs: NodeId, seen: &mut IdSet<NodeId>, out: &mut Vec<NodeId>) {
     add_lhs_members(db, lhs, driven_objects_of_lhs, seen, out);
 }
 
@@ -1165,11 +1166,11 @@ pub fn subroutine_formal_defaults(db: &Db, id: NodeId) -> Vec<NodeId> {
 pub fn declaration_initializers(db: &Db) -> impl Iterator<Item = (NodeId, NodeId)> + '_ {
     let variables = db
         .var_initializers()
-        .iter()
+        .unordered()
         .map(|(signal, init)| (*signal, *init));
     let arrays = db
         .arrays()
-        .iter()
+        .unordered()
         .filter_map(|(signal, meta)| meta.init.map(|init| (*signal, init)));
     variables
         .chain(arrays)
@@ -1179,17 +1180,7 @@ pub fn declaration_initializers(db: &Db) -> impl Iterator<Item = (NodeId, NodeId
 /// Every node in the design tree (from the top instances), depth-first, in
 /// deterministic order.
 pub fn all_nodes(db: &Db) -> Vec<NodeId> {
-    fn walk(db: &Db, id: NodeId, out: &mut Vec<NodeId>) {
-        out.push(id);
-        for c in &db.node(id).children {
-            walk(db, *c, out);
-        }
-    }
-    let mut out = Vec::new();
-    for top in db.tops() {
-        walk(db, *top, &mut out);
-    }
-    out
+    db.elaborated_nodes()
 }
 
 /// Every node reachable from all independent design roots.  Package and
@@ -1197,17 +1188,18 @@ pub fn all_nodes(db: &Db) -> Vec<NodeId> {
 /// source-oriented rules that promise function/task coverage must use this
 /// traversal rather than [`all_nodes`].
 pub fn all_design_nodes(db: &Db) -> Vec<NodeId> {
-    fn walk(db: &Db, id: NodeId, seen: &mut [bool], out: &mut Vec<NodeId>) {
-        if std::mem::replace(&mut seen[id.index()], true) {
+    fn walk(db: &Db, id: NodeId, seen: &mut IdSet<NodeId>, out: &mut Vec<NodeId>) {
+        if !seen.insert(id) {
             return;
         }
+        crate::work::count(crate::work::Work::ListedNodes, 1);
         out.push(id);
         for child in &db.node(id).children {
             walk(db, *child, seen, out);
         }
     }
 
-    let mut seen = vec![false; db.node_count()];
+    let mut seen = IdSet::new();
     let mut out = Vec::new();
     for root in db
         .tops()
@@ -1252,18 +1244,44 @@ pub fn iter_instances(db: &Db) -> impl Iterator<Item = (NodeId, String)> + '_ {
 /// Display path of a scope (module instance or gen scope), e.g. `"top.u0"` or
 /// `"top.g[0]"`.  The top instance yields its own name (unlike
 /// [`Db::instance_path`], which returns `""` for the top); loop generate
-/// blocks follow [`Db::hierarchical_name_parts`], the naming `%m` uses.
+/// blocks follow [`Db::hierarchical_name_parts`], the naming `%m` uses. A
+/// scope in a class or package starts with the class or package name, after
+/// the path of the instance that declares the class; only the compilation
+/// unit is [`COMPILATION_UNIT_NAME`].
 pub fn scope_path(db: &Db, id: NodeId) -> String {
-    db.hierarchical_name_parts(id).join(".")
+    let mut parts: Vec<&str> = Vec::new();
+    let mut current = Some(id);
+    while let Some(scope) = current {
+        let node = db.node(scope);
+        match node.kind {
+            NodeKind::ModuleInst { .. } | NodeKind::GenScope | NodeKind::GenScopeArray => {
+                parts.extend(db.hierarchical_name_parts(scope).into_iter().rev());
+                break;
+            }
+            NodeKind::ClassDef => {
+                parts.push(&node.name);
+                current = db.class_declaring_scope(scope);
+            }
+            NodeKind::Package => {
+                parts.push(&node.name);
+                break;
+            }
+            _ => current = node.parent,
+        }
+    }
+    if parts.is_empty() {
+        return COMPILATION_UNIT_NAME.to_owned();
+    }
+    parts.reverse();
+    parts.join(".")
 }
 
-/// Display path of the scope declaring `sig` (its parent scope); empty when
-/// the signal has no declaring scope.
-pub fn signal_scope_path(db: &Db, sig: NodeId) -> String {
-    db.node(sig)
-        .parent
-        .map(|p| scope_path(db, p))
-        .unwrap_or_default()
+/// Display path of the scope that holds the declaration or process `id`.
+pub fn holding_scope_path(db: &Db, id: NodeId) -> String {
+    match db.node(id).parent {
+        Some(parent) => scope_path(db, parent),
+        None => COMPILATION_UNIT_NAME.to_owned(),
+    }
 }
 
 /// Every signal connected to a port on either side of a binding.
@@ -1835,8 +1853,8 @@ pub fn process_local_vars(db: &Db, process: NodeId) -> HashSet<NodeId> {
             }
             _ => {}
         }
-        for child in &db.node(node).children {
-            walk(db, *child, out);
+        for child in db.walk_children(node) {
+            walk(db, child, out);
         }
     }
     let mut out = HashSet::new();
@@ -1878,10 +1896,8 @@ pub fn has_implicit_event(db: &Db, root: NodeId) -> bool {
     if let NodeKind::Stmt(StmtKind::EventControl { implicit: true, .. }) = db.node_kind(root) {
         return true;
     }
-    db.node(root)
-        .children
-        .iter()
-        .any(|c| has_implicit_event(db, *c))
+    db.walk_children(root)
+        .any(|child| has_implicit_event(db, child))
 }
 
 /// True when the process body contains a delay control or a non-implicit
@@ -1894,10 +1910,8 @@ pub fn has_timing_control(db: &Db, root: NodeId) -> bool {
         NodeKind::Stmt(StmtKind::EventControl { implicit, .. }) => return !*implicit,
         _ => {}
     }
-    db.node(root)
-        .children
-        .iter()
-        .any(|c| has_timing_control(db, *c))
+    db.walk_children(root)
+        .any(|child| has_timing_control(db, child))
 }
 
 #[cfg(test)]

@@ -31,7 +31,7 @@
 //! and are not reached.
 
 use crate::core::db::{Db, ExprKind, NodeId, NodeKind, StmtKind};
-use crate::core::lint::rules::analysis::scope_path;
+use crate::core::lint::rules::analysis::holding_scope_path;
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
 /// Errors on processes mixing blocking and non-blocking assignments.
@@ -59,7 +59,7 @@ impl LintRule for MixedAssignRule {
                 continue;
             }
             let node = db.node(id);
-            let path = node.parent.map(|p| scope_path(db, p)).unwrap_or_default();
+            let path = holding_scope_path(db, id);
             out.push(LintDiag {
                 rule: "mixed-assignments".to_string(),
                 logical: None,
@@ -98,8 +98,8 @@ fn collect_assign_kinds(db: &Db, root: NodeId, out: &mut AssignKinds) {
             out.nonblocking = true;
         }
     }
-    for c in &db.node(root).children {
-        collect_assign_kinds(db, *c, out);
+    for child in db.walk_children(root) {
+        collect_assign_kinds(db, child, out);
     }
 }
 

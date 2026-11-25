@@ -9,18 +9,19 @@
 //! such declaration scope is a VPI scope: 37.12 details 1-3.
 
 use super::*;
+use crate::IdMap;
 
 /// The statement blocks that are VPI scopes, built once per lowering.
 #[derive(Debug, Default)]
 pub(in crate::sim::codegen) struct VpiScopeIndex {
     /// The declaration scope of each block statement that has one.
-    block_scope: HashMap<NodeId, NodeId>,
+    block_scope: IdMap<NodeId, NodeId>,
     /// The block statement of each declaration scope.
-    scope_block: HashMap<NodeId, NodeId>,
+    scope_block: IdMap<NodeId, NodeId>,
     /// `unnamed$$_<n>` of each unnamed declaration scope of an instance,
     /// generate scope, task or function: `n` counts the unnamed scopes whose
     /// nearest named scope is the same, from 0 in source pre-order.
-    names: HashMap<NodeId, String>,
+    names: IdMap<NodeId, String>,
 }
 
 /// The `vpiType` of an unnamed block that is a scope: the statement that
@@ -52,8 +53,7 @@ impl Codegen<'_> {
     }
 
     fn is_declaration_scope(&self, id: NodeId) -> bool {
-        matches!(self.kind(id), NodeKind::Stmt(StmtKind::Begin))
-            && self.db.semantic_detail(id) == Some("StatementBlock")
+        self.db.is_block_scope(id)
     }
 
     /// Whether `id` keeps its own count of unnamed scopes: an instance, a

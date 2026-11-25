@@ -25,6 +25,7 @@ use crate::sim::ir::{
     IrContainer, IrContainerElement, IrContainerExpr, IrContainerKind, IrContainerStmt,
     IrStringExpr,
 };
+use crate::IdSet;
 
 /// A production generated from more than one place is expanded at each
 /// place while its expansion has at most this many production-list elements;
@@ -520,7 +521,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
     fn check_joins(&self, grammar: &Grammar) -> Result<(), String> {
         let db = self.cg.db;
         let reaches = |from: NodeId| {
-            let mut seen = HashSet::new();
+            let mut seen = IdSet::new();
             let mut pending = grammar.callees(db, from);
             while let Some(production) = pending.pop() {
                 if seen.insert(production) {

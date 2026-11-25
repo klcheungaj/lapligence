@@ -46,5 +46,8 @@ below; none were captured from `llg`.
   `neg_concat_select_conflict`: writers through expression ports overlap
   another writer of the same variable bits (§6.5); bit 1 of
   `.p({a[1:0], c})` is `a[0]`.
+- `neg_driver_order`, `neg_writer_order`: several variables or cells with two
+  writers each; every run names the same ones, in the same order
+  (`tests/generated_c_determinism.rs`).
 - `neg_virtual_interface_expression_port`: deferred; reading an expression port
   through a virtual interface handle reports a clear diagnostic.

@@ -1,6 +1,7 @@
 //! Capture.
 
 use super::*;
+use crate::{IdMap, IdSet};
 
 impl Db {
     /// Build the owned semantic database from a validated Slang snapshot.
@@ -22,7 +23,7 @@ impl Db {
         let mut source_positions = SourcePositions::new(snapshot);
         let udp_tables = udp_tables_from_slang(snapshot, &mut source_positions)?;
         let specify = specify_tables_from_slang(snapshot, &ids)?;
-        let mut source_identities = HashMap::new();
+        let mut source_identities = IdMap::new();
         // IEEE 1800-2009 37.23: a typedef reference names a declaration with
         // detail `TypeAlias` and a name; any other target (a typedef of a
         // scope the capture did not visit) leaves the type unnamed.
@@ -508,15 +509,15 @@ impl Db {
             .map(|symbol| semantic_id(&ids, symbol))
             .collect::<Result<HashSet<_>, _>>()?;
         cancel.check()?;
-        let mut arrays = HashMap::new();
-        let mut event_arrays = HashMap::new();
-        let mut subroutine_arrays = HashMap::new();
-        let mut array_select_paths = HashMap::new();
-        let mut vars_init = HashMap::new();
+        let mut arrays = IdMap::new();
+        let mut event_arrays = IdMap::new();
+        let mut subroutine_arrays = IdMap::new();
+        let mut array_select_paths = IdMap::new();
+        let mut vars_init = IdMap::new();
         let mut param_inits = HashMap::new();
         let mut assertion_local_initializers = HashMap::new();
         let mut net_delays = HashMap::new();
-        let mut two_state_types = HashSet::new();
+        let mut two_state_types = IdSet::new();
         let assertion_local_vars = snapshot
             .semantic_nodes
             .iter()
@@ -548,26 +549,26 @@ impl Db {
             .collect();
         let mut implicit_declarations = HashSet::new();
         let mut declaration_qualifiers = HashMap::new();
-        let mut implicit_conversions = HashSet::new();
-        let mut var_lifetimes = HashMap::new();
+        let mut implicit_conversions = IdSet::new();
+        let mut var_lifetimes = IdMap::new();
         let mut var_lifetime_qualifiers = HashMap::new();
-        let mut const_variables = HashSet::new();
-        let mut rand_qualifiers = HashMap::new();
+        let mut const_variables = IdSet::new();
+        let mut rand_qualifiers = IdMap::new();
         let mut member_visibilities = HashMap::new();
         let mut virtual_prototypes = HashSet::new();
         let mut randomize_calls = HashMap::new();
         let mut method_calls_with_clause = HashSet::new();
         let mut const_casts = HashSet::new();
         let mut parenthesized_assertions = HashSet::new();
-        let mut void_cast_statements = HashSet::new();
+        let mut void_cast_statements = IdSet::new();
         let mut method_call_iterators = HashMap::new();
-        let mut packed_members = HashMap::new();
-        let mut aggregate_layouts = HashMap::new();
+        let mut packed_members = IdMap::new();
+        let mut aggregate_layouts = IdMap::new();
         let mut dpi_open_types = HashMap::new();
         let mut type_descriptors = DenseSharedBuilder::new(snapshot.semantic_nodes.len());
         // A projection depends only on its frontend type record, so each
         // distinct type is projected once and shared by every typed node.
-        let mut projections: HashMap<u64, std::rc::Rc<_>> = HashMap::new();
+        let mut projections = IdMap::<u64, std::rc::Rc<_>>::new();
         let mut packed_pattern_elements = HashMap::new();
         let mailbox_elements = type_projector
             .mailbox_elements()
@@ -576,7 +577,7 @@ impl Db {
             .packed_array_elements()
             .map_err(DbError::InvalidSnapshot)?;
         let mut enum_types = HashMap::new();
-        let mut packed_dimensions = HashMap::new();
+        let mut packed_dimensions = IdMap::new();
         let mut clocking_blocks = HashMap::new();
         let mut coverage = CoverageImport::default();
         let mut clocking_vars = HashMap::new();
@@ -768,8 +769,10 @@ impl Db {
             {
                 children.clear();
             }
-            let mut seen_children = HashSet::new();
-            children.retain(|child| seen_children.insert(*child));
+            if children.len() > 1 {
+                let mut seen_children = IdSet::new();
+                children.retain(|child| seen_children.insert(*child));
+            }
             let projection = match semantic.type_id() {
                 Some(type_id) => Some(match projections.get(&type_id) {
                     Some(projection) => std::rc::Rc::clone(projection),
@@ -796,7 +799,7 @@ impl Db {
             }
             if matches!(
                 semantic.kind,
-                SemanticKind::Net | SemanticKind::GenerateScope
+                SemanticKind::Net | SemanticKind::Variable | SemanticKind::GenerateScope
             ) && semantic.is_implicit()
             {
                 implicit_declarations.insert(id);
@@ -1599,7 +1602,7 @@ impl Db {
         }
         cancel.check()?;
         let mut virtual_interface_targets = HashMap::new();
-        for &variable in vars_init.keys() {
+        for variable in vars_init.sorted_keys() {
             if let Some(instance) = virtual_interface_instance_from_slang(snapshot, &ids, variable)?
             {
                 virtual_interface_targets.insert(variable, instance);
@@ -1724,7 +1727,7 @@ impl Db {
                     },
                 ))
             })
-            .collect::<Result<HashMap<_, _>, _>>()?;
+            .collect::<Result<IdMap<_, _>, _>>()?;
         let design_name = tops
             .first()
             .map(|id| nodes[id.index()].name.clone())
@@ -1908,7 +1911,7 @@ const LEGACY_DIRECTIVES: [&str; 6] = [
 /// included. Each node's answer is memoized for the ancestors its walk
 /// passes, so the pass is linear; the walk is bounded by the node count, so a
 /// malformed parent cycle is an error, not a hang.
-fn uninstantiated_nodes(snapshot: &SlangSnapshot) -> Result<HashSet<NodeId>, DbError> {
+fn uninstantiated_nodes(snapshot: &SlangSnapshot) -> Result<IdSet<NodeId>, DbError> {
     #[derive(Clone, Copy, PartialEq)]
     enum State {
         Unknown,
@@ -2026,7 +2029,7 @@ fn time_scale_elements(
     use crate::ffi::slang::{INSTANCE_DECLARED_TIME_SCALE, INSTANCE_DEFAULT_TIME_SCALE};
     let mut found = Vec::new();
     let mut declared: Option<((u64, u64), &crate::ffi::slang::SemanticNode, &'static str)> = None;
-    let mut seen = HashSet::new();
+    let mut seen = IdSet::new();
     for semantic in snapshot.semantic_nodes.iter() {
         let default = semantic.auxiliary & INSTANCE_DEFAULT_TIME_SCALE != 0;
         if !default && semantic.auxiliary & INSTANCE_DECLARED_TIME_SCALE == 0 {

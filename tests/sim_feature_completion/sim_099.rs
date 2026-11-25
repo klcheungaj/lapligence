@@ -535,6 +535,19 @@ fn class_method_scope_names_the_method() {
     );
 }
 
+/// `%m` in a subroutine that a generate block declares names the block once
+/// per loop iteration, then the subroutine and the named blocks in it.
+#[test]
+fn generate_subroutine_scope_names_the_block_and_the_subroutine() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "generate_subroutine_scope",
+        include_str!("../fixtures/sim/feature_completion/sim_099/generate_subroutine_scope.out"),
+        &[],
+        &[],
+    );
+}
+
 /// The owned Db keeps the scope that declares each class, although class
 /// nodes have no parent: the package, the enclosing class, each module
 /// instance's own class, and the compilation unit for a specialization of a

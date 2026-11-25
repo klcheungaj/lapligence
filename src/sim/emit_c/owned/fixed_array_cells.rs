@@ -306,13 +306,13 @@ impl Frame<'_, '_> {
             true,
         );
         let key = if let Some(key) = &order.key {
-            let mut bindings = HashMap::new();
+            self.bindings.push();
             for (name, value, two_state) in [
                 (&order.item_name, &item, order.item_two_state),
                 (&order.index_name, &index, true),
             ] {
-                bindings.insert(
-                    name.clone(),
+                self.bindings.insert(
+                    name,
                     Binding {
                         address: format!("&{}", value.code),
                         width: value.width,
@@ -323,7 +323,6 @@ impl Frame<'_, '_> {
                     },
                 );
             }
-            self.bindings.push(bindings);
             let key = self.expression(key);
             self.bindings.pop();
             let key = self.own(key?);

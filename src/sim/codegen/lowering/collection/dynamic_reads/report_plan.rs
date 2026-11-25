@@ -34,7 +34,7 @@ enum PlannedHandle {
 }
 
 /// The handles one call binds, as [`CalleeReceivers`] holds them.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq)]
 struct PlannedReceivers {
     formals: HashMap<NodeId, Option<PlannedHandle>>,
     this: Option<PlannedHandle>,
@@ -79,7 +79,7 @@ impl Codegen<'_> {
             let handle = self.planned_root_handle(actual, false, &mut serial);
             receivers.formals.insert(formal, handle);
         }
-        self.planned_callee_binds(callee, receivers, &mut Vec::new(), &mut serial)
+        self.planned_callee_binds(callee, receivers, &mut CalleeWalk::default(), &mut serial)
     }
 
     /// A handle actual or receiver of the report's own call that the wait
@@ -135,17 +135,22 @@ impl Codegen<'_> {
         &self,
         callee: NodeId,
         receivers: PlannedReceivers,
-        stack: &mut Vec<NodeId>,
+        walk: &mut CalleeWalk<PlannedReceivers>,
         serial: &mut usize,
     ) -> bool {
         let Some(body) = self.func_body(callee) else {
             return true;
         };
-        if stack.contains(&callee) || stack.len() >= MAX_CALLEE_DEPTH {
-            return !self.reads_dynamic_storage_in(body, &mut HashSet::new());
+        if walk.cuts(callee) {
+            return !self.reads_dynamic_storage_in(body, &mut IdSet::new());
         }
+        if walk.has_walked(callee, &receivers) {
+            return true;
+        }
+        let entered = receivers.clone();
         let receivers = self.planned_bind_locals(body, receivers, serial);
-        stack.push(callee);
+        let cuts = walk.cuts;
+        walk.stack.push(callee);
         let mut pending = vec![body];
         while let Some(node) = pending.pop() {
             if self.reject_unobservable_read("", node).is_err() {
@@ -199,13 +204,13 @@ impl Codegen<'_> {
                     return false;
                 }
                 let bound = self.planned_nested_receivers(node, next, &receivers, serial);
-                if !self.planned_callee_binds(next, bound, stack, serial) {
+                if !self.planned_callee_binds(next, bound, walk, serial) {
                     return false;
                 }
             }
             pending.extend(self.node(node).children.iter().copied());
         }
-        stack.pop();
+        walk.leave(callee, entered, cuts);
         true
     }
 

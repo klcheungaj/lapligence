@@ -165,7 +165,9 @@ typedef struct {
    * ParseTreeTooDeep: recursive constructs and the nodes that operator,
    * member and select chains put above one another. Nonzero. Parsing,
    * elaboration and capture recurse as deep as a source nests on the stack
-   * of the caller, which sizes it for this depth. */
+   * of the caller, which sizes it for this depth. It is also the limit on the
+   * specializations of one class that name each other in their bodies
+   * (RecursiveClassSpecialization). */
   uint32_t max_nesting_depth;
   LlgSlangLimits limits;
   /* (ABI v76) The time scale of every design element that declares none

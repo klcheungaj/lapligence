@@ -14,6 +14,8 @@ use super::{
     JoinKind, NetType, ObjectType, Operation, PrimitiveType, Strength, UnconnectedDrive,
     UniquePriorityCheck,
 };
+use crate::work::{count, Work};
+use crate::{IdMap, IdSet};
 
 use crate::cancel::{CancelToken, Cancelled};
 use crate::core::elab::Val;
@@ -142,8 +144,10 @@ pub use specify::{
 };
 
 /// Arena index of one [`Node`].
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct NodeId(pub(crate) u32);
+
+impl crate::Id for NodeId {}
 
 impl NodeId {
     pub(crate) const fn from_index(index: usize) -> Self {
@@ -382,7 +386,7 @@ pub struct Db {
     /// the block included. Such nodes stay in the arena for navigation but
     /// are no scope's children and no root; nothing in them exists in the
     /// model.
-    uninstantiated_nodes: HashSet<NodeId>,
+    uninstantiated_nodes: IdSet<NodeId>,
     /// The class each forward typedef names (IEEE 1800-2009 6.18, 8.25), by
     /// typedef node.
     forward_typedefs: HashMap<NodeId, ForwardTypedef>,
@@ -398,36 +402,36 @@ pub struct Db {
     packages: Vec<NodeId>,
     classes: Vec<NodeId>,
     /// Class inheritance and nominal type metadata keyed by class node.
-    class_metadata: HashMap<NodeId, ClassMetadata>,
+    class_metadata: IdMap<NodeId, ClassMetadata>,
     design_name: String,
     /// Unpacked-array dimension/initializer metadata, keyed by each
     /// [`NodeKind::Array`] arena node (see [`ArrayMeta`]).
-    arrays: HashMap<NodeId, ArrayMeta>,
+    arrays: IdMap<NodeId, ArrayMeta>,
     /// Unpacked-array metadata for named-event declarations. Event arrays keep
     /// their declaration identity as [`NodeKind::NamedEvent`] while this side
     /// table records the index shape needed by the simulator.
-    event_arrays: HashMap<NodeId, ArrayMeta>,
+    event_arrays: IdMap<NodeId, ArrayMeta>,
     /// Resizable-container shape of subroutine formals and results, keyed by
     /// the [`NodeKind::FuncArg`] or [`NodeKind::FuncTask`] node. Formals keep
     /// their argument identity, so the shape is recorded beside them.
-    subroutine_arrays: HashMap<NodeId, ArrayMeta>,
+    subroutine_arrays: IdMap<NodeId, ArrayMeta>,
     /// Canonical owner/path for array-select expressions whose frontend base
     /// is a detached synthetic array node (for example a member array inside
     /// an unpacked aggregate).  Keeping this identity in the owned snapshot
     /// avoids resolving equal display names at lowering time.
-    array_select_paths: HashMap<NodeId, (NodeId, Vec<String>)>,
-    vars_init: HashMap<NodeId, NodeId>,
+    array_select_paths: IdMap<NodeId, (NodeId, Vec<String>)>,
+    vars_init: IdMap<NodeId, NodeId>,
     /// The default expression of each value parameter that has one.
     param_inits: HashMap<NodeId, NodeId>,
     /// Propagation delays declared on net symbols, kept separate from the
     /// synthetic declaration-assignment driver delay.
     net_delays: HashMap<NodeId, DriverDelay>,
-    var_lifetimes: HashMap<NodeId, VariableLifetime>,
+    var_lifetimes: IdMap<NodeId, VariableLifetime>,
     var_lifetime_qualifiers: HashMap<NodeId, VariableLifetimeQualifier>,
     /// Variables and class properties declared `const` (SV 6.20.6).
-    const_variables: HashSet<NodeId>,
+    const_variables: IdSet<NodeId>,
     /// Class properties declared `rand` or `randc` (IEEE 1800-2009 18.4).
-    rand_qualifiers: HashMap<NodeId, RandQualifier>,
+    rand_qualifiers: IdMap<NodeId, RandQualifier>,
     /// Class properties and methods declared `local` or `protected` (8.18).
     member_visibilities: HashMap<NodeId, MemberVisibility>,
     /// Virtual class method prototypes (`extern virtual`, `pure virtual`).
@@ -440,15 +444,15 @@ pub struct Db {
     /// Assertion expressions written in parentheses (16.14.3).
     parenthesized_assertions: HashSet<NodeId>,
     /// `void'(call)` statements (13.4.1).
-    void_cast_statements: HashSet<NodeId>,
+    void_cast_statements: IdSet<NodeId>,
     /// Method-call node → the frontend-owned iterator declaration used by its
     /// `with` expression.  Slang visits the expression itself as a structural
     /// child, but the implicit iterator variable is not an argument edge.
     method_call_iterators: HashMap<NodeId, NodeId>,
     /// Top-level packed struct/union layouts keyed by the declared object.
-    packed_members: HashMap<NodeId, Vec<PackedMember>>,
+    packed_members: IdMap<NodeId, Vec<PackedMember>>,
     /// Structure/union category and members keyed by the declared object.
-    aggregate_layouts: HashMap<NodeId, AggregateLayout>,
+    aggregate_layouts: IdMap<NodeId, AggregateLayout>,
     /// DPI import formals declared with an unsized dimension.
     dpi_open_types: HashMap<NodeId, DpiOpenType>,
     /// Complete recursive type descriptors keyed by the declared object.
@@ -470,9 +474,9 @@ pub struct Db {
     /// keyed by the array type identity.
     packed_array_elements: HashMap<TypeId, TypeDescriptor>,
     /// Ordered ranges of multidimensional packed declarations.
-    packed_dimensions: HashMap<NodeId, Vec<PackedRange>>,
+    packed_dimensions: IdMap<NodeId, Vec<PackedRange>>,
     /// True for declarations whose complete packed type has a two-state base.
-    two_state_types: HashSet<NodeId>,
+    two_state_types: IdSet<NodeId>,
     /// Local assertion variables are materialized independently for each
     /// sequence/property attempt. Slang does not attach them to an instance
     /// scope, so retain their declaration identity in a side table instead of
@@ -490,7 +494,7 @@ pub struct Db {
     /// Cloned Slang declarations may retain a source-identity edge to their
     /// canonical formal declaration. This map is owned metadata, not a native
     /// AST relationship.
-    source_identities: HashMap<NodeId, NodeId>,
+    source_identities: IdMap<NodeId, NodeId>,
     /// The package items each import declaration (a node with semantic
     /// detail `ExplicitImport` or `WildcardImport`) supplied to some name
     /// reference (IEEE 1800-2009 26.3, 37.12 detail 4), in declaration
@@ -547,13 +551,13 @@ pub struct Db {
     /// context import reach, so only then can it write SystemVerilog storage
     /// (SV 35.5.3).
     dpi_exports: HashMap<NodeId, String>,
-    /// Nets declared implicitly by Slang's semantic analysis, and the
+    /// Nets and variables declared implicitly by Slang's semantic analysis, and the
     /// implicit scopes of unnamed generate blocks.
     implicit_declarations: HashSet<NodeId>,
     /// Nets and ports with a [`DeclarationQualifiers`] fact.
     declaration_qualifiers: HashMap<NodeId, DeclarationQualifiers>,
     /// Context conversions inserted by Slang rather than written as casts.
-    implicit_conversions: HashSet<NodeId>,
+    implicit_conversions: IdSet<NodeId>,
     /// Exact admitted source buffers keyed by their frontend file name.
     source_files: HashMap<String, String>,
     elaborated_type_ranges: Vec<ElaboratedTypeRanges>,
@@ -563,17 +567,6 @@ pub struct Db {
     fsms: Vec<Fsm>,
     /// Malformed, misplaced or unresolved FSM pragmas.
     fsm_pragma_errors: Vec<FsmPragmaError>,
-}
-
-#[cfg(test)]
-thread_local! {
-    /// The node lookups of this thread, for tests of how work grows.
-    pub(crate) static NODE_READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
-#[cfg(test)]
-fn count_node_read() {
-    NODE_READS.with(|reads| reads.set(reads.get() + 1));
 }
 
 impl Db {
@@ -608,7 +601,7 @@ impl Db {
             source_libraries: HashMap::new(),
             declaration_time_scales: HashMap::new(),
             class_declaring_scopes: HashMap::new(),
-            uninstantiated_nodes: HashSet::new(),
+            uninstantiated_nodes: IdSet::new(),
             forward_typedefs: HashMap::new(),
             source_map: super::SourceMap::default(),
             legacy_directives: Vec::new(),
@@ -616,29 +609,29 @@ impl Db {
             flat_modules: Vec::new(),
             packages: Vec::new(),
             classes: Vec::new(),
-            class_metadata: HashMap::new(),
+            class_metadata: IdMap::new(),
             design_name: "test".to_owned(),
-            arrays: HashMap::new(),
-            event_arrays: HashMap::new(),
-            subroutine_arrays: HashMap::new(),
-            array_select_paths: HashMap::new(),
-            vars_init: HashMap::new(),
+            arrays: IdMap::new(),
+            event_arrays: IdMap::new(),
+            subroutine_arrays: IdMap::new(),
+            array_select_paths: IdMap::new(),
+            vars_init: IdMap::new(),
             param_inits: HashMap::new(),
             net_delays: HashMap::new(),
-            var_lifetimes: HashMap::new(),
+            var_lifetimes: IdMap::new(),
             var_lifetime_qualifiers: HashMap::new(),
-            const_variables: HashSet::new(),
-            rand_qualifiers: HashMap::new(),
+            const_variables: IdSet::new(),
+            rand_qualifiers: IdMap::new(),
             member_visibilities: HashMap::new(),
             virtual_prototypes: HashSet::new(),
             randomize_calls: HashMap::new(),
             method_calls_with_clause: HashSet::new(),
             const_casts: HashSet::new(),
             parenthesized_assertions: HashSet::new(),
-            void_cast_statements: HashSet::new(),
+            void_cast_statements: IdSet::new(),
             method_call_iterators: HashMap::new(),
-            packed_members: HashMap::new(),
-            aggregate_layouts: HashMap::new(),
+            packed_members: IdMap::new(),
+            aggregate_layouts: IdMap::new(),
             dpi_open_types: HashMap::new(),
             type_descriptors: DenseShared::default(),
             packed_pattern_elements: HashMap::new(),
@@ -647,12 +640,12 @@ impl Db {
             typedefs: TypedefNames::default(),
             packed_tagged_unions: HashSet::new(),
             packed_array_elements: HashMap::new(),
-            packed_dimensions: HashMap::new(),
-            two_state_types: HashSet::new(),
+            packed_dimensions: IdMap::new(),
+            two_state_types: IdSet::new(),
             assertion_local_vars: HashSet::new(),
             assertion_formal_directions: HashMap::new(),
             assertion_local_initializers: HashMap::new(),
-            source_identities: HashMap::new(),
+            source_identities: IdMap::new(),
             imported_items: HashMap::new(),
             virtual_interface_call_scopes: HashMap::new(),
             clocking_blocks: HashMap::new(),
@@ -671,7 +664,7 @@ impl Db {
             dpi_exports: HashMap::new(),
             implicit_declarations: HashSet::new(),
             declaration_qualifiers: HashMap::new(),
-            implicit_conversions: HashSet::new(),
+            implicit_conversions: IdSet::new(),
             source_files: HashMap::new(),
             elaborated_type_ranges: Vec::new(),
             specify: SpecifyTables::default(),
@@ -724,7 +717,7 @@ impl Db {
             source_libraries: HashMap::new(),
             declaration_time_scales: HashMap::new(),
             class_declaring_scopes: HashMap::new(),
-            uninstantiated_nodes: HashSet::new(),
+            uninstantiated_nodes: IdSet::new(),
             forward_typedefs: HashMap::new(),
             source_map: super::SourceMap::default(),
             legacy_directives: Vec::new(),
@@ -732,29 +725,29 @@ impl Db {
             flat_modules: Vec::new(),
             packages: Vec::new(),
             classes: Vec::new(),
-            class_metadata: HashMap::new(),
+            class_metadata: IdMap::new(),
             design_name: design_name.into(),
-            arrays,
-            event_arrays: HashMap::new(),
-            subroutine_arrays: HashMap::new(),
-            array_select_paths: HashMap::new(),
-            vars_init: HashMap::new(),
+            arrays: arrays.into_iter().collect(),
+            event_arrays: IdMap::new(),
+            subroutine_arrays: IdMap::new(),
+            array_select_paths: IdMap::new(),
+            vars_init: IdMap::new(),
             param_inits: HashMap::new(),
             net_delays: HashMap::new(),
-            var_lifetimes: HashMap::new(),
+            var_lifetimes: IdMap::new(),
             var_lifetime_qualifiers: HashMap::new(),
-            const_variables: HashSet::new(),
-            rand_qualifiers: HashMap::new(),
+            const_variables: IdSet::new(),
+            rand_qualifiers: IdMap::new(),
             member_visibilities: HashMap::new(),
             virtual_prototypes: HashSet::new(),
             randomize_calls: HashMap::new(),
             method_calls_with_clause: HashSet::new(),
             const_casts: HashSet::new(),
             parenthesized_assertions: HashSet::new(),
-            void_cast_statements: HashSet::new(),
+            void_cast_statements: IdSet::new(),
             method_call_iterators: HashMap::new(),
-            packed_members: HashMap::new(),
-            aggregate_layouts: HashMap::new(),
+            packed_members: IdMap::new(),
+            aggregate_layouts: IdMap::new(),
             dpi_open_types: HashMap::new(),
             type_descriptors: DenseShared::default(),
             packed_pattern_elements: HashMap::new(),
@@ -763,12 +756,12 @@ impl Db {
             typedefs: TypedefNames::default(),
             packed_tagged_unions: HashSet::new(),
             packed_array_elements: HashMap::new(),
-            packed_dimensions: HashMap::new(),
-            two_state_types: HashSet::new(),
+            packed_dimensions: IdMap::new(),
+            two_state_types: IdSet::new(),
             assertion_local_vars: HashSet::new(),
             assertion_formal_directions: HashMap::new(),
             assertion_local_initializers: HashMap::new(),
-            source_identities: HashMap::new(),
+            source_identities: IdMap::new(),
             imported_items: HashMap::new(),
             virtual_interface_call_scopes: HashMap::new(),
             clocking_blocks: HashMap::new(),
@@ -787,7 +780,7 @@ impl Db {
             dpi_exports: HashMap::new(),
             implicit_declarations: HashSet::new(),
             declaration_qualifiers: HashMap::new(),
-            implicit_conversions: HashSet::new(),
+            implicit_conversions: IdSet::new(),
             source_files: HashMap::new(),
             elaborated_type_ranges: Vec::new(),
             specify: SpecifyTables::default(),
@@ -800,8 +793,7 @@ impl Db {
 
     /// The node at `id`.
     pub fn node(&self, id: NodeId) -> &Node {
-        #[cfg(test)]
-        count_node_read();
+        count(Work::NodeReads, 1);
         &self.nodes[id.index()]
     }
 
@@ -812,8 +804,7 @@ impl Db {
 
     /// The kind of the node at `id`.
     pub fn node_kind(&self, id: NodeId) -> &NodeKind {
-        #[cfg(test)]
-        count_node_read();
+        count(Work::NodeReads, 1);
         &self.nodes[id.index()].kind
     }
 
@@ -837,6 +828,43 @@ impl Db {
     /// Native detail retained for diagnostics about a captured node.
     pub fn semantic_detail(&self, id: NodeId) -> Option<&str> {
         self.semantic_details.get(id).map(|detail| &**detail)
+    }
+
+    /// Whether `id` is the scope a block statement declares its names in.
+    pub(crate) fn is_block_scope(&self, id: NodeId) -> bool {
+        matches!(self.node_kind(id), NodeKind::Stmt(StmtKind::Begin))
+            && self.semantic_detail(id) == Some("StatementBlock")
+    }
+
+    /// The children of `id` for a walk of all the statements of a process or
+    /// subprogram. A block scope is a child of its statement and of the scope
+    /// around it, so a walk through both would pass the scopes inside a
+    /// statement once for each level around it; this leaves out the second.
+    pub(crate) fn walk_children(&self, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+        let scope = self.is_block_scope(id);
+        self.node(id)
+            .children
+            .iter()
+            .copied()
+            .filter(move |child| !(scope && self.is_block_scope(*child)))
+    }
+
+    /// Every node of the elaborated design, from its top instances down in
+    /// source order. A node that several others hold is listed under each,
+    /// except as [`Self::walk_children`] says.
+    pub(crate) fn elaborated_nodes(&self) -> Vec<NodeId> {
+        fn walk(db: &Db, id: NodeId, out: &mut Vec<NodeId>) {
+            count(Work::ListedNodes, 1);
+            out.push(id);
+            for child in db.walk_children(id) {
+                walk(db, child, out);
+            }
+        }
+        let mut out = Vec::new();
+        for top in self.tops() {
+            walk(self, *top, &mut out);
+        }
+        out
     }
 
     /// Whether any conditional pattern declares a variable.
@@ -1086,14 +1114,14 @@ impl Db {
         self.class_metadata.get(&id)
     }
 
-    pub(crate) fn class_metadata_entries(&self) -> &HashMap<NodeId, ClassMetadata> {
+    pub(crate) fn class_metadata_entries(&self) -> &IdMap<NodeId, ClassMetadata> {
         &self.class_metadata
     }
 
     /// Resolve a canonical frontend class type id to its owned class node.
     pub fn class_for_type(&self, type_id: TypeId) -> Option<NodeId> {
         self.class_metadata
-            .iter()
+            .unordered()
             .find_map(|(node, metadata)| (metadata.type_id == Some(type_id)).then_some(*node))
     }
 
@@ -1125,7 +1153,7 @@ impl Db {
         self.dpi_exports.get(&id).map(String::as_str)
     }
 
-    pub fn arrays(&self) -> &HashMap<NodeId, ArrayMeta> {
+    pub(crate) fn arrays(&self) -> &IdMap<NodeId, ArrayMeta> {
         &self.arrays
     }
 
@@ -1135,7 +1163,7 @@ impl Db {
 
     /// Return unpacked-array metadata for a named-event declaration, when the
     /// declaration has an unpacked event-array type.
-    pub fn event_arrays(&self) -> &HashMap<NodeId, ArrayMeta> {
+    pub(crate) fn event_arrays(&self) -> &IdMap<NodeId, ArrayMeta> {
         &self.event_arrays
     }
 
@@ -1158,7 +1186,7 @@ impl Db {
             .map(|(owner, path)| (*owner, path.as_slice()))
     }
 
-    pub fn var_initializers(&self) -> &HashMap<NodeId, NodeId> {
+    pub(crate) fn var_initializers(&self) -> &IdMap<NodeId, NodeId> {
         &self.vars_init
     }
 
@@ -1178,8 +1206,7 @@ impl Db {
 
     /// Return owned clocking block metadata, if `id` names a clocking block.
     pub fn clocking_block(&self, id: NodeId) -> Option<&ClockingBlockInfo> {
-        #[cfg(test)]
-        count_node_read();
+        count(Work::NodeReads, 1);
         self.clocking_blocks.get(&id)
     }
 
@@ -1366,7 +1393,7 @@ impl Db {
             return None;
         }
         let mut pending = vec![interface];
-        let mut visited = HashSet::new();
+        let mut visited = IdSet::new();
         while let Some(owner) = pending.pop() {
             if !visited.insert(owner) {
                 continue;
@@ -1416,7 +1443,7 @@ impl Db {
             .unwrap_or(VariableLifetime::Unavailable)
     }
 
-    pub(crate) fn variable_lifetime_nodes(&self) -> &HashMap<NodeId, VariableLifetime> {
+    pub(crate) fn variable_lifetime_nodes(&self) -> &IdMap<NodeId, VariableLifetime> {
         &self.var_lifetimes
     }
 
@@ -1448,10 +1475,11 @@ impl Db {
         self.void_cast_statements.contains(&id)
     }
 
-    /// Whether `id` declares a member of a structure or union type. Every
-    /// variable of the type shares the declaration, so it is no object.
+    /// Whether `id` declares a member of a structure or union type, which a
+    /// pattern may be the first to name. Every variable of the type shares the
+    /// declaration, so it is no object.
     pub fn is_record_member(&self, id: NodeId) -> bool {
-        self.semantic_detail(id) == Some("Field")
+        matches!(self.semantic_detail(id), Some("Field" | "PatternField"))
     }
 
     /// Random qualifier of a class property (IEEE 1800-2009 18.4).
@@ -1516,7 +1544,7 @@ impl Db {
         &self.parenthesized_assertions
     }
 
-    pub(crate) fn void_cast_statement_nodes(&self) -> &HashSet<NodeId> {
+    pub(crate) fn void_cast_statement_nodes(&self) -> &IdSet<NodeId> {
         &self.void_cast_statements
     }
 
@@ -1647,7 +1675,7 @@ impl Db {
     /// ordinary storage lookup continues to use the concrete node identity.
     pub fn source_identity(&self, id: NodeId) -> NodeId {
         let mut current = id;
-        let mut seen = HashSet::new();
+        let mut seen = IdSet::new();
         while seen.insert(current) {
             let Some(&representative) = self.source_identities.get(&current) else {
                 break;
@@ -1681,6 +1709,15 @@ impl Db {
 
     pub fn is_implicit_net(&self, id: NodeId) -> bool {
         matches!(self.node(id).kind, NodeKind::Net { .. })
+            && self.implicit_declarations.contains(&id)
+    }
+
+    /// Whether variable `id` is the `this` handle of a class, a method or a
+    /// constraint (IEEE 1800-2009 8.11), which no source declares.
+    pub fn is_this_handle(&self, id: NodeId) -> bool {
+        let node = self.node(id);
+        matches!(node.kind, NodeKind::Var { .. })
+            && node.name == "this"
             && self.implicit_declarations.contains(&id)
     }
 

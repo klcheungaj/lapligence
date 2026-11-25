@@ -93,7 +93,7 @@ impl<'a> Codegen<'a> {
         // Packages have one shared static environment. Collect them
         // separately so package state is not duplicated per module user.
         for package in self.db.packages() {
-            let path = self.instance_path_of(*package);
+            let path = self.scope_path_of(*package);
             if path.is_empty() {
                 return Err("package has no name".to_string());
             }
@@ -105,7 +105,7 @@ impl<'a> Codegen<'a> {
         // them explicitly after package storage is allocated; references keep
         // their owned declaration identity across every importing module.
         for unit in self.compilation_unit_scopes() {
-            let path = self.instance_path_of(unit);
+            let path = self.scope_path_of(unit);
             self.collect_instance(unit, &path)?;
             self.collect_funcs(unit, &path)?;
         }
@@ -211,7 +211,7 @@ impl<'a> Codegen<'a> {
     pub(super) fn instance_display_path(&self, inst: NodeId) -> String {
         let parts = self.db.hierarchical_name_parts(inst);
         if parts.len() <= 1 {
-            return self.instance_path_of(inst);
+            return self.scope_path_of(inst);
         }
         parts.join(".")
     }
@@ -222,7 +222,7 @@ impl<'a> Codegen<'a> {
             .procedural_checker_display_path(inst)
             .unwrap_or_else(|| self.instance_display_path(inst));
         self.display_paths.insert(path.to_owned(), display_path);
-        self.instance_paths.insert(inst, path.to_owned());
+        self.scope_paths.insert(inst, path.to_owned());
         self.scope_nodes.insert(path.to_owned(), inst);
         let components = if self.is_runtime_environment(inst) {
             vec![path.to_owned()]
@@ -583,7 +583,7 @@ impl<'a> Codegen<'a> {
                 self.kind(*c),
                 NodeKind::ModuleInst { .. } | NodeKind::GenScope | NodeKind::GenScopeArray
             ) {
-                let child_path = self.instance_path_of(*c);
+                let child_path = self.scope_path_of(*c);
                 self.collect_funcs(*c, &child_path)?;
             }
         }
@@ -689,7 +689,7 @@ impl<'a> Codegen<'a> {
         );
         self.display_paths.insert(gs_path.clone(), display);
         self.c_paths.insert(gs_path.clone(), components);
-        self.gen_scope_paths.insert(gs, gs_path.clone());
+        self.scope_paths.insert(gs, gs_path.clone());
         self.scope_nodes.insert(gs_path.clone(), gs);
         let mut gseen: HashSet<String> = HashSet::new();
         for c in &self.node(gs).children {
@@ -868,20 +868,8 @@ impl<'a> Codegen<'a> {
     /// Every arena node of the instance tree (top instances + children +
     /// generate scopes), depth-first, in deterministic order. Walked once.
     pub(in super::super) fn design_nodes(&self) -> std::rc::Rc<[NodeId]> {
-        fn walk(db: &Db, id: NodeId, out: &mut Vec<NodeId>) {
-            out.push(id);
-            for c in &db.node(id).children {
-                walk(db, *c, out);
-            }
-        }
         self.design_nodes
-            .get_or_init(|| {
-                let mut out = Vec::new();
-                for top in self.db.tops() {
-                    walk(self.db, *top, &mut out);
-                }
-                out.into()
-            })
+            .get_or_init(|| self.db.elaborated_nodes().into())
             .clone()
     }
 

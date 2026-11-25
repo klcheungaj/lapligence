@@ -89,13 +89,13 @@ impl Frame<'_, '_> {
             32,
             true,
         );
-        let mut bindings = HashMap::new();
+        self.bindings.push();
         for (name, value, two_state) in [
             (&reduction.item_name, &item, reduction.element_two_state),
             (&reduction.index_name, &index, true),
         ] {
-            bindings.insert(
-                name.clone(),
+            self.bindings.insert(
+                name,
                 Binding {
                     address: format!("&{}", value.code),
                     width: value.width,
@@ -106,7 +106,6 @@ impl Frame<'_, '_> {
                 },
             );
         }
-        self.bindings.push(bindings);
         let mapped = self.expression(&reduction.value);
         self.bindings.pop();
         let mapped = mapped?;

@@ -319,7 +319,7 @@ impl EmitCtx<'_, '_> {
     /// industry-standard simulators do; other code names its own scope.
     fn site_scope(&self) -> &str {
         if self.display_scope.is_none() && self.cg.in_compilation_unit_scope(self.inst) {
-            return "$unit";
+            return crate::core::db::COMPILATION_UNIT_NAME;
         }
         self.message_scope()
     }

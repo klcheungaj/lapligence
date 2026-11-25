@@ -1,3 +1,5 @@
+use crate::work::{count, Work};
+
 /// Strip an optional frontend library prefix from a top-instance name.
 pub(crate) fn strip_lib(name: &str) -> String {
     match name.split_once('@') {
@@ -203,29 +205,200 @@ pub(super) fn identifier_spans_in_comments(
 fn spans<const SKIP_COMMENTS: bool>(
     text: &str,
 ) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
+    count(Work::NameScanBytes, text.len());
     let bytes = text.as_bytes();
     let mut index = 0;
     std::iter::from_fn(move || next_identifier::<SKIP_COMMENTS>(bytes, &mut index))
 }
 
-/// The identifiers of `text` wherever they stand, literals and comments
-/// included.
-pub(super) fn identifiers_anywhere(text: &str) -> impl Iterator<Item = &str> {
-    let bytes = text.as_bytes();
-    let mut at = 0;
-    std::iter::from_fn(move || loop {
-        let start = at
-            + bytes[at..]
-                .iter()
-                .position(|byte| is_c_identifier_byte(*byte))?;
-        at = bytes[start..]
-            .iter()
-            .position(|byte| !is_c_identifier_byte(*byte))
-            .map_or(bytes.len(), |length| start + length);
-        if BYTE_CLASSES[usize::from(bytes[start])] == ByteClass::Name {
-            return Some(&text[start..at]);
-        }
+/// The identifiers of `text` of at least `shortest` bytes wherever they stand,
+/// literals and comments included.
+pub(super) fn identifiers_anywhere(text: &str, shortest: usize) -> impl Iterator<Item = &str> {
+    count(Work::NameScanBytes, text.len());
+    let mut names = LongNames::new(shortest);
+    std::iter::from_fn(move || {
+        names
+            .next::<false, false>(text.as_bytes())
+            .map(|span| &text[span])
     })
+}
+
+/// The spans of the identifiers of emitter-produced C that the set of `names`
+/// may hold, excluding literals and comments.
+pub(super) fn named_spans(
+    text: &str,
+    names: NameFilter,
+) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
+    spans_held::<true>(text, names)
+}
+
+/// [`named_spans`] with those in comments, excluding literals only.
+pub(super) fn named_spans_in_comments(
+    text: &str,
+    names: NameFilter,
+) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
+    spans_held::<false>(text, names)
+}
+
+fn spans_held<const SKIP_COMMENTS: bool>(
+    text: &str,
+    names: NameFilter,
+) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
+    count(Work::NameScanBytes, text.len());
+    let mut long = LongNames::new(names.shortest());
+    std::iter::from_fn(move || long.next::<true, SKIP_COMMENTS>(text.as_bytes()))
+        .filter(move |span| names.may_hold(&text[span.clone()]))
+}
+
+/// Finds the identifiers of at least a certain length. Such a name covers one
+/// of any that many consecutive bytes, so most of the text is not read.
+struct LongNames {
+    shortest: usize,
+    /// No identifier that reaches past this byte starts before it.
+    at: usize,
+    /// The first literal or comment that ends behind the last name found.
+    opaque: std::ops::Range<usize>,
+}
+
+impl LongNames {
+    fn new(shortest: usize) -> Self {
+        Self {
+            shortest: shortest.max(1),
+            at: 0,
+            opaque: 0..0,
+        }
+    }
+
+    /// The span of the next name in `bytes`, of those outside literals and
+    /// comments as the parameters say. Only bytes behind the last name are read, so a
+    /// caller may rewrite the others between calls.
+    fn next<const SKIP_LITERALS: bool, const SKIP_COMMENTS: bool>(
+        &mut self,
+        bytes: &[u8],
+    ) -> Option<std::ops::Range<usize>> {
+        loop {
+            let probe = self.at + self.shortest - 1;
+            if !is_c_identifier_byte(*bytes.get(probe)?) {
+                self.at = probe + 1;
+                continue;
+            }
+            let start = bytes[self.at..probe]
+                .iter()
+                .rposition(|byte| !is_c_identifier_byte(*byte))
+                .map_or(self.at, |before| self.at + before + 1);
+            let end = bytes[probe..]
+                .iter()
+                .position(|byte| !is_c_identifier_byte(*byte))
+                .map_or(bytes.len(), |length| probe + length);
+            self.at = end + 1;
+            if end - start < self.shortest
+                || BYTE_CLASSES[usize::from(bytes[start])] != ByteClass::Name
+            {
+                continue;
+            }
+            if SKIP_LITERALS || SKIP_COMMENTS {
+                while self.opaque.end <= start && self.opaque.start < bytes.len() {
+                    self.opaque = next_opaque::<SKIP_COMMENTS>(bytes, self.opaque.end);
+                }
+                if self.opaque.start < end {
+                    continue;
+                }
+            }
+            return Some(start..end);
+        }
+    }
+}
+
+/// The first literal, or comment if those are skipped, of `bytes` at or after
+/// `at`; behind the last one an empty span at the end.
+fn next_opaque<const SKIP_COMMENTS: bool>(bytes: &[u8], mut at: usize) -> std::ops::Range<usize> {
+    while let Some(start) = next_opening::<SKIP_COMMENTS>(bytes, at) {
+        match opaque_end(bytes, start) {
+            Some(end) => return start..end,
+            None => at = start + 1,
+        }
+    }
+    bytes.len()..bytes.len()
+}
+
+/// The end of the literal or comment that the quote or slash at `start` opens.
+fn opaque_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let quote = bytes[start];
+    if quote != b'/' {
+        let mut at = start + 1;
+        while bytes.get(at).is_some_and(|next| *next != quote) {
+            at += if bytes[at] == b'\\' { 2 } else { 1 };
+        }
+        return Some((at + 1).min(bytes.len()));
+    }
+    match bytes.get(start + 1)? {
+        b'*' => Some(
+            bytes[start + 2..]
+                .windows(2)
+                .position(|window| window == b"*/")
+                .map_or(bytes.len(), |offset| start + 2 + offset + 2),
+        ),
+        b'/' => Some(
+            bytes[start..]
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map_or(bytes.len(), |offset| start + offset),
+        ),
+        _ => None,
+    }
+}
+
+/// The first quote, or slash if comments are skipped, of `bytes` at or after
+/// `at`.
+fn next_opening<const SKIP_COMMENTS: bool>(bytes: &[u8], at: usize) -> Option<usize> {
+    let slash = if SKIP_COMMENTS { b'/' } else { b'"' };
+    first_of(bytes, at, [b'"', b'\'', slash])
+}
+
+/// Where `marker` occurs in `text`, found by its first byte: for markers that
+/// begin with one that generated code holds few of.
+pub(super) fn marker_starts<'t>(
+    text: &'t str,
+    marker: &'t str,
+) -> impl Iterator<Item = usize> + 't {
+    count(Work::NameScanBytes, text.len());
+    let (text, marker) = (text.as_bytes(), marker.as_bytes());
+    let mut at = 0;
+    std::iter::from_fn(move || {
+        let start = first_of(text, at, [*marker.first()?])?;
+        at = start + 1;
+        Some(start)
+    })
+    .filter(move |start| text[*start..].starts_with(marker))
+}
+
+/// The first of `wanted` in `bytes` at or after `at`, looked for in several
+/// bytes at a time: for bytes that generated code holds few of.
+pub(super) fn first_of<const N: usize>(
+    bytes: &[u8],
+    mut at: usize,
+    wanted: [u8; N],
+) -> Option<usize> {
+    const LOW: u64 = 0x0101_0101_0101_0101;
+    const HIGH: u64 = 0x8080_8080_8080_8080;
+    while let Some((word, _)) = bytes.get(at..)?.split_first_chunk() {
+        let word = u64::from_le_bytes(*word);
+        let mut found = 0;
+        for byte in wanted {
+            // A byte of `word` that equals `byte` becomes zero; subtracting one
+            // from it borrows from a top bit the byte itself does not have.
+            let difference = word ^ (LOW * u64::from(byte));
+            found |= difference.wrapping_sub(LOW) & !difference;
+        }
+        if found & HIGH != 0 {
+            break;
+        }
+        at += std::mem::size_of_val(&word);
+    }
+    bytes[at..]
+        .iter()
+        .position(|byte| wanted.contains(byte))
+        .map(|offset| at + offset)
 }
 
 /// Whether a C identifier may hold `byte` after its first character.
@@ -236,33 +409,55 @@ pub(super) fn is_c_identifier_byte(byte: u8) -> bool {
     )
 }
 
-/// The first bytes of a set of identifiers. Most identifiers of a generated
-/// body are not in the set, and their first byte tells it without hashing.
+/// The first bytes, last bytes and lengths of a set of identifiers. Most
+/// identifiers of a generated body are not in the set, and these tell it
+/// without hashing.
 #[derive(Clone, Copy, Debug, Default)]
-pub(super) struct FirstBytes(u128);
+pub(super) struct NameFilter {
+    first: u128,
+    last: u128,
+    lengths: u64,
+}
 
-impl FirstBytes {
+impl NameFilter {
+    fn bits(name: &str) -> Option<(u128, u128, u64)> {
+        let bytes = name.as_bytes();
+        let bit = |byte: u8| 1 << (byte & 0x7f);
+        Some((
+            bit(*bytes.first()?),
+            bit(*bytes.last()?),
+            1 << (bytes.len() & 0x3f),
+        ))
+    }
+
     pub(super) fn insert(&mut self, name: &str) {
-        if let Some(&first) = name.as_bytes().first() {
-            self.0 |= 1 << (first & 0x7f);
+        if let Some((first, last, length)) = Self::bits(name) {
+            self.first |= first;
+            self.last |= last;
+            self.lengths |= length;
         }
+    }
+
+    /// A length that no name of the set is shorter than.
+    fn shortest(&self) -> usize {
+        self.lengths.trailing_zeros() as usize
     }
 
     /// Whether the set may hold `name`.
-    pub(super) fn may_hold(self, name: &str) -> bool {
-        name.as_bytes()
-            .first()
-            .is_some_and(|first| self.0 >> (first & 0x7f) & 1 != 0)
+    pub(super) fn may_hold(&self, name: &str) -> bool {
+        Self::bits(name).is_some_and(|(first, last, length)| {
+            self.first & first != 0 && self.last & last != 0 && self.lengths & length != 0
+        })
     }
 }
 
-impl<'n> FromIterator<&'n str> for FirstBytes {
+impl<'n> FromIterator<&'n str> for NameFilter {
     fn from_iter<I: IntoIterator<Item = &'n str>>(names: I) -> Self {
-        let mut first = Self::default();
+        let mut filter = Self::default();
         for name in names {
-            first.insert(name);
+            filter.insert(name);
         }
-        first
+        filter
     }
 }
 
@@ -319,26 +514,9 @@ fn next_identifier<const SKIP_COMMENTS: bool>(
                     return Some(start..at);
                 }
             }
-            ByteClass::Quote => {
-                at += 1;
-                while bytes.get(at).is_some_and(|next| *next != byte) {
-                    at += if bytes[at] == b'\\' { 2 } else { 1 };
-                }
-                at = (at + 1).min(bytes.len());
-            }
-            ByteClass::Slash => {
-                let comment = bytes.get(at + 1).filter(|_| SKIP_COMMENTS);
-                at = match comment {
-                    Some(b'*') => bytes[at + 2..]
-                        .windows(2)
-                        .position(|window| window == b"*/")
-                        .map_or(bytes.len(), |offset| at + 2 + offset + 2),
-                    Some(b'/') => bytes[at..]
-                        .iter()
-                        .position(|byte| *byte == b'\n')
-                        .map_or(bytes.len(), |offset| at + offset),
-                    _ => at + 1,
-                };
+            ByteClass::Slash if !SKIP_COMMENTS => at += 1,
+            ByteClass::Quote | ByteClass::Slash => {
+                at = opaque_end(bytes, at).unwrap_or(at + 1);
             }
         }
     }
@@ -349,11 +527,28 @@ fn next_identifier<const SKIP_COMMENTS: bool>(
 /// Rewrite identifiers in emitted C without touching user-visible text.
 pub(super) fn rewrite_identifiers<S: AsRef<str>>(
     text: &str,
+    rename: impl FnMut(&str) -> Option<S>,
+) -> String {
+    rewrite_spans(text, identifier_spans(text), rename)
+}
+
+/// [`rewrite_identifiers`] for the names that the set of `names` may hold.
+pub(super) fn rewrite_names<S: AsRef<str>>(
+    text: &str,
+    names: NameFilter,
+    rename: impl FnMut(&str) -> Option<S>,
+) -> String {
+    rewrite_spans(text, named_spans(text, names), rename)
+}
+
+fn rewrite_spans<S: AsRef<str>>(
+    text: &str,
+    spans: impl Iterator<Item = std::ops::Range<usize>>,
     mut rename: impl FnMut(&str) -> Option<S>,
 ) -> String {
     let mut out = String::with_capacity(text.len());
     let mut copied = 0;
-    for span in identifier_spans(text) {
+    for span in spans {
         if let Some(replacement) = rename(&text[span.clone()]) {
             out.push_str(&text[copied..span.start]);
             out.push_str(replacement.as_ref());
@@ -381,11 +576,9 @@ pub(super) fn rewrite_identifiers_in_place(
     }
     let shortest = renamed.keys().map(String::len).min().unwrap_or(0);
     let mut bytes = text.into_bytes();
-    let (mut read, mut write, mut copied) = (0, 0, 0);
-    while let Some(span) = next_identifier::<true>(&bytes, &mut read) {
-        if span.len() < shortest {
-            continue;
-        }
+    let mut names = LongNames::new(shortest);
+    let (mut write, mut copied) = (0, 0);
+    while let Some(span) = names.next::<true, true>(&bytes) {
         // Identifiers are ASCII, so every span is valid UTF-8.
         let replacement = std::str::from_utf8(&bytes[span.clone()])
             .ok()
@@ -494,11 +687,12 @@ pub(super) fn bound_identifiers(
     // collide with one.
     let mut occupied = std::collections::HashSet::new();
     let mut oversized = std::collections::HashSet::new();
-    for span in identifier_spans(&source) {
+    let mut names = LongNames::new(MAX_C_IDENTIFIER_LEN);
+    while let Some(span) = names.next::<true, true>(source.as_bytes()) {
         let name = &source[span];
         if name.len() == MAX_C_IDENTIFIER_LEN {
             occupied.insert(name);
-        } else if name.len() > MAX_C_IDENTIFIER_LEN && !is_external(name) {
+        } else if !is_external(name) {
             oversized.insert(name);
         }
     }
@@ -844,14 +1038,66 @@ mod tests {
     }
 
     #[test]
+    fn the_first_of_several_bytes_is_found_at_every_distance() {
+        for length in 0..40 {
+            let mut text = vec![0x80_u8; length];
+            text.extend(b"a{b}");
+            assert_eq!(first_of(&text, 0, *b"}{"), Some(length + 1));
+            assert_eq!(first_of(&text, length + 2, *b"}{"), Some(length + 3));
+            assert_eq!(first_of(&text, 0, *b"?"), None);
+        }
+        assert_eq!(first_of(b"", 0, *b"?"), None);
+        assert_eq!(first_of(b"a", 2, *b"a"), None);
+    }
+
+    #[test]
+    fn filtered_spans_are_the_spans_the_filter_may_hold() {
+        // Random strings of pieces that open, close and nest literals and
+        // comments.
+        let pieces = ["ab", "abc", " ", "\"", "'", "\\", "/", "*", "\n", "1", "é"];
+        let names = ["abc", "bab", "abab", "ab1"];
+        let mut filters = names.map(|name| NameFilter::from_iter([name])).to_vec();
+        filters.push(NameFilter::from_iter(names));
+        filters.push(NameFilter::default());
+        let mut digits = [0; 7];
+        let mut seed = 1_u32;
+        for _ in 0..20_000 {
+            for digit in &mut digits {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                *digit = (seed >> 16) as usize % pieces.len();
+            }
+            let text = digits.map(|digit| pieces[digit]).concat();
+            for filter in &filters {
+                let held = |span: &std::ops::Range<usize>| filter.may_hold(&text[span.clone()]);
+                assert_eq!(
+                    named_spans(&text, *filter).collect::<Vec<_>>(),
+                    identifier_spans(&text).filter(held).collect::<Vec<_>>(),
+                    "{text}"
+                );
+                assert_eq!(
+                    named_spans_in_comments(&text, *filter).collect::<Vec<_>>(),
+                    identifier_spans_in_comments(&text)
+                        .filter(held)
+                        .collect::<Vec<_>>(),
+                    "{text}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn identifiers_anywhere_reads_literals_and_comments_and_drops_numbers() {
         let text = "a_1(\"in literal\", 0x1F_b); // é_c\n/* _d */e";
         assert_eq!(
-            identifiers_anywhere(text).collect::<Vec<_>>(),
+            identifiers_anywhere(text, 1).collect::<Vec<_>>(),
             ["a_1", "in", "literal", "_c", "_d", "e"]
         );
-        assert_eq!(identifiers_anywhere("12 é ").count(), 0);
-        assert_eq!(identifiers_anywhere("").count(), 0);
+        assert_eq!(
+            identifiers_anywhere(text, 3).collect::<Vec<_>>(),
+            ["a_1", "literal"]
+        );
+        assert_eq!(identifiers_anywhere("12 é ", 1).count(), 0);
+        assert_eq!(identifiers_anywhere("", 1).count(), 0);
     }
 
     #[test]

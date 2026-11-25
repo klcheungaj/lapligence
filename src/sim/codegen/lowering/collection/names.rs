@@ -65,7 +65,7 @@ impl<'a> Codegen<'a> {
 
     fn signal_source_node(&self, signal: usize) -> Option<NodeId> {
         self.sig_globals
-            .iter()
+            .unordered()
             .filter_map(|(node, info)| (info.ir == signal).then_some(*node))
             .chain(
                 self.static_formals
@@ -75,7 +75,7 @@ impl<'a> Codegen<'a> {
             )
             .chain(
                 self.proc_local_instances
-                    .iter()
+                    .unordered()
                     .filter_map(|((_, node), info)| {
                         info.static_signal
                             .as_ref()
@@ -161,7 +161,7 @@ impl<'a> Codegen<'a> {
                         }),
                     IrDependency::ArrayElement { array, .. } => self
                         .array_globals
-                        .iter()
+                        .unordered()
                         .filter_map(|(node, info)| (info.ir == *array).then_some(*node))
                         .min_by_key(|node| node.index())
                         .and_then(|node| self.db.packed_dimensions(node)),
@@ -205,7 +205,7 @@ impl<'a> Codegen<'a> {
             | IrDependency::ContainerShape(container) => {
                 let name = self
                     .container_globals
-                    .iter()
+                    .unordered()
                     .filter_map(|(node, info)| (info.ir == *container).then_some(*node))
                     .min_by_key(|node| node.index())
                     .map_or_else(
@@ -246,8 +246,8 @@ impl<'a> Codegen<'a> {
                 .aggregate_storage_label(|leaf| leaf.object == Some(*object))
                 .or_else(|| {
                     self.object_globals
-                        .iter()
-                        .chain(self.class_static_objects.iter())
+                        .unordered()
+                        .chain(self.class_static_objects.unordered())
                         .filter_map(|(node, index)| (*index == *object).then_some(*node))
                         .chain(
                             self.static_string_formals
@@ -447,7 +447,7 @@ impl<'a> Codegen<'a> {
             Some(p) => {
                 if self.is_runtime_environment(p) {
                     let namespace = if self.is_compilation_unit(p) {
-                        "$unit".to_string()
+                        crate::core::db::COMPILATION_UNIT_NAME.to_string()
                     } else {
                         strip_lib(&self.node(p).name)
                     };
@@ -601,7 +601,7 @@ impl<'a> Codegen<'a> {
                 variables.push(IrWaveVariable::new(IrWaveStorage::Signal(ir), name, scopes));
             }
         };
-        for ((_, node), info) in &self.proc_local_instances {
+        for ((_, node), info) in self.proc_local_instances.unordered() {
             if let (NodeKind::Var { .. }, Some(info)) = (self.kind(*node), &info.static_signal) {
                 signal(*node, info.ir);
             }
@@ -695,7 +695,7 @@ impl<'a> Codegen<'a> {
                 }
             } else if self.is_runtime_environment(scope_id) {
                 let name = if self.is_compilation_unit(scope_id) {
-                    "$unit"
+                    crate::core::db::COMPILATION_UNIT_NAME
                 } else {
                     scope.name.as_str()
                 };

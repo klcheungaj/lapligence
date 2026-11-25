@@ -471,9 +471,13 @@ impl<'a> Codegen<'a> {
                 }
             }
         }
-        if self.array_of(node).is_some() || self.container_of(node).is_some() {
+        // A parameter's elements have no storage to traverse.
+        let array = self
+            .query_descriptor(node)
+            .is_some_and(|descriptor| matches!(descriptor.shape, TypeShape::FixedArray { .. }));
+        if array || self.array_of(node).is_some() || self.container_of(node).is_some() {
             return Err(format!(
-                "string inside set item in `{path}` is a queue, dynamic or associative array of strings (or string array storage the set cannot traverse); such set items are not supported"
+                "string inside set item in `{path}` is an array of strings whose elements the set cannot traverse; such set items are not supported"
             ));
         }
         out.push(IrStringInsideItem::Value(self.lower_string(path, node)?));

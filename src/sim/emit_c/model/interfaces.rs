@@ -1,6 +1,7 @@
 //! Interfaces.
 
 use super::*;
+use crate::IdSet;
 
 /// Runtime environment for one virtual-interface specialization. Handles are
 /// opaque pointers to these records; member slots point at the concrete
@@ -265,7 +266,7 @@ fn environment_order(model: &IrModel) -> Vec<(usize, usize)> {
 
 fn signal_storage_name(model: &IrModel, index: usize) -> String {
     let mut index = index;
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = IdSet::new();
     while seen.insert(index) {
         let Some(alias) = model.signals.get(index).and_then(|signal| signal.alias) else {
             break;

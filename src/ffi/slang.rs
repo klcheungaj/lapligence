@@ -999,10 +999,11 @@ pub const SEMANTIC_UNIQUE_PRIORITY_PRIORITY: u64 = 3;
 /// unknown).
 pub const SEMANTIC_STMT_BLOCK: u32 = 32;
 pub const SEMANTIC_STMT_FOR: u32 = 35;
+/// An expression statement; its `auxiliary` holds [`EXPRESSION_STMT_VOID_CAST`].
+pub const SEMANTIC_STMT_EXPRESSION: u32 = 48;
 /// A statement list; as a task or function body its `auxiliary` keeps the
 /// byte offset + 1, in the subroutine's file, of the token after the name,
 /// or 0.
-pub const SEMANTIC_STMT_EXPRESSION: u32 = 48;
 pub const SEMANTIC_STMT_LIST: u32 = 60;
 
 /// Immediate assertion statement tags owned by the C ABI.

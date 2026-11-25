@@ -259,3 +259,40 @@ fn probe_debug_information_is_opt_in() {
         );
     }
 }
+
+/// The program replaces its launcher: its status and its arguments are its
+/// own, and it runs under the limit.
+#[cfg(unix)]
+#[test]
+fn commands_without_core_dumps_keep_status_and_arguments() {
+    use std::time::Duration;
+
+    let run = |script: &str| {
+        let mut command = sim_harness::command_without_core_dumps("sh");
+        command.args(["-c", script, "a b", "c  d"]);
+        sim_harness::run_command(&mut command, Duration::from_secs(30)).expect("run the script")
+    };
+    let printed = run("echo \"$0|$1\"; exit 7");
+    assert_eq!(printed.status.code(), Some(7));
+    assert_eq!(String::from_utf8_lossy(&printed.stdout), "a b|c  d\n");
+    assert!(sim_harness::ended_by_abort(&run("kill -ABRT $$").status));
+    assert!(!sim_harness::ended_by_abort(&run("kill -TERM $$").status));
+
+    // Hosts without prlimit, or with a hard limit of 0, run without a limit.
+    let limit = run("ulimit -H -c");
+    let limited = String::from_utf8_lossy(&limit.stdout).trim() == "0";
+    let available = std::process::Command::new("prlimit")
+        .args(["--core=1:1", "true"])
+        .output()
+        .is_ok_and(|output| output.status.success());
+    if cfg!(target_os = "linux") && available {
+        // Below one block of `ulimit`.
+        assert!(limited, "{limit:?}");
+        let limits = run("grep 'Max core file size' /proc/self/limits");
+        let limits = String::from_utf8_lossy(&limits.stdout);
+        assert_eq!(
+            limits.split_whitespace().collect::<Vec<_>>(),
+            ["Max", "core", "file", "size", "1", "1", "bytes"]
+        );
+    }
+}

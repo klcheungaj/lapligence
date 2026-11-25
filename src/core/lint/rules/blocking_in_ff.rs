@@ -14,7 +14,7 @@
 //! level-sensitive/implicit event controls (`@*`) are not checked.
 
 use crate::core::db::{AlwaysKind, Db, EventSpec, NodeId, NodeKind, ProcessKind, StmtKind};
-use crate::core::lint::rules::analysis::scope_path;
+use crate::core::lint::rules::analysis::holding_scope_path;
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
 /// Warns about blocking assignments in always_ff / edge-sensitive always.
@@ -36,11 +36,7 @@ impl LintRule for BlockingInFFRule {
             let Some(label) = ff_label(db, id) else {
                 continue;
             };
-            let path = db
-                .node(id)
-                .parent
-                .map(|p| scope_path(db, p))
-                .unwrap_or_default();
+            let path = holding_scope_path(db, id);
             let mut assigns = Vec::new();
             blocking_assigns(db, id, &mut assigns);
             for assign in assigns {
@@ -87,10 +83,8 @@ fn has_edge_event(db: &Db, root: NodeId) -> bool {
             return true;
         }
     }
-    db.node(root)
-        .children
-        .iter()
-        .any(|c| has_edge_event(db, *c))
+    db.walk_children(root)
+        .any(|child| has_edge_event(db, child))
 }
 
 /// Every blocking assignment statement in the subtree rooted at `root`, in
@@ -99,8 +93,8 @@ fn blocking_assigns(db: &Db, root: NodeId, out: &mut Vec<NodeId>) {
     if let NodeKind::Stmt(StmtKind::Assign { blocking: true, .. }) = db.node_kind(root) {
         out.push(root);
     }
-    for c in &db.node(root).children {
-        blocking_assigns(db, *c, out);
+    for child in db.walk_children(root) {
+        blocking_assigns(db, child, out);
     }
 }
 

@@ -17,6 +17,7 @@ use crate::ffi::slang::{
     SEMANTIC_STMT_CONCURRENT_EXPECT, SEMANTIC_STMT_CONCURRENT_RESTRICT, SEMANTIC_STMT_FOR,
     SEMANTIC_STMT_IMMEDIATE_ASSERT, SEMANTIC_STMT_IMMEDIATE_ASSUME, SEMANTIC_STMT_IMMEDIATE_COVER,
 };
+use crate::{IdMap, IdSet};
 use std::collections::{HashMap, HashSet};
 
 // IEEE 1364-2001 Clauses 15/17/18 and Annex C, plus $feof (17.2.4).
@@ -549,7 +550,7 @@ fn is_fixed_unpacked_type(snapshot: &Snapshot, type_id: Option<u64>) -> bool {
 /// remain legal because their result type is the packed element type.
 fn is_whole_unpacked_value(
     snapshot: &Snapshot,
-    nodes: &HashMap<u64, &SemanticNode>,
+    nodes: &IdMap<u64, &SemanticNode>,
     node: &SemanticNode,
 ) -> bool {
     if !matches!(
@@ -632,7 +633,7 @@ fn legacy_storage_argument(name: &str) -> Option<u32> {
 
 fn is_legacy_storage_operand(
     snapshot: &Snapshot,
-    nodes: &HashMap<u64, &SemanticNode>,
+    nodes: &IdMap<u64, &SemanticNode>,
     target: u64,
 ) -> bool {
     let mut stack = Vec::new();
@@ -650,7 +651,7 @@ fn is_legacy_storage_operand(
                 .map(|edge| edge.target_id),
         );
     }
-    let mut visited = HashSet::new();
+    let mut visited = IdSet::new();
     while let Some(id) = stack.pop() {
         if id == target {
             return true;
@@ -709,7 +710,7 @@ fn semantic_edges<'a>(
 /// even under a legacy keyword set; inspect typed edges, not source spelling.
 fn is_systemverilog_for_header(
     snapshot: &Snapshot,
-    nodes: &HashMap<u64, &SemanticNode>,
+    nodes: &IdMap<u64, &SemanticNode>,
     node: &SemanticNode,
 ) -> bool {
     if node.kind != SemanticKind::Statement || node.subkind != SEMANTIC_STMT_FOR {
@@ -754,7 +755,7 @@ fn extension_name(prototype: &str) -> Option<&str> {
 /// without `begin`/`end`, or a null body, are later forms.
 fn subroutine_statement_count(
     snapshot: &Snapshot,
-    nodes: &HashMap<u64, &SemanticNode>,
+    nodes: &IdMap<u64, &SemanticNode>,
     body: &SemanticNode,
 ) -> usize {
     match body.detail.as_str() {
@@ -774,7 +775,7 @@ fn subroutine_statement_count(
 /// queue dimensions (A.2.1.3). Walk the declared type's element chain.
 fn later_type_form(types: &HashMap<u64, &Type>, type_id: Option<u64>) -> Option<&'static str> {
     let mut current = type_id.and_then(|id| types.get(&id).copied());
-    let mut visited = HashSet::new();
+    let mut visited = IdSet::new();
     while let Some(ty) = current {
         if !visited.insert(ty.id) {
             return None;
@@ -803,7 +804,7 @@ fn later_type_form(types: &HashMap<u64, &Type>, type_id: Option<u64>) -> Option<
 /// form cannot trip it.
 fn verilog_2001_semantic_violation(
     snapshot: &Snapshot,
-    nodes: &HashMap<u64, &SemanticNode>,
+    nodes: &IdMap<u64, &SemanticNode>,
     types: &HashMap<u64, &Type>,
     node: &SemanticNode,
 ) -> Option<&'static str> {
@@ -901,11 +902,11 @@ fn verilog_2001_semantic_violation(
 /// output-argument assignments), never index or width expressions.
 fn written_variable<'a>(
     snapshot: &Snapshot,
-    nodes: &HashMap<u64, &'a SemanticNode>,
+    nodes: &IdMap<u64, &'a SemanticNode>,
     root: u64,
 ) -> Option<&'a SemanticNode> {
     let mut stack = vec![root];
-    let mut visited = HashSet::new();
+    let mut visited = IdSet::new();
     while let Some(id) = stack.pop() {
         if !visited.insert(id) {
             continue;
@@ -944,7 +945,7 @@ fn written_variable<'a>(
 /// Returns the reported range and label.
 fn verilog_2001_driver_violation(
     snapshot: &Snapshot,
-    nodes: &HashMap<u64, &SemanticNode>,
+    nodes: &IdMap<u64, &SemanticNode>,
     node: &SemanticNode,
 ) -> Option<(Option<SourceRange>, &'static str)> {
     let edges = semantic_edges(snapshot, node);
@@ -1052,7 +1053,7 @@ fn is_keyword(token: &crate::ffi::slang::LexicalToken) -> bool {
 /// C-style unpacked sizes, `.name` connections, empty subroutine argument
 /// lists and `localparam` parameter ports. `rest` starts at `next`.
 fn verilog_2001_sequence_violation(
-    nodes: &HashMap<u64, &SemanticNode>,
+    nodes: &IdMap<u64, &SemanticNode>,
     types: &HashMap<u64, &Type>,
     previous: Option<&crate::ffi::slang::LexicalToken>,
     token: &crate::ffi::slang::LexicalToken,
@@ -1216,7 +1217,7 @@ fn covergroup_bins_violation(
 /// `always_comb`/`always_latch`/`always_ff` checker procedures and output
 /// formals are 1800-2012 forms that the pinned frontend admits.
 fn checker_member_violation(
-    nodes: &HashMap<u64, &SemanticNode>,
+    nodes: &IdMap<u64, &SemanticNode>,
     node: &SemanticNode,
 ) -> Option<&'static str> {
     let label = match (node.kind, node.subkind) {
@@ -1268,7 +1269,7 @@ pub(super) fn edition_diagnostics(
     } else {
         HashMap::new()
     };
-    let nodes: HashMap<_, _> = snapshot
+    let nodes: IdMap<_, _> = snapshot
         .semantic_nodes
         .iter()
         .map(|node| (node.id, node))

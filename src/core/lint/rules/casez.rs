@@ -55,8 +55,8 @@ fn collect_wildcard_cases(db: &Db, root: NodeId, out: &mut Vec<NodeId>) {
             out.push(root);
         }
     }
-    for c in &db.node(root).children {
-        collect_wildcard_cases(db, *c, out);
+    for child in db.walk_children(root) {
+        collect_wildcard_cases(db, child, out);
     }
 }
 

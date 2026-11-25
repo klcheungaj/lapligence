@@ -10,6 +10,9 @@
 //! - a deterministic sample of the differing fixtures is built and run in both
 //!   forms, and the runs must match. `LLG_STORAGE_DIFF_EXEC=all` runs every
 //!   differing fixture instead (about 70 today, roughly a minute on 8 cores).
+//!   A fixture with DPI-C imports is linked with the C sources beside it; only
+//!   one whose imports no such source defines is not run, and every other
+//!   build failure fails the sweep.
 //!
 //! Identical models need no run. Most fixtures use all of their variables, so
 //! the pass omits storage in only a few percent of them; the targeted
@@ -90,14 +93,60 @@ fn syntax_check(compiler: &str, model: &str, fixture: &Path) {
     );
 }
 
-/// Build and run one generated model; the observation includes the exit
-/// status and both output streams.
-fn run_model(dir: &Path, model_c: &str) -> String {
-    let executable = match sim::build::build_model_cmake(dir, &[("model.c", model_c)]) {
-        Ok(executable) => executable,
-        Err(error) => return format!("build error: {error}"),
-    };
-    match sim_harness::run_command(Command::new(&executable).current_dir(dir), RUN_TIMEOUT) {
+/// The C sources beside a fixture that define its DPI-C imports, by the names
+/// fixtures give them.
+fn companions(fixture: &Path) -> Vec<PathBuf> {
+    let stem = fixture
+        .file_stem()
+        .expect("a fixture has a file name")
+        .to_string_lossy();
+    ["", "_dpi"]
+        .iter()
+        .map(|suffix| fixture.with_file_name(format!("{stem}{suffix}.c")))
+        .filter(|path| path.is_file())
+        .collect()
+}
+
+/// Build one generated model, with the companions of its fixture when it does
+/// not link without them. `None`: the fixture imports DPI-C functions that no
+/// companion defines, so it has no executable of its own. Any other build
+/// failure fails the test.
+fn build_model(temp: &Path, model_c: &str, fixture: &Path, label: &str) -> Option<PathBuf> {
+    use sim::build::{build_model_cmake_with_opts, BuildError, CmakeBuildOpts};
+
+    let dir = temp.join(label);
+    let mut opts = CmakeBuildOpts::default();
+    loop {
+        let error = match build_model_cmake_with_opts(&dir, &[("model.c", model_c)], &opts) {
+            Ok(executable) => return Some(executable),
+            Err(error) => error,
+        };
+        let imports =
+            matches!(&error, BuildError::MissingDpiSymbol { imports, .. } if !imports.is_empty());
+        let sources = companions(fixture);
+        assert!(
+            imports && opts.dpi_libraries.is_empty(),
+            "{}, {label}: {error}",
+            fixture.display()
+        );
+        if sources.is_empty() {
+            return None;
+        }
+        for (index, source) in sources.iter().enumerate() {
+            // Building a model replaces the contents of its directory.
+            let stem = format!("{label}{index}");
+            let archive = c_compiler::static_archive(source, temp, &stem, &[])
+                .unwrap_or_else(|error| panic!("{}, {label}: {error}", fixture.display()));
+            opts.dpi_libraries.push(archive);
+        }
+    }
+}
+
+/// Run one model; the observation includes the exit status and both output
+/// streams.
+fn run_model(dir: &Path, executable: &Path) -> String {
+    let mut command = sim_harness::command_without_core_dumps(executable);
+    match sim_harness::run_command(command.current_dir(dir), RUN_TIMEOUT) {
         Ok(output) => format!(
             "status {:?}\nstdout:\n{}\nstderr:\n{}",
             output.status.code(),
@@ -108,16 +157,20 @@ fn run_model(dir: &Path, model_c: &str) -> String {
     }
 }
 
-fn compare_runs(fixture: &Path, pruned: &str, kept: &str) {
+/// Whether the two forms were run and compared.
+fn compare_runs(fixture: &Path, pruned: &str, kept: &str) -> bool {
     let temp = sim_harness::TempDir::new("storage-diff").expect("differential build directory");
-    let pruned_run = run_model(&temp.path().join("pruned"), pruned);
-    let kept_run = run_model(&temp.path().join("kept"), kept);
+    let [pruned, kept] = [("pruned", pruned), ("kept", kept)].map(|(label, model_c)| {
+        build_model(temp.path(), model_c, fixture, label)
+            .map(|executable| run_model(&temp.path().join(label), &executable))
+    });
     assert_eq!(
-        pruned_run,
-        kept_run,
+        pruned,
+        kept,
         "{}: unused-storage pruning changed the run",
         fixture.display()
     );
+    kept.is_some()
 }
 
 fn sweep_shard(shard: usize) {
@@ -131,6 +184,7 @@ fn sweep_shard(shard: usize) {
     let execute_all = std::env::var("LLG_STORAGE_DIFF_EXEC").is_ok_and(|value| value == "all");
     let execute = sim::build::cmake_available();
     let (mut generated, mut differing) = (0usize, 0usize);
+    let (mut compared, mut unlinked) = (0usize, 0usize);
     for (index, path) in fixture_paths(&root).into_iter().enumerate() {
         if index % SHARDS != shard {
             continue;
@@ -165,14 +219,27 @@ fn sweep_shard(shard: usize) {
         if syntax {
             syntax_check(&compiler, &pruned.model_c, &path);
         }
+        // A fixture that does not link alone leaves its turn to the next.
         if execute && (execute_all || differing % EXEC_STRIDE == 0) {
-            compare_runs(&path, &pruned.model_c, &kept.model_c);
+            if !compare_runs(&path, &pruned.model_c, &kept.model_c) {
+                unlinked += 1;
+                continue;
+            }
+            compared += 1;
         }
         differing += 1;
     }
+    println!(
+        "storage differential shard {shard}: {generated} generated, {compared} runs compared, \
+         {unlinked} without their DPI-C functions"
+    );
     assert!(
         generated > 0,
         "storage differential shard {shard} generated no models"
+    );
+    assert!(
+        !execute || compared > 0,
+        "storage differential shard {shard} compared no runs"
     );
 }
 

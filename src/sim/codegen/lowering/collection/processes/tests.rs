@@ -26,7 +26,7 @@ fn continuous_array_graph_keeps_static_topology_and_rhs_only_dependencies() {
     }
     let array = |name: &str| {
         cg.array_globals
-            .iter()
+            .unordered()
             .find_map(|(node, array)| {
                 (database.node(*node).name == name).then_some(cg.reference_array(array.ir))
             })
@@ -264,7 +264,7 @@ endmodule
     );
     let grid = cg
         .array_globals
-        .iter()
+        .unordered()
         .find(|(node, _)| database.node(**node).name == "grid")
         .unwrap()
         .1
@@ -289,7 +289,7 @@ endmodule
     );
     let queue = cg
         .container_globals
-        .iter()
+        .unordered()
         .find(|(node, _)| database.node(**node).name == "queue_value")
         .unwrap()
         .1
@@ -304,7 +304,7 @@ endmodule
     );
     let map = cg
         .container_globals
-        .iter()
+        .unordered()
         .find(|(node, _)| database.node(**node).name == "map_value")
         .unwrap()
         .1
@@ -315,7 +315,7 @@ endmodule
     );
     let message = *cg
         .object_globals
-        .iter()
+        .unordered()
         .find(|(node, _)| database.node(**node).name == "message")
         .unwrap()
         .1;
@@ -620,7 +620,7 @@ fn component_comb_exclusion_is_precise_only_for_small_arrays() {
     cg.build_net_groups().unwrap();
     let statements = comb_statements(&cg);
     cg.inst = cg.owning_inst(statements[0]).unwrap();
-    let path = cg.instance_path_of(cg.inst);
+    let path = cg.scope_path_of(cg.inst);
     let big = cg
         .collect_process_sensitivity(&path, statements[0], Some(AlwaysKind::Comb))
         .unwrap();

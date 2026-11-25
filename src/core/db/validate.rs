@@ -1,3 +1,4 @@
+use crate::IdSet;
 use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
@@ -16,9 +17,9 @@ pub struct DbValidationError {
 }
 
 impl DbValidationError {
-    fn new(path: impl Into<String>, detail: impl Into<String>) -> Self {
+    fn new(path: impl fmt::Display, detail: impl Into<String>) -> Self {
         Self {
-            path: path.into(),
+            path: path.to_string(),
             detail: detail.into(),
         }
     }
@@ -90,33 +91,33 @@ impl Validator<'_> {
         }
         for (index, node) in self.db.nodes().iter().enumerate() {
             step()?;
-            let path = format!("nodes[{index}]");
+            let path = format_args!("nodes[{index}]");
             if let Some(parent) = node.parent {
-                self.node(parent, &format!("{path}.parent"))?;
+                self.node(parent, format_args!("{path}.parent"))?;
             }
             for (child_index, child) in node.children.iter().copied().enumerate() {
                 // `children` includes both owned descendants and resolved
                 // cross-references (for example port connections), so only
                 // arena validity is universal here; reciprocity is not.
-                self.node(child, &format!("{path}.children[{child_index}]"))?;
+                self.node(child, format_args!("{path}.children[{child_index}]"))?;
             }
-            self.validate_kind_refs(&node.kind, &format!("{path}.kind"))?;
+            self.validate_kind_refs(&node.kind, format_args!("{path}.kind"))?;
         }
         Ok(())
     }
 
     fn validate_tables(&self) -> Result<(), DbValidationError> {
         for (call, info) in self.db.randomize_call_entries() {
-            let path = format!("randomize_calls[{}]", call.0);
+            let path = format_args!("randomize_calls[{}]", call.0);
             if !matches!(
-                self.node(*call, &path)?.kind,
+                self.node(*call, path)?.kind,
                 NodeKind::SysCall { .. } | NodeKind::MethodCall { .. }
             ) {
                 return self.fail(path, "randomize metadata key is not a call");
             }
             if let Some(inline) = info.inline {
                 if !matches!(
-                    self.node(inline, &format!("{path}.inline"))?.kind,
+                    self.node(inline, format_args!("{path}.inline"))?.kind,
                     NodeKind::Constraint(_)
                 ) {
                     return self.fail(path, "inline randomize constraints are not a constraint");
@@ -124,22 +125,22 @@ impl Validator<'_> {
             }
         }
         for (pattern, fields) in self.db.conditional_pattern_field_entries() {
-            let path = format!("conditional_pattern_fields[{}]", pattern.0);
-            self.node(*pattern, &path)?;
+            let path = format_args!("conditional_pattern_fields[{}]", pattern.0);
+            self.node(*pattern, path)?;
             if self.db.conditional_pattern(*pattern).map(|info| info.kind)
                 != Some(ConditionalPatternKind::Structure)
             {
                 return self.fail(path, "field metadata key is not a structure pattern");
             }
-            let mut seen_fields = HashSet::new();
+            let mut seen_fields = IdSet::new();
             for (index, field) in fields.iter().enumerate() {
                 self.node(
                     field.field,
-                    &format!("conditional_pattern_fields[{}][{index}].field", pattern.0),
+                    format_args!("conditional_pattern_fields[{}][{index}].field", pattern.0),
                 )?;
                 self.node(
                     field.pattern,
-                    &format!("conditional_pattern_fields[{}][{index}].pattern", pattern.0),
+                    format_args!("conditional_pattern_fields[{}][{index}].pattern", pattern.0),
                 )?;
                 if !seen_fields.insert(field.field) {
                     return self.fail(
@@ -168,12 +169,12 @@ impl Validator<'_> {
                 };
                 self.node(
                     member,
-                    &format!("conditional_patterns[{}].tagged_member", pattern.0),
+                    format_args!("conditional_patterns[{}].tagged_member", pattern.0),
                 )?;
                 if let Some(payload) = info.value_pattern {
                     self.node(
                         payload,
-                        &format!("conditional_patterns[{}].value_pattern", pattern.0),
+                        format_args!("conditional_patterns[{}].value_pattern", pattern.0),
                     )?;
                     if self.db.conditional_pattern(payload).is_none() {
                         return self.fail(
@@ -204,13 +205,13 @@ impl Validator<'_> {
             matches!(kind, NodeKind::ClassDef)
         })?;
 
-        for (class, metadata) in self.db.class_metadata_entries() {
-            let path = format!("class_metadata[{}]", class.0);
+        for (class, metadata) in self.db.class_metadata_entries().unordered() {
+            let path = format_args!("class_metadata[{}]", class.0);
             if !self.db.classes().contains(class) {
                 return self.fail(path, "metadata key is not a class root");
             }
             if let Some(base) = metadata.base {
-                self.node(base, &format!("{path}.base"))?;
+                self.node(base, format_args!("{path}.base"))?;
                 if !matches!(self.db.node_kind(base), NodeKind::ClassDef) {
                     return self.fail(format!("{path}.base"), "base is not a class node");
                 }
@@ -218,18 +219,18 @@ impl Validator<'_> {
                     return self.fail(format!("{path}.base"), "class inherits from itself");
                 }
             }
-            let mut seen = HashSet::new();
+            let mut seen = IdSet::new();
             let mut current = Some(*class);
             while let Some(id) = current {
                 if !seen.insert(id) {
-                    return self.fail(path.clone(), "class inheritance contains a cycle");
+                    return self.fail(path, "class inheritance contains a cycle");
                 }
                 current = self.db.class_metadata(id).and_then(|entry| entry.base);
             }
         }
 
-        for (array, metadata) in self.db.arrays() {
-            let node = self.node(*array, &format!("arrays[{}]", array.0))?;
+        for (array, metadata) in self.db.arrays().unordered() {
+            let node = self.node(*array, format_args!("arrays[{}]", array.0))?;
             if !matches!(node.kind, NodeKind::Array { .. }) {
                 return self.fail(
                     format!("arrays[{}]", array.0),
@@ -237,12 +238,12 @@ impl Validator<'_> {
                 );
             }
             if let Some(init) = metadata.init {
-                self.node(init, &format!("arrays[{}].init", array.0))?;
+                self.node(init, format_args!("arrays[{}].init", array.0))?;
             }
         }
 
-        for (event, metadata) in self.db.event_arrays() {
-            let node = self.node(*event, &format!("event_arrays[{}]", event.0))?;
+        for (event, metadata) in self.db.event_arrays().unordered() {
+            let node = self.node(*event, format_args!("event_arrays[{}]", event.0))?;
             if !matches!(node.kind, NodeKind::NamedEvent) {
                 return self.fail(
                     format!("event_arrays[{}]", event.0),
@@ -258,8 +259,8 @@ impl Validator<'_> {
         }
 
         for (net, delay) in self.db.net_delays() {
-            let path = format!("net_delays[{}]", net.0);
-            let node = self.node(*net, &path)?;
+            let path = format_args!("net_delays[{}]", net.0);
+            let node = self.node(*net, path)?;
             // A net array's declaration delay applies to each of its nets.
             let net_array = matches!(node.kind, NodeKind::Array { .. })
                 && self
@@ -274,36 +275,36 @@ impl Validator<'_> {
             for (index, reference) in refs.into_iter().enumerate() {
                 self.node(
                     reference,
-                    &format!("net_delays[{}].expressions[{index}]", net.0),
+                    format_args!("net_delays[{}].expressions[{index}]", net.0),
                 )?;
             }
         }
 
-        for (variable, init) in self.db.var_initializers() {
-            let node = self.node(*variable, &format!("vars_init[{}]", variable.0))?;
+        for (variable, init) in self.db.var_initializers().unordered() {
+            let node = self.node(*variable, format_args!("vars_init[{}]", variable.0))?;
             if !matches!(node.kind, NodeKind::Var { .. }) {
                 return self.fail(
                     format!("vars_init[{}]", variable.0),
                     "initializer key is not a variable node",
                 );
             }
-            self.node(*init, &format!("vars_init[{}]", variable.0))?;
+            self.node(*init, format_args!("vars_init[{}]", variable.0))?;
         }
 
         for (parameter, init) in self.db.param_initializers() {
-            let node = self.node(*parameter, &format!("param_inits[{}]", parameter.0))?;
+            let node = self.node(*parameter, format_args!("param_inits[{}]", parameter.0))?;
             if !matches!(node.kind, NodeKind::Param { .. }) {
                 return self.fail(
                     format!("param_inits[{}]", parameter.0),
                     "initializer key is not a parameter node",
                 );
             }
-            self.node(*init, &format!("param_inits[{}]", parameter.0))?;
+            self.node(*init, format_args!("param_inits[{}]", parameter.0))?;
         }
 
         for (group, info) in self.db.covergroups() {
-            let path = format!("covergroups[{}]", group.0);
-            self.node(*group, &path)?;
+            let path = format_args!("covergroups[{}]", group.0);
+            self.node(*group, path)?;
             let mut refs = Vec::new();
             refs.extend(info.formals.iter().copied());
             refs.extend(info.sample_formals.iter().copied());
@@ -325,7 +326,7 @@ impl Validator<'_> {
                 None => {}
             }
             for (index, reference) in refs.into_iter().enumerate() {
-                self.node(reference, &format!("{path}.refs[{index}]"))?;
+                self.node(reference, format_args!("{path}.refs[{index}]"))?;
             }
             for point in &info.coverpoints {
                 let Some(metadata) = self.db.coverpoint(*point) else {
@@ -334,15 +335,15 @@ impl Validator<'_> {
                 if metadata.group != *group {
                     return self.fail(path, "coverpoint names another covergroup");
                 }
-                let point_path = format!("coverpoints[{}]", point.0);
-                self.node(metadata.expr, &format!("{point_path}.expr"))?;
+                let point_path = format_args!("coverpoints[{}]", point.0);
+                self.node(metadata.expr, format_args!("{point_path}.expr"))?;
                 for reference in metadata
                     .iff
                     .iter()
                     .chain(&metadata.options)
                     .chain(&metadata.bins)
                 {
-                    self.node(*reference, &point_path)?;
+                    self.node(*reference, point_path)?;
                 }
                 for bin in &metadata.bins {
                     let Some(bin_info) = self.db.coverage_bin(*bin) else {
@@ -354,21 +355,21 @@ impl Validator<'_> {
                         .chain(&bin_info.count)
                         .chain(&bin_info.iff)
                     {
-                        self.node(*reference, &format!("coverage_bins[{}]", bin.0))?;
+                        self.node(*reference, format_args!("coverage_bins[{}]", bin.0))?;
                     }
                 }
             }
         }
 
         for (block, metadata) in self.db.clocking_blocks() {
-            let path = format!("clocking_blocks[{}]", block.0);
-            let node = self.node(*block, &path)?;
+            let path = format_args!("clocking_blocks[{}]", block.0);
+            let node = self.node(*block, path)?;
             if !matches!(node.kind, NodeKind::Stmt(super::StmtKind::Begin)) {
                 return self.fail(path, "metadata key is not a clocking-block scope");
             }
             self.node(
                 metadata.event,
-                &format!("clocking_blocks[{}].event", block.0),
+                format_args!("clocking_blocks[{}].event", block.0),
             )?;
             for (index, spec) in metadata.event_specs.iter().enumerate() {
                 let mut refs = Vec::new();
@@ -376,7 +377,7 @@ impl Validator<'_> {
                 for (ref_index, reference) in refs.into_iter().enumerate() {
                     self.node(
                         reference,
-                        &format!(
+                        format_args!(
                             "clocking_blocks[{}].event_specs[{index}][{ref_index}]",
                             block.0
                         ),
@@ -388,20 +389,23 @@ impl Validator<'_> {
                 ("default_output", &metadata.default_output),
             ] {
                 if let Some(delay) = skew.delay {
-                    self.node(delay, &format!("clocking_blocks[{}].{name}.delay", block.0))?;
+                    self.node(
+                        delay,
+                        format_args!("clocking_blocks[{}].{name}.delay", block.0),
+                    )?;
                 }
                 if let Some(expression) = skew.delay_expression {
                     self.node(
                         expression,
-                        &format!("clocking_blocks[{}].{name}.delay_expression", block.0),
+                        format_args!("clocking_blocks[{}].{name}.delay_expression", block.0),
                     )?;
                 }
             }
         }
 
         for (variable, metadata) in self.db.clocking_vars() {
-            let path = format!("clocking_vars[{}]", variable.0);
-            let node = self.node(*variable, &path)?;
+            let path = format_args!("clocking_vars[{}]", variable.0);
+            let node = self.node(*variable, path)?;
             if !matches!(node.kind, NodeKind::Var { .. }) {
                 return self.fail(path, "metadata key is not a clocking-variable declaration");
             }
@@ -412,11 +416,11 @@ impl Validator<'_> {
                 );
             }
             if let Some(source) = metadata.source {
-                self.node(source, &format!("clocking_vars[{}].source", variable.0))?;
+                self.node(source, format_args!("clocking_vars[{}].source", variable.0))?;
             }
             let expression = self.node(
                 metadata.expression,
-                &format!("clocking_vars[{}].expression", variable.0),
+                format_args!("clocking_vars[{}].expression", variable.0),
             )?;
             if !matches!(
                 expression.kind,
@@ -434,64 +438,64 @@ impl Validator<'_> {
                 if let Some(delay) = skew.delay {
                     self.node(
                         delay,
-                        &format!("clocking_vars[{}].{name}.delay", variable.0),
+                        format_args!("clocking_vars[{}].{name}.delay", variable.0),
                     )?;
                 }
                 if let Some(expression) = skew.delay_expression {
                     self.node(
                         expression,
-                        &format!("clocking_vars[{}].{name}.delay_expression", variable.0),
+                        format_args!("clocking_vars[{}].{name}.delay_expression", variable.0),
                     )?;
                 }
             }
         }
 
         for (instance, block) in self.db.default_clockings() {
-            let path = format!("default_clockings[{}]", instance.0);
-            self.node(*instance, &path)?;
+            let path = format_args!("default_clockings[{}]", instance.0);
+            self.node(*instance, path)?;
             if !self.db.clocking_blocks().contains_key(block) {
                 return self.fail(path, "default clocking names an unknown clocking block");
             }
         }
 
         for (instance, disable) in self.db.instance_default_disables() {
-            let path = format!("instance_default_disables[{}]", instance.0);
-            self.node(*instance, &path)?;
-            self.node(*disable, &format!("{path}.expression"))?;
+            let path = format_args!("instance_default_disables[{}]", instance.0);
+            self.node(*instance, path)?;
+            self.node(*disable, format_args!("{path}.expression"))?;
         }
 
         for (port, expression) in self.db.modport_expression_entries() {
-            let path = format!("modport_expressions[{}]", port.0);
-            let node = self.node(*port, &path)?;
+            let path = format_args!("modport_expressions[{}]", port.0);
+            let node = self.node(*port, path)?;
             if !matches!(node.kind, NodeKind::ModPort)
                 || self.db.modport_port_direction(*port).is_none()
             {
                 return self.fail(path, "metadata key is not a modport port");
             }
-            let expression_node = self.node(*expression, &path)?;
+            let expression_node = self.node(*expression, path)?;
             if !matches!(expression_node.kind, NodeKind::Expr(_)) {
                 return self.fail(path, "modport port expression is not an expression");
             }
         }
 
         for (port, expression) in self.db.port_expression_entries() {
-            let path = format!("port_expressions[{}]", port.0);
-            let node = self.node(*port, &path)?;
+            let path = format_args!("port_expressions[{}]", port.0);
+            let node = self.node(*port, path)?;
             if !matches!(node.kind, NodeKind::Port { low: None, .. }) {
                 return self.fail(
                     path,
                     "metadata key is not a port without an internal symbol",
                 );
             }
-            let expression_node = self.node(*expression, &path)?;
+            let expression_node = self.node(*expression, path)?;
             if !matches!(expression_node.kind, NodeKind::Expr(_)) {
                 return self.fail(path, "port expression is not an expression");
             }
         }
 
         for (port, components) in self.db.multi_port_entries() {
-            let path = format!("multi_ports[{}]", port.0);
-            let node = self.node(*port, &path)?;
+            let path = format_args!("multi_ports[{}]", port.0);
+            let node = self.node(*port, path)?;
             if !matches!(node.kind, NodeKind::Port { low: None, .. }) {
                 return self.fail(
                     path,
@@ -499,7 +503,7 @@ impl Validator<'_> {
                 );
             }
             for component in components {
-                let component_node = self.node(*component, &path)?;
+                let component_node = self.node(*component, path)?;
                 if !matches!(component_node.kind, NodeKind::Port { .. })
                     || !self.db.multi_port_components(*component).is_empty()
                 {
@@ -509,7 +513,7 @@ impl Validator<'_> {
         }
 
         for call in self.db.method_calls_with_clause_nodes() {
-            let node = self.node(*call, &format!("method_calls_with_clause[{}]", call.0))?;
+            let node = self.node(*call, format_args!("method_calls_with_clause[{}]", call.0))?;
             if !matches!(node.kind, NodeKind::MethodCall { .. }) {
                 return self.fail(
                     format!("method_calls_with_clause[{}]", call.0),
@@ -519,7 +523,7 @@ impl Validator<'_> {
         }
 
         for cast in self.db.const_cast_nodes() {
-            let node = self.node(*cast, &format!("const_casts[{}]", cast.0))?;
+            let node = self.node(*cast, format_args!("const_casts[{}]", cast.0))?;
             if !matches!(node.kind, NodeKind::Expr(ExprKind::Cast { .. })) {
                 return self.fail(
                     format!("const_casts[{}]", cast.0),
@@ -529,7 +533,7 @@ impl Validator<'_> {
         }
 
         for expr in self.db.parenthesized_assertion_nodes() {
-            let node = self.node(*expr, &format!("parenthesized_assertions[{}]", expr.0))?;
+            let node = self.node(*expr, format_args!("parenthesized_assertions[{}]", expr.0))?;
             if !matches!(node.kind, NodeKind::AssertionExpr(_)) {
                 return self.fail(
                     format!("parenthesized_assertions[{}]", expr.0),
@@ -538,16 +542,16 @@ impl Validator<'_> {
             }
         }
 
-        for statement in self.db.void_cast_statement_nodes() {
-            let path = format!("void_cast_statements[{}]", statement.0);
-            let node = self.node(*statement, &path)?;
+        for statement in self.db.void_cast_statement_nodes().unordered() {
+            let path = format_args!("void_cast_statements[{}]", statement.0);
+            let node = self.node(*statement, path)?;
             if !matches!(node.kind, NodeKind::Stmt(super::StmtKind::Begin)) {
                 return self.fail(path, "void-cast metadata key is not a call statement");
             }
         }
 
         for (call, iterator) in self.db.method_call_iterator_nodes() {
-            let node = self.node(*call, &format!("method_call_iterators[{}]", call.0))?;
+            let node = self.node(*call, format_args!("method_call_iterators[{}]", call.0))?;
             if !matches!(node.kind, NodeKind::MethodCall { .. }) {
                 return self.fail(
                     format!("method_call_iterators[{}]", call.0),
@@ -562,12 +566,15 @@ impl Validator<'_> {
             }
             self.node(
                 *iterator,
-                &format!("method_call_iterators[{}].iterator", call.0),
+                format_args!("method_call_iterators[{}].iterator", call.0),
             )?;
         }
 
-        for variable in self.db.variable_lifetime_nodes().keys() {
-            let node = self.node(*variable, &format!("variable_lifetimes[{}]", variable.0))?;
+        for (variable, _) in self.db.variable_lifetime_nodes().unordered() {
+            let node = self.node(
+                *variable,
+                format_args!("variable_lifetimes[{}]", variable.0),
+            )?;
             if !matches!(
                 node.kind,
                 NodeKind::Var { .. } | NodeKind::Array { .. } | NodeKind::NamedEvent
@@ -583,7 +590,7 @@ impl Validator<'_> {
         for (index, entry) in self.db.elaborated_type_ranges().iter().enumerate() {
             let node = self.node(
                 entry.declaration,
-                &format!("elaborated_type_ranges[{index}].declaration"),
+                format_args!("elaborated_type_ranges[{index}].declaration"),
             )?;
             if !matches!(
                 node.kind,
@@ -611,11 +618,15 @@ impl Validator<'_> {
         Ok(())
     }
 
-    fn validate_kind_refs(&self, kind: &NodeKind, path: &str) -> Result<(), DbValidationError> {
+    fn validate_kind_refs(
+        &self,
+        kind: &NodeKind,
+        path: fmt::Arguments<'_>,
+    ) -> Result<(), DbValidationError> {
         let mut refs = Vec::new();
         kind.append_references(&mut refs);
         for (index, id) in refs.into_iter().enumerate() {
-            self.node(id, &format!("{path}.refs[{index}]"))?;
+            self.node(id, format_args!("{path}.refs[{index}]"))?;
         }
         match kind {
             NodeKind::Stmt(StmtKind::IfElse { predicate, .. })
@@ -772,7 +783,7 @@ impl Validator<'_> {
         path: &str,
         expected_kind: impl Fn(&NodeKind) -> bool,
     ) -> Result<(), DbValidationError> {
-        let mut seen = HashSet::new();
+        let mut seen = IdSet::new();
         for (index, root) in roots.iter().copied().enumerate() {
             if !seen.insert(root) {
                 return self.fail(
@@ -780,7 +791,7 @@ impl Validator<'_> {
                     format!("node {} is listed more than once", root.0),
                 );
             }
-            let node = self.node(root, &format!("{path}[{index}]"))?;
+            let node = self.node(root, format_args!("{path}[{index}]"))?;
             if node.parent.is_some() {
                 return self.fail(format!("{path}[{index}]"), "root node has a parent");
             }
@@ -791,7 +802,7 @@ impl Validator<'_> {
         Ok(())
     }
 
-    fn node(&self, id: NodeId, path: &str) -> Result<&super::Node, DbValidationError> {
+    fn node(&self, id: NodeId, path: impl fmt::Display) -> Result<&super::Node, DbValidationError> {
         self.db.nodes().get(id.index()).ok_or_else(|| {
             DbValidationError::new(path, format!("node index {} is out of bounds", id.0))
         })
@@ -799,7 +810,7 @@ impl Validator<'_> {
 
     fn fail<T>(
         &self,
-        path: impl Into<String>,
+        path: impl fmt::Display,
         detail: impl Into<String>,
     ) -> Result<T, DbValidationError> {
         Err(DbValidationError::new(path, detail))

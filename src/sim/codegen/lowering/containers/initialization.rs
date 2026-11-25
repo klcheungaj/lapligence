@@ -16,7 +16,7 @@ impl<'a> Codegen<'a> {
             })?;
             self.inst = inst;
             self.depth_arg = "0".into();
-            let path = self.instance_path_of(inst);
+            let path = self.scope_path_of(inst);
             if self
                 .array_globals
                 .get(&declaration)
@@ -95,7 +95,7 @@ impl<'a> Codegen<'a> {
                 .ok_or_else(|| format!("record initializer for `{name}` has no owning instance"))?;
             self.inst = inst;
             self.depth_arg = "0".into();
-            let path = self.instance_path_of(inst);
+            let path = self.scope_path_of(inst);
             if self.db.edition() != LanguageEdition::SystemVerilog2009 {
                 return Err(format!(
                     "initializer of column-layout record `{name}` in `{path}` requires SystemVerilog"

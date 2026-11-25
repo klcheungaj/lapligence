@@ -14,6 +14,7 @@
 //! on its semantic leading clock (16.17.1).
 
 use super::*;
+use crate::IdSet;
 
 /// Semantic leading clocks of a sequence or property (16.17.1): the explicit
 /// clocks, and whether a leading position inherits the clock flowing in.
@@ -453,7 +454,7 @@ impl Codegen<'_> {
             return false;
         };
         let mut current = *expr;
-        let mut seen = HashSet::new();
+        let mut seen = IdSet::new();
         while seen.insert(current) {
             if let Some(body) = self.assertion_instance_body(current) {
                 current = body;
@@ -481,7 +482,7 @@ impl Codegen<'_> {
     pub(super) fn implication_end_clocking(&self, antecedent: NodeId) -> Option<NodeId> {
         let mut end = None;
         let mut node = antecedent;
-        let mut seen = HashSet::new();
+        let mut seen = IdSet::new();
         while seen.insert(node) && !self.db.is_parenthesized_assertion(node) {
             match self.kind(node) {
                 NodeKind::AssertionExpr(AssertionExprKind::Clocking { expr, .. }) => {
@@ -508,7 +509,7 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<LeadingClocks, String> {
-        let mut seen = HashSet::new();
+        let mut seen = IdSet::new();
         self.semantic_leading_clocks_inner(path, node, &mut seen)
     }
 
@@ -516,7 +517,7 @@ impl Codegen<'_> {
         &mut self,
         path: &str,
         node: NodeId,
-        seen: &mut HashSet<NodeId>,
+        seen: &mut IdSet<NodeId>,
     ) -> Result<LeadingClocks, String> {
         // A recursive instance re-enters a body already being examined; its
         // clocks are those of the enclosing expansion.
@@ -532,7 +533,7 @@ impl Codegen<'_> {
         &mut self,
         path: &str,
         node: NodeId,
-        seen: &mut HashSet<NodeId>,
+        seen: &mut IdSet<NodeId>,
     ) -> Result<LeadingClocks, String> {
         let NodeKind::AssertionExpr(kind) = self.kind(node) else {
             return Ok(LeadingClocks::inherited());
@@ -620,7 +621,7 @@ impl Codegen<'_> {
         &mut self,
         path: &str,
         node: NodeId,
-        seen: &mut HashSet<NodeId>,
+        seen: &mut IdSet<NodeId>,
     ) -> Result<Option<SampledClock>, String> {
         if !seen.insert(node) {
             return Ok(None);
@@ -675,7 +676,7 @@ impl Codegen<'_> {
         let leading = match clocks.as_slice() {
             [clock] => *clock,
             [] => {
-                let mut seen = HashSet::new();
+                let mut seen = IdSet::new();
                 self.first_assertion_clock(path, root, &mut seen)?
                     .ok_or_else(|| {
                         crate::sim::codegen::error::located(
@@ -892,7 +893,7 @@ impl Codegen<'_> {
             return false;
         }
         let mut stack = vec![node];
-        let mut seen = HashSet::new();
+        let mut seen = IdSet::new();
         while let Some(node) = stack.pop() {
             if !seen.insert(node) {
                 continue;

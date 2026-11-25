@@ -261,6 +261,17 @@ pub(crate) fn reject_case_with_inputs(
     reject_case_with_args(suite, fixture, diagnostic, &args);
 }
 
+/// The `llg` command of a fixture run in `directory`. A model it runs may end
+/// in an abort that the test expects.
+fn fixture_command(directory: &sim_harness::TempDir, optimized: bool) -> Command {
+    let mut command = sim_harness::command_without_core_dumps(env!("CARGO_BIN_EXE_llg"));
+    command.current_dir(directory.path()).args(["--top", "tb"]);
+    if !optimized {
+        command.arg("--no-opt");
+    }
+    command
+}
+
 fn invoke_with_args(suite: &str, fixture: &str, optimized: bool, args: &[&str]) -> Output {
     invoke_with_env(suite, fixture, optimized, args, &[], &[])
 }
@@ -294,11 +305,7 @@ fn invoke_with_source_prefix_and_runtime_args(
     let directory = sim_harness::TempDir::new(fixture).expect("CLI test directory");
     let label = format!("{suite}/{fixture}, optimized={optimized}");
     run_fixture_command(&source, &label, |lint_args| {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
-        command.current_dir(directory.path()).args(["--top", "tb"]);
-        if !optimized {
-            command.arg("--no-opt");
-        }
+        let mut command = fixture_command(&directory, optimized);
         command.args(args).args(lint_args);
         for path in &prefix_paths {
             command.arg(path);
@@ -330,11 +337,7 @@ fn invoke_with_files(
     }
     let label = format!("{suite}/{fixture}, optimized={optimized}");
     run_fixture_command(&source, &label, |lint_args| {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
-        command.current_dir(directory.path()).args(["--top", "tb"]);
-        if !optimized {
-            command.arg("--no-opt");
-        }
+        let mut command = fixture_command(&directory, optimized);
         command.args(args).args(lint_args).arg(&source);
         command
     })
@@ -356,11 +359,7 @@ pub(crate) fn invoke_with_env(
     let directory = sim_harness::TempDir::new(fixture).expect("CLI test directory");
     let label = format!("{suite}/{fixture}, optimized={optimized}");
     run_fixture_command(&source, &label, |lint_args| {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
-        command.current_dir(directory.path()).args(["--top", "tb"]);
-        if !optimized {
-            command.arg("--no-opt");
-        }
+        let mut command = fixture_command(&directory, optimized);
         command.args(args).args(lint_args);
         command.arg(&source);
         command.envs(envs.iter().copied());
@@ -391,11 +390,7 @@ fn invoke_with_env_and_files(
     }
     let label = format!("{suite}/{fixture}, optimized={optimized}");
     run_fixture_command(&source, &label, |lint_args| {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
-        command.current_dir(directory.path()).args(["--top", "tb"]);
-        if !optimized {
-            command.arg("--no-opt");
-        }
+        let mut command = fixture_command(&directory, optimized);
         command.args(args).args(lint_args);
         command.arg(&source);
         command.envs(envs.iter().copied());
@@ -420,11 +415,7 @@ pub(crate) fn run_case_keeping_dir(
     let directory = sim_harness::TempDir::new(fixture).expect("CLI test directory");
     let label = format!("{suite}/{fixture}, optimized={optimized}");
     let output = run_fixture_command(&source, &label, |lint_args| {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
-        command.current_dir(directory.path()).args(["--top", "tb"]);
-        if !optimized {
-            command.arg("--no-opt");
-        }
+        let mut command = fixture_command(&directory, optimized);
         command.args(args).args(lint_args).arg(&source);
         command.envs(envs.iter().copied());
         command
@@ -457,11 +448,7 @@ pub(crate) fn run_case_sequence(
         .map(|(index, (args, runtime_args))| {
             let label = format!("{suite}/{fixture}, run {index}, optimized={optimized}");
             run_fixture_command(&source, &label, |lint_args| {
-                let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
-                command.current_dir(directory.path()).args(["--top", "tb"]);
-                if !optimized {
-                    command.arg("--no-opt");
-                }
+                let mut command = fixture_command(&directory, optimized);
                 command
                     .args(*args)
                     .args(lint_args)
@@ -514,11 +501,7 @@ fn invoke_with_runtime_args(
     let directory = sim_harness::TempDir::new(fixture).expect("CLI test directory");
     let label = format!("{suite}/{fixture}, optimized={optimized}");
     run_fixture_command(&source, &label, |lint_args| {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
-        command.current_dir(directory.path()).args(["--top", "tb"]);
-        if !optimized {
-            command.arg("--no-opt");
-        }
+        let mut command = fixture_command(&directory, optimized);
         command
             .args(args)
             .args(lint_args)

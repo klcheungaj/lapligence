@@ -164,7 +164,7 @@ pub use processes::{
     IrPreFn, IrProcess, IrProcessKind, IrRedrive, IrRedriveAction, IrRedriveTarget, IrShape,
 };
 mod functions;
-pub(in crate::sim) use functions::dimension_size;
+pub(in crate::sim) use functions::{dimension_size, CALLBACK_CALL_DEPTH, CALLBACK_INLINED_CALLS};
 mod virtual_dispatch;
 pub use functions::{
     IrDpiExport, IrDpiImport, IrDpiType, IrFormal, IrFormalMode, IrFunc, IrLocal, IrVpiAutoStorage,

@@ -11,7 +11,7 @@ where, plus the rules the code comments do not state.
 | --- | --- |
 | Build flow, stale-output pruning, clean retry, generator and launcher order, environment fallbacks, cache key, cache root and auxiliary directories | `build.rs` module docs |
 | Optimization level, MSVC mapping, flag precedence, `--parallel` and job count | `CmakeBuildOpts` field docs, `ModelOptLevel`, `resolve_build_jobs` |
-| `-Wno-misleading-indentation` and Clang's `-fbracket-depth` on model sources only | comment above the per-source options in `build.rs` |
+| `-Wno-misleading-indentation`, GCC's `-fno-devirtualize` and Clang's `-fbracket-depth` on model sources only | comment above the per-source options in `build.rs` |
 | `-ffp-contract=off` on every GCC/Clang model and runtime compile | [cross-platform guide](../../../docs/cross_platform.md#memory-floating-point-and-pages), `FP_CONTRACT_FLAG` in `build.rs` |
 | Host-stack estimate, POSIX warning and MSVC `/STACK` reserve | `rt/llg_rt.h` stack-estimate comment and `build.rs` |
 | Toolchain seeds (key, self-check, markers, `LLG_CMAKE_TOOLCHAIN_SEED=0`, `toolchain_args`) | `build/toolchain_seed.rs` module docs |

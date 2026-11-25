@@ -1,6 +1,7 @@
 //! Force descriptors borrow only persistent targets; evaluators publish owners.
 use super::stores::Selection;
 use super::*;
+use crate::IdSet;
 
 impl Frame<'_, '_> {
     fn force_parts(
@@ -68,7 +69,7 @@ impl Frame<'_, '_> {
                         IrLhs::Bit(_, _, state) | IrLhs::Part(_, _, _, state) => *state,
                         _ => false,
                     };
-                let mut seen = std::collections::HashSet::new();
+                let mut seen = IdSet::new();
                 for (bit, source) in selected {
                     let binding = signal
                         .net_alias

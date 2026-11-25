@@ -4,26 +4,33 @@ Open design limitations that are understood but deliberately deferred. Each
 entry states the symptom, the cause, the intended direction and how to
 reproduce it. Remove an entry when the fix lands.
 
-## Deeply nested source compiles slowly, and C compilers refuse it first
+## Deeply nested source: quadratic remainders, and C compilers refuse it first
 
-**Status:** found by FIN-002 step 4 (nesting limit); not fixed. Source up to
-`llg::stack::MAX_NESTING_DEPTH` has a defined result in every stage, but some
-constructs take time that grows with the square or the cube of their depth,
-and a C compiler may refuse the model of a design `llg` accepts.
+**Status:** found by FIN-002 step 4 (nesting limit). The walks that passed the
+inside or the outside of a construct once per level are gone
+(`src/sim/scaling_tests.rs` counts their work); what is left is text and tables
+whose size is the square of the depth, and a few walks. A C compiler may refuse
+the model of a design `llg` accepts.
 
 ### Symptom
 
-Generation (`--gen-only`, unoptimized `quick` profile, Linux):
+Instructions of `--gen-only` in thousand millions (optimized build):
 
-| Construct | Levels and seconds |
-| --- | --- |
-| `for` in `for` | 250: 1.7, 500: 9, 1,000: 60; 4,087 not finished after 900 |
-| `fork begin` in `fork begin` | 250: 1, 500: 7, 1,000: 56; 2,043: 530 |
-| `foreach` in `foreach`, `wait` before `wait` | 500: 17 and 5 |
-| `randcase` in `randcase`, `wait` before `wait` | 4,087: 220 and 420 |
-| packed or unpacked dimensions, selects of one | 4,086: 170 to 310 |
-| `o.n.n...` over class handles | 250: 0.7; beyond 256 refused with `CODEGEN-009`, after 4 s at 500 and 34 s at 1,000 |
-| `else if` chain | 2,000: 6, 4,087: 24 |
+| Construct | 1,000 levels | 2,000 | 4,000 | What grows with the square of the depth |
+| --- | --- | --- | --- | --- |
+| `for` in `for` | 2.8 | 7.7 | 24 | indentation of `model.c`, names of scopes in the VPI catalog |
+| `foreach` in `foreach` | 2.6 | 7.1 | 22 | the same |
+| `else if` chain | 0.7 | 1.7 | 4.7 | indentation; the conditions are nested statements |
+| packed or unpacked dimensions, selects of one | 2.0 to 2.3 | 7.7 to 8.9 | 30 to 35 | the database keeps the dimensions of every part of a type and the indices of every part of a select; Slang's comparison of types |
+| `wait` before `wait` | 6.9 | 30 | about 120, extrapolated | the path of a frame field names every enclosing block that has storage |
+| generate `for` in generate `for` | 4.4 | 17 | 66 | hierarchical names |
+| call in call argument, `find` in a `with` of `find` | 0.9, 1.5 | refused (`SLANG-ParseTreeTooDeep`) | | arguments copied per level; Slang's analysis |
+| `o.n.n...` over class handles | refused beyond 256 (`CODEGEN-009`) | | | |
+
+Statements nested 4,000 deep that need no scope (`if`, `case`, `repeat`,
+`randcase`), chains of tasks and `ref` arguments, concatenations and conditional
+chains take 2 to 25 thousand million. Searching a statement for the suspensions
+inside it costs about nine instructions per statement and level.
 
 Nested statements become nested C blocks, up to five brackets for one loop.
 GCC builds `begin` and `if` nested 4,087 deep. `llg` raises Clang's limit on
@@ -32,20 +39,16 @@ with a stack overflow of its own (`BUILD-009`; 2,000 levels build). MSVC
 documents a limit of 128 nested blocks (C1061), which also counts an `else if`
 chain; not run.
 
-### Cause
-
-Not analysed; the steps are per construct.
-
 ### Intended direction
 
-Profile the constructs generated code uses first (`else if` chains, generate
-blocks). Emitting a chain of `else if` without nesting its arms would keep it
-below MSVC's limit.
+Emitting a chain of `else if` without nesting its arms would keep it below
+MSVC's limit and its indentation short. Members of nested frame blocks need
+names that do not repeat the path.
 
 ### Reproduce
 
 ```sh
-python3 -c "print('module tb; initial begin ' + ''.join(f'for (int i{n} = 0; i{n} < 1; i{n}++) ' for n in range(500)) + '\$display(1); end endmodule')" > loops.sv
+python3 -c "print('module tb; initial begin ' + ''.join(f'for (int i{n} = 0; i{n} < 1; i{n}++) ' for n in range(2000)) + '\$display(1); end endmodule')" > loops.sv
 llg --gen-only loops.sv
 ```
 
@@ -1954,15 +1957,15 @@ execute (`sim_019/handle_inside`, decision R14-D1).
 
 ### Symptom
 
-These legal `inside` set items reject with explicit diagnostics: a queue,
-dynamic or associative array of strings (`s inside {sq}`); a container of
+These legal `inside` set items reject with explicit diagnostics: an array of
+strings, a parameter included (`s inside {sq}`, decision R14-D2); a container of
 reals, handles or records (`r inside {rq}`); an element of a container of
 containers (`x inside {qq[0]}`, "container element access ... requires a
 scalar value"); and a container-result call (`x inside {g()}`).
 
 ### Cause
 
-String set items traverse only fixed and aggregate string storage; the
+String set items traverse only the string leaves of flattened aggregates; the
 container item form (`IrInsideItem::Container`) compares packed elements.
 Nested container elements and container results have no addressed-container
 operand (see

@@ -19,6 +19,7 @@
 //! its storage.
 use super::*;
 use crate::sim::ir::{IrStatementItem, IrToggleSignal};
+use crate::IdSet;
 
 /// The 40.3.1 coverage type values.
 const SV_COV_STATEMENT: u64 = 22;
@@ -55,7 +56,7 @@ impl Codegen<'_> {
             .chain(self.db.packages().iter().copied())
             .collect::<Vec<_>>();
         let mut stack = roots;
-        let mut seen = HashSet::new();
+        let mut seen = IdSet::new();
         while let Some(node) = stack.pop() {
             if !seen.insert(node) {
                 continue;
@@ -215,7 +216,7 @@ impl Codegen<'_> {
         }
         let mut candidates = self
             .sig_globals
-            .iter()
+            .unordered()
             .filter(|(_, info)| !info.real && info.width > 0)
             .map(|(node, info)| (*node, info.ir, info.width))
             .collect::<Vec<_>>();

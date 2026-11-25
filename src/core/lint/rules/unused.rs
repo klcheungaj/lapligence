@@ -36,7 +36,7 @@ use crate::core::db::{Db, Direction, NodeId, NodeKind};
 use crate::core::lint::rules::analysis::{
     black_box_connection_signals, collect_reads, collect_writes_with_members,
     declaration_initializers, extend_virtual_interface_members, gate_terminal_drivers,
-    gate_terminal_reads, is_signal, iter_instances, port_connected_signals, signal_scope_path,
+    gate_terminal_reads, holding_scope_path, is_signal, iter_instances, port_connected_signals,
     subroutine_body, subroutine_formal_defaults, timing_check_activity, virtual_interface_members,
 };
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
@@ -163,13 +163,13 @@ impl LintRule for UnusedSignalRule {
                     format!(
                         "signal `{}` in `{}` is never used",
                         db.node(*sig).name,
-                        signal_scope_path(db, *sig)
+                        holding_scope_path(db, *sig)
                     )
                 } else if !is_read {
                     format!(
                         "signal `{}` in `{}` is never read",
                         db.node(*sig).name,
-                        signal_scope_path(db, *sig)
+                        holding_scope_path(db, *sig)
                     )
                 } else {
                     continue;

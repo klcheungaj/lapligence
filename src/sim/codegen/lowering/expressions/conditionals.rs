@@ -5,6 +5,7 @@ use crate::core::db::ConditionalPatternKind;
 use crate::sim::ir::{
     IrNativeBinding, IrNativeLeafExpr, IrPatternCheck, IrPatternExpr, IrPatternMatchKind,
 };
+use crate::IdSet;
 use std::collections::HashSet;
 
 fn supported_fixed_integral_value(descriptor: &TypeDescriptor) -> bool {
@@ -365,7 +366,7 @@ impl Codegen<'_> {
                 format!("conditional structure pattern fields are missing in `{scope_path}`")
             })?
             .to_vec();
-        let mut seen_fields = HashSet::new();
+        let mut seen_fields = IdSet::new();
         let mut seen_names = HashSet::new();
         for field in fields {
             if !seen_fields.insert(field.field) {

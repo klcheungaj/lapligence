@@ -288,36 +288,13 @@ impl<'a> Codegen<'a> {
         if let Some(name) = self.proc_mailbox_local_name(reference) {
             return Some((reference, name));
         }
-        let name = self.node(reference).name.as_str();
-        for scope in self.lexical_scopes(reference) {
-            if matches!(self.kind(scope), NodeKind::Stmt(StmtKind::Begin)) {
-                if let Some(variable) = self.node(scope).children.iter().find(|child| {
-                    self.is_mailbox_expr("", **child) && self.node(**child).name == name
-                }) {
-                    if let Some(c_name) = self.proc_mailbox_local_name(*variable) {
-                        return Some((*variable, c_name));
-                    }
-                }
-            }
-            let variable = match self.kind(scope) {
-                NodeKind::Stmt(StmtKind::For { vars, .. }) => vars
-                    .iter()
-                    .find(|variable| {
-                        self.is_mailbox_expr("", **variable) && self.node(**variable).name == name
-                    })
-                    .copied(),
-                NodeKind::Stmt(StmtKind::Foreach { vars, .. }) => vars
-                    .iter()
-                    .flatten()
-                    .find(|variable| {
-                        self.is_mailbox_expr("", **variable) && self.node(**variable).name == name
-                    })
-                    .copied(),
-                _ => None,
-            };
+        for (_, variables) in self.lexical_declarations(reference) {
+            let variable = variables
+                .iter()
+                .find(|variable| self.is_mailbox_expr("", **variable));
             if let Some(variable) = variable {
-                if let Some(c_name) = self.proc_mailbox_local_name(variable) {
-                    return Some((variable, c_name));
+                if let Some(c_name) = self.proc_mailbox_local_name(*variable) {
+                    return Some((*variable, c_name));
                 }
             }
         }
@@ -523,102 +500,28 @@ impl<'a> Codegen<'a> {
         &self,
         reference: NodeId,
     ) -> Option<NodeId> {
-        let name = self.node(reference).name.as_str();
-        for scope in self.lexical_scopes(reference) {
-            if matches!(self.kind(scope), NodeKind::Stmt(StmtKind::Begin)) {
-                if let Some(variable) = self.node(scope).children.iter().find(|child| {
-                    matches!(
-                        self.kind(**child),
-                        NodeKind::Var { ty }
-                            if ty.kind == "class"
-                                && ty.type_name.as_deref() == Some("semaphore")
-                    ) && self.node(**child).name == name
-                }) {
-                    return Some(*variable);
-                }
-            }
-            let variable = match self.kind(scope) {
-                NodeKind::Stmt(StmtKind::For { vars, .. }) => vars
-                    .iter()
-                    .find(|variable| {
-                        matches!(
-                            self.kind(**variable),
-                            NodeKind::Var { ty }
-                                if ty.kind == "class"
-                                    && ty.type_name.as_deref() == Some("semaphore")
-                        ) && self.node(**variable).name == name
-                    })
-                    .copied(),
-                NodeKind::Stmt(StmtKind::Foreach { vars, .. }) => vars
-                    .iter()
-                    .flatten()
-                    .find(|variable| {
-                        matches!(
-                            self.kind(**variable),
-                            NodeKind::Var { ty }
-                                if ty.kind == "class"
-                                    && ty.type_name.as_deref() == Some("semaphore")
-                        ) && self.node(**variable).name == name
-                    })
-                    .copied(),
-                _ => None,
-            };
-            if variable.is_some() {
-                return variable;
-            }
-        }
-        None
+        self.lexical_class_declaration(reference, "semaphore")
     }
 
     /// Resolve a process declaration through begin/loop lexical scopes,
     /// including static declarations whose storage is model-backed.
     pub(in super::super) fn lexical_proc_process_decl(&self, reference: NodeId) -> Option<NodeId> {
-        let name = self.node(reference).name.as_str();
-        for scope in self.lexical_scopes(reference) {
-            if matches!(self.kind(scope), NodeKind::Stmt(StmtKind::Begin)) {
-                if let Some(variable) = self.node(scope).children.iter().find(|child| {
-                    matches!(self.kind(**child), NodeKind::Var { ty } if ty.kind == "class" && ty.type_name.as_deref() == Some("process"))
-                        && self.node(**child).name == name
-                }) {
-                    return Some(*variable);
-                }
-            }
-            if let NodeKind::Stmt(StmtKind::For { vars, .. }) = self.kind(scope) {
-                if let Some(variable) = vars.iter().find(|variable| {
-                    matches!(self.kind(**variable), NodeKind::Var { ty } if ty.kind == "class" && ty.type_name.as_deref() == Some("process"))
-                        && self.node(**variable).name == name
-                }) {
-                    return Some(*variable);
-                }
-            }
-            if let NodeKind::Stmt(StmtKind::Foreach { vars, .. }) = self.kind(scope) {
-                if let Some(variable) = vars.iter().flatten().find(|variable| {
-                    matches!(self.kind(**variable), NodeKind::Var { ty } if ty.kind == "class" && ty.type_name.as_deref() == Some("process"))
-                        && self.node(**variable).name == name
-                }) {
-                    return Some(*variable);
-                }
-            }
-        }
-        None
+        self.lexical_class_declaration(reference, "process")
     }
 
-    /// The blocks and loops around `node` whose declarations its procedural
-    /// names can resolve to, innermost first. One table holds the nearest scope
-    /// of every node: resolving each operand of a deep expression over the
-    /// parent links would pass every operator around it.
-    fn lexical_scopes(&self, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
-        let table = self
-            .lexical_scopes
-            .get_or_init(|| nearest_ancestors(self.db, |id| self.is_lexical_scope(id)));
-        std::iter::successors(table[node.index()], |scope| table[scope.index()])
-    }
-
-    fn is_lexical_scope(&self, node: NodeId) -> bool {
-        matches!(
-            self.kind(node),
-            NodeKind::Stmt(StmtKind::Begin | StmtKind::For { .. } | StmtKind::Foreach { .. })
-        )
+    /// The innermost procedural variable of the built-in class `class` that
+    /// `reference` names.
+    fn lexical_class_declaration(&self, reference: NodeId, class: &str) -> Option<NodeId> {
+        self.lexical_declarations(reference)
+            .flat_map(|(_, variables)| variables)
+            .copied()
+            .find(|variable| {
+                matches!(
+                    self.kind(*variable),
+                    NodeKind::Var { ty }
+                        if ty.kind == "class" && ty.type_name.as_deref() == Some(class)
+                )
+            })
     }
 
     pub(in super::super) fn is_foreach_iterator(&self, node: NodeId) -> bool {
@@ -653,30 +556,8 @@ impl<'a> Codegen<'a> {
                 return Some((*target, c_name));
             }
         }
-        let name = self.node(reference).name.as_str();
-        for scope in self.lexical_scopes(reference) {
-            if matches!(self.kind(scope), NodeKind::Stmt(StmtKind::Begin)) {
-                if let Some(variable) = self.node(scope).children.iter().find(|child| {
-                    matches!(self.kind(**child), NodeKind::Var { .. })
-                        && self.node(**child).name == name
-                }) {
-                    if let Some(c_name) = self.proc_string_local_name(*variable) {
-                        return Some((*variable, c_name));
-                    }
-                }
-            }
-            let variable = match self.kind(scope) {
-                NodeKind::Stmt(StmtKind::For { vars, .. }) => vars
-                    .iter()
-                    .find(|variable| self.node(**variable).name == name)
-                    .copied(),
-                NodeKind::Stmt(StmtKind::Foreach { vars, .. }) => vars
-                    .iter()
-                    .flatten()
-                    .find(|variable| self.node(**variable).name == name)
-                    .copied(),
-                _ => None,
-            };
+        for (scope, variables) in self.lexical_declarations(reference) {
+            let variable = self.lexical_variables(scope, variables).next();
             if let Some(variable) = variable {
                 if let Some(c_name) = self.proc_string_local_name(variable) {
                     return Some((variable, c_name));
@@ -750,70 +631,30 @@ impl<'a> Codegen<'a> {
         &self,
         reference: NodeId,
     ) -> Option<(NodeId, &ProcLocalInfo)> {
-        let name = self.node(reference).name.as_str();
-        for scope in self.lexical_scopes(reference) {
-            if matches!(self.kind(scope), NodeKind::Stmt(StmtKind::Begin)) {
-                if let Some(variable) = self.node(scope).children.iter().find(|child| {
-                    matches!(self.kind(**child), NodeKind::Var { .. })
-                        && self.node(**child).name == name
-                }) {
-                    return self
-                        .proc_local_info(*variable)
-                        .map(|info| (*variable, info));
-                }
+        let inner_loop = self.innermost_lexical_loop(reference);
+        for (scope, variables) in self.lexical_declarations(reference) {
+            // A loop that does not declare the name ends the search.
+            if inner_loop
+                .is_some_and(|inner| inner != scope && self.nesting().contains(scope, inner))
+            {
+                return None;
             }
-            let vars = match self.kind(scope) {
-                NodeKind::Stmt(StmtKind::For { vars, .. }) => {
-                    return vars
-                        .iter()
-                        .find(|variable| self.node(**variable).name == name)
-                        .and_then(|variable| {
-                            self.proc_local_info(*variable)
-                                .map(|info| (*variable, info))
-                        });
-                }
-                NodeKind::Stmt(StmtKind::Foreach { vars, .. }) => Some(vars.as_slice()),
-                _ => None,
+            let Some(variable) = self.lexical_variables(scope, variables).next() else {
+                continue;
             };
-            if let Some(variable) = vars.and_then(|vars| {
-                vars.iter()
-                    .flatten()
-                    .find(|variable| self.node(**variable).name == name)
-            }) {
-                if let Some(info) = self.proc_local_info(*variable) {
-                    return Some((*variable, info));
-                }
+            let info = self.proc_local_info(variable);
+            match self.kind(scope) {
+                NodeKind::Stmt(StmtKind::Foreach { .. }) if info.is_none() => {}
+                _ => return info.map(|info| (variable, info)),
             }
         }
         None
     }
 
     pub(in super::super) fn proc_local_is_shadowed(&self, reference: NodeId) -> bool {
-        let name = self.node(reference).name.as_str();
-        for scope in self.lexical_scopes(reference) {
-            if matches!(self.kind(scope), NodeKind::Stmt(StmtKind::Begin))
-                && self.node(scope).children.iter().any(|child| {
-                    matches!(self.kind(*child), NodeKind::Var { .. })
-                        && self.node(*child).name == name
-                })
-            {
-                return true;
-            }
-            let is_loop_var = match self.kind(scope) {
-                NodeKind::Stmt(StmtKind::For { vars, .. }) => vars
-                    .iter()
-                    .any(|variable| self.node(*variable).name == name),
-                NodeKind::Stmt(StmtKind::Foreach { vars, .. }) => vars
-                    .iter()
-                    .flatten()
-                    .any(|variable| self.node(*variable).name == name),
-                _ => false,
-            };
-            if is_loop_var {
-                return false;
-            }
-        }
-        false
+        self.lexical_declarations(reference)
+            .find(|(scope, variables)| self.lexical_variables(*scope, variables).next().is_some())
+            .is_some_and(|(scope, _)| matches!(self.kind(scope), NodeKind::Stmt(StmtKind::Begin)))
     }
 
     pub(in super::super) fn nested_proc_local_ref(&self, node: NodeId) -> Option<NodeId> {

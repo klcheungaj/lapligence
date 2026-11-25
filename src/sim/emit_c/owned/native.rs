@@ -138,33 +138,23 @@ impl Frame<'_, '_> {
             kind,
             automatic: true,
         };
-        self.native_bindings
-            .last_mut()
-            .expect("native scope")
-            .insert(name.to_owned(), binding.clone());
+        self.native_bindings.insert(name, binding.clone());
         binding
     }
     /// Bind `name` to existing native storage at `address`.
     pub(super) fn bind_native(&mut self, name: &str, address: String, kind: NativeKind) {
-        self.native_bindings
-            .last_mut()
-            .expect("native scope")
-            .insert(
-                name.to_owned(),
-                NativeBinding {
-                    address,
-                    kind,
-                    automatic: true,
-                },
-            );
+        self.native_bindings.insert(
+            name,
+            NativeBinding {
+                address,
+                kind,
+                automatic: true,
+            },
+        );
     }
     /// The kind of the innermost native binding named `name`, if any.
     pub(super) fn bound_native_kind(&self, name: &str) -> Option<NativeKind> {
-        self.native_bindings
-            .iter()
-            .rev()
-            .find_map(|scope| scope.get(name))
-            .map(|binding| binding.kind)
+        self.native_bindings.get(name).map(|binding| binding.kind)
     }
     pub(super) fn native_lookup(
         &mut self,
@@ -177,13 +167,11 @@ impl Frame<'_, '_> {
         if let Some(address) = name.strip_prefix('*') {
             return self.native_address(address, kind);
         }
-        for scope in self.native_bindings.iter().rev() {
-            if let Some(binding) = scope.get(name) {
-                if binding.kind != kind {
-                    return Err(format!("native type mismatch for {name}"));
-                }
-                return Ok(binding.clone());
+        if let Some(binding) = self.native_bindings.get(name) {
+            if binding.kind != kind {
+                return Err(format!("native type mismatch for {name}"));
             }
+            return Ok(binding.clone());
         }
         let object = self
             .ctx

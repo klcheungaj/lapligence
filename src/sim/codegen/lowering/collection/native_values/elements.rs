@@ -192,6 +192,10 @@ impl Codegen<'_> {
             else {
                 return None;
             };
+            // Of the indices only the last is a child: the others belong to
+            // the selects below.
+            let index = inner.last();
+            crate::work::count(crate::work::Work::SelectIndices, 1);
             // The element select shares the flattened select's base; a
             // member array below a record element (`q[i].a[j]`) does not.
             let (child, consumed) =
@@ -202,12 +206,12 @@ impl Codegen<'_> {
                         NodeKind::Expr(ExprKind::ArraySelect {
                             base: child_base,
                             indices,
-                        }) if child_base == base && !inner.contains(child) => {
+                        }) if child_base == base && index != Some(child) => {
                             Some((*child, indices.len()))
                         }
                         NodeKind::Expr(ExprKind::BitSelect {
                             base: child_base, ..
-                        }) if child_base == base && !inner.contains(child) => Some((*child, 1)),
+                        }) if child_base == base && index != Some(child) => Some((*child, 1)),
                         _ => None,
                     })?;
             if let Some(selection) = self.record_element_of(child) {
@@ -238,14 +242,16 @@ impl Codegen<'_> {
         let staged = self.staged_container_types.get(&typed).cloned();
         let declaration = self
             .container_globals
-            .iter()
-            .find(|(_, info)| info.ir == typed)
+            .unordered()
+            .filter(|(_, info)| info.ir == typed)
             .map(|(node, _)| *node)
+            .min_by_key(|node| node.index())
             .or_else(|| {
                 self.subroutine_containers
-                    .iter()
-                    .find(|(_, ir)| **ir == typed)
+                    .unordered()
+                    .filter(|(_, ir)| **ir == typed)
                     .map(|((_, node), _)| *node)
+                    .min_by_key(|node| node.index())
             });
         let mut descriptor = match staged {
             Some(descriptor) => descriptor,
@@ -1825,11 +1831,19 @@ impl Codegen<'_> {
             }) => {
                 let lazy = operands.get(1..).unwrap_or_default().to_vec();
                 for child in children {
-                    if lazy.contains(&child) && self.names_called_selector(child) {
+                    if !lazy.contains(&child) {
+                        self.collect_staged_members(child, false, out, nested);
+                        continue;
+                    }
+                    // What an operand does not name the operands in it do not.
+                    let outer = self.no_called_selectors.get();
+                    if !outer && self.names_called_selector(child) {
                         self.deferred_selectors.set(true);
                         continue;
                     }
+                    self.no_called_selectors.set(true);
                     self.collect_staged_members(child, false, out, nested);
+                    self.no_called_selectors.set(outer);
                 }
             }
             // A member passed to an output, inout or ref formal is written
@@ -2369,6 +2383,7 @@ impl Codegen<'_> {
 
     /// Whether `node` holds a nested array selected by a call.
     fn names_called_selector(&self, node: NodeId) -> bool {
+        crate::work::count(crate::work::Work::SelectorNodes, 1);
         (self.nested_element_selection(node).is_some() && !self.side_effect_free(node))
             || self
                 .node(node)
@@ -2636,6 +2651,9 @@ impl Codegen<'_> {
     /// A queue, dynamic or associative array nested in an element of
     /// container storage (`qq[i]`, `qd[i][j]`, `sq[k]`), named whole.
     fn nested_element_selection(&self, node: NodeId) -> Option<ElementSelection> {
+        if self.model.containers.is_empty() {
+            return None;
+        }
         let nested = |element: Option<IrContainerElement>| {
             matches!(element, Some(IrContainerElement::Container { .. }))
         };

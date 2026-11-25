@@ -11,10 +11,21 @@ index 133958b90..888bc04cb 100644
          TYPE(ScalarType);
          TYPE(FloatingType);
 diff --git a/include/slang/ast/Compilation.h b/include/slang/ast/Compilation.h
-index 90d225362..e05f8d7d2 100644
+index 90d225362..06cabb89d 100644
 --- a/include/slang/ast/Compilation.h
 +++ b/include/slang/ast/Compilation.h
-@@ -221,6 +221,14 @@ struct SLANG_EXPORT CompilationOptions {
+@@ -182,7 +182,9 @@ struct SLANG_EXPORT CompilationOptions {
+     /// The maximum number of members allowed in a single enum declaration.
+     uint32_t maxEnumValues = 65535;
+ 
+-    /// The maximum depth of recursive generic class specializations.
++    /// The maximum depth of recursive generic class specializations: of one that
++    /// is being created while another one is, and of one that is named in the
++    /// body of another one of the same class.
+     uint32_t maxRecursiveClassSpecialization = 8;
+ 
+     /// The maximum number of UDP coverage notes that will be generated for a single
+@@ -221,6 +223,14 @@ struct SLANG_EXPORT CompilationOptions {
      /// A list of library names, in the order in which they should be searched
      /// when binding cells to instances.
      std::vector<std::string> defaultLiblist;
@@ -29,7 +40,7 @@ index 90d225362..e05f8d7d2 100644
  };
  
  /// Information about how a bind directive applies to some definition
-@@ -266,6 +274,9 @@ struct SLANG_EXPORT HierarchyOverrideNode {
+@@ -266,6 +276,9 @@ struct SLANG_EXPORT HierarchyOverrideNode {
  
          /// The source defparam syntax node doing the overriding, if any (can be null).
          const syntax::SyntaxNode* defparam = nullptr;
@@ -39,7 +50,7 @@ index 90d225362..e05f8d7d2 100644
      };
  
      /// A map of parameters in the current scope to override.
-@@ -306,6 +317,12 @@ public:
+@@ -306,6 +319,12 @@ public:
      /// Gets the set of options used to construct the compilation.
      const CompilationOptions& getOptions() const { return options; }
  
@@ -52,7 +63,28 @@ index 90d225362..e05f8d7d2 100644
      /// Returns true if the given flag(s) are enabled for this compilation.
      bool hasFlag(bitmask<CompilationFlags> flags) const { return options.flags.has(flags); }
  
-@@ -656,6 +673,34 @@ public:
+@@ -365,6 +384,20 @@ public:
+     /// because of it.
+     bool hasFatalErrors() const { return sawFatalError; }
+ 
++    /// Notes that instances, class specializations or virtual interface types
++    /// nest deeper than their limit allows. From then on nothing that nests
++    /// in itself is created any more, so that every walk of the AST ends.
++    void noteHierarchyTooDeep() { hierarchyTooDeep = true; }
++
++    /// Indicates whether @a noteHierarchyTooDeep has been called.
++    bool isHierarchyTooDeep() const { return hierarchyTooDeep; }
++
++    /// Notes a new specialization of a generic class.
++    void noteSpecialization(const ClassType& type) { specializations.push_back(&type); }
++
++    /// Gets the specializations of all generic classes in order of creation.
++    std::span<const ClassType* const> getSpecializations() const { return specializations; }
++
+     /// Returns the total number of bytes allocated for AST nodes and related structures.
+     /// This includes the main bump allocator as well as specialized allocators for types
+     /// that require non-trivial destruction.
+@@ -656,6 +689,34 @@ public:
      /// This will cause appropriate errors to be issued.
      void noteNameConflict(const Symbol& symbol);
  
@@ -87,7 +119,7 @@ index 90d225362..e05f8d7d2 100644
      using AliasBitRange = std::pair<uint64_t, uint64_t>;
  
      /// Makes note of an alias defined between the bit ranges of the two given symbols.
-@@ -817,6 +862,10 @@ private:
+@@ -817,6 +878,10 @@ private:
      friend class Scope;
      friend struct DiagnosticVisitor;
  
@@ -98,8 +130,19 @@ index 90d225362..e05f8d7d2 100644
      // Collected information about a resolved bind directive.
      struct ResolvedBind {
          SmallVector<const Symbol*> instTargets;
+@@ -961,6 +1026,10 @@ private:
+     bool anyElemsWithTimescales = false;
+     bool diagsDisabled = false;
+     bool sawFatalError = false;
++    bool hierarchyTooDeep = false;
++
++    // The specializations of all generic classes in order of creation.
++    std::vector<const ClassType*> specializations;
+     uint32_t typoCorrections = 0;
+     int nextEnumSystemId = 1;
+     int nextStructSystemId = 1;
 diff --git a/include/slang/ast/Symbol.h b/include/slang/ast/Symbol.h
-index c7a8297c2..584d58e1e 100644
+index c7a8297c2..3afa324d2 100644
 --- a/include/slang/ast/Symbol.h
 +++ b/include/slang/ast/Symbol.h
 @@ -120,7 +120,8 @@ enum class RandMode;
@@ -112,6 +155,19 @@ index c7a8297c2..584d58e1e 100644
  // clang-format on
  
  SLANG_ENUM(SymbolKind, SYMBOLKIND)
+@@ -160,6 +161,12 @@ public:
+     /// This is the same as getParentScope except for instance body symbols.
+     const Scope* getHierarchicalParent() const;
+ 
++    /// Gets the scope that brought this symbol's parameter values about: the one
++    /// that names the specialization for a specialized class, the one that holds
++    /// the instance for an instance body, otherwise the parent scope. Can be null
++    /// for an instance that is still being created.
++    const Scope* getSpecializingParent() const;
++
+     /// Gets the syntax node that was used to create this symbol, if any. Symbols can
+     /// be created without any originating syntax; in those cases, this returns nullptr.
+     const syntax::SyntaxNode* getSyntax() const { return originatingSyntax; }
 diff --git a/include/slang/ast/expressions/AssignmentExpressions.h b/include/slang/ast/expressions/AssignmentExpressions.h
 index bff100b96..82f33a67d 100644
 --- a/include/slang/ast/expressions/AssignmentExpressions.h
@@ -442,9 +498,18 @@ index d03210214..871411803 100644
                                                                     : diag::ShadowHierarchy;
  
 diff --git a/source/ast/ElabVisitors.h b/source/ast/ElabVisitors.h
-index 5058df7d0..bd3f4fac6 100644
+index 5058df7d0..afbbbe736 100644
 --- a/source/ast/ElabVisitors.h
 +++ b/source/ast/ElabVisitors.h
+@@ -23,7 +23,7 @@ struct DiagnosticVisitor : public ASTVisitor<DiagnosticVisitor> {
+     DiagnosticVisitor(Compilation& compilation, const size_t& numErrors, uint32_t errorLimit) :
+         compilation(compilation), numErrors(numErrors), errorLimit(errorLimit) {}
+ 
+-    bool finishedEarly() const { return numErrors > errorLimit || hierarchyProblem; }
++    bool finishedEarly() const { return numErrors > errorLimit || compilation.isHierarchyTooDeep(); }
+ 
+     template<typename T>
+     void handle(const T& symbol) {
 @@ -145,10 +145,22 @@ struct DiagnosticVisitor : public ASTVisitor<DiagnosticVisitor> {
          symbol.getNetReferences();
      }
@@ -476,6 +541,15 @@ index 5058df7d0..bd3f4fac6 100644
          if (!handleDefault(symbol))
              return;
  
+@@ -285,7 +298,7 @@ struct DiagnosticVisitor : public ASTVisitor<DiagnosticVisitor> {
+             return;
+ 
+         if (symbol.instanceDepth > compilation.getOptions().maxCheckerInstanceDepth) {
+-            hierarchyProblem = true;
++            compilation.noteHierarchyTooDeep();
+             return;
+         }
+ 
 @@ -302,6 +315,7 @@ struct DiagnosticVisitor : public ASTVisitor<DiagnosticVisitor> {
      }
  
@@ -484,7 +558,21 @@ index 5058df7d0..bd3f4fac6 100644
          if (finishedEarly())
              return;
  
-@@ -352,7 +366,13 @@ struct DiagnosticVisitor : public ASTVisitor<DiagnosticVisitor> {
+@@ -333,7 +347,7 @@ struct DiagnosticVisitor : public ASTVisitor<DiagnosticVisitor> {
+                                                           symbol.location);
+             diag << symbol.getDefinition().getKindString();
+             diag << compilation.getOptions().maxInstanceDepth;
+-            hierarchyProblem = true;
++            compilation.noteHierarchyTooDeep();
+             return;
+         }
+ 
+@@ -348,11 +362,17 @@ struct DiagnosticVisitor : public ASTVisitor<DiagnosticVisitor> {
+             auto name = symbol.name.empty() ? "<unnamed instance>"sv : symbol.name;
+             symbol.getParentScope()->addDiag(diag::InfinitelyRecursiveHierarchy, symbol.location)
+                 << name;
+-            hierarchyProblem = true;
++            compilation.noteHierarchyTooDeep();
          }
      }
  
@@ -498,8 +586,89 @@ index 5058df7d0..bd3f4fac6 100644
          if (!handleDefault(symbol))
              return;
  
+@@ -466,33 +486,58 @@ struct DiagnosticVisitor : public ASTVisitor<DiagnosticVisitor> {
+             auto vii = std::move(compilation.virtualIfaceInstances);
+             compilation.virtualIfaceInstances.clear();
+ 
+-            for (auto inst : vii) {
++            // The ones that a visit adds come next: an interface that keeps
++            // naming itself with new parameter values reaches its depth limit
++            // before the number of its instances explodes.
++            std::ranges::reverse(vii);
++            while (!vii.empty() && !finishedEarly()) {
++                auto inst = vii.back();
++                vii.pop_back();
++
+                 inst->visit(*this);
+                 compilation.checkVirtualIfaceInstance(*inst);
++
++                auto& added = compilation.virtualIfaceInstances;
++                vii.insert(vii.end(), added.rbegin(), added.rend());
++                added.clear();
+             }
+         }
+ 
+         // Visiting a specialization can trigger more specializations to be made for the
+-        // same or other generic classes, so we need to be careful here when iterating.
++        // same or other generic classes. Those come next, as for virtual interfaces.
+         SmallSet<const Type*, 8> visitedSpecs;
+-        SmallVector<const Type*> toVisit;
+-        bool didSomething;
+-        do {
+-            didSomething = false;
+-            for (auto symbol : genericClasses) {
++        flat_hash_set<const GenericClassDefSymbol*> knownClasses;
++        std::vector<const Type*> toVisit;
++        size_t nextClass = 0;
++        size_t nextSpec = 0;
++        while (!finishedEarly()) {
++            const size_t start = toVisit.size();
++            for (; nextClass < genericClasses.size(); nextClass++) {
++                auto symbol = genericClasses[nextClass];
++                knownClasses.emplace(symbol);
+                 for (auto& spec : symbol->specializations()) {
+                     if (visitedSpecs.emplace(&spec).second)
+                         toVisit.push_back(&spec);
+                 }
++            }
+ 
+-                for (auto spec : toVisit) {
+-                    spec->visit(*this);
+-                    didSomething = true;
+-                }
+-
+-                toVisit.clear();
++            for (; nextSpec < compilation.getSpecializations().size(); nextSpec++) {
++                auto spec = compilation.getSpecializations()[nextSpec];
++                if (knownClasses.contains(spec->genericClass) && visitedSpecs.emplace(spec).second)
++                    toVisit.push_back(spec);
+             }
+-        } while (didSomething);
++
++            std::ranges::reverse(toVisit.begin() + ptrdiff_t(start), toVisit.end());
++            if (toVisit.empty())
++                break;
++
++            auto spec = toVisit.back();
++            toVisit.pop_back();
++            spec->visit(*this);
++        }
++
++        if (compilation.isHierarchyTooDeep())
++            return;
+ 
+         // Go back over and find generic classes that were never instantiated
+         // and force an empty one to make sure we collect all diagnostics that
+@@ -609,7 +654,6 @@ struct DiagnosticVisitor : public ASTVisitor<DiagnosticVisitor> {
+     uint32_t errorLimit;
+     bool visitInstances = true;
+     bool disableCache = false;
+-    bool hierarchyProblem = false;
+     flat_hash_map<InstanceCacheKey, InstanceCacheEntry> instanceCache;
+     flat_hash_set<const InstanceBodySymbol*> activeInstanceBodies;
+     flat_hash_set<const DefinitionSymbol*> usedIfacePorts;
 diff --git a/source/ast/Expression.cpp b/source/ast/Expression.cpp
-index 2f0389a41..13dd6c9d1 100644
+index 2f0389a41..227d61fb0 100644
 --- a/source/ast/Expression.cpp
 +++ b/source/ast/Expression.cpp
 @@ -812,7 +812,7 @@ Expression& Expression::create(Compilation& compilation, const ExpressionSyntax&
@@ -520,6 +689,49 @@ index 2f0389a41..13dd6c9d1 100644
              break;
          case SyntaxKind::AssignmentExpression:
          case SyntaxKind::AddAssignmentExpression:
+@@ -1305,25 +1305,31 @@ Expression& Expression::bindSelector(Compilation& compilation, Expression& value
+ 
+ static const SyntaxNode* findOverrideNodeSource(const HierarchyOverrideNode& node) {
+     // Try to find some concrete syntax node (defparam or bind directive) that
+-    // caused us to have this override node.
+-    if (!node.paramOverrides.empty()) {
+-        for (auto& [_, val] : node.paramOverrides) {
+-            if (val.defparam)
+-                return val.defparam;
++    // caused us to have this override node. The maps are keyed by addresses,
++    // so take the first in the source of those they hold.
++    const SyntaxNode* result = nullptr;
++    auto consider = [&](const SyntaxNode* candidate) {
++        if (candidate && (!result || candidate->sourceRange().start() <
++                                         result->sourceRange().start())) {
++            result = candidate;
+         }
+-    }
++    };
++
++    for (auto& [_, val] : node.paramOverrides)
++        consider(val.defparam);
++
++    if (result)
++        return result;
+ 
+     for (auto& [info, _] : node.binds) {
+         if (info.bindSyntax)
+             return info.bindSyntax;
+     }
+ 
+-    for (auto& [_, val] : node.childNodes) {
+-        if (auto result = findOverrideNodeSource(val))
+-            return result;
+-    }
++    for (auto& [_, val] : node.childNodes)
++        consider(findOverrideNodeSource(val));
+ 
+-    return nullptr;
++    return result;
+ }
+ 
+ Expression* Expression::tryBindInterfaceRef(const ASTContext& context,
 diff --git a/source/ast/Scope.cpp b/source/ast/Scope.cpp
 index 6545485a1..8520120ce 100644
 --- a/source/ast/Scope.cpp

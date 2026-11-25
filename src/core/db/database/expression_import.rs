@@ -1,6 +1,8 @@
 //! Expression import.
 
 use super::*;
+use crate::work::{count, Work};
+use crate::IdMap;
 use std::sync::Arc;
 
 fn source_spelling(snapshot: &SlangSnapshot, node: &SemanticNode) -> Option<String> {
@@ -463,11 +465,6 @@ pub(super) fn expression_from_slang(
     }))
 }
 
-#[cfg(test)]
-thread_local! {
-    static SOURCE_INDEX_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
 /// The lines of a source text, for repeated lookups of byte offsets.
 pub(super) struct SourceLines<'a> {
     text: &'a str,
@@ -479,8 +476,7 @@ pub(super) struct SourceLines<'a> {
 
 impl<'a> SourceLines<'a> {
     pub(super) fn new(text: &'a str) -> Self {
-        #[cfg(test)]
-        SOURCE_INDEX_BYTES.with(|work| work.set(work.get() + text.len()));
+        count(Work::SourceIndexBytes, text.len());
         let starts = std::iter::once(0)
             .chain(text.match_indices('\n').map(|(offset, _)| offset + 1))
             .collect();
@@ -513,7 +509,10 @@ impl<'a> SourceLines<'a> {
                 .get(self.last + 1)
                 .is_none_or(|next| offset < *next);
         if !on_last {
-            self.last = self.starts.partition_point(|start| *start <= offset) - 1;
+            self.last = self.starts.partition_point(|start| {
+                count(Work::SourceLineSteps, 1);
+                *start <= offset
+            }) - 1;
         }
         let line = u32::try_from(self.last + 1)
             .map_err(|_| DbError::InvalidSnapshot("source line number is too large".into()))?;
@@ -534,12 +533,12 @@ struct SourcePositionFile<'a> {
 }
 
 pub(super) struct SourcePositions<'a> {
-    files: HashMap<u64, SourcePositionFile<'a>>,
+    files: IdMap<u64, SourcePositionFile<'a>>,
 }
 
 impl<'a> SourcePositions<'a> {
     pub(super) fn new(snapshot: &'a SlangSnapshot) -> Self {
-        let mut files = HashMap::with_capacity(snapshot.files.len());
+        let mut files = IdMap::new();
         for file in &snapshot.files {
             files.entry(file.id).or_insert(SourcePositionFile {
                 file,
@@ -687,6 +686,7 @@ fn member_select_name(
 #[cfg(test)]
 mod source_position_tests {
     use super::*;
+    use crate::work::counted;
 
     #[test]
     fn source_positions_match_a_scan_in_any_query_order() {
@@ -700,18 +700,44 @@ mod source_position_tests {
         let offsets = (0..=text.len())
             .filter(|offset| text.is_char_boundary(*offset))
             .collect::<Vec<_>>();
-        let indexed = || SOURCE_INDEX_BYTES.with(std::cell::Cell::get);
-        let before = indexed();
-        let mut lines = SourceLines::new(&text);
-        for offset in offsets
-            .iter()
-            .chain(offsets.iter().rev())
-            .chain(offsets.iter().step_by(37))
-        {
-            assert_eq!(lines.position(*offset).unwrap(), scanned(*offset));
-        }
+        let indexed = counted(Work::SourceIndexBytes, || {
+            let mut lines = SourceLines::new(&text);
+            for offset in offsets
+                .iter()
+                .chain(offsets.iter().rev())
+                .chain(offsets.iter().step_by(37))
+            {
+                assert_eq!(lines.position(*offset).unwrap(), scanned(*offset));
+            }
+        });
         // The text is read once, however many positions are asked for.
-        assert_eq!(indexed() - before, text.len());
+        assert_eq!(indexed, text.len());
+    }
+
+    #[test]
+    fn a_source_position_compares_the_logarithm_of_the_lines() {
+        const QUERIES: usize = 1000;
+        for count in [100, 10_000_usize] {
+            let text = "line\n".repeat(count);
+            let mut lines = SourceLines::new(&text);
+            let steps = counted(Work::SourceLineSteps, || {
+                for query in 0..QUERIES {
+                    // Far from the one before, on either side of it.
+                    let line = query * 7919 % count;
+                    assert_eq!(lines.position(line * 5 + 2).unwrap(), (line as u32 + 1, 3));
+                }
+            });
+            assert!(steps > 0);
+            let bound = QUERIES * (count.ilog2() as usize + 2);
+            assert!(steps <= bound, "{steps} steps for {count} lines");
+            // An offset on the line of the one before needs none.
+            let steps = counted(Work::SourceLineSteps, || {
+                for column in 0..4 {
+                    lines.position(5 + column).unwrap();
+                }
+            });
+            assert!(steps <= count.ilog2() as usize + 2);
+        }
     }
 
     #[test]
@@ -836,12 +862,12 @@ mod source_position_tests {
             },
         )
         .unwrap();
-        let before = SOURCE_INDEX_BYTES.with(std::cell::Cell::get);
-        let db = Db::from_slang(&output.snapshot).unwrap();
-        assert_eq!(
-            SOURCE_INDEX_BYTES.with(std::cell::Cell::get) - before,
-            source.len()
-        );
+        let mut db = None;
+        let indexed = counted(Work::SourceIndexBytes, || {
+            db = Some(Db::from_slang(&output.snapshot).unwrap());
+        });
+        assert_eq!(indexed, source.len());
+        let db = db.expect("database");
         drop(output);
         db.validate().unwrap();
         assert_eq!(db.source_text("indexed_source.sv"), Some(source));

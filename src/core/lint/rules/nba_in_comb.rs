@@ -9,7 +9,7 @@
 //! explicit event control are not combinational and are skipped.
 
 use crate::core::db::{Db, NodeId, NodeKind, StmtKind};
-use crate::core::lint::rules::analysis::{has_timing_control, is_comb_process, scope_path};
+use crate::core::lint::rules::analysis::{has_timing_control, holding_scope_path, is_comb_process};
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
 /// Warns about nonblocking assignments in combinational processes.
@@ -34,11 +34,7 @@ impl LintRule for NbaInCombRule {
             if !is_comb_process(db, id) || has_timing_control(db, id) {
                 continue;
             }
-            let path = db
-                .node(id)
-                .parent
-                .map(|p| scope_path(db, p))
-                .unwrap_or_default();
+            let path = holding_scope_path(db, id);
             let mut assigns = Vec::new();
             nba_assigns(db, id, &mut assigns);
             for assign in assigns {
@@ -67,8 +63,8 @@ fn nba_assigns(db: &Db, root: NodeId, out: &mut Vec<NodeId>) {
     {
         out.push(root);
     }
-    for c in &db.node(root).children {
-        nba_assigns(db, *c, out);
+    for child in db.walk_children(root) {
+        nba_assigns(db, child, out);
     }
 }
 

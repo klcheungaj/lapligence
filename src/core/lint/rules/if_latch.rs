@@ -30,7 +30,7 @@ use std::collections::HashSet;
 
 use crate::core::db::{AlwaysKind, Db, NodeId, NodeKind, ProcessKind, StmtKind};
 use crate::core::lint::rules::analysis::{
-    has_implicit_event, has_timing_control, scope_path, signal_of_ref,
+    has_implicit_event, has_timing_control, holding_scope_path, signal_of_ref,
 };
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
@@ -62,11 +62,7 @@ impl LintRule for IfLatchRule {
             if maybes.is_empty() {
                 continue;
             }
-            let path = db
-                .node(id)
-                .parent
-                .map(|p| scope_path(db, p))
-                .unwrap_or_default();
+            let path = holding_scope_path(db, id);
             let node = db.node(id);
             for sig in maybes {
                 out.push(LintDiag {
@@ -175,8 +171,8 @@ fn analyze_stmt(db: &Db, root: NodeId) -> PathWrites {
             // wait(cond) may never proceed and fork branches may not all run:
             // every write underneath is conditional.
             let mut maybe = HashSet::new();
-            for c in &db.node(root).children {
-                let w = analyze_stmt(db, *c);
+            for child in db.walk_children(root) {
+                let w = analyze_stmt(db, child);
                 maybe.extend(w.definite);
                 maybe.extend(w.maybe);
             }
@@ -203,8 +199,8 @@ fn analyze_stmt(db: &Db, root: NodeId) -> PathWrites {
 /// leaves no latch.
 fn fold_children(db: &Db, root: NodeId) -> PathWrites {
     let mut out = PathWrites::default();
-    for c in &db.node(root).children {
-        let w = analyze_stmt(db, *c);
+    for child in db.walk_children(root) {
+        let w = analyze_stmt(db, child);
         out.definite.extend(w.definite);
         out.maybe.extend(w.maybe);
     }

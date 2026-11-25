@@ -14,7 +14,7 @@ pub use analysis::{
     SuspensionSite, DEFAULT_EMBED_LIMIT, DEFAULT_POLL_DEPTH_MAX,
 };
 
-pub(in crate::sim) use effects::EffectSummaries;
+pub(in crate::sim) use effects::{EffectSummaries, NestedEffects};
 
 use std::collections::{BTreeSet, HashSet};
 
@@ -877,6 +877,9 @@ struct CallVisits<'a> {
     allocations: HashSet<usize>,
     accesses: HashSet<usize>,
     callees: Callees<'a>,
+    /// Statements whose effects are known, of those recorded since a mark
+    /// ([`NestedEffects`]).
+    nested: Option<(&'a effects::KnownStatements, usize)>,
 }
 
 impl<'a> CallVisits<'a> {
@@ -885,6 +888,7 @@ impl<'a> CallVisits<'a> {
             allocations: HashSet::new(),
             accesses: HashSet::new(),
             callees,
+            nested: None,
         }
     }
 
@@ -944,9 +948,19 @@ fn collect_effects(
         if effects.found() {
             return;
         }
-        #[cfg(test)]
-        effects::WALKED_STATEMENTS.with(|walked| walked.set(walked.get() + 1));
+        crate::work::count(crate::work::Work::EffectStatements, 1);
         let statement = statement.unlocated();
+        if let Some((known, mark)) = visited_calls.nested {
+            match known.get(&std::ptr::from_ref(statement)) {
+                Some((at, has)) if *at >= mark => {
+                    if *has {
+                        effects.push_sought();
+                    }
+                    continue;
+                }
+                _ => {}
+            }
+        }
         match statement {
             IrStmt::InertialAssign { .. } | IrStmt::InertialEnable(_) => {
                 effects.push(ExecutionEffect::EnqueueUpdate(ScheduleRegion::Active))

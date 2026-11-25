@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::sim::ir::{IrVpiAutoStorage, IrVpiAutomatic};
+use crate::IdSet;
 
 impl<'a> Codegen<'a> {
     /// Emit one static C function for a function/task definition.  The body
@@ -22,7 +23,7 @@ impl<'a> Codegen<'a> {
     /// `ref` formals to other tasks), so drain until none remain.
     pub(in super::super) fn emit_task_specializations(&mut self) -> Result<(), String> {
         while let Some(specialization) = self.pending_specializations.pop() {
-            let path = self.instance_path_of(specialization.inst);
+            let path = self.scope_path_of(specialization.inst);
             self.emit_func_task_with(
                 &path,
                 specialization.inst,
@@ -1576,7 +1577,7 @@ impl<'a> Codegen<'a> {
         // the frame, in declaration order (decision A19-D88).
         let frame_path = self.vpi_path(ft);
         let mut pending = vec![ft];
-        let mut seen = HashSet::new();
+        let mut seen = IdSet::new();
         while let Some(node) = pending.pop() {
             if !seen.insert(node) {
                 continue;

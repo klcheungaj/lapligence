@@ -4,7 +4,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::sim::execution::CallMechanism;
 
-use super::names::FirstBytes;
+use super::names::NameFilter;
+use crate::work::{count, Work};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FrameStorage {
@@ -44,6 +45,32 @@ pub(super) struct GcFrameSlot {
     pub(super) path: String,
     /// `LLG_GC_FRAME_HANDLE` (0) or `LLG_GC_FRAME_INTERIOR` (1).
     pub(super) kind: u32,
+}
+
+/// The slots of a frame map's `states` as one list, and the first slot and
+/// the number of slots of each state. A state whose slots start those of
+/// another shares them.
+pub(super) fn gc_slot_runs(
+    map: &[(u32, Vec<GcFrameSlot>)],
+    states: usize,
+) -> (Vec<&GcFrameSlot>, Vec<usize>, Vec<usize>) {
+    let mut slots = Vec::new();
+    let mut first = vec![0; states];
+    let mut count = vec![0; states];
+    // In descending order a list follows the longest one that it starts, or
+    // another that it starts too.
+    let mut descending: Vec<_> = map.iter().collect();
+    descending.sort_by(|(left, a), (right, b)| b.cmp(a).then(left.cmp(right)));
+    let mut run: &[GcFrameSlot] = &[];
+    for (state, own) in descending {
+        if !run.starts_with(own) {
+            run = own;
+            slots.extend(own);
+        }
+        first[*state as usize] = slots.len() - run.len();
+        count[*state as usize] = own.len();
+    }
+    (slots, first, count)
 }
 
 /// Collector kind of a frame field's C type: object handles are `void*`;
@@ -109,7 +136,7 @@ pub(super) struct FrameLayout {
     current: usize,
     /// The declared fields by name.
     fields: HashMap<String, FieldEntry>,
-    field_first_bytes: FirstBytes,
+    field_filter: NameFilter,
     /// The paths of the call slots.
     call_paths: BTreeSet<String>,
     calls: Vec<CallSlot>,
@@ -127,7 +154,7 @@ impl FrameLayout {
             blocks: vec![Block::default()],
             current: 0,
             fields: HashMap::new(),
-            field_first_bytes: FirstBytes::default(),
+            field_filter: NameFilter::default(),
             call_paths: BTreeSet::new(),
             calls: Vec::new(),
             paths_finalized: false,
@@ -283,7 +310,7 @@ impl FrameLayout {
         let (size, align) = lp64_layout(ty, self.value_backend)?;
         // The final path depends on whether sibling blocks retain any frame
         // storage. Defer constructing it until the whole block tree is known.
-        self.field_first_bytes.insert(name);
+        self.field_filter.insert(name);
         let fields = &mut self.blocks[self.current].fields;
         self.fields.insert(
             name.to_owned(),
@@ -310,10 +337,19 @@ impl FrameLayout {
         self.field_entry(name)?.access.as_deref()
     }
 
+    /// A set that holds the names of the fields.
+    pub(super) fn field_names(&self) -> NameFilter {
+        self.field_filter
+    }
+
     fn field_entry(&self, name: &str) -> Option<&FieldEntry> {
-        self.field_first_bytes
+        self.field_filter
             .may_hold(name)
-            .then(|| self.fields.get(name))
+            .then(|| {
+                let entry = self.fields.get(name);
+                count(Work::FieldMisses, usize::from(entry.is_none()));
+                entry
+            })
             .flatten()
     }
 
@@ -400,8 +436,16 @@ impl FrameLayout {
         let mut map = BTreeMap::new();
         for resume in &self.resume_states {
             let mut slots = Vec::new();
+            let mut chain = Vec::new();
             let mut block = Some(resume.block);
             while let Some(index) = block {
+                chain.push(index);
+                block = self.blocks[index].parent;
+            }
+            // In the order of declaration, the maps of two states that a
+            // chain of calls separates start alike.
+            for index in chain.into_iter().rev() {
+                let first = slots.len();
                 for field in &self.blocks[index].fields {
                     // Emitter-owned pointers into registered scope storage
                     // (temporaries, packed locals, native cells) never
@@ -418,14 +462,17 @@ impl FrameLayout {
                     else {
                         continue;
                     };
-                    slots.push(GcFrameSlot {
-                        path: path.to_owned(),
-                        kind,
-                    });
+                    slots.push((
+                        field.seq,
+                        GcFrameSlot {
+                            path: path.to_owned(),
+                            kind,
+                        },
+                    ));
                 }
-                block = self.blocks[index].parent;
+                slots[first..].sort();
             }
-            slots.sort();
+            let slots: Vec<_> = slots.into_iter().map(|(_, slot)| slot).collect();
             map.insert(resume.state, slots);
         }
         self.gc_map = map
@@ -919,6 +966,17 @@ mod tests {
         );
         layout.release_emission_state();
         assert_eq!(layout.gc_map().len(), 3);
+
+        // State 2 has the first slots of state 3.
+        let (slots, first, count) = gc_slot_runs(layout.gc_map(), 4);
+        assert_eq!(slots.len(), 7);
+        assert_eq!(count, [0, 3, 3, 4]);
+        assert_eq!(first[2], first[3]);
+        for (state, own) in layout.gc_map() {
+            let state = *state as usize;
+            let run = &slots[first[state]..first[state] + count[state]];
+            assert!(run.iter().copied().eq(own));
+        }
     }
 
     #[test]

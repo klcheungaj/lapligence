@@ -342,7 +342,7 @@ static void dyn_static_slots(uint32_t base) {
 
 static vpiHandle dyn_class_handle(uint32_t class_index, uint32_t which) {
     if (class_index >= dyn_class_count()) return NULL;
-    return encode_handle(g_dyn.class_base + which * dyn_class_count() + class_index);
+    return static_handle(g_dyn.class_base + which * dyn_class_count() + class_index);
 }
 
 static vpiHandle defn_handle(uint32_t class_index) { return dyn_class_handle(class_index, 0); }
@@ -351,7 +351,7 @@ static vpiHandle defn_handle(uint32_t class_index) { return dyn_class_handle(cla
 static vpiHandle item_handle(uint32_t class_index, uint32_t item) {
     const llg_vpi_class_t* layout = dyn_class(class_index);
     if (!layout || item >= layout->item_count) return NULL;
-    return encode_handle(g_dyn.class_base + dyn_class_count() * 3u + layout->first_item + item);
+    return static_handle(g_dyn.class_base + dyn_class_count() * 3u + layout->first_item + item);
 }
 static vpiHandle class_typespec_handle(uint32_t class_index) {
     return dyn_class_handle(class_index, 1);
@@ -388,10 +388,9 @@ static llg_vpi_live_t* live_find(const void* object) {
     }
 }
 
-static int32_t live_grow(void) {
+static void live_grow(void) {
     size_t capacity = g_dyn.live_capacity ? g_dyn.live_capacity * 2u : 64u;
     llg_vpi_live_t* table = (llg_vpi_live_t*)vpi_calloc(capacity, sizeof(*table));
-    if (!table) return 0;
     for (size_t i = 0; i < g_dyn.live_capacity; ++i) {
         llg_vpi_live_t* entry = &g_dyn.live[i];
         if (!entry->object) continue;
@@ -402,7 +401,6 @@ static int32_t live_grow(void) {
     free(g_dyn.live);
     g_dyn.live = table;
     g_dyn.live_capacity = capacity;
-    return 1;
 }
 
 static void dyn_hook(void) {
@@ -416,10 +414,7 @@ static void dyn_hook(void) {
 static llg_vpi_live_t* live_get(void* object) {
     llg_vpi_live_t* entry = live_find(object);
     if (entry) return entry;
-    if ((g_dyn.live_count + 1u) * 4u > g_dyn.live_capacity * 3u && !live_grow()) {
-        vpi_error("LLG_VPI_NOMEM", "VPI object table allocation failed");
-        return NULL;
-    }
+    if ((g_dyn.live_count + 1u) * 4u > g_dyn.live_capacity * 3u) live_grow();
     dyn_hook();
     size_t mask = g_dyn.live_capacity - 1u;
     size_t at = live_bucket(object, g_dyn.live_capacity);
@@ -462,12 +457,12 @@ static int32_t dyn_object_class(void* object, uint32_t* class_index) {
 
 static vpiHandle make_object(void* object) {
     llg_vpi_live_t* entry = live_get(object);
-    if (!entry) return NULL;
-    uint32_t index = alloc_slot(SLOT_CLASSOBJ);
-    if (index == LLG_VPI_NONE) return NULL;
+    vpiHandle handle;
+    llg_vpi_slot_t* slot = alloc_slot(SLOT_CLASSOBJ, &handle);
+    if (!slot) return NULL;
     entry->named = 1;
-    slot_at(index)->pointer = object;
-    return encode_handle(index);
+    slot->pointer = object;
+    return handle;
 }
 
 /* The class object a handle of `shape` names: a mailbox or semaphore is a
@@ -475,26 +470,25 @@ static vpiHandle make_object(void* object) {
  * accessor. */
 static vpiHandle make_shape_object(const llg_vpi_shape_t* shape, void* object) {
     if (!shape || !shape->builtin) return make_object(object);
-    uint32_t index = alloc_slot(SLOT_BUILTINOBJ);
-    if (index == LLG_VPI_NONE) return NULL;
-    slot_at(index)->pointer = object;
-    slot_at(index)->aux = (int32_t)shape->builtin;
-    return encode_handle(index);
+    vpiHandle handle;
+    llg_vpi_slot_t* slot = alloc_slot(SLOT_BUILTINOBJ, &handle);
+    if (!slot) return NULL;
+    slot->pointer = object;
+    slot->aux = (int32_t)shape->builtin;
+    return handle;
 }
 
 static vpiHandle make_property(void* object, uint32_t class_index, uint32_t field) {
     if (object) {
-        llg_vpi_live_t* entry = live_get(object);
-        if (!entry) return NULL;
-        entry->named = 1;
+        live_get(object)->named = 1;
     }
-    uint32_t index = alloc_slot(SLOT_PROPERTY);
-    if (index == LLG_VPI_NONE) return NULL;
-    llg_vpi_slot_t* slot = slot_at(index);
+    vpiHandle handle;
+    llg_vpi_slot_t* slot = alloc_slot(SLOT_PROPERTY, &handle);
+    if (!slot) return NULL;
     slot->pointer = object;
     slot->aux = (int32_t)field;
     slot->right = class_index;
-    return encode_handle(index);
+    return handle;
 }
 
 /* The handle of static property `field` (a property number from
@@ -509,15 +503,14 @@ static LLG_OUTLYING vpiHandle make_static_property(uint32_t field) {
  * (37.30). The handle tracks the object like a property handle. */
 static vpiHandle object_item_handle(void* object, uint32_t class_index, uint32_t item) {
     llg_vpi_live_t* entry = live_get(object);
-    if (!entry) return NULL;
-    uint32_t index = alloc_slot(SLOT_CLASSITEM);
-    if (index == LLG_VPI_NONE) return NULL;
+    vpiHandle handle;
+    llg_vpi_slot_t* slot = alloc_slot(SLOT_CLASSITEM, &handle);
+    if (!slot) return NULL;
     entry->named = 1;
-    llg_vpi_slot_t* slot = slot_at(index);
     slot->pointer = object;
     slot->aux = (int32_t)item;
     slot->right = class_index;
-    return encode_handle(index);
+    return handle;
 }
 
 /* ── places: the storage a handle names ─────────────────────────────────── */
@@ -814,14 +807,9 @@ static LLG_OUTLYING void dyn_release_path(llg_vpi_slot_t* slot) {
     slot->span = 0;
 }
 
-/* A copy of `count` bytes of `key` with a terminating NUL, or NULL with
- * an error. */
+/* A copy of `count` bytes of `key` with a terminating NUL. */
 static LLG_OUTLYING char* dyn_key_copy(const char* key, size_t count) {
     char* copy = (char*)vpi_malloc(count + 1u);
-    if (!copy) {
-        vpi_error("LLG_VPI_NOMEM", "VPI element key allocation failed");
-        return NULL;
-    }
     if (count) memcpy(copy, key, count);
     copy[count] = '\0';
     return copy;
@@ -844,44 +832,26 @@ static LLG_OUTLYING vpiHandle make_dyn_path(const dyn_place_t* place, uint32_t f
                                uint32_t count) {
     char* first = NULL;
     dyn_step_t* rest = NULL;
-    if (steps[0].at == DYN_AT_STRING && !(first = dyn_key_copy(steps[0].key, steps[0].length)))
-        return NULL;
+    if (steps[0].at == DYN_AT_STRING) first = dyn_key_copy(steps[0].key, steps[0].length);
     if (count > 1u) {
         rest = (dyn_step_t*)vpi_calloc(count - 1u, sizeof(*rest));
-        int32_t failed = rest == NULL;
-        for (uint32_t i = 1; !failed && i < count; ++i) {
+        for (uint32_t i = 1; i < count; ++i) {
             rest[i - 1u] = steps[i];
-            rest[i - 1u].key = NULL;
-            if (steps[i].at == DYN_AT_STRING &&
-                !(rest[i - 1u].key = dyn_key_copy(steps[i].key, steps[i].length)))
-                failed = 1;
-        }
-        if (failed) {
-            for (uint32_t i = 0; rest && i + 1u < count; ++i) free((void*)(uintptr_t)rest[i].key);
-            free(rest);
-            free(first);
-            if (!rest) vpi_error("LLG_VPI_NOMEM", "VPI element path allocation failed");
-            return NULL;
+            rest[i - 1u].key = steps[i].at == DYN_AT_STRING
+                ? dyn_key_copy(steps[i].key, steps[i].length) : NULL;
         }
     }
     if (place->owner) {
-        llg_vpi_live_t* entry = live_get(place->owner);
-        if (!entry) {
-            for (uint32_t i = 0; rest && i + 1u < count; ++i) free((void*)(uintptr_t)rest[i].key);
-            free(rest);
-            free(first);
-            return NULL;
-        }
-        entry->named = 1;
+        live_get(place->owner)->named = 1;
     }
-    uint32_t index = alloc_slot(SLOT_DYNELEM);
-    if (index == LLG_VPI_NONE) {
+    vpiHandle handle;
+    llg_vpi_slot_t* slot = alloc_slot(SLOT_DYNELEM, &handle);
+    if (!slot) {
         for (uint32_t i = 0; rest && i + 1u < count; ++i) free((void*)(uintptr_t)rest[i].key);
         free(rest);
         free(first);
         return NULL;
     }
-    llg_vpi_slot_t* slot = slot_at(index);
     slot->object = place->row;
     slot->right = place->serial;
     slot->pointer = place->owner;
@@ -892,7 +862,7 @@ static LLG_OUTLYING vpiHandle make_dyn_path(const dyn_place_t* place, uint32_t f
     slot->count = steps[0].length;
     slot->span = count - 1u;
     slot->use = (uintptr_t)rest; /* freed by release_slot (dyn_release_path) */
-    return encode_handle(index);
+    return handle;
 }
 
 /* An element handle; `key`/`key_length` copy a string key. */
@@ -1204,10 +1174,6 @@ static void dyn_fill_string(const llg_string_t* text, p_vpi_value output) {
     if (output->format == vpiSuppressVal) return;
     if (output->format == vpiStringVal) {
         char* buffer = text_buffer(text->len + 1u);
-        if (!buffer) {
-            vpi_error("LLG_VPI_NOMEM", "VPI string value allocation failed");
-            return;
-        }
         if (text->len) memcpy(buffer, text->data, text->len);
         buffer[text->len] = '\0';
         output->value.str = buffer;
@@ -1751,15 +1717,10 @@ static vpiHandle dyn_iterate_items(uint32_t class_index, int32_t relation, uint6
     for (uint32_t k = 0; layout && k < layout->item_count; ++k)
         if (dyn_item_selected(dyn_item(class_index, k), relation, owner)) ++count;
     vpiHandle iterator = dyn_iterator(DYN_ITER_ITEMS, count);
-    llg_vpi_slot_t* state = iterator ? decode_handle(iterator, NULL) : NULL;
+    llg_vpi_slot_t* state = iterator ? decode_handle(iterator) : NULL;
     if (!state) return NULL;
     if (object) {
-        llg_vpi_live_t* entry = live_get(object);
-        if (!entry) {
-            vpi_release_handle(iterator);
-            return NULL;
-        }
-        entry->named = 1;
+        live_get(object)->named = 1;
     }
     state->right = class_index;
     state->aux = relation;
@@ -1784,7 +1745,7 @@ static vpiHandle dyn_iterate_class_defns(uint32_t scope) {
     for (uint32_t i = 0; i < dyn_class_count(); ++i)
         if (dyn_class_in_scope(i, scope)) ++count;
     vpiHandle iterator = dyn_iterator(DYN_ITER_CLASSES, count);
-    llg_vpi_slot_t* state = iterator ? decode_handle(iterator, NULL) : NULL;
+    llg_vpi_slot_t* state = iterator ? decode_handle(iterator) : NULL;
     if (state) state->right = scope;
     return iterator;
 }
@@ -2358,13 +2319,13 @@ static uint32_t dyn_visible_fields(uint32_t class_index, uint32_t first, int32_t
 
 static vpiHandle dyn_iterator(uint32_t sub_kind, uint32_t count) {
     if (count == 0) return NULL;
-    uint32_t index = alloc_slot(SLOT_ITERATOR);
-    if (index == LLG_VPI_NONE) return NULL;
-    llg_vpi_slot_t* slot = slot_at(index);
+    vpiHandle handle;
+    llg_vpi_slot_t* slot = alloc_slot(SLOT_ITERATOR, &handle);
+    if (!slot) return NULL;
     slot->iter_kind = ITER_DYN;
     slot->span = sub_kind;
     slot->count = count;
-    return encode_handle(index);
+    return handle;
 }
 
 static vpiHandle dyn_iterate_fields(void* object, uint32_t class_index, uint32_t first,
@@ -2374,16 +2335,11 @@ static vpiHandle dyn_iterate_fields(void* object, uint32_t class_index, uint32_t
     int32_t inherited = first == 0;
     vpiHandle iterator =
         dyn_iterator(DYN_ITER_FIELDS, dyn_visible_fields(class_index, first, type, inherited));
-    llg_vpi_slot_t* slot = iterator ? decode_handle(iterator, NULL) : NULL;
+    llg_vpi_slot_t* slot = iterator ? decode_handle(iterator) : NULL;
     if (!slot) return NULL;
     slot->lsb = (uint32_t)inherited;
     if (object) {
-        llg_vpi_live_t* entry = live_get(object);
-        if (!entry) {
-            vpi_release_handle(iterator);
-            return NULL;
-        }
-        entry->named = 1;
+        live_get(object)->named = 1;
     }
     slot->pointer = object;
     slot->right = class_index;
@@ -2399,10 +2355,6 @@ static vpiHandle dyn_iterate_fields(void* object, uint32_t class_index, uint32_t
 static vpiHandle dyn_event_array_ranges(const llg_vpi_shape_t* shape, uint32_t class_index,
                                         uint32_t field) {
     uintptr_t* items = (uintptr_t*)vpi_calloc(1u, sizeof(*items));
-    if (!items) {
-        vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
-        return NULL;
-    }
     uint32_t declaring = dyn_declaring_class(class_index, field);
     const llg_vpi_class_field_t* entry = dyn_field(class_index, field);
     llg_vpi_range_origin_t origin = {
@@ -2451,15 +2403,8 @@ static LLG_OUTLYING void dyn_list_push(dyn_list_t* list, vpiHandle handle) {
     }
     if (list->count == list->capacity) {
         uint32_t capacity = list->capacity ? list->capacity * 2u : 8u;
-        uintptr_t* grown = capacity > list->capacity
-            ? (uintptr_t*)vpi_realloc(list->items, (size_t)capacity * sizeof(*grown)) : NULL;
-        if (!grown) {
-            vpi_release_handle(handle);
-            list->failed = 1;
-            vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
-            return;
-        }
-        list->items = grown;
+        list->items =
+            (uintptr_t*)vpi_realloc(list->items, (size_t)capacity * sizeof(*list->items));
         list->capacity = capacity;
     }
     list->items[list->count++] = (uintptr_t)handle;
@@ -2742,7 +2687,7 @@ static vpiHandle dyn_iterate(int32_t type, llg_vpi_slot_t* slot, int32_t* handle
                 for (uint32_t i = 0; i < dyn_class_count(); ++i)
                     if (dyn_class(i)->base == class_index + 1u) ++count;
                 vpiHandle iterator = dyn_iterator(DYN_ITER_DERIVED, count);
-                llg_vpi_slot_t* state = iterator ? decode_handle(iterator, NULL) : NULL;
+                llg_vpi_slot_t* state = iterator ? decode_handle(iterator) : NULL;
                 if (state) state->right = class_index;
                 return iterator;
             }
@@ -2761,11 +2706,6 @@ static vpiHandle dyn_iterate(int32_t type, llg_vpi_slot_t* slot, int32_t* handle
                 vpiHandle index = dyn_handle(vpiIndex, slot, &index_handled);
                 if (!index) return NULL;
                 uintptr_t* items = (uintptr_t*)vpi_calloc(1u, sizeof(*items));
-                if (!items) {
-                    vpi_release_handle(index);
-                    vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
-                    return NULL;
-                }
                 items[0] = (uintptr_t)index;
                 return make_list_iterator(vpiIndex, items, 1u);
             }
@@ -2855,15 +2795,10 @@ static vpiHandle dyn_iterate(int32_t type, llg_vpi_slot_t* slot, int32_t* handle
             size_t size = dyn_container_size(&place);
             if (size > UINT32_MAX) size = UINT32_MAX;
             vpiHandle iterator = dyn_iterator(DYN_ITER_ELEMENTS, (uint32_t)size);
-            llg_vpi_slot_t* state = iterator ? decode_handle(iterator, NULL) : NULL;
+            llg_vpi_slot_t* state = iterator ? decode_handle(iterator) : NULL;
             if (!state) return NULL;
             if (place.owner) {
-                llg_vpi_live_t* entry = live_get(place.owner);
-                if (!entry) {
-                    vpi_release_handle(iterator);
-                    return NULL;
-                }
-                entry->named = 1;
+                live_get(place.owner)->named = 1;
             }
             state->object = place.row;
             state->right = place.serial;
@@ -3181,8 +3116,7 @@ static PLI_INT64 dyn_get(int32_t property, llg_vpi_slot_t* slot, int32_t* handle
                 int32_t ok;
                 void* object = dyn_class_target(slot, &ok);
                 if (!ok) break;
-                llg_vpi_live_t* entry = object ? live_get(object) : NULL;
-                return entry ? (PLI_INT64)entry->id : 0;
+                return object ? (PLI_INT64)live_get(object)->id : 0;
             }
             break;
         }
@@ -3210,8 +3144,7 @@ static PLI_INT64 dyn_get(int32_t property, llg_vpi_slot_t* slot, int32_t* handle
                     /* 37.29 detail 2: the referenced object's id, 0 for null. */
                     if (shape->shape != LLG_VPI_SHAPE_CLASS || !place.storage) break;
                     void* object = *(void**)place.storage;
-                    llg_vpi_live_t* entry = object ? live_get(object) : NULL;
-                    return entry ? (PLI_INT64)entry->id : 0;
+                    return object ? (PLI_INT64)live_get(object)->id : 0;
                 }
                 case vpiSigned:
                     return shape->shape == LLG_VPI_SHAPE_PACKED ? shape->is_signed : 0;
@@ -3280,20 +3213,13 @@ typedef struct {
     char* data;
     size_t length;
     size_t capacity;
-    int32_t failed;
 } dyn_name_t;
 
 static LLG_OUTLYING void dyn_name_append(dyn_name_t* name, const char* text, size_t length) {
-    if (name->failed) return;
     if (name->length + length + 1u > name->capacity) {
         size_t capacity = name->capacity ? name->capacity : 64u;
         while (capacity < name->length + length + 1u) capacity *= 2u;
         char* grown = (char*)vpi_realloc(name->data, capacity);
-        if (!grown) {
-            name->failed = 1;
-            vpi_error("LLG_VPI_NOMEM", "VPI element name allocation failed");
-            return;
-        }
         name->data = grown;
         name->capacity = capacity;
     }
@@ -3356,7 +3282,7 @@ static LLG_OUTLYING int32_t dyn_name_path(dyn_name_t* name, const llg_vpi_slot_t
         value = (llg_value_t*)top->storage;
     }
     uint32_t count = 1u + slot->span;
-    for (uint32_t i = 0; i < count && !name->failed; ++i) {
+    for (uint32_t i = 0; i < count; ++i) {
         dyn_step_t step = dyn_step_at(slot, i);
         if (step.at == DYN_AT_MEMBER) {
             const llg_vpi_member_t* member = dyn_member(shape, step.element);
@@ -3385,7 +3311,7 @@ static LLG_OUTLYING int32_t dyn_name_path(dyn_name_t* name, const llg_vpi_slot_t
             return 0;
         }
     }
-    return !name->failed;
+    return 1;
 }
 
 /* 37.17 detail 25: the full name of a static property, through its class
@@ -3397,10 +3323,6 @@ static LLG_OUTLYING char* dyn_static_full_name(uint32_t field) {
     if (!layout) return NULL;
     size_t length = strlen(layout->full_name) + 2u + strlen(entry->field.name) + 1u;
     char* text = (char*)vpi_malloc(length);
-    if (!text) {
-        vpi_error("LLG_VPI_NOMEM", "VPI name allocation failed");
-        return NULL;
-    }
     snprintf(text, length, "%s::%s", layout->full_name, entry->field.name);
     return text;
 }
@@ -3463,10 +3385,6 @@ static char* dyn_element_name(const llg_vpi_slot_t* slot, int32_t full) {
         if (!frame) return NULL;
         size_t length = strlen(frame) + 1u + strlen(place.name) + 1u;
         base = (char*)vpi_malloc(length);
-        if (!base) {
-            vpi_error("LLG_VPI_NOMEM", "VPI element name allocation failed");
-            return NULL;
-        }
         snprintf(base, length, "%s.%s", frame, place.name);
     }
     int32_t ok = dyn_name_path(&name, slot, &place, 0,
@@ -3813,15 +3731,15 @@ static LLG_OUTLYING vpiHandle dyn_element_by_index(const dyn_place_t* place, uin
             if (!quiet) vpi_error("LLG_VPI_INDEX", "index outside the array range");
             return NULL;
         }
-        uint32_t made = alloc_slot(SLOT_DYNELEM);
-        if (made == LLG_VPI_NONE) return NULL;
-        llg_vpi_slot_t* slot = slot_at(made);
+        vpiHandle handle;
+        llg_vpi_slot_t* slot = alloc_slot(SLOT_DYNELEM, &handle);
+        if (!slot) return NULL;
         slot->object = DYN_DEFN_ROW;
         slot->right = (int64_t)place->class_index;
         slot->aux = (int32_t)field;
         slot->lsb = DYN_AT_INDEX;
         slot->element = (uint64_t)(left >= right ? left - index : index - left);
-        return encode_handle(made);
+        return handle;
     }
     if (!place->storage) {
         if (!quiet)
@@ -3950,7 +3868,6 @@ static int32_t dyn_parse_key(const char** cursor, char** key, size_t* length) {
         if (q[0] == '\\' && q[1] == '"') ++q;
     if (*q != '"') return 0;
     char* text = (char*)vpi_malloc(size + 1u);
-    if (!text) return 0;
     size_t n = 0;
     for (; p < q; ++p) {
         if (p[0] == '\\' && p[1] == '"') ++p;
@@ -4138,7 +4055,7 @@ static LLG_OUTLYING vpiHandle dyn_record_member(const dyn_place_t* place, uint32
 static LLG_OUTLYING vpiHandle dyn_walk_suffix(vpiHandle current, vpiHandle keep, const char* p, int32_t partial) {
     int32_t unserved_select = 0, unserved_member = 0;
     while (current && *p) {
-        llg_vpi_slot_t* slot = decode_handle(current, NULL);
+        llg_vpi_slot_t* slot = decode_handle(current);
         vpiHandle next = NULL;
         if (*p == '[') {
             dyn_place_t place;
@@ -4167,12 +4084,12 @@ static LLG_OUTLYING vpiHandle dyn_walk_suffix(vpiHandle current, vpiHandle keep,
             }
             if (!next) {
                 int32_t ok;
-                void* object = dyn_class_target(decode_handle(current, NULL), &ok);
+                void* object = dyn_class_target(decode_handle(current), &ok);
                 if (ok && object) next = dyn_property_by_name(object, name, (size_t)(p - name));
             }
             if (!next) {
                 /* A structure kept as one packed value has no member objects. */
-                slot = decode_handle(current, NULL);
+                slot = decode_handle(current);
                 dyn_place_t place;
                 const llg_vpi_shape_t* shape = slot->kind == SLOT_DYNELEM ? dyn_element_shape(slot)
                                                : dyn_place(slot, &place)  ? place.shape
@@ -4187,7 +4104,7 @@ static LLG_OUTLYING vpiHandle dyn_walk_suffix(vpiHandle current, vpiHandle keep,
     }
     if (current) {
         /* A container nested in an element is a dimension, not an object. */
-        llg_vpi_slot_t* slot = decode_handle(current, NULL);
+        llg_vpi_slot_t* slot = decode_handle(current);
         const llg_vpi_shape_t* shape =
             slot && slot->kind == SLOT_DYNELEM && !dyn_is_member(slot) ? dyn_element_shape(slot) : NULL;
         if (shape && shape->shape == LLG_VPI_SHAPE_CONTAINER) {
@@ -4316,10 +4233,6 @@ static int32_t dyn_bind_value_cb(struct llg_vpi_cb* cb, llg_vpi_slot_t* slot) {
         return 0;
     }
     llg_vpi_watch_t* watch = (llg_vpi_watch_t*)vpi_calloc(1, sizeof(*watch));
-    if (!watch) {
-        vpi_error("LLG_VPI_NOMEM", "VPI value-change watch allocation failed");
-        return 0;
-    }
     watch->key = object->dependency;
     watch->cb = cb;
     watch->element = LLG_VPI_NO_ELEMENT;
@@ -4382,10 +4295,6 @@ static int32_t dyn_bind_size_cb(struct llg_vpi_cb* cb, llg_vpi_slot_t* slot, con
         return 0;
     }
     llg_vpi_watch_t* watch = (llg_vpi_watch_t*)vpi_calloc(1, sizeof(*watch));
-    if (!watch) {
-        vpi_error("LLG_VPI_NOMEM", "VPI value-change watch allocation failed");
-        return 0;
-    }
     watch->key = marker;
     watch->cb = cb;
     watch->element = LLG_VPI_NO_ELEMENT;
@@ -4427,7 +4336,7 @@ static LLG_OUTLYING void dyn_handle_cb_value(const struct llg_vpi_cb* cb, p_vpi_
  * the class in target.object and a watched object's address in
  * target.element. */
 static int32_t dyn_bind_object_cb(struct llg_vpi_cb* cb, const s_cb_data* data) {
-    llg_vpi_slot_t* slot = checked_handle(data->obj, NULL);
+    llg_vpi_slot_t* slot = checked_handle(data->obj);
     if (!slot) return 0;
     int32_t reason = data->reason;
     if (slot->kind == SLOT_CLASSTS && reason != cbEndOfObject) {
@@ -4486,8 +4395,7 @@ static void dyn_run_object_cbs(int32_t reason, void* object, uint32_t class_inde
     llg_vpi_cb_t** items = collect_cbs(g_vpi.cbs, matches_object_cb, &match, buffer, &count);
     if (count) {
         vpiHandle handle = make_object(object);
-        uint32_t index = LLG_VPI_NONE;
-        if (handle && decode_handle(handle, &index)) {
+        if (handle) {
             for (size_t i = 0; i < count; ++i) {
                 llg_vpi_cb_t* cb = items[i];
                 if (cb->removed) continue;
@@ -4502,7 +4410,8 @@ static void dyn_run_object_cbs(int32_t reason, void* object, uint32_t class_inde
                 /* An object record runs once: its object is gone. */
                 if (cb->target.element) vpi_cb_fired(cb);
             }
-            if (decode_handle(handle, &index)) release_slot(index);
+            llg_vpi_slot_t* slot = decode_handle(handle);
+            if (slot) release_slot(slot, handle_index(handle));
         }
     }
     if (items != buffer) free(items);
@@ -4536,7 +4445,6 @@ static void dyn_reclaimed(void* const* objects, size_t count) {
             uint32_t class_index;
             if (!dyn_object_class(objects[i], &class_index)) continue;
             llg_vpi_live_t* entry = live_get(objects[i]);
-            if (!entry) continue;
             entry->dying = 1;
             dyn_run_object_cbs(cbReclaimObj, objects[i], class_index);
             named |= entry->named;
@@ -4550,7 +4458,8 @@ static void dyn_reclaimed(void* const* objects, size_t count) {
                         slot->kind == SLOT_PROPERTY ||
                         slot->kind == SLOT_DYNELEM || slot->kind == SLOT_CLASSITEM ||
                         (slot->kind == SLOT_ITERATOR && slot->iter_kind == ITER_DYN);
-            if (bound && slot->pointer && dyn_is_dying(slot->pointer)) release_slot((uint32_t)i);
+            if (bound && slot->pointer && dyn_is_dying(slot->pointer))
+                release_slot(slot, (uint32_t)i);
         }
     }
     for (size_t i = 0; i < count; ++i) {

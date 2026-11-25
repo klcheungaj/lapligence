@@ -11,10 +11,11 @@
 //! do not change.
 
 use super::*;
+use crate::IdMap;
 
 /// Design-order positions of the nodes that may write or drive each net.
 pub(super) struct NetWriterIndex {
-    by_target: HashMap<NodeId, Vec<usize>>,
+    by_target: IdMap<NodeId, Vec<usize>>,
     /// Continuous assignments with an unresolved hierarchical target. The
     /// wired-net scan matches such a target against each net's name in the
     /// source text, so these are candidates for every net.
@@ -40,7 +41,7 @@ impl Codegen<'_> {
     /// Index the candidate writers among `nodes` (the design node order).
     pub(super) fn net_writer_index(&self, nodes: &[NodeId]) -> NetWriterIndex {
         let mut index = NetWriterIndex {
-            by_target: HashMap::new(),
+            by_target: IdMap::new(),
             every_net: Vec::new(),
         };
         let mut roots = Vec::new();

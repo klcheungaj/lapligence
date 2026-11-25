@@ -92,7 +92,7 @@ impl Codegen<'_> {
                     .and_then(|parent| instances.index.get(&parent).copied());
                 let index = instances.table.len() as u32;
                 instances.table.push(IrCoverageInstance {
-                    path: self.instance_path_of(node),
+                    path: self.scope_path_of(node),
                     definition: strip_lib(def_name),
                     parent,
                 });

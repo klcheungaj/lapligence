@@ -210,7 +210,7 @@ fn fixed_stream_index_owners_use_registered_slots_and_are_destroyed() {
     assert_eq!(indexes, 2);
     assert!(!source.contains("sv4_t _llg_scalar_"));
     assert!(frame.slots.iter().all(|used| !used));
-    assert!(frame.bindings.iter().all(|scope| scope.is_empty()));
+    assert!(frame.bindings.is_empty());
 }
 
 #[test]

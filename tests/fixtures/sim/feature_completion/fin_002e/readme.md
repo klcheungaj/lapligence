@@ -74,3 +74,57 @@ depend on the depth:
 | `inside` | an even number of memberships of 0 in the set of the previous result; of 1, always 1 |
 | `begin` to `class`, `constraint` | the assignment in the innermost statement, one unit of time per nested `fork` or delay |
 | `property` | an even number of negations of a condition that holds at the first clock edge and fails at the second |
+
+## Recursive specializations
+
+`recursive_specializations.sv`: classes that name themselves with other
+parameter values until the values stop changing, two classes that name each
+other, a class with two branches per level, eleven nested specializations of
+one class, and a module that ends in a generate block. Endless ones are refused
+([`tests/deep_nesting.rs`](../../../../deep_nesting.rs)).
+
+- 8.24 L10756-10757: "The combination of a generic class and the actual
+  parameter values is called a specialization. Each specialization of a class
+  has a separate set of static member variables".
+
+| Line | Value |
+| --- | --- |
+| `sum`, `chain` | 100 + 99 + ... + 0, over the specializations and over objects of them |
+| `visit`, `again` | each specialization counts its own visits from its own `N`: 4 + 3 + 2 + 1, then 5 + 4 + 3 + 2 |
+| `even`, `odd` | the number of levels above 0 |
+| `leaves` | f(n) = f(n - 1) + f(n - 2) with f(0) = 1 and f(1) = 2 |
+| `ladder` | 60 steps and the last one |
+| `nested` | the fifth handle was never constructed |
+
+## Call diamonds
+
+`call_diamonds.sv`: thirty functions that each call the next one at two places,
+so the first reaches the last along 2^30 call paths. Lowering visits a body once
+for each way its `ref` and handle formals are bound, and an expression whose
+calls would expand to more than 256 inlined bodies is evaluated by its process
+instead of a callback
+([`scaling_tests.rs`](../../../../../src/sim/codegen/lowering/scaling_tests.rs)
+counts the lookups). Only the argument 200 takes the paths, and no process
+passes it.
+
+- 9.2.2.2.2 L11201-11202: "always_comb is sensitive to changes within the
+  contents of a function, whereas always @* is only sensitive to changes to the
+  arguments of a function".
+
+| Line | Value |
+| --- | --- |
+| `n`, `y`, `event`, `monitor`, `force` | `d + e`, one time unit later for `n` |
+| `edge` | `d + e + 1` when its least significant bit rises |
+| `f` | `r` after it changes |
+| `handle`, `wait` | the time at which the waited value appears |
+
+## Task diamonds
+
+`task_diamonds.sv`: the same with tasks, whose frames embed the frame of the
+task they call once per call. GCC's `-fdevirtualize` follows every path of
+nested types, so models build without it. `t0(200)` enables a task that ends
+after one time unit below each level and adds 201, 30 times, and `t30(200)`
+once: 61 time units later `y` is 6230.
+
+- 13.3 L18399-18400: "Regardless of how many tasks have been enabled, con-
+  trol shall not return until all enabled tasks have completed."

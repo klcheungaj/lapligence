@@ -290,7 +290,7 @@ impl ExecutionAnalysis {
             } else {
                 scan_statements(
                     &definition.body,
-                    &OperationPath::default(),
+                    &mut OperationPath::default(),
                     function_effects,
                     &mut sites,
                 );
@@ -308,9 +308,14 @@ impl ExecutionAnalysis {
         for (process_index, process) in processes.iter().enumerate() {
             let mut sites = Vec::new();
             for (block_index, block) in process.blocks.iter().enumerate() {
-                let block_path = OperationPath::default()
+                let mut block_path = OperationPath::default()
                     .child(OperationPathElement::ExecutionBlock(block_index));
-                scan_statements(&block.operations, &block_path, function_effects, &mut sites);
+                scan_statements(
+                    &block.operations,
+                    &mut block_path,
+                    function_effects,
+                    &mut sites,
+                );
                 if matches!(
                     &block.terminator,
                     ExecutionTerminator::Suspend {
@@ -627,7 +632,7 @@ fn scan_branches(
         let mut sites = Vec::new();
         scan_statements(
             body,
-            &OperationPath::default(),
+            &mut OperationPath::default(),
             function_effects,
             &mut sites,
         );
@@ -637,130 +642,81 @@ fn scan_branches(
 
 fn scan_statements(
     statements: &[IrStmt],
-    parent: &OperationPath,
+    path: &mut OperationPath,
     function_effects: &CallEffects<'_>,
     sites: &mut Vec<SiteDraft>,
 ) {
     for (index, statement) in statements.iter().enumerate() {
-        let path = parent.child(OperationPathElement::Statement(index));
-        let origin = statement.origin().cloned();
-        let statement = statement.unlocated();
-        if matches!(statement, IrStmt::ClockingCycleWait { .. }) {
+        path.0.push(OperationPathElement::Statement(index));
+        let origin = || statement.origin().cloned();
+        let unlocated = statement.unlocated();
+        if matches!(unlocated, IrStmt::ClockingCycleWait { .. }) {
             for branch in [OperationPathElement::Then, OperationPathElement::Else] {
                 sites.push(SiteDraft {
                     path: path.child(branch),
                     operation: SuspensionOperation::ClockingCycle,
                     call: None,
-                    origin: origin.clone(),
+                    origin: origin(),
                 });
             }
-        } else if let Some((operation, call)) = suspension_operation(statement, function_effects) {
+        } else if let Some((operation, call)) = suspension_operation(unlocated, function_effects) {
             sites.push(SiteDraft {
                 path: path.clone(),
                 operation,
                 call,
-                origin,
+                origin: origin(),
             });
         }
-        match statement {
+        let mut list = |element, statements: &[IrStmt]| {
+            path.0.push(element);
+            scan_statements(statements, path, function_effects, sites);
+            path.0.pop();
+        };
+        match unlocated {
             IrStmt::Block(body)
             | IrStmt::While { body, .. }
             | IrStmt::Repeat { body, .. }
             | IrStmt::Forever { body }
             | IrStmt::WaitCond { body, .. }
             | IrStmt::WaitEventTriggered { body, .. }
-            | IrStmt::ActivationScope { body, .. } => scan_statements(
-                body,
-                &path.child(OperationPathElement::Body),
-                function_effects,
-                sites,
-            ),
+            | IrStmt::ActivationScope { body, .. } => list(OperationPathElement::Body, body),
             IrStmt::If { then_, els, .. } => {
-                scan_statements(
-                    then_,
-                    &path.child(OperationPathElement::Then),
-                    function_effects,
-                    sites,
-                );
+                list(OperationPathElement::Then, then_);
                 if let Some(els) = els {
-                    scan_statements(
-                        els,
-                        &path.child(OperationPathElement::Else),
-                        function_effects,
-                        sites,
-                    );
+                    list(OperationPathElement::Else, els);
                 }
             }
             IrStmt::ImmediateAssertion {
                 if_true, if_false, ..
             } => {
                 if let Some(if_true) = if_true {
-                    scan_statements(
-                        if_true,
-                        &path.child(OperationPathElement::Success),
-                        function_effects,
-                        sites,
-                    );
+                    list(OperationPathElement::Success, if_true);
                 }
                 if let Some(if_false) = if_false {
-                    scan_statements(
-                        if_false,
-                        &path.child(OperationPathElement::Failure),
-                        function_effects,
-                        sites,
-                    );
+                    list(OperationPathElement::Failure, if_false);
                 }
             }
             IrStmt::For {
                 init, incr, body, ..
             } => {
-                scan_statements(
-                    init,
-                    &path.child(OperationPathElement::Init),
-                    function_effects,
-                    sites,
-                );
-                scan_statements(
-                    body,
-                    &path.child(OperationPathElement::Body),
-                    function_effects,
-                    sites,
-                );
-                scan_statements(
-                    incr,
-                    &path.child(OperationPathElement::Increment),
-                    function_effects,
-                    sites,
-                );
+                list(OperationPathElement::Init, init);
+                list(OperationPathElement::Body, body);
+                list(OperationPathElement::Increment, incr);
             }
             IrStmt::Case { items, .. } => {
                 for (item_index, item) in items.iter().enumerate() {
-                    scan_statements(
-                        item.body(),
-                        &path.child(OperationPathElement::CaseItem(item_index)),
-                        function_effects,
-                        sites,
-                    );
+                    list(OperationPathElement::CaseItem(item_index), item.body());
                 }
             }
             IrStmt::WaitOrder {
                 success, failure, ..
             } => {
-                scan_statements(
-                    success,
-                    &path.child(OperationPathElement::Success),
-                    function_effects,
-                    sites,
-                );
-                scan_statements(
-                    failure,
-                    &path.child(OperationPathElement::Failure),
-                    function_effects,
-                    sites,
-                );
+                list(OperationPathElement::Success, success);
+                list(OperationPathElement::Failure, failure);
             }
             _ => {}
         }
+        path.0.pop();
     }
 }
 
@@ -1543,7 +1499,7 @@ mod tests {
         let mut sites = Vec::new();
         scan_statements(
             std::slice::from_ref(&clocking),
-            &OperationPath::default(),
+            &mut OperationPath::default(),
             function_effects,
             &mut sites,
         );

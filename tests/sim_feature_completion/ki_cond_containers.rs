@@ -45,96 +45,114 @@ macro_rules! expected {
     };
 }
 
+/// The models take the C compiler's optimizer, which is not under test, up to
+/// minutes.
+const LOW_OPTIMIZATION: &[&str] = &["--model-opt-level", "O1"];
+
 #[test]
 fn container_chains_select_and_merge_at_every_depth() {
     sim_cli::run_case_backend_parity(
         SUITE,
         "chain_containers",
         expected!("chain_containers"),
-        &[],
+        LOW_OPTIMIZATION,
         &[],
     );
 }
 
 #[test]
 fn alternatives_are_evaluated_once_in_source_order_and_may_read_the_target() {
-    sim_cli::run_case(
+    sim_cli::run_case_with_args(
         SUITE,
         "chain_effects",
         expected!("chain_effects"),
         ENDED,
         &[],
+        LOW_OPTIMIZATION,
     );
 }
 
 #[test]
 fn nested_conditionals_of_every_shape_agree() {
-    sim_cli::run_case(SUITE, "chain_shapes", expected!("chain_shapes"), ENDED, &[]);
+    sim_cli::run_case_with_args(
+        SUITE,
+        "chain_shapes",
+        expected!("chain_shapes"),
+        ENDED,
+        &[],
+        LOW_OPTIMIZATION,
+    );
 }
 
 #[test]
 fn conditionals_nest_through_call_arguments() {
-    sim_cli::run_case(
+    sim_cli::run_case_with_args(
         SUITE,
         "chain_arguments",
         expected!("chain_arguments"),
         ENDED_AT_37000,
         &[],
+        LOW_OPTIMIZATION,
     );
 }
 
 #[test]
 fn record_chains_select_every_member() {
-    sim_cli::run_case(
+    sim_cli::run_case_with_args(
         SUITE,
         "chain_records_known",
         expected!("chain_records_known"),
         ENDED,
         &[],
+        LOW_OPTIMIZATION,
     );
 }
 
 #[test]
 fn record_chains_merge_member_by_member() {
-    sim_cli::run_case(
+    sim_cli::run_case_with_args(
         SUITE,
         "chain_records",
         expected!("chain_records"),
         ENDED_AT_19000,
         &[],
+        LOW_OPTIMIZATION,
     );
 }
 
 #[test]
 fn a_record_alternative_is_read_after_the_alternatives_that_write_it() {
-    sim_cli::run_case(
+    sim_cli::run_case_with_args(
         SUITE,
         "chain_late_reads",
         expected!("chain_late_reads"),
         ENDED,
         &[],
+        LOW_OPTIMIZATION,
     );
 }
 
 #[test]
 fn every_predicate_type_selects_at_every_depth() {
-    sim_cli::run_case(
+    sim_cli::run_case_with_args(
         SUITE,
         "chain_predicates",
         expected!("chain_predicates"),
         ENDED,
         &[],
+        LOW_OPTIMIZATION,
     );
 }
 
 #[test]
 fn pattern_predicates_bind_their_identifiers_at_every_depth() {
-    sim_cli::run_case(
+    sim_cli::run_case_with_args(
         SUITE,
         "chain_patterns",
         expected!("chain_patterns"),
         ENDED,
         &[],
+        LOW_OPTIMIZATION,
     );
 }
 

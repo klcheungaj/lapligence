@@ -111,7 +111,7 @@ pub fn parse_layout(text: &str) -> Result<Layout, String> {
         context_join: take("CONTEXT_JOIN")?,
         summary: take("SUMMARY")?,
     };
-    if let Some(name) = entries.keys().next() {
+    if let Some(name) = entries.keys().min() {
         return Err(format!("unknown LLG_MSG_LAYOUT entry {name}"));
     }
     tokens(&layout.template)?;

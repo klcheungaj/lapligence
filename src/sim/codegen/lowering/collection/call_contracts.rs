@@ -1,6 +1,9 @@
 //! Call contracts.
 
 use super::*;
+use crate::sim::ir::{CALLBACK_CALL_DEPTH, CALLBACK_INLINED_CALLS};
+use crate::{IdMap, IdSet};
+use std::rc::Rc;
 
 #[cfg(test)]
 mod tests;
@@ -33,16 +36,28 @@ pub(in super::super) struct CallShape {
     pub(in super::super) native_refs: Vec<usize>,
 }
 
-/// A body [`Codegen::call_shape`] is in.
+impl CallShape {
+    /// The formals waited on, with whether each is one of `native_refs`.
+    fn refs(&self) -> impl Iterator<Item = (bool, usize)> + '_ {
+        let statics = self.static_refs.iter().map(|index| (false, *index));
+        statics.chain(self.native_refs.iter().map(|index| (true, *index)))
+    }
+
+    fn order(&mut self) {
+        for refs in [&mut self.static_refs, &mut self.native_refs] {
+            refs.sort_unstable();
+            refs.dedup();
+        }
+    }
+}
+
+/// A body [`Codegen::call_shape`] reaches.
+#[derive(Default)]
 struct CallShapeBody {
-    function: NodeId,
-    inst: NodeId,
-    /// The call that entered it.
-    call: Option<NodeId>,
-    /// How many of the nodes still to visit belong to the bodies around it.
-    outside: usize,
     formals: Vec<(NodeId, bool)>,
     shape: CallShape,
+    /// The calls that enter it, each with the index of the body it is in.
+    callers: Vec<(usize, NodeId)>,
 }
 
 /// Where an evaluated event expression is computed.
@@ -179,10 +194,71 @@ impl<'a> Codegen<'a> {
         expression: NodeId,
         scope_path: &str,
     ) -> Result<EvaluationEffects, String> {
-        let mut visited = HashSet::new();
+        let mut visited = IdSet::new();
         let mut effects = EvaluationEffects::default();
         self.check_event_node(expression, scope_path, &mut visited, None, &mut effects)?;
+        if effects.process.is_none()
+            && self
+                .callback_inlining(expression, &mut Vec::new(), &mut IdMap::new())
+                .is_none()
+        {
+            effects.process = Some(format!(
+                "function calls in evaluated event controls are not supported in `{scope_path}`: \
+                 the calls nest deeper than {CALLBACK_CALL_DEPTH} or expand to more than \
+                 {CALLBACK_INLINED_CALLS} bodies"
+            ));
+        }
         Ok(effects)
+    }
+
+    /// How many bodies the function calls in `root` expand to when a callback
+    /// inlines them, and how deep they nest; `None` beyond
+    /// [`CALLBACK_INLINED_CALLS`] or [`CALLBACK_CALL_DEPTH`]. `known` holds the
+    /// answer for each function body, of which the walk enters every one once.
+    fn callback_inlining(
+        &self,
+        root: NodeId,
+        path: &mut Vec<NodeId>,
+        known: &mut IdMap<NodeId, (usize, usize)>,
+    ) -> Option<(usize, usize)> {
+        let (mut bodies, mut depth) = (0, 0);
+        let mut pending = vec![root];
+        while let Some(node) = pending.pop() {
+            pending.extend(&self.node(node).children);
+            let NodeKind::FuncCall {
+                name,
+                is_task: false,
+                callee,
+                ..
+            } = self.kind(node)
+            else {
+                continue;
+            };
+            let Ok((function, _)) = self.resolve_callee_env(self.inst, name, false, *callee) else {
+                continue;
+            };
+            let Some(body) = self.func_body(function) else {
+                continue;
+            };
+            let (nested, levels) = match known.get(&function) {
+                Some(inlining) => *inlining,
+                None => {
+                    if path.contains(&function) || path.len() >= CALLBACK_CALL_DEPTH {
+                        return None;
+                    }
+                    path.push(function);
+                    let (nested, levels) = self.callback_inlining(body, path, known)?;
+                    path.pop();
+                    *known.entry(function).or_insert((nested + 1, levels + 1))
+                }
+            };
+            bodies += nested;
+            depth = depth.max(levels);
+            if bodies > CALLBACK_INLINED_CALLS || path.len() + depth > CALLBACK_CALL_DEPTH {
+                return None;
+            }
+        }
+        Some((bodies, depth))
     }
 
     /// Whether `expression`, or a function body it reaches, calls a user
@@ -192,7 +268,7 @@ impl<'a> Codegen<'a> {
         if self.user_system_functions.is_empty() {
             return false;
         }
-        let mut visited = HashSet::new();
+        let mut visited = IdSet::new();
         let mut pending = vec![expression];
         while let Some(node) = pending.pop() {
             match self.kind(node) {
@@ -260,7 +336,7 @@ impl<'a> Codegen<'a> {
         &self,
         node: NodeId,
         scope_path: &str,
-        visited_functions: &mut HashSet<NodeId>,
+        visited_functions: &mut IdSet<NodeId>,
         function: Option<NodeId>,
         effects: &mut EvaluationEffects,
     ) -> Result<(), String> {
@@ -849,7 +925,7 @@ impl<'a> Codegen<'a> {
     /// Delay-bearing tasks are inlined at their call sites; the others become
     /// plain C functions.
     pub(in super::super) fn task_has_wait(&self, ft: NodeId, inst: NodeId) -> bool {
-        let mut seen: HashSet<NodeId> = HashSet::new();
+        let mut seen: IdSet<NodeId> = IdSet::new();
         self.task_has_wait_inner(ft, inst, &mut seen)
     }
 
@@ -888,65 +964,77 @@ impl<'a> Codegen<'a> {
     }
 
     /// How calls to a subroutine reach its body.
-    pub(in super::super) fn call_shape(&self, ft: NodeId, inst: NodeId) -> CallShape {
-        // The nodes still to visit and the bodies on the call path are lists,
-        // not the thread's stack: a chain of calls is as long as the design
-        // makes it.
+    pub(in super::super) fn call_shape(&self, ft: NodeId, inst: NodeId) -> Rc<CallShape> {
+        if let Some(shape) = self.call_shapes.borrow().get(&(ft, inst)) {
+            return Rc::clone(shape);
+        }
+        // Each body is walked once, however many calls reach it. The formals
+        // waited on then spread to those their callers forward.
+        let mut functions = vec![(ft, inst)];
+        let mut bodies = vec![CallShapeBody::default()];
+        let mut indices = IdMap::new();
+        indices.insert((ft, inst), 0);
+        let mut waited = Vec::new();
         let mut nodes = Vec::with_capacity(32);
-        let mut outer = Vec::new();
-        let mut body = self.call_shape_body(ft, inst, None, &mut nodes);
-        loop {
-            let node = if nodes.len() > body.outside {
-                nodes.pop()
-            } else {
-                None
-            };
-            let Some(node) = node else {
-                let mut shape = body.shape;
-                shape.static_refs.sort_unstable();
-                shape.static_refs.dedup();
-                shape.native_refs.sort_unstable();
-                shape.native_refs.dedup();
-                let (Some(call), Some(mut caller)) = (body.call, outer.pop()) else {
-                    return shape;
+        let mut current = 0;
+        while let Some(&(function, inst)) = functions.get(current) {
+            if let Some(shape) = self.call_shapes.borrow().get(&(function, inst)) {
+                waited.extend(shape.refs().map(|(native, index)| (current, native, index)));
+                current += 1;
+                continue;
+            }
+            crate::work::count(crate::work::Work::CallBodies, 1);
+            let formals = self.func_formals(function);
+            let mut shape = CallShape::default();
+            nodes.extend(self.func_body(function));
+            while let Some(node) = nodes.pop() {
+                nodes.extend(&self.node(node).children);
+                let Some(callee) = self.call_shape_node(node, inst, &formals, &mut shape) else {
+                    continue;
                 };
-                self.forward_call_shape(call, shape, &mut caller);
-                body = caller;
-                continue;
-            };
-            for child in self.node(node).children.iter().rev() {
-                nodes.push(*child);
+                let index = *indices.entry(callee).or_insert_with(|| {
+                    functions.push(callee);
+                    bodies.push(CallShapeBody::default());
+                    bodies.len() - 1
+                });
+                bodies[index].callers.push((current, node));
             }
-            let Some((function, owner)) = self.call_shape_node(node, &mut body) else {
-                continue;
-            };
-            // A recursive call adds nothing its outer activation does not.
-            let active = |walk: &CallShapeBody| walk.function == function;
-            if !active(&body) && !outer.iter().any(active) {
-                let callee = self.call_shape_body(function, owner, Some(node), &mut nodes);
-                outer.push(std::mem::replace(&mut body, callee));
+            shape.order();
+            waited.extend(shape.refs().map(|(native, index)| (current, native, index)));
+            bodies[current].formals = formals;
+            bodies[current].shape = shape;
+            current += 1;
+        }
+        while let Some((body, native, index)) = waited.pop() {
+            for at in 0..bodies[body].callers.len() {
+                let (caller, call) = bodies[body].callers[at];
+                let caller_body = &mut bodies[caller];
+                let outer = self
+                    .call_argument_nodes(call)
+                    .get(index)
+                    .and_then(|actual| self.forwarded_ref(*actual, &caller_body.formals, native));
+                let Some(outer) = outer else {
+                    continue;
+                };
+                let refs = if native {
+                    &mut caller_body.shape.native_refs
+                } else {
+                    &mut caller_body.shape.static_refs
+                };
+                if !refs.contains(&outer) {
+                    refs.push(outer);
+                    waited.push((caller, native, outer));
+                }
             }
         }
-    }
-
-    /// Enter the body of `function`, whose nodes join those to visit.
-    fn call_shape_body(
-        &self,
-        function: NodeId,
-        inst: NodeId,
-        call: Option<NodeId>,
-        nodes: &mut Vec<NodeId>,
-    ) -> CallShapeBody {
-        let outside = nodes.len();
-        nodes.extend(self.func_body(function));
-        CallShapeBody {
-            function,
-            inst,
-            call,
-            outside,
-            formals: self.func_formals(function),
-            shape: CallShape::default(),
+        let mut shapes = self.call_shapes.borrow_mut();
+        for (function, mut body) in functions.into_iter().zip(bodies) {
+            shapes.entry(function).or_insert_with(|| {
+                body.shape.order();
+                Rc::new(body.shape)
+            });
         }
+        Rc::clone(&shapes[&(ft, inst)])
     }
 
     /// Whether a task waits on a record `ref` formal. Its wait needs a
@@ -1117,7 +1205,7 @@ impl<'a> Codegen<'a> {
             false
         };
         let mut pending = vec![scope];
-        let mut visited = HashSet::new();
+        let mut visited = IdSet::new();
         while let Some(node) = pending.pop() {
             if !visited.insert(node) {
                 continue;
@@ -1171,13 +1259,13 @@ impl<'a> Codegen<'a> {
 
     /// What `node` itself adds to the shape of the body it is in, or the task
     /// it calls and that task's instance.
-    fn call_shape_node(&self, node: NodeId, body: &mut CallShapeBody) -> Option<(NodeId, NodeId)> {
-        let CallShapeBody {
-            inst,
-            formals,
-            shape,
-            ..
-        } = body;
+    fn call_shape_node(
+        &self,
+        node: NodeId,
+        inst: NodeId,
+        formals: &[(NodeId, bool)],
+        shape: &mut CallShape,
+    ) -> Option<(NodeId, NodeId)> {
         match self.kind(node) {
             NodeKind::Stmt(StmtKind::EventControl {
                 specs,
@@ -1210,35 +1298,10 @@ impl<'a> Codegen<'a> {
                 is_task: true,
                 callee,
                 ..
-            } => return self.resolve_callee_env(*inst, name, true, *callee).ok(),
+            } => return self.resolve_callee_env(inst, name, true, *callee).ok(),
             _ => {}
         }
         None
-    }
-
-    /// Add the shape of the task `call` enters to the body it is in.
-    fn forward_call_shape(&self, call: NodeId, inner: CallShape, body: &mut CallShapeBody) {
-        let arguments = self.call_argument_nodes(call);
-        // A forwarded formal is checked at this task's own calls; any other
-        // actual is checked where this call lowers.
-        for index in &inner.native_refs {
-            if let Some(NodeKind::Expr(ExprKind::Ref {
-                target: Some(target),
-            })) = arguments.get(*index).map(|actual| self.kind(*actual))
-            {
-                if let Some(outer) = body.formals.iter().position(|(formal, _)| formal == target) {
-                    body.shape.native_refs.push(outer);
-                }
-            }
-        }
-        // A forwarded `ref` formal lets this task's own callers bind the
-        // callee's specialization statically; any other actual is followed
-        // through its descriptor.
-        for index in inner.static_refs {
-            if let Some(actual) = arguments.get(index) {
-                self.note_forwarded_ref(*actual, &body.formals, &mut body.shape);
-            }
-        }
     }
 
     /// Expression roots an event spec evaluates.
@@ -1322,31 +1385,33 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    /// Record a `ref` formal of this task forwarded as the actual of a
-    /// statically bound formal of a callee.
-    fn note_forwarded_ref(
+    /// The formal among `formals` that `actual` forwards to a formal its
+    /// callee waits on. A statically bound one lets this task's own callers
+    /// bind the callee's specialization, and one of `native_refs` is checked
+    /// at this task's own calls; any other actual is followed through its
+    /// descriptor, or checked where this call lowers.
+    fn forwarded_ref(
         &self,
         actual: NodeId,
         formals: &[(NodeId, bool)],
-        shape: &mut CallShape,
-    ) {
+        native: bool,
+    ) -> Option<usize> {
         let NodeKind::Expr(ExprKind::Ref {
             target: Some(target),
         }) = self.kind(actual)
         else {
-            return;
+            return None;
         };
-        if let Some(index) = formals.iter().position(|(formal, _)| formal == target) {
-            if matches!(
+        let index = formals.iter().position(|(formal, _)| formal == target)?;
+        (native
+            || matches!(
                 self.kind(*target),
                 NodeKind::FuncArg {
                     direction: DbDirection::Ref,
                     ..
                 }
-            ) {
-                shape.static_refs.push(index);
-            }
-        }
+            ))
+        .then_some(index)
     }
 
     /// Whether the string or handle a `ref` actual names publishes every
@@ -1385,8 +1450,17 @@ impl<'a> Codegen<'a> {
     /// Its call sites keep the activation visible to the caller's
     /// cancellation check, so output/inout copy-out is skipped.
     pub(in super::super) fn task_has_disable(&self, ft: NodeId, inst: NodeId) -> bool {
-        let mut seen: HashSet<NodeId> = HashSet::new();
-        self.task_has_disable_inner(ft, inst, &mut seen)
+        let mut seen: IdSet<NodeId> = IdSet::new();
+        let disables = self.task_has_disable_inner(ft, inst, &mut seen);
+        // A task is passed once, so what was decided about it on the way to a
+        // `disable` can lack what another call on that way leads to; without
+        // one, none of them leads to any.
+        if !disables {
+            self.task_disables
+                .borrow_mut()
+                .extend(seen.unordered().map(|task| (*task, false)));
+        }
+        disables
     }
 
     /// Whether a task declaration is the target of an explicit `disable`.
@@ -1514,7 +1588,7 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    fn task_has_wait_inner(&self, ft: NodeId, inst: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+    fn task_has_wait_inner(&self, ft: NodeId, inst: NodeId, seen: &mut IdSet<NodeId>) -> bool {
         if !seen.insert(ft) {
             return false;
         }
@@ -1524,17 +1598,25 @@ impl<'a> Codegen<'a> {
         self.node_has_wait(body, inst, seen)
     }
 
-    fn task_has_disable_inner(&self, ft: NodeId, inst: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+    fn task_has_disable_inner(&self, ft: NodeId, inst: NodeId, seen: &mut IdSet<NodeId>) -> bool {
+        if let Some(disables) = self.task_disables.borrow().get(&ft) {
+            return *disables;
+        }
         if !seen.insert(ft) {
             return false;
         }
         let Some(body) = self.func_body(ft) else {
             return false;
         };
-        self.node_has_disable(body, inst, seen)
+        crate::work::count(crate::work::Work::CallBodies, 1);
+        let disables = self.node_has_disable(body, inst, seen);
+        if disables {
+            self.task_disables.borrow_mut().insert(ft, true);
+        }
+        disables
     }
 
-    fn node_has_disable(&self, node: NodeId, inst: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+    fn node_has_disable(&self, node: NodeId, inst: NodeId, seen: &mut IdSet<NodeId>) -> bool {
         match self.kind(node) {
             NodeKind::Stmt(StmtKind::Disable { .. }) => true,
             NodeKind::FuncCall {
@@ -1562,7 +1644,7 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    fn node_has_wait(&self, node: NodeId, inst: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+    fn node_has_wait(&self, node: NodeId, inst: NodeId, seen: &mut IdSet<NodeId>) -> bool {
         match self.kind(node) {
             NodeKind::Stmt(
                 StmtKind::DelayControl { .. }
@@ -1580,7 +1662,7 @@ impl<'a> Codegen<'a> {
                 receiver: Some(receiver),
                 ..
             } if matches!(name.as_str(), "suspend" | "await")
-                && self.is_process_value(&self.instance_path_of(inst), *receiver) =>
+                && self.is_process_value(&self.scope_path_of(inst), *receiver) =>
             {
                 true
             }

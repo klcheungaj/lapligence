@@ -199,8 +199,7 @@ pub(super) fn design_exports(extra: &[(&str, &str)]) -> BTreeSet<String> {
     extra
         .iter()
         .filter(|(name, _)| name.ends_with(".c"))
-        .flat_map(|(_, source)| source.lines())
-        .filter_map(|line| line.strip_prefix(EXPORT_MARKER))
+        .flat_map(|(_, source)| super::lines_after(source, EXPORT_MARKER))
         .filter_map(|rest| rest.split_whitespace().next())
         .map(str::to_owned)
         .collect()

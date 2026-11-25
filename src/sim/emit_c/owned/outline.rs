@@ -187,59 +187,54 @@ fn nested(statement: &IrStmt) -> Vec<&[IrStmt]> {
     }
 }
 
-/// Labels declared anywhere inside a statement: the only targets a `goto`
-/// in a run may have.
-fn collect_labels(statement: &IrStmt, labels: &mut HashSet<String>) {
-    if let IrStmt::Label(name) = statement.unlocated() {
-        labels.insert(name.clone());
-    }
-    for list in nested(statement) {
-        for statement in list {
-            collect_labels(statement, labels);
-        }
-    }
-}
-
-/// Weighs one statement and decides whether a run may hold it.
+/// Weighs one statement and decides whether a run may hold it. A statement
+/// heavier than a run is none, so the walk ends at that weight: the lists
+/// inside it are weighed again when they are rendered.
 struct Check<'c, 'a, 'm> {
     frame: &'c Frame<'a, 'm>,
     depth: bool,
     sequence_locals: &'c HashSet<String>,
-    scopes: Vec<Vec<String>>,
-    labels: HashSet<String>,
+    locals: Scopes<()>,
+    /// Labels declared anywhere inside the statement: the only targets a
+    /// `goto` in a run may have.
+    labels: HashSet<&'c str>,
+    gotos: Vec<&'c str>,
     weight: usize,
     ok: bool,
 }
 
-impl Check<'_, '_, '_> {
+impl<'c> Check<'c, '_, '_> {
     fn reject(&mut self) {
         self.ok = false;
     }
 
     fn declare(&mut self, name: &str) {
-        if let Some(scope) = self.scopes.last_mut() {
-            scope.push(name.to_owned());
-        }
+        self.locals.insert(name, ());
+    }
+
+    /// Whether the statement is heavier than a run, so nothing more of it
+    /// matters.
+    fn heavy(&self) -> bool {
+        self.weight > LLG_OUTLINE_RUN_WEIGHT
+    }
+
+    /// The weight of the checked statement, and whether a run may hold it.
+    fn verdict(&self) -> (usize, bool) {
+        let resolved = self.gotos.iter().all(|label| self.labels.contains(label));
+        (self.weight, self.ok && resolved && !self.heavy())
     }
 
     /// A name read or written by the statement: its own local, or storage
     /// that resolves identically in a helper frame.
     fn name(&mut self, name: &str) {
-        if self
-            .scopes
-            .iter()
-            .any(|scope| scope.iter().any(|local| local == name))
-        {
+        if self.locals.contains(name) {
             return;
         }
         let frame = self.frame;
         if name.starts_with('*')
             || self.sequence_locals.contains(name)
-            || frame.bindings.iter().any(|scope| scope.contains_key(name))
-            || frame
-                .native_bindings
-                .iter()
-                .any(|scope| scope.contains_key(name))
+            || frame.bindings.contains(name)
+            || frame.native_bindings.contains(name)
             || frame.shared_cells.contains_key(name)
             || frame.ctx.model.native_access(name).is_some()
         {
@@ -254,28 +249,31 @@ impl Check<'_, '_, '_> {
         }
     }
 
-    fn body(&mut self, body: &[IrStmt]) {
-        self.scopes.push(Vec::new());
+    fn body(&mut self, body: &'c [IrStmt]) {
+        self.locals.push();
         for statement in body {
             self.statement(statement);
         }
-        self.scopes.pop();
+        self.locals.pop();
     }
 
-    fn statement(&mut self, statement: &IrStmt) {
+    fn statement(&mut self, statement: &'c IrStmt) {
+        if self.heavy() {
+            return;
+        }
+        crate::work::count(crate::work::Work::OutlineWeighing, 1);
         if let IrStmt::Located { statement, .. } = statement {
             return self.statement(statement);
         }
         self.weight += 1;
         match statement {
-            IrStmt::Nop | IrStmt::Finish | IrStmt::FinishControl { .. } | IrStmt::Label(_) => {}
+            IrStmt::Nop | IrStmt::Finish | IrStmt::FinishControl { .. } => {}
+            IrStmt::Label(label) => {
+                self.labels.insert(label);
+            }
             IrStmt::Coverage(operation)
                 if matches!(operation.as_ref(), IrCoverageStmt::StatementHit { .. }) => {}
-            IrStmt::Goto(label) => {
-                if !self.labels.contains(label) {
-                    self.reject();
-                }
-            }
+            IrStmt::Goto(label) => self.gotos.push(label),
             IrStmt::Display { args, .. } => {
                 for (value, _) in args {
                     self.weight += FORMAT_ARGUMENT_WEIGHT;
@@ -338,14 +336,14 @@ impl Check<'_, '_, '_> {
                 incr,
                 body,
             } => {
-                self.scopes.push(Vec::new());
+                self.locals.push();
                 for statement in init {
                     self.statement(statement);
                 }
                 self.expr(cond);
                 self.body(body);
                 self.body(incr);
-                self.scopes.pop();
+                self.locals.pop();
             }
             IrStmt::ImmediateAssertion {
                 condition,
@@ -359,7 +357,7 @@ impl Check<'_, '_, '_> {
                 }
             }
             IrStmt::Call(call) => {
-                self.scopes.push(Vec::new());
+                self.locals.push();
                 for (name, _, init) in &call.temps {
                     if let Some(init) = init {
                         self.expr(init);
@@ -379,7 +377,7 @@ impl Check<'_, '_, '_> {
                     self.name(temp);
                     self.lhs(lhs);
                 }
-                self.scopes.pop();
+                self.locals.pop();
             }
             other => {
                 self.reject();
@@ -533,6 +531,9 @@ impl Check<'_, '_, '_> {
     }
 
     fn expr(&mut self, value: &IrExpr) {
+        if self.heavy() {
+            return;
+        }
         self.weight += 1;
         match &value.kind {
             IrExprKind::Const(_) | IrExprKind::SigRead(_) | IrExprKind::Fill(_) => {}
@@ -720,19 +721,18 @@ impl Frame<'_, '_> {
         let mut sequence_locals = HashSet::new();
         let mut weights = Vec::with_capacity(statements.len());
         for statement in statements {
-            let mut labels = HashSet::new();
-            collect_labels(statement, &mut labels);
             let mut check = Check {
                 frame: self,
                 depth,
                 sequence_locals: &sequence_locals,
-                scopes: vec![Vec::new()],
-                labels,
+                locals: Scopes::new(),
+                labels: HashSet::new(),
+                gotos: Vec::new(),
                 weight: 0,
                 ok: true,
             };
             check.statement(statement);
-            let (weight, ok) = (check.weight, check.ok);
+            let (weight, ok) = check.verdict();
             let unlocated = statement.unlocated();
             // A declaration binds for the rest of the sequence and a label is
             // a target from it, so neither may leave the body.

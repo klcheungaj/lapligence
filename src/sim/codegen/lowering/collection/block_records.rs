@@ -12,6 +12,7 @@ use super::record_defaults::LeafDefault;
 use super::*;
 use crate::core::db::JoinKind;
 use crate::sim::ir::{IrContainerKind, IrContainerStmt};
+use crate::IdSet;
 
 impl Codegen<'_> {
     /// Collect the leaf storage of every procedural-block record of
@@ -275,7 +276,7 @@ impl Codegen<'_> {
             return false;
         };
         let mut pending = vec![block];
-        let mut visited = HashSet::new();
+        let mut visited = IdSet::new();
         let mut referencing_fork = false;
         while let Some(node) = pending.pop() {
             if !visited.insert(node) {
@@ -326,7 +327,7 @@ impl Codegen<'_> {
     pub(super) fn references_declaration(&self, node: NodeId, declaration: NodeId) -> bool {
         let name = &self.node(declaration).name;
         let mut pending = vec![node];
-        let mut visited = HashSet::new();
+        let mut visited = IdSet::new();
         while let Some(id) = pending.pop() {
             if !visited.insert(id) {
                 continue;
@@ -590,7 +591,7 @@ impl Codegen<'_> {
 /// Record declarations of one process body and their declaration statements.
 #[derive(Default)]
 struct BlockDeclarations {
-    visited: HashSet<NodeId>,
+    visited: IdSet<NodeId>,
     records: Vec<NodeId>,
     /// String, chandle and class-handle declarations.
     natives: Vec<NodeId>,
