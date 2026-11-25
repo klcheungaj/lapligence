@@ -308,13 +308,23 @@ fn assert_public_cli_fixture_contract(cli_helper: &str, row_id: &str) {
             row_id
         );
     }
-    let invoke_body = named_function_body(cli_helper, "invoke_with_env");
+    let command_body = named_function_body(cli_helper, "fixture_command");
     for required in [
-        "let source = fixture_path(suite, fixture);",
-        "Command::new(env!(\"CARGO_BIN_EXE_llg\"))",
+        "command_without_core_dumps(env!(\"CARGO_BIN_EXE_llg\"))",
         "current_dir(directory.path())",
         "if !optimized",
         "command.arg(\"--no-opt\")",
+    ] {
+        assert!(
+            command_body.contains(required),
+            "{} public-CLI helper no longer guarantees the command and mode: {required}",
+            row_id
+        );
+    }
+    let invoke_body = named_function_body(cli_helper, "invoke_with_env");
+    for required in [
+        "let source = fixture_path(suite, fixture);",
+        "fixture_command(&directory, optimized)",
         "command.args(args)",
         "command.arg(&source)",
     ] {

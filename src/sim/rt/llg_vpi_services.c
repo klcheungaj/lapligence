@@ -128,10 +128,6 @@ static void svc_error_recorded(void) {
         size_t grown = g_svc.capacity ? g_svc.capacity * 2u : 4u;
         if (grown > LLG_VPI_MAX_PLI_ERRORS) grown = LLG_VPI_MAX_PLI_ERRORS;
         svc_error_t* queue = (svc_error_t*)vpi_realloc(g_svc.queue, grown * sizeof(*queue));
-        if (!queue) {
-            ++g_svc.dropped;
-            return;
-        }
         g_svc.queue = queue;
         g_svc.capacity = grown;
     }
@@ -364,27 +360,18 @@ static int32_t svc_strength_changed(llg_vpi_cb_t* cb) {
  * strength view, attaching one when the net has none; the net then
  * publishes its strengths after every resolution, a cost only nets with
  * such a record pay. */
-static int32_t svc_strength_bind(llg_vpi_cb_t* cb) {
+static void svc_strength_bind(llg_vpi_cb_t* cb) {
     llg_net_t* net = svc_target_net(&cb->target);
-    if (!net) return 1;
+    if (!net) return;
     if (!net->strength) {
         if (g_svc.view_count == g_svc.view_capacity) {
             size_t grown = g_svc.view_capacity ? g_svc.view_capacity * 2u : 4u;
-            llg_net_t** nets = (llg_net_t**)vpi_realloc(g_svc.view_nets, grown * sizeof(*nets));
-            if (nets) g_svc.view_nets = nets;
-            sv4_t** views = nets ? (sv4_t**)vpi_realloc(g_svc.views, grown * sizeof(*views)) : NULL;
-            if (views) g_svc.views = views;
-            if (!nets || !views) {
-                vpi_error("LLG_VPI_NOMEM", "VPI strength view allocation failed");
-                return 0;
-            }
+            g_svc.view_nets =
+                (llg_net_t**)vpi_realloc(g_svc.view_nets, grown * sizeof(*g_svc.view_nets));
+            g_svc.views = (sv4_t**)vpi_realloc(g_svc.views, grown * sizeof(*g_svc.views));
             g_svc.view_capacity = grown;
         }
         sv4_t* view = (sv4_t*)vpi_malloc(sizeof(*view));
-        if (!view) {
-            vpi_error("LLG_VPI_NOMEM", "VPI strength view allocation failed");
-            return 0;
-        }
         *view = VPI_EMPTY;
         if (!llg_net_strength_attach(net, view)) {
             free(view);
@@ -395,15 +382,8 @@ static int32_t svc_strength_bind(llg_vpi_cb_t* cb) {
     }
     uint32_t width = svc_target_width(&cb->target);
     uint8_t* last = (uint8_t*)vpi_calloc(width ? width : 1u, 1);
-    llg_vpi_watch_t* watches = last ? (llg_vpi_watch_t*)vpi_realloc(
-                                          cb->watches, (size_t)(cb->watch_total + 1u) *
-                                                           sizeof(*watches))
-                                    : NULL;
-    if (!watches) {
-        free(last);
-        vpi_error("LLG_VPI_NOMEM", "VPI value-change watch allocation failed");
-        return 0;
-    }
+    llg_vpi_watch_t* watches = (llg_vpi_watch_t*)vpi_realloc(
+        cb->watches, (size_t)(cb->watch_total + 1u) * sizeof(*watches));
     cb->watches = watches;
     llg_vpi_watch_t* watch = &watches[cb->watch_total++];
     memset(watch, 0, sizeof(*watch));
@@ -414,7 +394,6 @@ static int32_t svc_strength_bind(llg_vpi_cb_t* cb) {
     cb->strength_net = net;
     cb->strength_last = last;
     (void)svc_strength_changed(cb);
-    return 1;
 }
 
 /* ── delayed puts to string variables ─────────────────────────────────── */

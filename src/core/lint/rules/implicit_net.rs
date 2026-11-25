@@ -4,7 +4,7 @@
 //! retains that fact independently of the net's resolved type.
 
 use crate::core::db::NodeKind;
-use crate::core::lint::rules::analysis::signal_scope_path;
+use crate::core::lint::rules::analysis::holding_scope_path;
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
 /// Flags nets that were implicitly declared from an undeclared identifier.
@@ -42,7 +42,7 @@ impl LintRule for ImplicitNetRule {
                      (promoted to a wire by `default_nettype`; likely a misspelling) — \
                      declare it explicitly or fix the spelling",
                     node.name,
-                    signal_scope_path(db, id),
+                    holding_scope_path(db, id),
                 ),
             });
         }

@@ -124,7 +124,7 @@ impl<'a> Codegen<'a> {
                 self.inst = instance;
             }
             let result = if self.driver_delay_is_runtime(delay) {
-                let path = self.instance_path_of(self.inst);
+                let path = self.scope_path_of(self.inst);
                 self.driver_delay(&path, member, delay).map(|_| {
                     runtime = Some((member, delay));
                     None
@@ -184,7 +184,7 @@ impl<'a> Codegen<'a> {
             if let Some(instance) = self.owning_inst(member) {
                 self.inst = instance;
             }
-            let path = self.instance_path_of(self.inst);
+            let path = self.scope_path_of(self.inst);
             let lowered = self.driver_delay(&path, member, delay);
             let mut reads = Vec::new();
             let values = match delay {

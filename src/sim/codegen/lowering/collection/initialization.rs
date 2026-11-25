@@ -152,7 +152,7 @@ impl<'a> Codegen<'a> {
     pub(super) fn flush_deferred_declaration_inits(&mut self) -> Result<(), String> {
         let deferred = std::mem::take(&mut self.deferred_declaration_inits);
         for (declaration, initializer, inst, info) in deferred {
-            let path = self.instance_path_of(inst);
+            let path = self.scope_path_of(inst);
             self.inst = inst;
             // Declaration initializers execute in the model initialization
             // frame, so calls start at process recursion depth zero.

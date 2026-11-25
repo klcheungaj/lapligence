@@ -87,7 +87,7 @@ impl Codegen<'_> {
                 None => {
                     let saved = self.inst;
                     let mut indices = Vec::new();
-                    let path = self.instance_path_of(instance);
+                    let path = self.scope_path_of(instance);
                     let result = self.register_checker_static_assertions(
                         instance,
                         instance,
@@ -166,21 +166,13 @@ impl Codegen<'_> {
                     }
                 }
                 NodeKind::GenScope => {
-                    let gs_path = self
-                        .gen_scope_paths
-                        .get(&child)
-                        .cloned()
-                        .unwrap_or_else(|| path.to_owned());
+                    let gs_path = self.scope_path_of(child);
                     self.register_checker_static_assertions(inst, child, &gs_path, indices)?;
                 }
                 NodeKind::GenScopeArray => {
                     for nested in self.node(child).children.clone() {
                         if matches!(self.kind(nested), NodeKind::GenScope) {
-                            let gs_path = self
-                                .gen_scope_paths
-                                .get(&nested)
-                                .cloned()
-                                .unwrap_or_else(|| path.to_owned());
+                            let gs_path = self.scope_path_of(nested);
                             self.register_checker_static_assertions(
                                 inst, nested, &gs_path, indices,
                             )?;
@@ -188,7 +180,7 @@ impl Codegen<'_> {
                     }
                 }
                 NodeKind::ModuleInst { .. } if self.db.checker_instance(child).is_some() => {
-                    let child_path = self.instance_path_of(child);
+                    let child_path = self.scope_path_of(child);
                     self.register_checker_static_assertions(child, child, &child_path, indices)?;
                 }
                 _ => {}

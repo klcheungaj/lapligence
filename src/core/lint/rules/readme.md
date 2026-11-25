@@ -47,7 +47,8 @@ See [shared lint](../readme.md).
   target bits (the 17.7.1 Single Assignment Rule keeps them disjoint), so two
   checker procedures assigning different bits are not two drivers. A member
   array counts per variable and member path, since its node belongs to the
-  record type: `a.m[i]` and `b.m[i]` are two objects.
+  record type: `a.m[i]` and `b.m[i]` are two objects. A port link to a member is
+  not counted.
 - `unconnected-port` (`unconnected_port.rs`): top ports are external boundaries;
   interface connections refer to actual instances, without frontend-generated
   copies.

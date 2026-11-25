@@ -145,7 +145,12 @@ fn neg_inside_string_and_real_container_items() {
     sim_cli::reject_case(
         SUITE,
         "neg_string_container_inside",
-        "string inside set item in `tb` is a queue, dynamic or associative array of strings",
+        "string inside set item in `tb` is an array of strings whose elements the set cannot traverse",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_string_parameter_inside",
+        "string inside set item in `tb` is an array of strings whose elements the set cannot traverse",
     );
     sim_cli::reject_case(
         SUITE,

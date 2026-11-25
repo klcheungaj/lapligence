@@ -3,6 +3,7 @@
 use super::super::packed_geometry::PackedSelectDim;
 use super::*;
 use crate::IdSet;
+use std::rc::Rc;
 
 #[cfg(test)]
 thread_local! {
@@ -35,38 +36,49 @@ enum ProcessWriteMode {
     Ownership,
 }
 
-/// The subroutines a process-write walk is inside and the ones it has
-/// finished. A walk inlines each callee's body at its call; a subroutine
-/// whose walk met no `ref` binding adds the same writes wherever it is
-/// called, so a second call adds nothing to the set and is not walked again
-/// (a library's call graph has exponentially many paths).
+/// What the `ref` formals of a subroutine are bound to, in formal order.
+#[derive(Default, PartialEq, Eq, Hash)]
+struct RefBindings(Vec<(NodeId, IrDependency)>);
+
+impl RefBindings {
+    fn get(&self, formal: &NodeId) -> Option<&IrDependency> {
+        self.0
+            .iter()
+            .find_map(|(bound, prefix)| (bound == formal).then_some(prefix))
+    }
+}
+
+/// The subroutines a walk over the storage a process uses is inside and the
+/// ones it has finished. A walk inlines each callee's body at its call; a
+/// subroutine uses the same storage wherever it is called with the same `ref`
+/// bindings, so a second such call adds nothing to the set and is not walked
+/// again (a library's call graph has exponentially many paths).
 #[derive(Default)]
 struct CallWalk {
-    /// Subroutines on the current call path (a call back into one is cut).
-    active: HashSet<NodeId>,
-    /// Active subroutines entered with `ref` bindings.
-    bound: HashSet<NodeId>,
-    /// Subroutines walked to the end without a taint: their writes are all
-    /// in the set already.
-    walked: HashSet<NodeId>,
-    /// Calls so far whose writes depend on the call path: a call that binds
-    /// a `ref` formal to a packed storage prefix (cut, it writes the whole
-    /// actual instead), or a cut into a frame entered with bindings. A walk
-    /// that met one is not recorded as complete.
-    taints: usize,
+    /// Subroutines on the current call path. A call back into one is cut: the
+    /// body being walked adds its storage, and the call's own `ref` actuals
+    /// count as a whole.
+    active: IdSet<NodeId>,
+    walked: HashSet<(NodeId, Rc<RefBindings>)>,
+    /// Dependencies so far that a read left out because a caller owns them
+    /// (see [`Codegen::declared_in_callee`]). A walk that left one out is not
+    /// recorded as finished.
+    left_out: usize,
 }
 
 impl CallWalk {
-    /// The walk is past the end of `body`.
-    fn leave(&mut self, body: WriteBody) {
-        let Some(callee) = body.callee else {
-            return;
-        };
+    /// Whether to walk the body of `callee` for a call with `bindings`.
+    fn enter(&mut self, callee: NodeId, bindings: &Rc<RefBindings>) -> bool {
+        // The owned key holds a reference count, not a copy of the bindings.
+        !self.walked.contains(&(callee, Rc::clone(bindings))) && self.active.insert(callee)
+    }
+
+    /// The walk is past the end of a body entered when `left_out`
+    /// dependencies had been left out.
+    fn leave(&mut self, callee: NodeId, bindings: Rc<RefBindings>, left_out: usize) {
         self.active.remove(&callee);
-        if !body.bindings.is_empty() {
-            self.bound.remove(&callee);
-        } else if self.taints == body.taints {
-            self.walked.insert(callee);
+        if self.left_out == left_out {
+            self.walked.insert((callee, bindings));
         }
     }
 }
@@ -77,10 +89,9 @@ struct WriteBody {
     callee: Option<NodeId>,
     /// How many of the nodes still to visit belong to the bodies around it.
     outside: usize,
-    /// What the `ref` formals of `callee` are bound to.
-    bindings: HashMap<NodeId, IrDependency>,
-    /// The taints counted when the body was entered.
-    taints: usize,
+    bindings: Rc<RefBindings>,
+    /// The dependencies left out when the body was entered.
+    left_out: usize,
 }
 
 impl<'a> Codegen<'a> {
@@ -455,7 +466,7 @@ impl<'a> Codegen<'a> {
     fn packed_storage_prefix_bound(
         &self,
         node: NodeId,
-        bindings: &HashMap<NodeId, IrDependency>,
+        bindings: &RefBindings,
     ) -> Option<IrDependency> {
         if let Some(select) = self.packed_element_member_select(node) {
             // A member of a packed-array element: the member's bits when the
@@ -867,7 +878,7 @@ impl<'a> Codegen<'a> {
         let mut writes = HashSet::new();
         for target in targets {
             let mut target_writes = HashSet::new();
-            self.add_process_lhs_write_bound(*target, &mut target_writes, &HashMap::new());
+            self.add_process_lhs_write_bound(*target, &mut target_writes, &RefBindings::default());
             if target_writes.is_empty() {
                 return Ok(true);
             }
@@ -896,20 +907,14 @@ impl<'a> Codegen<'a> {
         let mut writes = HashSet::new();
         for target in targets {
             let mut target_writes = HashSet::new();
-            self.add_process_lhs_write_bound(*target, &mut target_writes, &HashMap::new());
+            self.add_process_lhs_write_bound(*target, &mut target_writes, &RefBindings::default());
             if target_writes.is_empty() {
                 return Ok(true);
             }
             writes.extend(target_writes);
         }
         let mut reads = Vec::new();
-        self.walk_lhs_select_reads(
-            scope_path,
-            lhs,
-            &mut HashSet::new(),
-            &mut IdSet::new(),
-            &mut reads,
-        )?;
+        self.walk_lhs_select_reads(scope_path, lhs, &mut HashSet::new(), &mut reads)?;
         Ok(reads
             .iter()
             .any(|read| writes.iter().any(|write| self.same_storage(read, write))))
@@ -990,7 +995,10 @@ impl<'a> Codegen<'a> {
                 let Some(caller) = outer.pop() else {
                     return Ok(writes);
                 };
-                calls.leave(std::mem::replace(&mut body, caller));
+                let left = std::mem::replace(&mut body, caller);
+                if let Some(callee) = left.callee {
+                    calls.leave(callee, left.bindings, left.left_out);
+                }
                 continue;
             };
             let children = &self.node(node).children;
@@ -1083,11 +1091,8 @@ impl<'a> Codegen<'a> {
                     let (ft, callee_inst) =
                         self.resolve_callee_env(self.inst, name, *is_task, *callee)?;
                     let (_, _, formals) = self.func_info(ft, callee_inst)?;
-                    let mut callee_bindings = HashMap::new();
+                    let mut callee_bindings = RefBindings::default();
                     let recursive = calls.active.contains(&ft);
-                    if recursive && calls.bound.contains(&ft) {
-                        calls.taints += 1;
-                    }
                     for ((formal, is_out), actual) in formals.iter().zip(children) {
                         let is_ref = matches!(
                             self.kind(*formal),
@@ -1097,19 +1102,11 @@ impl<'a> Codegen<'a> {
                             }
                         );
                         let actual = self.unwrap_output_actual(*actual);
-                        if is_ref
-                            && recursive
-                            && self
-                                .packed_storage_prefix_bound(actual, &body.bindings)
-                                .is_some()
-                        {
-                            calls.taints += 1;
-                        }
                         if is_ref && !recursive {
                             if let Some(prefix) =
                                 self.packed_storage_prefix_bound(actual, &body.bindings)
                             {
-                                callee_bindings.insert(*formal, prefix);
+                                callee_bindings.0.push((*formal, prefix));
                             } else if !matches!(
                                 self.kind(*formal),
                                 NodeKind::FuncArg {
@@ -1136,14 +1133,8 @@ impl<'a> Codegen<'a> {
                             self.add_process_lhs_write_bound(actual, &mut writes, &body.bindings);
                         }
                     }
-                    let bound = !callee_bindings.is_empty();
-                    if bound {
-                        calls.taints += 1;
-                    }
-                    if (bound || !calls.walked.contains(&ft)) && calls.active.insert(ft) {
-                        if bound {
-                            calls.bound.insert(ft);
-                        }
+                    let callee_bindings = Rc::new(callee_bindings);
+                    if calls.enter(ft, &callee_bindings) {
                         // The body is walked before the call's other children.
                         for child in children.iter().rev() {
                             nodes.push(*child);
@@ -1152,7 +1143,7 @@ impl<'a> Codegen<'a> {
                             callee: Some(ft),
                             outside: nodes.len(),
                             bindings: callee_bindings,
-                            taints: calls.taints,
+                            left_out: calls.left_out,
                         };
                         nodes.extend(self.func_body(ft));
                         outer.push(std::mem::replace(&mut body, entered));
@@ -1195,14 +1186,14 @@ impl<'a> Codegen<'a> {
     }
 
     pub(super) fn add_process_lhs_write(&self, lhs: NodeId, writes: &mut HashSet<IrDependency>) {
-        self.add_process_lhs_write_bound(lhs, writes, &HashMap::new());
+        self.add_process_lhs_write_bound(lhs, writes, &RefBindings::default());
     }
 
     fn add_process_lhs_write_bound(
         &self,
         lhs: NodeId,
         writes: &mut HashSet<IrDependency>,
-        bindings: &HashMap<NodeId, IrDependency>,
+        bindings: &RefBindings,
     ) {
         if let Some(expression) = self.modport_expression_target(lhs) {
             self.add_process_lhs_write_bound(expression, writes, bindings);
@@ -1456,12 +1447,12 @@ impl<'a> Codegen<'a> {
     ) -> Result<Vec<IrDependency>, String> {
         let mut out = Vec::new();
         let mut seen: HashSet<IrDependency> = HashSet::new();
-        let mut visited: IdSet<NodeId> = IdSet::new();
+        let mut calls = CallWalk::default();
         self.walk_read_signals_mode(
             scope_path,
             root,
             &mut seen,
-            &mut visited,
+            &mut calls,
             &mut out,
             include_function_bodies,
         )?;
@@ -1473,7 +1464,7 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         node: NodeId,
         seen: &mut HashSet<IrDependency>,
-        visited: &mut IdSet<NodeId>,
+        calls: &mut CallWalk,
         out: &mut Vec<IrDependency>,
         include_function_bodies: bool,
     ) -> Result<(), String> {
@@ -1481,10 +1472,10 @@ impl<'a> Codegen<'a> {
             scope_path,
             node,
             seen,
-            visited,
+            calls,
             out,
             include_function_bodies,
-            &HashMap::new(),
+            &RefBindings::default(),
         )
     }
 
@@ -1494,10 +1485,10 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         node: NodeId,
         seen: &mut HashSet<IrDependency>,
-        visited: &mut IdSet<NodeId>,
+        calls: &mut CallWalk,
         out: &mut Vec<IrDependency>,
         include_function_bodies: bool,
-        bindings: &HashMap<NodeId, IrDependency>,
+        bindings: &RefBindings,
     ) -> Result<(), String> {
         self.check_stack(node)?;
         // Reaching a procedural concurrent assertion only queues it (IEEE
@@ -1517,7 +1508,7 @@ impl<'a> Codegen<'a> {
                 scope_path,
                 expression,
                 seen,
-                visited,
+                calls,
                 out,
                 include_function_bodies,
                 bindings,
@@ -1547,7 +1538,7 @@ impl<'a> Codegen<'a> {
                     scope_path,
                     *child,
                     seen,
-                    visited,
+                    calls,
                     out,
                     include_function_bodies,
                     bindings,
@@ -1561,7 +1552,7 @@ impl<'a> Codegen<'a> {
                     scope_path,
                     *child,
                     seen,
-                    visited,
+                    calls,
                     out,
                     include_function_bodies,
                     bindings,
@@ -1610,7 +1601,7 @@ impl<'a> Codegen<'a> {
                     scope_path,
                     node,
                     seen,
-                    visited,
+                    calls,
                     out,
                     include_function_bodies,
                     bindings,
@@ -1638,7 +1629,7 @@ impl<'a> Codegen<'a> {
                                 scope_path,
                                 *child,
                                 seen,
-                                visited,
+                                calls,
                                 out,
                                 include_function_bodies,
                                 bindings,
@@ -1657,7 +1648,7 @@ impl<'a> Codegen<'a> {
                         scope_path,
                         *index,
                         seen,
-                        visited,
+                        calls,
                         out,
                         include_function_bodies,
                         bindings,
@@ -1669,7 +1660,7 @@ impl<'a> Codegen<'a> {
                         scope_path,
                         *index,
                         seen,
-                        visited,
+                        calls,
                         out,
                         include_function_bodies,
                         bindings,
@@ -1684,7 +1675,7 @@ impl<'a> Codegen<'a> {
                             scope_path,
                             *index,
                             seen,
-                            visited,
+                            calls,
                             out,
                             include_function_bodies,
                             bindings,
@@ -1699,7 +1690,7 @@ impl<'a> Codegen<'a> {
                             scope_path,
                             *index,
                             seen,
-                            visited,
+                            calls,
                             out,
                             include_function_bodies,
                             bindings,
@@ -1752,7 +1743,7 @@ impl<'a> Codegen<'a> {
                                 scope_path,
                                 *child,
                                 seen,
-                                visited,
+                                calls,
                                 out,
                                 include_function_bodies,
                                 bindings,
@@ -1773,7 +1764,7 @@ impl<'a> Codegen<'a> {
                         scope_path,
                         *rhs,
                         seen,
-                        visited,
+                        calls,
                         out,
                         include_function_bodies,
                         bindings,
@@ -1784,7 +1775,7 @@ impl<'a> Codegen<'a> {
                         scope_path,
                         *lhs,
                         seen,
-                        visited,
+                        calls,
                         out,
                         include_function_bodies,
                         bindings,
@@ -1798,7 +1789,7 @@ impl<'a> Codegen<'a> {
                         scope_path,
                         initializer,
                         seen,
-                        visited,
+                        calls,
                         out,
                         include_function_bodies,
                         bindings,
@@ -1823,7 +1814,7 @@ impl<'a> Codegen<'a> {
                         scope_path,
                         *rhs,
                         seen,
-                        visited,
+                        calls,
                         out,
                         include_function_bodies,
                         bindings,
@@ -1834,7 +1825,7 @@ impl<'a> Codegen<'a> {
                         scope_path,
                         *lhs,
                         seen,
-                        visited,
+                        calls,
                         out,
                         include_function_bodies,
                         bindings,
@@ -1855,7 +1846,7 @@ impl<'a> Codegen<'a> {
                             scope_path,
                             initializer,
                             seen,
-                            visited,
+                            calls,
                             out,
                             include_function_bodies,
                             bindings,
@@ -1867,7 +1858,7 @@ impl<'a> Codegen<'a> {
                         scope_path,
                         *statement,
                         seen,
-                        visited,
+                        calls,
                         out,
                         include_function_bodies,
                         bindings,
@@ -1877,7 +1868,7 @@ impl<'a> Codegen<'a> {
                     scope_path,
                     *cond,
                     seen,
-                    visited,
+                    calls,
                     out,
                     include_function_bodies,
                     bindings,
@@ -1886,7 +1877,7 @@ impl<'a> Codegen<'a> {
                     scope_path,
                     *body,
                     seen,
-                    visited,
+                    calls,
                     out,
                     include_function_bodies,
                     bindings,
@@ -1896,7 +1887,7 @@ impl<'a> Codegen<'a> {
                         scope_path,
                         *statement,
                         seen,
-                        visited,
+                        calls,
                         out,
                         include_function_bodies,
                         bindings,
@@ -1912,7 +1903,7 @@ impl<'a> Codegen<'a> {
                         scope_path,
                         *b,
                         seen,
-                        visited,
+                        calls,
                         out,
                         include_function_bodies,
                         bindings,
@@ -1960,7 +1951,7 @@ impl<'a> Codegen<'a> {
                     }
                 }
                 let (_, _, formals) = self.func_info(ft, callee_inst)?;
-                let mut callee_bindings = HashMap::new();
+                let mut callee_bindings = RefBindings::default();
                 for ((formal, is_out), actual) in formals.iter().zip(&self.node(node).children) {
                     let is_ref = matches!(
                         self.kind(*formal),
@@ -1974,14 +1965,14 @@ impl<'a> Codegen<'a> {
                         .then(|| self.packed_storage_prefix_bound(actual, bindings))
                         .flatten();
                     if let Some(prefix) =
-                        prefix.filter(|_| include_function_bodies && !visited.contains(&ft))
+                        prefix.filter(|_| include_function_bodies && !calls.active.contains(&ft))
                     {
-                        callee_bindings.insert(*formal, prefix);
+                        callee_bindings.0.push((*formal, prefix));
                         self.walk_lhs_select_reads_bound(
                             scope_path,
                             actual,
                             seen,
-                            visited,
+                            calls,
                             out,
                             include_function_bodies,
                             bindings,
@@ -1999,7 +1990,7 @@ impl<'a> Codegen<'a> {
                             scope_path,
                             actual,
                             seen,
-                            visited,
+                            calls,
                             out,
                             include_function_bodies,
                             bindings,
@@ -2009,21 +2000,23 @@ impl<'a> Codegen<'a> {
                             scope_path,
                             actual,
                             seen,
-                            visited,
+                            calls,
                             out,
                             include_function_bodies,
                             bindings,
                         )?;
                     }
                 }
-                if include_function_bodies && visited.insert(ft) {
+                let callee_bindings = Rc::new(callee_bindings);
+                if include_function_bodies && calls.enter(ft, &callee_bindings) {
+                    let left_out = calls.left_out;
                     if let Some(body) = self.func_body(ft) {
                         let first = out.len();
                         self.walk_read_signals_bound(
                             scope_path,
                             body,
                             seen,
-                            visited,
+                            calls,
                             out,
                             include_function_bodies,
                             &callee_bindings,
@@ -2036,7 +2029,7 @@ impl<'a> Codegen<'a> {
                         callee.retain(|dependency| !self.activation_dependency(dependency));
                         out.extend(callee);
                     }
-                    visited.remove(&ft);
+                    calls.leave(ft, callee_bindings, left_out);
                 }
                 for (formal, _) in formals.iter().skip(self.node(node).children.len()) {
                     if let NodeKind::FuncArg {
@@ -2048,7 +2041,7 @@ impl<'a> Codegen<'a> {
                             scope_path,
                             *default,
                             seen,
-                            visited,
+                            calls,
                             out,
                             include_function_bodies,
                             bindings,
@@ -2106,10 +2099,10 @@ impl<'a> Codegen<'a> {
                 return Ok(());
             }
         }
-        if let Some(dependency) = self.static_record_dependency(node, visited) {
+        if let Some(dependency) = self.static_record_dependency(node, calls) {
             self.add_dependency(dependency, seen, out);
         }
-        for dependency in self.static_column_dependencies(node, visited) {
+        for dependency in self.static_column_dependencies(node, calls) {
             self.add_dependency(dependency, seen, out);
         }
         self.add_node_read(node, seen, out);
@@ -2118,7 +2111,7 @@ impl<'a> Codegen<'a> {
                 scope_path,
                 *c,
                 seen,
-                visited,
+                calls,
                 out,
                 include_function_bodies,
                 bindings,
@@ -2137,28 +2130,29 @@ impl<'a> Codegen<'a> {
     }
 
     /// Whether `declaration` belongs to a subroutine whose body the walk is
-    /// in (`callees`). Such storage adds nothing: the callee's own stores
+    /// in (`calls`). Such storage adds nothing: the callee's own stores
     /// would wake its caller again, as for the storage
     /// `collect_evaluator_sensitivity` leaves out.
-    fn declared_in_callee(&self, declaration: NodeId, callees: &IdSet<NodeId>) -> bool {
+    fn declared_in_callee(&self, declaration: NodeId, node: NodeId, calls: &mut CallWalk) -> bool {
         let owner = if matches!(self.kind(declaration), NodeKind::FuncTask { .. }) {
             Some(declaration)
         } else {
             self.enclosing_func_task(declaration)
         };
-        owner.is_some_and(|owner| callees.contains(&owner))
+        let left_out = owner.is_some_and(|owner| calls.active.contains(&owner));
+        // Outside its own body the answer depends on the call path.
+        if left_out && owner != self.enclosing_func_task(node) {
+            calls.left_out += 1;
+        }
+        left_out
     }
 
     /// The contents marker of the static record `node` reads below, which
     /// every store into the record toggles.
-    fn static_record_dependency(
-        &self,
-        node: NodeId,
-        callees: &IdSet<NodeId>,
-    ) -> Option<IrDependency> {
+    fn static_record_dependency(&self, node: NodeId, calls: &mut CallWalk) -> Option<IrDependency> {
         let value = self.static_record_read(node)?;
         let declaration = self.native_value_layouts.get(&value).copied()?;
-        if self.declared_in_callee(declaration, callees) {
+        if self.declared_in_callee(declaration, node, calls) {
             return None;
         }
         self.native_value_markers.borrow_mut().insert(value);
@@ -2171,18 +2165,14 @@ impl<'a> Codegen<'a> {
     /// marker of the native value that holds the string, real and handle
     /// members. An automatic record's columns live in its activation and
     /// publish nothing.
-    fn static_column_dependencies(
-        &self,
-        node: NodeId,
-        callees: &IdSet<NodeId>,
-    ) -> Vec<IrDependency> {
+    fn static_column_dependencies(&self, node: NodeId, calls: &mut CallWalk) -> Vec<IrDependency> {
         let Some((root, path)) = self.activation_record_path(node) else {
             return Vec::new();
         };
         let Some(record) = self.activation_records.get(&root) else {
             return Vec::new();
         };
-        if self.declared_in_callee(root, callees) {
+        if self.declared_in_callee(root, node, calls) {
             return Vec::new();
         }
         let mut dependencies = Vec::new();
@@ -2234,29 +2224,16 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         lhs: NodeId,
         seen: &mut HashSet<IrDependency>,
-        visited: &mut IdSet<NodeId>,
         out: &mut Vec<IrDependency>,
-    ) -> Result<(), String> {
-        self.walk_lhs_select_reads_mode(scope_path, lhs, seen, visited, out, true)
-    }
-
-    fn walk_lhs_select_reads_mode(
-        &self,
-        scope_path: &str,
-        lhs: NodeId,
-        seen: &mut HashSet<IrDependency>,
-        visited: &mut IdSet<NodeId>,
-        out: &mut Vec<IrDependency>,
-        include_function_bodies: bool,
     ) -> Result<(), String> {
         self.walk_lhs_select_reads_bound(
             scope_path,
             lhs,
             seen,
-            visited,
+            &mut CallWalk::default(),
             out,
-            include_function_bodies,
-            &HashMap::new(),
+            true,
+            &RefBindings::default(),
         )
     }
 
@@ -2266,10 +2243,10 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         lhs: NodeId,
         seen: &mut HashSet<IrDependency>,
-        visited: &mut IdSet<NodeId>,
+        calls: &mut CallWalk,
         out: &mut Vec<IrDependency>,
         include_function_bodies: bool,
-        bindings: &HashMap<NodeId, IrDependency>,
+        bindings: &RefBindings,
     ) -> Result<(), String> {
         if let Some(expression) = self.modport_expression_target(lhs) {
             // The port expression's own selectors are reads of the writer;
@@ -2287,7 +2264,7 @@ impl<'a> Codegen<'a> {
                     scope_path,
                     part,
                     seen,
-                    visited,
+                    calls,
                     out,
                     include_function_bodies,
                     bindings,
@@ -2306,7 +2283,7 @@ impl<'a> Codegen<'a> {
                 scope_path,
                 *base,
                 seen,
-                visited,
+                calls,
                 out,
                 include_function_bodies,
                 bindings,
@@ -2317,7 +2294,7 @@ impl<'a> Codegen<'a> {
                 scope_path,
                 *index,
                 seen,
-                visited,
+                calls,
                 out,
                 include_function_bodies,
                 bindings,
@@ -2327,7 +2304,7 @@ impl<'a> Codegen<'a> {
                     scope_path,
                     *left,
                     seen,
-                    visited,
+                    calls,
                     out,
                     include_function_bodies,
                     bindings,
@@ -2336,7 +2313,7 @@ impl<'a> Codegen<'a> {
                     scope_path,
                     *right,
                     seen,
-                    visited,
+                    calls,
                     out,
                     include_function_bodies,
                     bindings,
@@ -2351,7 +2328,7 @@ impl<'a> Codegen<'a> {
                     scope_path,
                     *base_expr,
                     seen,
-                    visited,
+                    calls,
                     out,
                     include_function_bodies,
                     bindings,
@@ -2360,7 +2337,7 @@ impl<'a> Codegen<'a> {
                     scope_path,
                     *width_expr,
                     seen,
-                    visited,
+                    calls,
                     out,
                     include_function_bodies,
                     bindings,
@@ -2374,7 +2351,7 @@ impl<'a> Codegen<'a> {
                         scope_path,
                         *i,
                         seen,
-                        visited,
+                        calls,
                         out,
                         include_function_bodies,
                         bindings,
@@ -2394,7 +2371,7 @@ impl<'a> Codegen<'a> {
                             scope_path,
                             *root,
                             seen,
-                            visited,
+                            calls,
                             out,
                             include_function_bodies,
                             bindings,

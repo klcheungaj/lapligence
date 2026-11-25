@@ -697,7 +697,7 @@ impl Codegen<'_> {
             .func_scope_labels
             .get(&function)
             .cloned()
-            .unwrap_or_else(|| self.source_path(&self.instance_path_of(inst)));
+            .unwrap_or_else(|| self.source_path(&self.scope_path_of(inst)));
         let scale = self.timescale_of_node(inst);
         let index = self.model.dpi_scopes.len();
         self.model

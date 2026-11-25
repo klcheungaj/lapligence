@@ -40,3 +40,6 @@ pub use domain::{
 };
 pub use source_map::{LogicalPosition, SourceMap};
 pub use validate::DbValidationError;
+
+/// The name of the compilation unit (IEEE 1800-2009 3.12.1).
+pub const COMPILATION_UNIT_NAME: &str = "$unit";

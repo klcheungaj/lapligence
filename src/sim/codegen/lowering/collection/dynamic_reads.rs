@@ -26,7 +26,7 @@
 
 use super::*;
 use crate::sim::ir::{IrElementRefKind, IrElementRoot, IrNativeAccessKind};
-use crate::IdSet;
+use crate::{IdMap, IdSet};
 
 mod report_plan;
 
@@ -44,10 +44,50 @@ const MAX_CALLEE_DEPTH: usize = 64;
 /// Class handles a callee body can read through, bound for one call: the
 /// handle formals to the caller's actuals and `this` to the receiver. An
 /// unbound handle (`None`) cannot be evaluated again when the wait arms.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq)]
 struct CalleeReceivers {
     formals: HashMap<NodeId, Option<IrChandleExpr>>,
     this: Option<IrChandleExpr>,
+}
+
+/// A walk over the bodies one call reaches with receivers `R`. A body reads
+/// the same storage wherever it is entered with the same receivers, so it is
+/// walked once with each (a call graph has exponentially many paths).
+#[derive(Default)]
+struct CalleeWalk<R> {
+    /// The subroutines on the call path.
+    stack: Vec<NodeId>,
+    walked: IdMap<NodeId, Vec<R>>,
+    /// Bodies so far that were not entered because the path was too long. A
+    /// walk that met one is not recorded: a shorter path enters it.
+    cuts: usize,
+}
+
+impl<R: PartialEq> CalleeWalk<R> {
+    fn has_walked(&self, callee: NodeId, receivers: &R) -> bool {
+        self.walked
+            .get(&callee)
+            .is_some_and(|walked| walked.contains(receivers))
+    }
+
+    /// Whether a call is cut: its callee is on the path or the path is too
+    /// long.
+    fn cuts(&mut self, callee: NodeId) -> bool {
+        if self.stack.contains(&callee) {
+            return true;
+        }
+        let cut = self.stack.len() >= MAX_CALLEE_DEPTH;
+        self.cuts += usize::from(cut);
+        cut
+    }
+
+    /// The walk is past the end of `callee`, entered after `cuts` cuts.
+    fn leave(&mut self, callee: NodeId, receivers: R, cuts: usize) {
+        self.stack.pop();
+        if self.cuts == cuts {
+            self.walked.entry(callee).or_default().push(receivers);
+        }
+    }
 }
 
 /// How a `$monitor` learns that an argument changed (SV 21.2.3).
@@ -1347,13 +1387,13 @@ impl Codegen<'_> {
         call: NodeId,
         callee: NodeId,
         receivers: CalleeReceivers,
-        stack: &mut Vec<NodeId>,
+        walk: &mut CalleeWalk<CalleeReceivers>,
         out: &mut Vec<IrDependency>,
     ) -> Result<(), String> {
         let Some(body) = self.func_body(callee) else {
             return Ok(());
         };
-        if stack.contains(&callee) || stack.len() >= MAX_CALLEE_DEPTH {
+        if walk.cuts(callee) {
             if self.reads_dynamic_storage_in(body, &mut IdSet::new()) {
                 return Err(self.unobservable_read(
                     path,
@@ -1363,8 +1403,14 @@ impl Codegen<'_> {
             }
             return Ok(());
         }
+        if walk.has_walked(callee, &receivers) {
+            return Ok(());
+        }
+        // The locals the body binds are not part of what it was entered with.
+        let entered = receivers.clone();
         let receivers = self.bind_callee_locals(body, receivers);
-        stack.push(callee);
+        let cuts = walk.cuts;
+        walk.stack.push(callee);
         if self.class_method_owner(callee).is_some() {
             for dependency in self.collect_read_signals(path, body)? {
                 if !self.activation_dependency(&dependency) {
@@ -1426,11 +1472,11 @@ impl Codegen<'_> {
             }
             if let Some(next) = self.called_subroutine(node) {
                 let bound = self.nested_call_receivers(path, node, next, &receivers)?;
-                self.callee_dependencies(path, node, next, bound, stack, out)?;
+                self.callee_dependencies(path, node, next, bound, walk, out)?;
             }
             pending.extend(self.node(node).children.iter().copied());
         }
-        stack.pop();
+        walk.leave(callee, entered, cuts);
         Ok(())
     }
 
@@ -1526,7 +1572,7 @@ impl Codegen<'_> {
                     node,
                     callee,
                     receivers,
-                    &mut Vec::new(),
+                    &mut CalleeWalk::default(),
                     &mut dependencies,
                 )?;
                 if !dependencies.is_empty() {

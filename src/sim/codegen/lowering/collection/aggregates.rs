@@ -102,7 +102,7 @@ impl<'a> Codegen<'a> {
         aggregate: UnpackedAggregateInfo,
     ) {
         if self.unpacked_aggregates.insert(node, aggregate).is_none() {
-            let path = self.instance_path_of(node);
+            let path = self.scope_path_of(node);
             self.aggregate_scope_separators = self
                 .aggregate_scope_separators
                 .max(path.matches('.').count());
@@ -120,7 +120,7 @@ impl<'a> Codegen<'a> {
         if self.unpacked_aggregates.remove(&node).is_none() {
             return;
         }
-        let path = self.instance_path_of(node);
+        let path = self.scope_path_of(node);
         let name = self.db.node(node).name.as_str();
         if let Some(nodes) = self
             .aggregates_by_scope

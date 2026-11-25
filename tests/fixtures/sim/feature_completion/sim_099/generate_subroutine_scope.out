@@ -1,0 +1,50 @@
+case task tb.g[0].q.u.lp[0].genblk2.t
+unnamed loop task tb.g[0].q.u.genblk3[0].t
+unnamed loop task tb.g[0].q.u.genblk3[1].t
+static task tb.g[0].q.u.l.st.show
+automatic task tb.g[0].q.u.l.at.show
+static function tb.g[0].q.u.l.sf.fb
+automatic function tb.g[0].q.u.l.af
+recursive task tb.g[0].q.u.l.rec.fk
+loop task tb.g[0].q.u.lp[0].t
+loop task tb.g[0].q.u.lp[1].t
+conditional task tb.g[0].q.u.lp[1].cond.t
+module task tb.g[0].q.u.t
+case task tb.g[1].genblk1.u.lp[0].genblk2.t
+unnamed loop task tb.g[1].genblk1.u.genblk3[0].t
+unnamed loop task tb.g[1].genblk1.u.genblk3[1].t
+static task tb.g[1].genblk1.u.l.st.show
+automatic task tb.g[1].genblk1.u.l.at.show
+static function tb.g[1].genblk1.u.l.sf.fb
+automatic function tb.g[1].genblk1.u.l.af
+recursive task tb.g[1].genblk1.u.l.rec.fk
+loop task tb.g[1].genblk1.u.lp[0].t
+loop task tb.g[1].genblk1.u.lp[1].t
+conditional task tb.g[1].genblk1.u.lp[1].cond.t
+module task tb.g[1].genblk1.u.t
+case task tb.one.lp[0].genblk2.t
+unnamed loop task tb.one.genblk3[0].t
+unnamed loop task tb.one.genblk3[1].t
+static task tb.one.l.st.show
+automatic task tb.one.l.at.show
+static function tb.one.l.sf.fb
+automatic function tb.one.l.af
+recursive task tb.one.l.rec.fk
+loop task tb.one.lp[0].t
+loop task tb.one.lp[1].t
+conditional task tb.one.lp[1].cond.t
+module task tb.one.t
+case task tb.arr[1].lp[0].genblk2.t
+unnamed loop task tb.arr[1].genblk3[0].t
+unnamed loop task tb.arr[1].genblk3[1].t
+static task tb.arr[1].l.st.show
+automatic task tb.arr[1].l.at.show
+static function tb.arr[1].l.sf.fb
+automatic function tb.arr[1].l.af
+recursive task tb.arr[1].l.rec.fk
+loop task tb.arr[1].lp[0].t
+loop task tb.arr[1].lp[1].t
+conditional task tb.arr[1].lp[1].cond.t
+module task tb.arr[1].t
+interface tb.g[0].b.ig.show
+interface tb.g[1].b.ig.show

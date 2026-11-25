@@ -1,8 +1,24 @@
 diff --git a/include/slang/ast/symbols/ClassSymbols.h b/include/slang/ast/symbols/ClassSymbols.h
-index 7777fa1ba..30066b449 100644
+index 7777fa1ba..5577937a1 100644
 --- a/include/slang/ast/symbols/ClassSymbols.h
 +++ b/include/slang/ast/symbols/ClassSymbols.h
-@@ -259,11 +259,12 @@ public:
+@@ -48,6 +48,15 @@ public:
+     /// a pointer to that generic class definition.
+     const GenericClassDefSymbol* genericClass = nullptr;
+ 
++    /// If the class type was specialized from a generic class, this is the
++    /// scope that names the specialization.
++    const Scope* specializingScope = nullptr;
++
++    /// The number of specializations of the same generic class that enclose the
++    /// scope that names this one, directly or through other specializations
++    /// and instances.
++    uint32_t specializationDepth = 0;
++
+     /// The list of generic parameters for this class specialization, if any.
+     std::span<const Symbol* const> genericParameters;
+ 
+@@ -259,11 +268,12 @@ public:
      const Type& getInvalidSpecialization() const;
  
      /// Gets the number of specializations that have been made for this generic class.
@@ -18,7 +34,7 @@ index 7777fa1ba..30066b449 100644
      }
  
      void addForwardDecl(const ForwardingTypedefSymbol& decl) const;
-@@ -295,6 +296,10 @@ private:
+@@ -295,6 +305,10 @@ private:
      using SpecMap = flat_hash_map<detail::ClassSpecializationKey, const Type*,
                                    detail::ClassSpecializationHasher>;
      mutable SpecMap specMap;
@@ -29,15 +45,164 @@ index 7777fa1ba..30066b449 100644
      mutable SpecMap uninstantiatedSpecMap;
      mutable std::optional<const Type*> defaultSpecialization;
      mutable const ForwardingTypedefSymbol* firstForward = nullptr;
+diff --git a/source/analysis/ConstraintAnalysis.h b/source/analysis/ConstraintAnalysis.h
+index 5311513ba..25309b721 100644
+--- a/source/analysis/ConstraintAnalysis.h
++++ b/source/analysis/ConstraintAnalysis.h
+@@ -32,7 +32,6 @@ public:
+     // Outer value: one EdgeList per distinct path rooted at that symbol.
+     // Each EdgeList holds the path node for that "from" node plus its outgoing edges.
+     using EdgeList = std::pair<ValuePath, SmallVector<ValuePath>>;
+-    using MapType = flat_hash_map<const ValueSymbol*, SmallVector<EdgeList>>;
+ 
+     void addEdge(const ValuePath& from, const ValuePath& to) {
+         // Ensure the 'to' node has an entry (so DFS can start from it even
+@@ -44,8 +43,8 @@ public:
+     }
+ 
+     const EdgeList& findEdgeList(const ValuePath& node) const {
+-        if (auto it = map.find(node.rootSymbol()); it != map.end()) {
+-            for (auto& edgeList : it->second) {
++        if (auto it = indices.find(node.rootSymbol()); it != indices.end()) {
++            for (auto& edgeList : buckets[it->second]) {
+                 if (edgeList.first.overlaps(node))
+                     return edgeList;
+             }
+@@ -53,16 +52,24 @@ public:
+         SLANG_UNREACHABLE;
+     }
+ 
+-    auto allEdgeLists() const { return map | std::views::values | std::views::join; }
++    auto allEdgeLists() const { return buckets | std::views::join; }
+ 
+ private:
+-    MapType map;
++    // The buckets are in the order their symbols were first named, which
++    // decides the cycle that is reported. The map is keyed by addresses, so
++    // its own order changes between runs.
++    flat_hash_map<const ValueSymbol*, size_t> indices;
++    std::vector<SmallVector<EdgeList>> buckets;
+ 
+     SmallVector<ValuePath>& insert(const ValuePath& node) {
+         auto sym = node.rootSymbol();
+         SLANG_ASSERT(sym);
+ 
+-        auto& bucket = map[sym];
++        auto [it, inserted] = indices.try_emplace(sym, buckets.size());
++        if (inserted)
++            buckets.emplace_back();
++
++        auto& bucket = buckets[it->second];
+         for (auto& entry : bucket) {
+             if (entry.first.overlaps(node))
+                 return entry.second;
 diff --git a/source/ast/symbols/ClassSymbols.cpp b/source/ast/symbols/ClassSymbols.cpp
-index 2bb2ece39..4790b0a63 100644
+index 2bb2ece39..877a8f344 100644
 --- a/source/ast/symbols/ClassSymbols.cpp
 +++ b/source/ast/symbols/ClassSymbols.cpp
-@@ -1094,6 +1094,7 @@ const Type* GenericClassDefSymbol::getSpecializationImpl(
-             auto [it, inserted] = specMap.emplace(key, classType);
+@@ -1016,6 +1016,22 @@ const Type& GenericClassDefSymbol::getInvalidSpecialization() const {
+     return *result;
+ }
+ 
++// Finds how many specializations of the given class enclose the given scope: the
++// body of a specialization lies in the scope that names the specialization.
++static uint32_t findSpecializationDepth(const GenericClassDefSymbol& genericClass,
++                                        const Scope& scope) {
++    for (auto curr = &scope; curr;) {
++        auto& sym = curr->asSymbol();
++        if (sym.kind == SymbolKind::ClassType) {
++            auto& classType = sym.as<ClassType>();
++            if (classType.genericClass == &genericClass)
++                return classType.specializationDepth + 1;
++        }
++        curr = sym.getSpecializingParent();
++    }
++    return 0;
++}
++
+ const Type* GenericClassDefSymbol::getSpecializationImpl(
+     const ASTContext& context, SourceLocation instanceLoc, bool forceInvalidParams,
+     const ParameterValueAssignmentSyntax* syntax) const {
+@@ -1024,16 +1040,28 @@ const Type* GenericClassDefSymbol::getSpecializationImpl(
+     auto scope = getParentScope();
+     SLANG_ASSERT(scope);
+ 
+-    auto guard = ScopeGuard([this] { recursionDepth--; });
+-    if (++recursionDepth > comp.getOptions().maxRecursiveClassSpecialization) {
+-        context.addDiag(diag::RecursiveClassSpecialization, instanceLoc) << name;
++    // A class that keeps specializing itself with new parameter values has no end.
++    // Diagnostics of an uninstantiated scope are dropped, so it can't end the walk.
++    auto tooDeep = [&]() -> const Type* {
++        if (!comp.isHierarchyTooDeep()) {
++            context.addDiag(diag::RecursiveClassSpecialization, instanceLoc) << name;
++            if (!context.scope->isUninstantiated())
++                comp.noteHierarchyTooDeep();
++        }
+         return &comp.getErrorType();
+-    }
++    };
++
++    const uint32_t maxDepth = comp.getOptions().maxRecursiveClassSpecialization;
++    auto guard = ScopeGuard([this] { recursionDepth--; });
++    if (++recursionDepth > maxDepth)
++        return tooDeep();
+ 
+     // Create a class type instance to hold the parameters. If it turns out we already
+     // have this specialization cached we'll throw it away, but that's not a big deal.
+     auto classType = comp.emplace<ClassType>(comp, name, location);
+     classType->genericClass = this;
++    classType->specializingScope = context.scope;
++    classType->specializationDepth = findSpecializationDepth(*this, *context.scope);
+     classType->isUninstantiated = forceInvalidParams || context.scope->isUninstantiated();
+     classType->setParent(*scope, getIndex());
+ 
+@@ -1089,11 +1117,22 @@ const Type* GenericClassDefSymbol::getSpecializationImpl(
+             auto [it, inserted] = uninstantiatedSpecMap.emplace(key, classType);
              if (!inserted)
                  return it->second;
++
++            if (classType->specializationDepth > maxDepth)
++                return tooDeep();
+         }
+         else {
+-            auto [it, inserted] = specMap.emplace(key, classType);
+-            if (!inserted)
++            if (auto it = specMap.find(key); it != specMap.end())
+                 return it->second;
++
++            if (classType->specializationDepth > maxDepth ||
++                (classType->specializationDepth > 0 && comp.isHierarchyTooDeep())) {
++                return tooDeep();
++            }
++
++            specMap.emplace(key, classType);
 +            specList.push_back(classType);
++            comp.noteSpecialization(*classType);
          }
      }
  
+diff --git a/source/ast/symbols/SpecifySymbols.cpp b/source/ast/symbols/SpecifySymbols.cpp
+index ef1e2f5ae..1bb113a37 100644
+--- a/source/ast/symbols/SpecifySymbols.cpp
++++ b/source/ast/symbols/SpecifySymbols.cpp
+@@ -621,9 +621,18 @@ void PulseStyleSymbol::checkPreviouslyUsed(const TimingPathMap& timingPathMap) c
+     for (auto terminal : getTerminals()) {
+         if (auto symbol = terminal->getSymbolReference()) {
+             if (auto it = timingPathMap.find(symbol); it != timingPathMap.end()) {
+-                if (!it->second.empty() && !it->second.begin()->second.empty()) {
++                // The paths are in a map keyed by addresses, whose order
++                // changes between runs, so look for the first in the source.
++                const TimingPathSymbol* first = nullptr;
++                for (auto& [_, paths] : it->second) {
++                    for (auto path : paths) {
++                        if (!first || path->location < first->location)
++                            first = path;
++                    }
++                }
++
++                if (first) {
+                     SourceRange pathRange;
+-                    auto first = it->second.begin()->second.front();
+                     for (auto outputExpr : first->getOutputs()) {
+                         if (outputExpr->getSymbolReference() == symbol) {
+                             pathRange = outputExpr->sourceRange;

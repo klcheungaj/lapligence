@@ -1358,7 +1358,7 @@ impl Codegen<'_> {
         if let Some(body) = self.func_body(function) {
             self.record_locals(body, &mut nodes);
         }
-        let path = self.instance_path_of(function);
+        let path = self.scope_path_of(function);
         for (node, activation) in nodes {
             if self.activation_records.contains_key(&node) {
                 continue;

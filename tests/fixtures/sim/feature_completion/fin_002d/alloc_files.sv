@@ -1,5 +1,7 @@
 // Allocation failure matrix: file descriptors, formatted writes and reads,
-// memory images, string scanning and plusargs.
+// memory images, string scanning and plusargs. The files whose positions are
+// printed are open in binary mode, as some hosts map the characters of text
+// files (21.3.1).
 `timescale 1ns / 1ns
 module tb;
   integer file, channel, code;
@@ -11,7 +13,7 @@ module tb;
   logic [31:0] value;
 
   initial begin
-    file = $fopen("alloc_files.txt", "w");
+    file = $fopen("alloc_files.txt", "wb");
     channel = $fopen("alloc_files.log");
     for (int i = 0; i < 8; i++) $fdisplay(file, "%h // word %0d", 16'(i * 4369), i);
     $fwrite(file, "@2 %h\n", 16'hbeef);
@@ -23,7 +25,7 @@ module tb;
     $fclose(channel);
     $readmemh("alloc_files.txt", words, 0, 7);
     $display("words %h %h %h", words[1], words[2], words[7]);
-    file = $fopen("alloc_files.txt", "r");
+    file = $fopen("alloc_files.txt", "rb");
     count = 0;
     while ($fgets(line, file) > 0) count += line.len();
     $display("lines %0d %0d", count, $feof(file));

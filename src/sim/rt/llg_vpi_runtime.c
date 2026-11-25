@@ -55,33 +55,17 @@ static vpiHandle rts_make(llg_vpi_slot_kind_t kind, uint32_t aux, int64_t left) 
     return encode_handle(index);
 }
 
-/* A list iterator over `count` handles, or NULL with an error when the
- * list could not be built. */
-static vpiHandle rts_list(int32_t type, uintptr_t* items, uint32_t count, int32_t failed) {
-    if (failed) {
-        free(items);
-        vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
-        return NULL;
-    }
-    return make_list_iterator(type, items, count);
-}
-
 typedef struct {
     uintptr_t* items;
     uint32_t count;
     uint32_t capacity;
-    int32_t failed;
 } rts_handles_t;
 
 static void rts_push(rts_handles_t* list, vpiHandle handle) {
-    if (list->failed || !handle) return;
+    if (!handle) return;
     if (list->count == list->capacity) {
         uint32_t capacity = list->capacity ? list->capacity * 2u : 8u;
         uintptr_t* grown = (uintptr_t*)vpi_realloc(list->items, capacity * sizeof(*grown));
-        if (!grown) {
-            list->failed = 1;
-            return;
-        }
         list->items = grown;
         list->capacity = capacity;
     }
@@ -141,10 +125,6 @@ static void rts_entry_value(const llg_vpi_slot_t* slot, p_vpi_value output) {
     if (output->format == vpiStringVal) {
         size_t length = strlen(text);
         char* buffer = text_buffer(length + 1u);
-        if (!buffer) {
-            vpi_error("LLG_VPI_NOMEM", "VPI value allocation failed");
-            return;
-        }
         memcpy(buffer, text, length + 1u);
         output->value.str = buffer;
         return;
@@ -161,10 +141,6 @@ static void rts_entry_value(const llg_vpi_slot_t* slot, p_vpi_value output) {
     if (words > g_vpi.value_vector_capacity) {
         s_vpi_vecval* grown =
             (s_vpi_vecval*)vpi_realloc(g_vpi.value_vector, words * sizeof(*grown));
-        if (!grown) {
-            vpi_error("LLG_VPI_NOMEM", "VPI vector allocation failed");
-            return;
-        }
         g_vpi.value_vector = grown;
         g_vpi.value_vector_capacity = words;
     }
@@ -204,7 +180,7 @@ static vpiHandle rts_time_queues(void) {
     for (size_t i = 0; i < count; ++i)
         rts_push(&list, rts_make(SLOT_TIMEQ, 0u, (int64_t)times[i]));
     free(times);
-    return rts_list(vpiTimeQueue, list.items, list.count, list.failed);
+    return make_list_iterator(vpiTimeQueue, list.items, list.count);
 }
 
 /* ── callback iteration (37.75) ─────────────────────────────────────────── */
@@ -275,7 +251,7 @@ static vpiHandle rts_callbacks(vpiHandle reference, const llg_vpi_slot_t* slot) 
         }
         if (listed) rts_push(&list, encode_handle(cb->slot));
     }
-    return rts_list(vpiCallback, list.items, list.count, list.failed);
+    return make_list_iterator(vpiCallback, list.items, list.count);
 }
 
 /* ── vpiUse (37.54) ─────────────────────────────────────────────────────── */
@@ -287,7 +263,6 @@ static int32_t rts_code_parents(void) {
     if (!g_vpi.code || !g_vpi.code->node_count) return 0;
     uint32_t count = g_vpi.code->node_count;
     uint32_t* parents = (uint32_t*)vpi_calloc(count, sizeof(*parents));
-    if (!parents) return 0;
     for (uint32_t row = 0; row < count; ++row) {
         const llg_vpi_code_t* node = &g_vpi.code->nodes[row];
         if (node->flags & LLG_VPI_CODE_LINK) continue;
@@ -348,22 +323,21 @@ static vpiHandle rts_uses(const llg_vpi_slot_t* slot) {
     llg_vpi_span_t query;
     int32_t one_bit = 0;
     int32_t spanned = slot->kind != SLOT_CODE && slot_span(slot, &query, &one_bit);
-    if (links_ready()) {
-        for (size_t i = links_of(row); i < g_vpi.link_count && g_vpi.links[i].row == row; ++i) {
-            const llg_vpi_link_t* link = &g_vpi.links[i];
-            uint32_t from, to;
-            if (spanned && !link_overlap(link, &query, &from, &to)) continue;
-            /* A force is a statement: the code rows below report it. */
-            if (link->kind == LINK_FORCE) continue;
-            if (link->kind == LINK_PORT_HIGH || link->kind == LINK_CONT_ASSIGN)
-                items_add(&items, SLOT_OBJECT, link->source, 0u);
-            else if (link->kind == LINK_PRIM_TERM)
-                items_add(&items, SLOT_PRIMTERM, link->source, link->aux);
-            else if (link->kind == LINK_TERM)
-                items_add(&items, SLOT_TERM, link->source, link->aux);
-            else
-                items_add(&items, SLOT_OBJECT, link->source, 0u);
-        }
+    links_build();
+    for (size_t i = links_of(row); i < g_vpi.link_count && g_vpi.links[i].row == row; ++i) {
+        const llg_vpi_link_t* link = &g_vpi.links[i];
+        uint32_t from, to;
+        if (spanned && !link_overlap(link, &query, &from, &to)) continue;
+        /* A force is a statement: the code rows below report it. */
+        if (link->kind == LINK_FORCE) continue;
+        if (link->kind == LINK_PORT_HIGH || link->kind == LINK_CONT_ASSIGN)
+            items_add(&items, SLOT_OBJECT, link->source, 0u);
+        else if (link->kind == LINK_PRIM_TERM)
+            items_add(&items, SLOT_PRIMTERM, link->source, link->aux);
+        else if (link->kind == LINK_TERM)
+            items_add(&items, SLOT_TERM, link->source, link->aux);
+        else
+            items_add(&items, SLOT_OBJECT, link->source, 0u);
     }
     if (rts_code_parents()) {
         for (uint32_t code = 0; code < g_vpi.code->node_count; ++code) {
@@ -472,7 +446,6 @@ static rts_stack_t* rts_stack(int32_t slot, uint64_t identity, int32_t create) {
         uint32_t count = rts.stack_count ? rts.stack_count : 16u;
         while (count <= index) count *= 2u;
         rts_stack_t* grown = (rts_stack_t*)vpi_realloc(rts.stacks, count * sizeof(*grown));
-        if (!grown) return NULL;
         memset(grown + rts.stack_count, 0, (count - rts.stack_count) * sizeof(*grown));
         rts.stacks = grown;
         rts.stack_count = count;
@@ -631,7 +604,7 @@ static vpiHandle rts_automatics(const llg_vpi_slot_t* frame_slot) {
         }
         rts_push(&list, handle);
     }
-    return rts_list(vpiAutomatics, list.items, list.count, list.failed);
+    return make_list_iterator(vpiAutomatics, list.items, list.count);
 }
 
 /* ── parts of automatics: elements of fixed-size arrays, members ── */
@@ -1283,7 +1256,7 @@ static vpiHandle rts_part_member_list(const llg_vpi_slot_t* slot, const rts_part
     llg_vpi_slot_t base = *slot;
     rts_handles_t list = {0};
     for (uint32_t i = 0; i < count; ++i) rts_push(&list, rts_part_make(&base, base.count, first + i + 1u));
-    return rts_list(vpiMember, list.items, list.count, list.failed);
+    return make_list_iterator(vpiMember, list.items, list.count);
 }
 
 /* vpiRange of a fixed-size array automatic (37.17 detail 6): its declared
@@ -1308,12 +1281,12 @@ static vpiHandle rts_auto_ranges(const llg_vpi_auto_t* entry, rts_frame_t* frame
         const int64_t* bounds = &g_vpi.types->ranges[2u * (typespec->first_range + d)];
         vpiHandle range = make_range(&origin, d, bounds[0], bounds[1]);
         if (!range) {
-            list.failed = 1;
-            break;
+            free(list.items);
+            return NULL;
         }
         rts_push(&list, range);
     }
-    return rts_list(vpiRange, list.items, list.count, list.failed);
+    return make_list_iterator(vpiRange, list.items, list.count);
 }
 
 /* vpiReg / vpiVarSelect of a fixed-size array automatic: its elements, in
@@ -1334,7 +1307,7 @@ static vpiHandle rts_fixed_elements(int32_t type, const llg_vpi_slot_t* slot, co
     llg_vpi_slot_t base = *slot;
     rts_handles_t list = {0};
     for (uint32_t i = 0; i < part->entry->size; ++i) rts_push(&list, rts_part_make(&base, i + 1u, 0u));
-    return rts_list(type, list.items, list.count, list.failed);
+    return make_list_iterator(type, list.items, list.count);
 }
 
 /* The live frame with `serial` on any thread, with its thread (VPI queries
@@ -1469,7 +1442,7 @@ static LLG_OUTLYING vpiHandle rts_auto_iterate(int32_t type, const llg_vpi_slot_
                 rts_handles_t list = {0};
                 for (uint64_t i = 0; i < count; ++i)
                     rts_push(&list, rts_part_make_at(&base, base.count, base.lsb, (uint32_t)(i + 1u)));
-                return rts_list(type, list.items, list.count, list.failed);
+                return make_list_iterator(type, list.items, list.count);
             }
         }
         vpi_error("LLG_VPI_RELATION", "this object has no such iteration");
@@ -1691,8 +1664,7 @@ static PLI_INT64 rts_auto_get(int32_t property, const llg_vpi_slot_t* slot) {
         case vpiObjId:
             if (shape && shape->shape == LLG_VPI_SHAPE_CLASS && place.storage) {
                 void* object = *(void**)place.storage;
-                llg_vpi_live_t* live = object ? live_get(object) : NULL;
-                return live ? (PLI_INT64)live->id : 0;
+                return object ? (PLI_INT64)live_get(object)->id : 0;
             }
             break;
         default: break;
@@ -1780,10 +1752,9 @@ static LLG_OUTLYING uint32_t rts_auto_block_by_name(const rts_frame_t* frame, co
     for (uint32_t i = 0; table[i].name; ++i) {
         if (!(table[i].flags & LLG_VPI_AUTO_BLOCK)) continue;
         size_t length = strlen(table[i].name);
+        if (length <= best || strncmp(table[i].name, rest, length) != 0) continue;
         char next = rest[length];
-        if (length <= best || strncmp(table[i].name, rest, length) != 0 ||
-            (next != '\0' && next != '.' && next != '['))
-            continue;
+        if (next != '\0' && next != '.' && next != '[') continue;
         if (!frame->slots[LLG_VPI_AUTOS_FIRST + i]) continue;
         found = i;
         best = length;
@@ -1820,7 +1791,7 @@ static LLG_OUTLYING vpiHandle rts_block_scope_iterate(int32_t type, uint32_t row
         if (!child_matches(&shown, type)) continue;
         rts_push(&list, rts_auto_handle_by_serial(serial, i));
     }
-    return rts_list(type, list.items, list.count, list.failed);
+    return make_list_iterator(type, list.items, list.count);
 }
 
 /* vpi_handle_by_name relative to an automatic variable or a part of it (a
@@ -1832,10 +1803,6 @@ static vpiHandle rts_auto_by_scoped_name(const llg_vpi_slot_t* scope, const char
     if (!base) return NULL;
     size_t length = strlen(base) + 1u + strlen(name) + 1u;
     char* full = (char*)vpi_malloc(length);
-    if (!full) {
-        vpi_error("LLG_VPI_NOMEM", "VPI name allocation failed");
-        return NULL;
-    }
     snprintf(full, length, "%s.%s", base, name);
     vpiHandle result = rts_auto_by_name(full);
     free(full);
@@ -2101,7 +2068,6 @@ static void rts_pop_frame(int32_t slot, uint64_t identity) {
 static int32_t rts_grow(rts_stack_t* stack, uint32_t capacity) {
     if ((uint64_t)capacity * sizeof(rts_frame_t) > (uint64_t)(SIZE_MAX - RTS_FRAME_ALIGN)) return 0;
     void* block = vpi_malloc((size_t)capacity * sizeof(rts_frame_t) + RTS_FRAME_ALIGN);
-    if (!block) return 0;
     uintptr_t address = ((uintptr_t)block + RTS_FRAME_ALIGN - 1u) & ~(uintptr_t)(RTS_FRAME_ALIGN - 1u);
     rts_frame_t* frames = (rts_frame_t*)(void*)address;
     if (stack->depth) memcpy(frames, stack->frames, stack->depth * sizeof(*frames));
@@ -2298,7 +2264,7 @@ static vpiHandle rts_thread_list(int32_t parent_slot, uint64_t parent_identity) 
     for (size_t i = 0; i < count; ++i) rts_push(&list, rts_thread_handle(slots[i], identities[i]));
     free(slots);
     free(identities);
-    return rts_list(vpiThread, list.items, list.count, list.failed);
+    return make_list_iterator(vpiThread, list.items, list.count);
 }
 
 /* 37.25 detail 1: the threads waiting on a named event. */
@@ -2310,7 +2276,7 @@ static vpiHandle rts_event_waiters(const llg_event_t* event) {
     for (size_t i = 0; i < count; ++i) rts_push(&list, rts_thread_handle(slots[i], identities[i]));
     free(slots);
     free(identities);
-    return rts_list(vpiThread, list.items, list.count, list.failed);
+    return make_list_iterator(vpiThread, list.items, list.count);
 }
 
 static void rts_runtime_shutdown(void) {
@@ -2346,7 +2312,6 @@ static int32_t rts_process_owners(void) {
     if (rts_code_owners) return 1;
     if (!rts_code_parents()) return 0;
     uint32_t* owners = (uint32_t*)vpi_calloc(g_vpi.code->node_count, sizeof(*owners));
-    if (!owners) return 0;
     for (size_t row = 0; row < g_vpi.object_count; ++row) {
         const llg_vpi_model_object_t* object = &g_vpi.objects[row];
         int32_t process = object->type == vpiInitial || object->type == vpiAlways ||
@@ -2383,10 +2348,7 @@ static vpiHandle rts_statement_process(const llg_vpi_slot_t* slot, int32_t* hand
         return NULL;
     }
     *handled = 1;
-    if (!rts_process_owners()) {
-        vpi_error("LLG_VPI_NOMEM", "VPI statement process index allocation failed");
-        return NULL;
-    }
+    if (!rts_process_owners()) return NULL;
     while (g_vpi.code_parents[row]) row = g_vpi.code_parents[row] - 1u;
     uint32_t owner = rts_code_owners[row];
     return owner ? object_handle(owner - 1u) : NULL;
@@ -2620,7 +2582,7 @@ static vpiHandle rts_iterate(int32_t type, vpiHandle reference, int32_t* handled
             rts_handles_t list = {0};
             for (int32_t i = 0; i < g_vpi.registration_count; ++i)
                 rts_push(&list, encode_handle(g_vpi.registrations[i]->slot));
-            return rts_list(vpiUserSystf, list.items, list.count, list.failed);
+            return make_list_iterator(vpiUserSystf, list.items, list.count);
         }
         if (type == vpiCallback) return rts_callbacks(NULL, NULL);
         if (type == vpiTimeQueue) return rts_time_queues();
@@ -2629,7 +2591,7 @@ static vpiHandle rts_iterate(int32_t type, vpiHandle reference, int32_t* handled
             rts_handles_t list = {0};
             for (uint32_t i = 0; i < rts_udp_count(); ++i)
                 rts_push(&list, rts_make(SLOT_UDPDEFN, i, 0));
-            return rts_list(vpiUdpDefn, list.items, list.count, list.failed);
+            return make_list_iterator(vpiUdpDefn, list.items, list.count);
         }
         *handled = 0;
         return NULL;
@@ -2663,7 +2625,7 @@ static vpiHandle rts_iterate(int32_t type, vpiHandle reference, int32_t* handled
             rts_push(&list, rts_thread_handle(slots[i], identities[i]));
         free(slots);
         free(identities);
-        return rts_list(vpiThread, list.items, list.count, list.failed);
+        return make_list_iterator(vpiThread, list.items, list.count);
     }
     if (type == vpiWaitingProcesses && slot->kind == SLOT_PROPERTY) {
         /* 37.25 detail 1 for an event property of a class object. */
@@ -2691,12 +2653,12 @@ static vpiHandle rts_iterate(int32_t type, vpiHandle reference, int32_t* handled
         if (type == vpiIODecl) {
             for (uint32_t i = 0; i < udp->port_count; ++i)
                 rts_push(&list, rts_make(SLOT_UDPIO, defn, (int64_t)i));
-            return rts_list(vpiIODecl, list.items, list.count, list.failed);
+            return make_list_iterator(vpiIODecl, list.items, list.count);
         }
         if (type == vpiTableEntry) {
             for (uint32_t i = 0; i < udp->entry_count; ++i)
                 rts_push(&list, rts_make(SLOT_TABLEENTRY, defn, (int64_t)i));
-            return rts_list(vpiTableEntry, list.items, list.count, list.failed);
+            return make_list_iterator(vpiTableEntry, list.items, list.count);
         }
     }
     if (rts_slot(slot)) {

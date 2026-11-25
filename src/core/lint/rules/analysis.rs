@@ -22,7 +22,7 @@ use std::collections::{HashMap, HashSet};
 use crate::core::db::Operation;
 use crate::core::db::{
     AggregateKind, AlwaysKind, Db, Direction, ExprKind, IntraControl, NodeId, NodeKind,
-    ProductionKind, StmtKind, TypeShape,
+    ProductionKind, StmtKind, TypeShape, COMPILATION_UNIT_NAME,
 };
 use crate::core::value::ValueData;
 
@@ -1244,18 +1244,44 @@ pub fn iter_instances(db: &Db) -> impl Iterator<Item = (NodeId, String)> + '_ {
 /// Display path of a scope (module instance or gen scope), e.g. `"top.u0"` or
 /// `"top.g[0]"`.  The top instance yields its own name (unlike
 /// [`Db::instance_path`], which returns `""` for the top); loop generate
-/// blocks follow [`Db::hierarchical_name_parts`], the naming `%m` uses.
+/// blocks follow [`Db::hierarchical_name_parts`], the naming `%m` uses. A
+/// scope in a class or package starts with the class or package name, after
+/// the path of the instance that declares the class; only the compilation
+/// unit is [`COMPILATION_UNIT_NAME`].
 pub fn scope_path(db: &Db, id: NodeId) -> String {
-    db.hierarchical_name_parts(id).join(".")
+    let mut parts: Vec<&str> = Vec::new();
+    let mut current = Some(id);
+    while let Some(scope) = current {
+        let node = db.node(scope);
+        match node.kind {
+            NodeKind::ModuleInst { .. } | NodeKind::GenScope | NodeKind::GenScopeArray => {
+                parts.extend(db.hierarchical_name_parts(scope).into_iter().rev());
+                break;
+            }
+            NodeKind::ClassDef => {
+                parts.push(&node.name);
+                current = db.class_declaring_scope(scope);
+            }
+            NodeKind::Package => {
+                parts.push(&node.name);
+                break;
+            }
+            _ => current = node.parent,
+        }
+    }
+    if parts.is_empty() {
+        return COMPILATION_UNIT_NAME.to_owned();
+    }
+    parts.reverse();
+    parts.join(".")
 }
 
-/// Display path of the scope declaring `sig` (its parent scope); empty when
-/// the signal has no declaring scope.
-pub fn signal_scope_path(db: &Db, sig: NodeId) -> String {
-    db.node(sig)
-        .parent
-        .map(|p| scope_path(db, p))
-        .unwrap_or_default()
+/// Display path of the scope that holds the declaration or process `id`.
+pub fn holding_scope_path(db: &Db, id: NodeId) -> String {
+    match db.node(id).parent {
+        Some(parent) => scope_path(db, parent),
+        None => COMPILATION_UNIT_NAME.to_owned(),
+    }
 }
 
 /// Every signal connected to a port on either side of a binding.

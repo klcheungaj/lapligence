@@ -461,7 +461,7 @@ impl<'a> Codegen<'a> {
                 {
                     self.inst = inst;
                     let lowered = self.lower_declaration_initializer(
-                        &self.instance_path_of(inst),
+                        &self.scope_path_of(inst),
                         local,
                         initializer,
                         IrInitTarget::Signal(info.ir),
@@ -475,7 +475,7 @@ impl<'a> Codegen<'a> {
                         Err(lowering_error) => {
                             let value = self
                                 .var_decl_init(
-                                    &self.instance_path_of(inst),
+                                    &self.scope_path_of(inst),
                                     &self.node(local).name,
                                     initializer,
                                 )
@@ -625,7 +625,7 @@ impl<'a> Codegen<'a> {
                     // Only its record-binding specializations have bodies.
                     continue;
                 }
-                let path = self.instance_path_of(inst);
+                let path = self.scope_path_of(inst);
                 self.emit_func_task(&path, inst, *c)?;
             }
         }

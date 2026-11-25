@@ -119,7 +119,7 @@ impl Codegen<'_> {
                     .flatten()
                     .filter_map(|node| self.owning_inst(node))
                     .any(|instance| {
-                        let scope = self.source_path(&self.instance_path_of(instance));
+                        let scope = self.source_path(&self.scope_path_of(instance));
                         specify_scopes.contains(scope.as_str())
                     })
             {

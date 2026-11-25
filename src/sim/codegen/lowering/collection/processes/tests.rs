@@ -620,7 +620,7 @@ fn component_comb_exclusion_is_precise_only_for_small_arrays() {
     cg.build_net_groups().unwrap();
     let statements = comb_statements(&cg);
     cg.inst = cg.owning_inst(statements[0]).unwrap();
-    let path = cg.instance_path_of(cg.inst);
+    let path = cg.scope_path_of(cg.inst);
     let big = cg
         .collect_process_sensitivity(&path, statements[0], Some(AlwaysKind::Comb))
         .unwrap();

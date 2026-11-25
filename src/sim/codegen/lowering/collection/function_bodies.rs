@@ -23,7 +23,7 @@ impl<'a> Codegen<'a> {
     /// `ref` formals to other tasks), so drain until none remain.
     pub(in super::super) fn emit_task_specializations(&mut self) -> Result<(), String> {
         while let Some(specialization) = self.pending_specializations.pop() {
-            let path = self.instance_path_of(specialization.inst);
+            let path = self.scope_path_of(specialization.inst);
             self.emit_func_task_with(
                 &path,
                 specialization.inst,

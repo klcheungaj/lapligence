@@ -1106,7 +1106,7 @@ impl<'a> Codegen<'a> {
     /// The instance path and module instance a covergroup body lowers in.
     fn covergroup_path(&self, group: NodeId) -> String {
         let parent = self.node(group).parent.unwrap_or(group);
-        self.instance_path_of(parent)
+        self.scope_path_of(parent)
     }
 
     fn covergroup_inst(&self, group: NodeId) -> NodeId {
