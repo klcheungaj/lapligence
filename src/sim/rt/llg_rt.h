@@ -3662,6 +3662,10 @@ void llg_string_nba_after(llg_string_t* target, llg_string_t value,
                           uint64_t ticks);
 void llg_chandle_nba_after(void** target, void* value, uint64_t ticks,
                            sv4_t* dependency);
+// The same for a process handle variable, which counts a reference to the
+// handle it holds; `value` is pinned (llg_process_pin).
+void llg_process_nba_after(llg_process_handle_t** target, llg_process_handle_t* value,
+                           uint64_t ticks, sv4_t* dependency);
 // Nonblocking write to persistent descriptor-backed array storage (a
 // fixed-array view of string, record or handle elements, SIM-007). The
 // source elements (`count` from storage position `src_start`, or the whole

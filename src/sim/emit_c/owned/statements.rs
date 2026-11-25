@@ -463,6 +463,18 @@ impl Frame<'_, '_> {
                 ));
                 self.native_discard(value);
             }
+            IrStmt::DelayedChandleAssign { target, rhs, ticks }
+                if self.ctx.model.objects.iter().any(|object| {
+                    object.ty == IrObjectType::Process && object.c_name == *target
+                }) =>
+            {
+                let ticks = self.delay(ticks)?;
+                let value = self.chandle(rhs)?;
+                let value = self.scalar("llg_process_handle_t*", value);
+                self.queue_update(format!(
+                    "llg_process_nba_after(&{target}, {value}, {ticks}, &{target}_llg_dep);"
+                ));
+            }
             IrStmt::DelayedChandleAssign { target, rhs, ticks } => {
                 let binding = self.native_lookup(target, super::native::NativeKind::Chandle)?;
                 if binding.automatic {

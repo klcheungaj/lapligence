@@ -284,6 +284,7 @@ impl Codegen<'_> {
 enum NativeNbaTarget {
     String(String),
     Chandle(String),
+    Process(String),
 }
 
 /// An already lowered native value queued by a nonblocking write.
@@ -331,14 +332,6 @@ impl Codegen<'_> {
                 ),
             ));
         }
-        if self.is_mailbox_expr(path, lhs)
-            || self.is_process_value(path, lhs)
-            || self.is_semaphore_expr(path, lhs)
-        {
-            return Err(format!(
-                "nonblocking assignment to a mailbox, process or semaphore handle in `{path}` is not supported"
-            ));
-        }
         if self.native_target(lhs) {
             return Err(format!(
                 "nonblocking assignment to an automatic native record in `{path}` is illegal (SV 6.21, 10.4.2)"
@@ -348,10 +341,10 @@ impl Codegen<'_> {
             let object = &self.model.objects[index];
             return match object.ty {
                 IrObjectType::String => Ok(NativeNbaTarget::String(object.c_name.clone())),
-                IrObjectType::Chandle => Ok(NativeNbaTarget::Chandle(object.c_name.clone())),
-                IrObjectType::Semaphore | IrObjectType::Process => Err(format!(
-                    "nonblocking assignment to a process or semaphore handle in `{path}` is not supported"
-                )),
+                IrObjectType::Chandle | IrObjectType::Semaphore => {
+                    Ok(NativeNbaTarget::Chandle(object.c_name.clone()))
+                }
+                IrObjectType::Process => Ok(NativeNbaTarget::Process(object.c_name.clone())),
             };
         }
         if self.subroutine_auto_target(lhs) {
@@ -434,6 +427,22 @@ impl Codegen<'_> {
                 rhs: self.lower_string(path, rhs)?,
                 ticks,
             },
+            NativeNbaTarget::Chandle(target) if self.is_mailbox_expr(path, lhs) => {
+                let declaration = match self.kind(lhs) {
+                    NodeKind::Expr(ExprKind::Ref {
+                        target: Some(target),
+                    }) => *target,
+                    _ => lhs,
+                };
+                let element = self.mailbox_element_for_decl(declaration);
+                IrStmt::DelayedChandleAssign {
+                    target,
+                    rhs: IrChandleExpr::Mailbox(Box::new(
+                        self.lower_mailbox_expr(path, rhs, element)?,
+                    )),
+                    ticks,
+                }
+            }
             NativeNbaTarget::Chandle(target) => {
                 self.validate_virtual_interface_assignment(lhs, rhs, path)?;
                 IrStmt::DelayedChandleAssign {
@@ -442,6 +451,12 @@ impl Codegen<'_> {
                     ticks,
                 }
             }
+            // The queued update holds no reference, so the handle is pinned.
+            NativeNbaTarget::Process(target) => IrStmt::DelayedChandleAssign {
+                target,
+                rhs: IrChandleExpr::PinnedProcess(Box::new(self.lower_process(path, rhs)?)),
+                ticks,
+            },
         })
     }
 }

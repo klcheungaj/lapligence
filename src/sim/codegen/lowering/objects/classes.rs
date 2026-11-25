@@ -56,31 +56,43 @@ impl Codegen<'_> {
     /// part of one, named by its class or through an object. A member of an
     /// interface a static virtual interface property names is not one.
     pub(in super::super) fn writes_static_property(&self, destination: NodeId) -> bool {
-        let mut node = destination;
+        let root = self.selected_root(destination);
+        let NodeKind::Expr(ExprKind::HierPath { refs, .. }) = self.kind(root) else {
+            return self.is_static_property(root);
+        };
+        let mut from_last = refs
+            .iter()
+            .rev()
+            .flatten()
+            .map(|target| self.selected_root(*target))
+            .peekable();
+        let last = from_last.peek().copied();
+        let property = from_last.find(|target| self.is_class_property(*target));
+        property.is_some_and(|property| {
+            let last = last == Some(property);
+            self.is_static_property(property)
+                && (last
+                    || !matches!(self.kind(property), NodeKind::Var { ty } if ty.kind == "virtual_interface"))
+        })
+    }
+
+    /// The declaration, or the member path, that the selects of `node` start
+    /// from.
+    fn selected_root(&self, node: NodeId) -> NodeId {
+        let mut root = node;
         loop {
-            match self.kind(node) {
+            root = match self.kind(root) {
                 NodeKind::Expr(
                     ExprKind::BitSelect { base, .. }
                     | ExprKind::PartSelect { base, .. }
                     | ExprKind::IndexedPartSelect { base, .. }
                     | ExprKind::ArraySelect { base, .. }
                     | ExprKind::MemberSelect { base, .. },
-                ) => node = *base,
-                NodeKind::Expr(ExprKind::Ref { target }) => {
-                    return target.is_some_and(|target| self.is_static_property(target))
-                }
-                NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
-                    let mut from_last = refs.iter().rev().flatten().copied().peekable();
-                    let last = from_last.peek().copied();
-                    let property = from_last.find(|target| self.is_class_property(*target));
-                    return property.is_some_and(|property| {
-                        let last = last == Some(property);
-                        self.is_static_property(property)
-                            && (last
-                                || !matches!(self.kind(property), NodeKind::Var { ty } if ty.kind == "virtual_interface"))
-                    });
-                }
-                _ => return false,
+                ) => *base,
+                NodeKind::Expr(ExprKind::Ref {
+                    target: Some(target),
+                }) => *target,
+                _ => return root,
             }
         }
     }

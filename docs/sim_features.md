@@ -629,7 +629,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   locals, admitted aggregate/class fields, mixed signatures, returns and
   input/output/inout/ref/const-ref calls are present. Untimed and `#delay`
   nonblocking writes to persistent chandles and module-record chandle members
-  store the issue-time pointer; an ambiguous conditional keeps equal pointers
+  store the issue-time pointer, like those to class, mailbox, semaphore and
+  process handles and to elements of fixed arrays of them, also with an event
+  control ([ki_handle_updates](../tests/fixtures/sim/feature_completion/ki_handle_updates/readme.md)); an ambiguous conditional keeps equal pointers
   or yields null. Chandle ports (including ref ports and records with chandle
   members), packed containment, arithmetic, continuous assignments (including
   of a record with a chandle member) and sensitivity/event expressions are

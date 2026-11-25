@@ -876,9 +876,7 @@ impl EmitCtx<'_, '_> {
         {
             return self.lower_delayed_native_record(h, lhs, rhs, false, scaled_ticks);
         }
-        let string_target = self.cg.is_string_expr(&self.path, lhs);
-        let chandle_target = !string_target && self.cg.is_chandle_expr(&self.path, lhs);
-        if string_target || chandle_target {
+        if self.native_nba_target(lhs) {
             return Ok(vec![self.cg.lower_native_nba(
                 &self.path,
                 lhs,
@@ -1591,7 +1589,10 @@ impl EmitCtx<'_, '_> {
     /// Whether a nonblocking destination is a string or handle object,
     /// which queues an owned native value rather than a packed one.
     pub(super) fn native_nba_target(&self, lhs: NodeId) -> bool {
-        self.cg.is_string_expr(&self.path, lhs) || self.cg.is_chandle_expr(&self.path, lhs)
+        self.cg.is_string_expr(&self.path, lhs)
+            || self.cg.is_chandle_expr(&self.path, lhs)
+            || self.cg.is_mailbox_expr(&self.path, lhs)
+            || self.cg.is_process_value(&self.path, lhs)
     }
 
     /// The explicit event list and optional repeat count of an

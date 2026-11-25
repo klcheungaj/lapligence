@@ -26,6 +26,23 @@ impl EmitCtx<'_, '_> {
             || self.cg.persistent_native_target(member)
             || (self.cg.native_record_target(member) && !self.native_nba_target(lhs))
             || self.whole_unpacked_record(member)
+            || self.fixed_view_target(member)
+    }
+
+    /// An element of a fixed array of strings or handles, a slice of one or
+    /// the whole array.
+    fn fixed_view_target(&self, member: NodeId) -> bool {
+        let element = self.native_nba_target(member)
+            && matches!(
+                self.cg.kind(member),
+                NodeKind::Expr(ExprKind::ArraySelect { .. } | ExprKind::BitSelect { .. })
+            );
+        element
+            || self.cg.is_fixed_view_slice(member)
+            || self
+                .cg
+                .container_of(member)
+                .is_some_and(|container| self.cg.is_fixed_view(container.ir))
     }
 
     /// A record with no packed image: its leaves are written one by one.

@@ -57,6 +57,8 @@ typedef struct llg_nba_locator {
     struct llg_bound_update* bound;
 } llg_nba_locator_t;
 
+enum { LLG_NBA_HANDLE = 1, LLG_NBA_PROCESS = 2 };
+
 typedef struct llg_nba {
     struct llg_nba* queue_next;
     struct llg_nba* queue_prev;
@@ -80,7 +82,7 @@ typedef struct llg_nba {
     double* real_target;
     double real_value;
     int32_t is_string;
-    int32_t is_chandle;
+    int32_t is_chandle; // LLG_NBA_HANDLE or LLG_NBA_PROCESS.
     int32_t is_values;
     int32_t is_container;
     // Persistent native destination and its owned issue-time value;
@@ -96,6 +98,12 @@ typedef struct llg_nba {
             // Change marker of handle storage, or NULL.
             sv4_t* dependency;
         } chandle;
+        // A process variable and a pinned handle.
+        struct {
+            llg_process_handle_t** target;
+            llg_process_handle_t* value;
+            sv4_t* dependency;
+        } process;
         // Descriptor-backed array write: the whole array (`whole`) or the
         // payload's elements from the storage position held in `value`.
         struct {

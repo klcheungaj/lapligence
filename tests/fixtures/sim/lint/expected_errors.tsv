@@ -20,6 +20,10 @@ feature_completion/fin_002f/cancel_vpi_statements.sv	mixed-assignments	12:3
 feature_completion/g1_05/owner_publication_snapshot.sv	mixed-assignments	9:5
 feature_completion/g1_19/nba_issue_capture.sv	mixed-assignments	10:5
 feature_completion/g1_19/nba_ordered_updates.sv	mixed-assignments	20:5
+feature_completion/ki_handle_updates/delays.sv	mixed-assignments	17:3
+feature_completion/ki_handle_updates/elements.sv	mixed-assignments	43:3
+feature_completion/ki_handle_updates/kinds.sv	mixed-assignments	28:3
+feature_completion/ki_handle_updates/strings.sv	mixed-assignments	14:3
 feature_completion/ki_packed_range/procedural_selects.sv	mixed-assignments	17:3
 feature_completion/ki_pattern_rows/dense_rows.sv	mixed-assignments	33:3
 feature_completion/ki_pattern_rows/descriptor_rows.sv	mixed-assignments	22:3
