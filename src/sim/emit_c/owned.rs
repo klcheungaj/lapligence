@@ -212,6 +212,9 @@ pub(super) struct Frame<'a, 'm> {
     /// Emitting a deferred assertion action (SV 16.4): a Reactive callback
     /// with no process turn, so `$stop` uses the action entry point.
     deferred_action: bool,
+    /// The update of an event-controlled nonblocking assignment, which runs
+    /// outside every process.
+    event_update: bool,
     sampled_reads: bool,
     item_callback: bool,
     sequence_addresses: HashMap<String, Binding>,
@@ -463,8 +466,9 @@ impl<'a, 'm> Frame<'a, 'm> {
     /// compare.
     fn exit_on_failed_access(&mut self, failed: &str) {
         // A failed access in a report evaluator already ended the run (SV
-        // 8.4): the evaluator stops and the report prints nothing.
-        if self.postponed_reader && !self.quiet_receivers {
+        // 8.4): the evaluator stops and the report prints nothing, and the
+        // update of an event-controlled assignment writes nothing.
+        if (self.postponed_reader || self.event_update) && !self.quiet_receivers {
             self.line(format!("if (LLG_CO_UNLIKELY({failed})) goto _llg_return;"));
             return;
         }
@@ -551,6 +555,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             branch_formals: None,
             postponed_reader: false,
             deferred_action: false,
+            event_update: false,
             sampled_reads: ctx.sampled,
             item_callback: false,
             sequence_addresses: HashMap::new(),

@@ -409,6 +409,7 @@ fn render_with_frame(
             rhs,
             ..
         } => {
+            frame.event_update = true;
             frame.line("(void)frame;");
             for capture in captures {
                 let storage = capture.storage();

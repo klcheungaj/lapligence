@@ -220,23 +220,34 @@ fn arrays_of_interface_instances_are_arrays_of_handles() {
     );
 }
 
-#[test]
-fn named_event_through_a_null_handle_stops_at_once() {
-    sim_cli::run_case_checked_matrix("virtual_interfaces", "null_event", &[], &|label, output| {
+/// A run that ends in the fatal report of a null handle `site`.
+fn ends_at_null_handle(fixture: &str, stdout: &str, site: &str) {
+    sim_cli::run_case_checked_matrix("virtual_interfaces", fixture, &[], &|label, output| {
         assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
-        assert_eq!(
-            String::from_utf8_lossy(&output.stdout),
-            "start\n",
-            "{label}"
-        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout), stdout, "{label}");
         assert!(
-            sim_harness::mentions(
-                &String::from_utf8_lossy(&output.stderr),
-                "virtual interface access failed: virtual interface event at drv:11:10"
-            ),
+            sim_harness::mentions(&String::from_utf8_lossy(&output.stderr), site),
             "{label}: {output:?}"
         );
     });
+}
+
+#[test]
+fn named_event_through_a_null_handle_stops_at_once() {
+    ends_at_null_handle(
+        "null_event",
+        "start\n",
+        "virtual interface access failed: virtual interface event at drv:11:10",
+    );
+}
+
+#[test]
+fn event_controlled_update_through_a_null_handle_stops_at_the_event() {
+    ends_at_null_handle(
+        "null_event_nba",
+        "issued\n",
+        "virtual interface access failed: virtual interface member access at tb:11:5",
+    );
 }
 
 #[test]
