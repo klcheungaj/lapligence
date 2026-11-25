@@ -2560,6 +2560,62 @@ Give event arrays indexed slots in the descriptor.
 
 `tests/fixtures/sim/virtual_interfaces/neg_event_array_actual.sv`.
 
+## String and handle members through virtual interfaces
+
+**Status:** open. Each use rejects with a located diagnostic.
+
+### Symptom
+
+A string variable or a class handle of an interface used through a virtual
+interface (`v.name = "x"`) rejects with "member `name` of virtual interface
+`bus_if` is a string or a handle". The interface's other members stay
+reachable through the virtual interface, and the member through the instance
+works.
+
+### Cause
+
+The virtual interface descriptor holds packed and real signal slots; such a
+member has no signal.
+
+### Intended direction
+
+Native slots in the descriptor, as unpacked members get (the follow-up of
+sim-defects-10 item 3).
+
+### Reproduce
+
+`tests/fixtures/sim/virtual_interfaces/neg_string_member.sv`.
+
+## Remaining items of unpacked array concatenations
+
+**Status:** open. Each form rejects with a located diagnostic.
+
+### Symptom
+
+As an item of an unpacked array concatenation (SV 10.10): a dense fixed array
+of reals, events or rows (an item of a queue of fixed arrays); a queue or
+dynamic array that is an element of a container (`{qq[1], 0}`, also as one
+element of a queue of queues); an array of rows into a queue of queues
+(`qq = {m, q}` with `int m[2][2]`); an unpacked member through a virtual
+interface; an item of a run-time size into a fixed target of two dimensions,
+a real fixed target or an associative-array element. A whole assignment of
+such an array to a queue (`rq = r2`) rejects too.
+
+### Cause
+
+An array item is copied into a temporary queue through the whole-array
+assignment of its kind; these kinds have none yet.
+
+### Intended direction
+
+Element-wise copies for real and row arrays; the in-place alias of a nested
+container element as a queue source.
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_006/array_concatenation.sv` holds
+the supported forms; the forms above reject at the item.
+
 ## Modport expression ports through virtual interfaces
 
 **Status:** open (RTL-102 deferral).
