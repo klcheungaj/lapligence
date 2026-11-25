@@ -118,7 +118,7 @@ fn value_runtime_rejects_over_capacity_widths() {
     for operation in ["constructor", "resolution"] {
         let mut command = Command::new(&executable);
         command.arg(operation);
-        let output = sim_harness::run_command(&mut command, Duration::from_secs(10))
+        let output = sim_harness::run_command(&mut command, sim_harness::MODEL_TIMEOUT)
             .unwrap_or_else(|error| panic!("run {operation} boundary probe: {error}"));
         assert!(
             !output.status.success(),
