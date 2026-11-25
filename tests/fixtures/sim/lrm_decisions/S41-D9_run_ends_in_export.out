@@ -1,0 +1,6 @@
+before
+c: outer call
+middle
+c: inner call
+inner
+final r=7

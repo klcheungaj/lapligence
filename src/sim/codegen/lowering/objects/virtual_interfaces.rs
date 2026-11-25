@@ -295,7 +295,7 @@ impl Codegen<'_> {
             .ok_or_else(|| {
                 // A clocking block has no member storage of its own, only
                 // its clockvars (`cb.x`); its event is reached by an event
-                // control alone (`virtual_clocking_event_ref`).
+                // control alone (`virtual_event_ref`).
                 let prefix = format!("{member}.");
                 if self
                     .virtual_interface_members
@@ -792,50 +792,54 @@ impl Codegen<'_> {
 }
 
 impl Codegen<'_> {
-    /// The member path of `node` when it names a clocking block through a
-    /// virtual-interface handle or view (`vif.cb`, SV 14.13, 25.9): some
-    /// interface instance the descriptor can bind declares a block of that
-    /// name.
-    pub(in super::super) fn virtual_clocking_event_member(
+    /// The member path of `node` when it names a clocking block or a scalar
+    /// named event through a virtual-interface handle or view (`vif.cb`,
+    /// `vif.e`, SV 14.13, 15.5, 25.9), with that declaration in an interface
+    /// instance the descriptor can bind.
+    pub(in super::super) fn virtual_event_member(
         &self,
         node: NodeId,
-    ) -> Option<VirtualInterfaceMemberPath> {
+    ) -> Option<(VirtualInterfaceMemberPath, NodeId)> {
         let target = self
             .virtual_interface_member_path("", node, false)
             .ok()
             .flatten()?;
-        self.virtual_interface_instances
+        let event = self
+            .virtual_interface_instances
             .iter()
             .filter(|(_, (descriptor, _))| *descriptor == target.descriptor)
-            .any(|(interface, _)| {
-                self.virtual_interface_clocking_block(*interface, &target.member)
-                    .is_some()
-            })
-            .then_some(target)
+            .find_map(|(interface, _)| self.virtual_interface_event(*interface, &target.member))?;
+        Some((target, event))
     }
 
-    fn virtual_interface_clocking_block(&self, interface: NodeId, name: &str) -> Option<NodeId> {
-        self.node(interface)
-            .children
-            .iter()
-            .copied()
-            .find(|child| self.db.is_clocking_block(*child) && self.node(*child).name == name)
+    fn virtual_interface_event(&self, interface: NodeId, name: &str) -> Option<NodeId> {
+        self.node(interface).children.iter().copied().find(|child| {
+            self.node(*child).name == name
+                && (self.db.is_clocking_block(*child)
+                    || matches!(self.kind(*child), NodeKind::NamedEvent)
+                        && self.db.event_array_meta(*child).is_none())
+        })
     }
 
-    /// The event of the clocking block `node` names through a virtual
-    /// interface: the handle selects the descriptor's event slot of the
-    /// bound instance when the wait arms.
-    pub(in super::super) fn virtual_clocking_event_ref(
+    /// The event `node` names through a virtual interface: the handle selects
+    /// the descriptor's event slot of the bound instance where the operation
+    /// is issued.
+    pub(in super::super) fn virtual_event_ref(
         &mut self,
         path: &str,
         node: NodeId,
     ) -> Result<Option<IrEventRef>, String> {
-        let Some(target) = self.virtual_clocking_event_member(node) else {
+        let Some((target, event)) = self.virtual_event_member(node) else {
             return Ok(None);
         };
         let slot = self.virtual_interface_event_slot(target.descriptor, &target.member)?;
         let handle = self.virtual_interface_handle(path, node, &target)?;
-        let site = self.source_site("virtual interface clocking block event", path, node);
+        let kind = if self.db.is_clocking_block(event) {
+            "virtual interface clocking block event"
+        } else {
+            "virtual interface event"
+        };
+        let site = self.source_site(kind, path, node);
         let name = self.native_access_symbol_at(
             handle,
             crate::sim::ir::IrNativeAccessKind::InterfaceEvent {
@@ -849,19 +853,19 @@ impl Codegen<'_> {
         ))))
     }
 
-    /// The descriptor event slot of the clocking block `block`, added with
-    /// each bound instance's block event on first use.
+    /// The descriptor event slot of the event `name`, added with each bound
+    /// instance's event on first use.
     fn virtual_interface_event_slot(
         &mut self,
         descriptor: usize,
-        block: &str,
+        name: &str,
     ) -> Result<usize, String> {
         let interface = self
             .model
             .virtual_interfaces
             .get(descriptor)
             .ok_or("virtual interface descriptor is out of bounds")?;
-        if let Some(slot) = interface.events.iter().position(|name| name == block) {
+        if let Some(slot) = interface.events.iter().position(|event| event == name) {
             return Ok(slot);
         }
         let mut events = vec![None; interface.instances.len()];
@@ -870,15 +874,15 @@ impl Codegen<'_> {
                 continue;
             }
             let event = self
-                .virtual_interface_clocking_block(*node, block)
-                .and_then(|block| self.event_globals.get(&block))
+                .virtual_interface_event(*node, name)
+                .and_then(|event| self.event_globals.get(&event))
                 .map(|event| event.ir);
             if let Some(entry) = events.get_mut(*instance) {
                 *entry = event;
             }
         }
         let interface = &mut self.model.virtual_interfaces[descriptor];
-        interface.events.push(block.to_owned());
+        interface.events.push(name.to_owned());
         for (instance, event) in interface.instances.iter_mut().zip(events) {
             instance.events.push(event);
         }

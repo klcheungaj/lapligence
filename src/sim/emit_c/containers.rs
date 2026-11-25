@@ -6,7 +6,7 @@ use super::objects::string as render_string;
 use crate::sim::ir::{
     IrAssocKey, IrAssocTraversal, IrContainerElement, IrContainerExpr, IrContainerKind,
     IrContainerMethod, IrContainerReduction, IrContainerStmt, IrQueueBound, IrQueueSource,
-    IrStreamDirection, IrStreamSelector,
+    IrStreamDirection, IrStreamSelector, CLASS_KEY_WIDTH,
 };
 
 fn name<'a>(ctx: &'a RCtx<'_>, index: usize) -> &'a str {
@@ -147,12 +147,14 @@ pub(super) fn expression(ctx: &RCtx<'_>, operation: &IrContainerExpr) -> Result<
                 }
                 IrContainerKind::Queue { .. } => "llg_queue_value_get",
                 IrContainerKind::Associative {
-                    key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard | IrAssocKey::Class,
+                    key:
+                        IrAssocKey::Integral { .. } | IrAssocKey::Wildcard | IrAssocKey::Handle { .. },
                 } if ctx.model.containers[*container].element.is_packed() => {
                     "llg_assoc_get_integral"
                 }
                 IrContainerKind::Associative {
-                    key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard | IrAssocKey::Class,
+                    key:
+                        IrAssocKey::Integral { .. } | IrAssocKey::Wildcard | IrAssocKey::Handle { .. },
                 } => "llg_assoc_value_get_integral",
                 IrContainerKind::Associative {
                     key: IrAssocKey::String,
@@ -678,13 +680,15 @@ pub(super) fn statement(ctx: &RCtx<'_>, operation: &IrContainerStmt) -> Result<S
                     "llg_queue_set"
                 }
                 IrContainerKind::Associative {
-                    key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard | IrAssocKey::Class,
+                    key:
+                        IrAssocKey::Integral { .. } | IrAssocKey::Wildcard | IrAssocKey::Handle { .. },
                 } if ctx.model.containers[*container].element.is_packed() => {
                     "llg_assoc_set_integral"
                 }
                 IrContainerKind::Queue { .. } => "llg_queue_value_set",
                 IrContainerKind::Associative {
-                    key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard | IrAssocKey::Class,
+                    key:
+                        IrAssocKey::Integral { .. } | IrAssocKey::Wildcard | IrAssocKey::Handle { .. },
                 } => "llg_assoc_value_set_integral",
                 IrContainerKind::Dynamic => {
                     return Err(
@@ -1393,7 +1397,8 @@ pub(super) fn value_descriptor_tables(
                         two_state,
                     } => (*width, *signed, *two_state, 0),
                     IrAssocKey::String => (0, false, false, 1),
-                    IrAssocKey::Class => (0, false, false, 2),
+                    IrAssocKey::Handle { object: true } => (0, false, false, 2),
+                    IrAssocKey::Handle { object: false } => (CLASS_KEY_WIDTH, false, true, 0),
                 };
                 (
                     "LLG_VALUE_ASSOC",
@@ -1517,7 +1522,10 @@ fn storage_parts(
                     IrAssocKey::String => {
                         format!("    llg_assoc_value_init_string(&{target}, &{root});\n")
                     }
-                    IrAssocKey::Class => {
+                    IrAssocKey::Handle { object: false } => format!(
+                        "    llg_assoc_value_init_integral(&{target}, &{root}, {CLASS_KEY_WIDTH}, 0, 1);\n"
+                    ),
+                    IrAssocKey::Handle { object: true } => {
                         format!("    llg_assoc_value_init_class(&{target}, &{root});\n")
                     }
                 },
@@ -1560,7 +1568,11 @@ fn storage_parts(
                 "    llg_assoc_init_string(&{target}, {width}, {}, {});\n",
                 signed as u8, two_state as u8
             ),
-            IrAssocKey::Class => format!(
+            IrAssocKey::Handle { object: false } => format!(
+                "    llg_assoc_init_integral(&{target}, {width}, {}, {}, {CLASS_KEY_WIDTH}, 0, 1);\n",
+                signed as u8, two_state as u8
+            ),
+            IrAssocKey::Handle { object: true } => format!(
                 "    llg_assoc_init_class(&{target}, {width}, {}, {});\n",
                 signed as u8, two_state as u8
             ),

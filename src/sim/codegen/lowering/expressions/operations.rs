@@ -602,29 +602,35 @@ impl<'a> Codegen<'a> {
         if item_nodes.is_empty() {
             return Err(format!("inside set is empty in `{scope_path}`"));
         }
-        if self.is_chandle_expr(scope_path, *value_node) {
-            return self.lower_handle_inside(scope_path, *value_node, item_nodes);
+        if self.is_handle_set_operand(scope_path, *value_node) {
+            return self.with_set_arrays(|this| {
+                this.lower_handle_inside(scope_path, *value_node, item_nodes)
+            });
         }
         if self.is_string_expr(scope_path, *value_node) {
-            let value = self.lower_string(scope_path, *value_node)?;
-            let items = self.lower_inside_string_items(scope_path, item_nodes)?;
-            return Ok(object_query(
-                IrObjectQuery::StringInside { value, items },
+            return self.with_set_arrays(|this| {
+                let value = this.lower_string(scope_path, *value_node)?;
+                let items = this.lower_inside_string_items(scope_path, item_nodes)?;
+                Ok(object_query(
+                    IrObjectQuery::StringInside { value, items },
+                    1,
+                    false,
+                ))
+            });
+        }
+        self.with_set_arrays(|this| {
+            let value = this.lower_expr(scope_path, *value_node)?;
+            let items = this.lower_inside_items(scope_path, item_nodes)?;
+            Ok(IrExpr::new(
+                IrExprKind::Inside {
+                    value: Box::new(value),
+                    items,
+                },
                 1,
                 false,
-            ));
-        }
-        let value = self.lower_expr(scope_path, *value_node)?;
-        let items = self.lower_inside_items(scope_path, item_nodes)?;
-        Ok(IrExpr::new(
-            IrExprKind::Inside {
-                value: Box::new(value),
-                items,
-            },
-            1,
-            false,
-            None,
-        ))
+                None,
+            ))
+        })
     }
 
     fn lower_concatenation(

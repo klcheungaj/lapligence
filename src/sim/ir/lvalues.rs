@@ -81,6 +81,97 @@ pub struct IrInsideArrayElement {
     pub signed: bool,
 }
 
+/// An unpacked array as an `inside` set item: every value below its
+/// dimensions and nested containers is one member of the set (SV 11.4.13).
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrInsideArray {
+    /// A whole dynamic array, queue, associative array or fixed-array view.
+    Container(usize),
+    /// An array that is an element of container storage, or below one.
+    Value {
+        /// Locator of the element
+        /// ([`IrChandleExpr::ContainerElement`](super::IrChandleExpr)).
+        element: IrChandleExpr,
+        /// Item positions from the element down to the array.
+        items: Vec<u32>,
+    },
+}
+
+impl IrInsideArray {
+    /// The type of the members, or `None` when they are not singular.
+    pub(in crate::sim) fn member(
+        &self,
+        model: &super::IrModel,
+    ) -> Result<Option<IrContainerElement>, IrValidationError> {
+        let mut element = match self {
+            Self::Container(container) => {
+                &model
+                    .containers
+                    .get(*container)
+                    .ok_or_else(|| {
+                        IrValidationError::new(
+                            "inside set",
+                            "inside container index is out of bounds",
+                        )
+                    })?
+                    .element
+            }
+            Self::Value { element, items } => {
+                super::native_values::native_leaf_type(element.located_value(model)?, items)
+                    .ok_or_else(|| {
+                        IrValidationError::new("inside set", "item path does not select an array")
+                    })?
+            }
+        };
+        Ok(loop {
+            match element {
+                IrContainerElement::FixedArray { element: next, .. }
+                | IrContainerElement::Container { element: next, .. } => element = next,
+                IrContainerElement::Aggregate { .. } | IrContainerElement::Union { .. } => {
+                    break None
+                }
+                _ => break Some(element.clone()),
+            }
+        })
+    }
+
+    /// Check the array and that `fits` admits the type of its members.
+    pub(in crate::sim) fn validate(
+        &self,
+        model: &super::CheckedModel<'_>,
+        formals: &[IrFormal],
+        chandle_return: Option<bool>,
+        fits: impl Fn(&IrContainerElement) -> bool,
+    ) -> Result<(), IrValidationError> {
+        match self {
+            // Registers the reference as well as finding the container.
+            Self::Container(container) => {
+                model.container(*container);
+            }
+            Self::Value { element, .. } => element.validate(model, formals, chandle_return)?,
+        }
+        if self.member(model)?.as_ref().is_some_and(fits) {
+            return Ok(());
+        }
+        Err(IrValidationError::new(
+            "inside set",
+            "array members do not compare with the inside selector",
+        ))
+    }
+
+    pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
+        if let Self::Value { element, .. } = self {
+            element.expressions(visit);
+        }
+    }
+
+    pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
+        if let Self::Value { element, .. } = self {
+            element.expressions_mut(visit);
+        }
+    }
+}
+
 /// One scalar integral member of an `inside` set.
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrInsideItem {
@@ -93,9 +184,8 @@ pub enum IrInsideItem {
         low: Option<IrExpr>,
         high: Option<IrExpr>,
     },
-    /// All values currently stored in a dynamic, queue, or associative
-    /// container. The container storage ABI remains unchanged.
-    Container { container: usize },
+    /// Every packed or real value an array stores below its dimensions.
+    Array(IrInsideArray),
     /// A fixed unpacked array value. The expression is evaluated once and
     /// each element is projected from its packed payload as a scalar set
     /// item. Aggregate leaves remain one value at this boundary.
@@ -265,13 +355,17 @@ impl IrLhs {
 
     /// A deferred operation must not retain a local owner or reference formal.
     /// Selected members inherit the lifetime of their root capability.
-    pub(in crate::sim) fn has_activation_root(&self) -> bool {
+    pub(in crate::sim) fn has_activation_root(&self, model: &IrModel) -> bool {
         match self {
-            Self::WholeRef { .. } | Self::Ref { .. } => true,
-            Self::PackedSelect { target, .. } | Self::TaggedSelect { target, .. } => {
-                target.has_activation_root()
+            Self::WholeRef { addr, .. } | Self::Ref { addr, .. } => {
+                !model.is_interface_member_address(addr)
             }
-            Self::Stream { parts, .. } => parts.iter().any(|(part, _)| part.has_activation_root()),
+            Self::PackedSelect { target, .. } | Self::TaggedSelect { target, .. } => {
+                target.has_activation_root(model)
+            }
+            Self::Stream { parts, .. } => parts
+                .iter()
+                .any(|(part, _)| part.has_activation_root(model)),
             _ => false,
         }
     }

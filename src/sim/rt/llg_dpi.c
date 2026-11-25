@@ -762,8 +762,8 @@ void llg_dpi_guard_pop(llg_dpi_guard_t* guard) {
     llg_dpi_guard_top = guard->outer;
 }
 
-/* Abandon the foreign code of the innermost guarded import after a fatal
- * error it caused; without a guard the access only does nothing. */
+/* Abandon the foreign code of the innermost guarded import; without a guard
+ * it continues. */
 static void llg_dpi_abandon_foreign_code(void) {
     llg_dpi_guard_t* guard = llg_dpi_guard_top;
     if (!guard) return;
@@ -819,6 +819,10 @@ int32_t llg_dpi_task_status(int32_t status, const char* c_name) {
     return status != 0;
 }
 
+void llg_dpi_export_returns(void) {
+    if (llg_rt_run_ended()) llg_dpi_abandon_foreign_code();
+}
+
 llg_dpi_fn_t llg_dpi_export_target(uint32_t id, const char* c_name, int32_t task) {
     char detail[256];
     if (llg_dpi_now.chain != LLG_DPI_CHAIN_CONTEXT) {
@@ -863,6 +867,7 @@ llg_dpi_fn_t llg_dpi_export_target(uint32_t id, const char* c_name, int32_t task
 
 int32_t llg_dpi_export_enter(llg_dpi_call_t* saved) {
     *saved = llg_dpi_now;
+    saved->exiting = (uint8_t)llg_rt_exit_put_off();
     llg_dpi_now.chain = LLG_DPI_CHAIN_NONE;
     llg_dpi_now.site = NULL;
     return saved->depth + 1;
@@ -878,6 +883,7 @@ int32_t llg_dpi_export_leave(const llg_dpi_call_t* saved, int32_t task) {
      * activation, so only a cancelled caller activation remains. */
     int32_t status = task && llg_activation_cancelled() ? 1 : 0;
     llg_dpi_now = *saved;
+    if (saved->exiting) llg_rt_exit_resume(saved->exiting);
     return status;
 }
 

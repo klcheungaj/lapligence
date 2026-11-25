@@ -397,7 +397,8 @@ impl Backend {
                 parent_id
             );
             let current = || open_document_is_current(&state, &uri, &document.text);
-            let result = open_document_identifiers_if_current(&document, current, parent_id);
+            let result =
+                open_document_identifiers_if_current(&document, current, server_token(), parent_id);
             // Keep this post-compute check: a revision may change after the
             // final pre-frontend check, so stale results must never enter the
             // request cache. A frontend refusal is as much a function of the

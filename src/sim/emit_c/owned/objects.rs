@@ -438,6 +438,16 @@ impl Frame<'_, '_> {
                 let right = self.chandle(right)?;
                 self.value(format!("sv4_from_u64({left} == {right}, 1, 0)"), 1, false)
             }
+            HandleInside { handle, array } => {
+                let handle = self.chandle(handle)?;
+                let selector = format!("llg_inside_handle_selector({handle})");
+                let search = self.inside_array(array, &selector)?;
+                self.value(
+                    format!("sv4_from_u64({search} == LLG_VALUE_EQUAL, 1, 0)"),
+                    1,
+                    false,
+                )
+            }
             ClassKey(handle) => {
                 let handle = self.chandle(handle)?;
                 self.value(
@@ -701,7 +711,7 @@ impl Frame<'_, '_> {
                     crate::sim::ir::IrProcessRandom::Seed(seed) => {
                         let seed = self.expression(seed)?;
                         self.line(format!(
-                            "llg_object_srandom(llg_class_rng({target}, \"srandom\"), {});",
+                            "llg_object_srandom(llg_class_stream({target}), {});",
                             seed.code
                         ));
                         self.discard(seed);
@@ -709,7 +719,7 @@ impl Frame<'_, '_> {
                     crate::sim::ir::IrProcessRandom::SetState(state) => {
                         let state = self.string(state)?;
                         self.line(format!(
-                            "llg_object_set_randstate(llg_class_rng({target}, \"set_randstate\"), {});",
+                            "llg_object_set_randstate(llg_class_stream({target}), {});",
                             state.take_string()
                         ));
                         self.native_discard(state);

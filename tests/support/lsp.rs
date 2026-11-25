@@ -153,15 +153,7 @@ impl LspProcess {
         params: Value,
         timeout: Duration,
     ) -> Result<Value, String> {
-        let id = json!(self.next_id);
-        self.next_id += 1;
-        self.send_message(json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-            "params": params,
-        }))?;
-
+        let id = self.send_request(method, params)?;
         let deadline = Instant::now() + timeout;
         loop {
             if let Some(index) = self
@@ -184,6 +176,19 @@ impl LspProcess {
             }
             self.route_unsolicited(message)?;
         }
+    }
+
+    /// Send a request without waiting for its response; its id.
+    pub(crate) fn send_request(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        let id = json!(self.next_id);
+        self.next_id += 1;
+        self.send_message(json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        }))?;
+        Ok(id)
     }
 
     pub(crate) fn send_notification(&mut self, method: &str, params: Value) -> Result<(), String> {
@@ -374,6 +379,7 @@ impl LspProcess {
                         "semanticTokens": { "refreshSupport": token_refresh }
                     },
                     "textDocument": {
+                        "synchronization": { "didSave": true },
                         "publishDiagnostics": { "relatedInformation": true },
                         "semanticTokens": { "dynamicRegistration": false, "requests": { "range": true, "full": true }, "tokenTypes": [], "tokenModifiers": [], "formats": ["relative"] }
                     }
@@ -406,6 +412,26 @@ impl LspProcess {
                 "contentChanges": [{ "text": text }]
             }),
         )
+    }
+
+    /// Tell the server that the document was saved. The file itself is the
+    /// caller's to write.
+    pub(crate) fn save(&mut self, path: &Path) -> Result<(), String> {
+        self.send_notification(
+            "textDocument/didSave",
+            json!({ "textDocument": { "uri": file_uri(path) } }),
+        )
+    }
+
+    /// An edit and its save, which starts an analysis.
+    pub(crate) fn change_and_save(
+        &mut self,
+        path: &Path,
+        version: i64,
+        text: &str,
+    ) -> Result<(), String> {
+        self.change(path, version, text)?;
+        self.save(path)
     }
 
     pub(crate) fn send_watch_event(&mut self, path: &Path, event_type: u8) -> Result<(), String> {

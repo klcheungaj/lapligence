@@ -697,7 +697,7 @@ impl Codegen<'_> {
             }
             // The traversal of the values; `item.index` has no packed form.
             IrContainerKind::Associative {
-                key: IrAssocKey::Class,
+                key: IrAssocKey::Handle { .. },
             } => {
                 let name = self.inline_name("key");
                 statements.push(IrStmt::DeclLocal {
@@ -812,7 +812,7 @@ impl Codegen<'_> {
                                     key: IrAssocKey::Integral {
                                         two_state: true,
                                         ..
-                                    } | IrAssocKey::Class
+                                    } | IrAssocKey::Handle { .. }
                                 }
                             ),
                         },

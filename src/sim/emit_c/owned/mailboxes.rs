@@ -205,7 +205,7 @@ impl Frame<'_, '_> {
         }
         let code = match query {
             SemaphoreTryGet(handle, keys) => {
-                let handle = self.chandle(handle)?;
+                let handle = self.receiver(handle)?;
                 let keys = self.expression(keys)?;
                 let status = self.scalar(
                     "int",
@@ -215,11 +215,17 @@ impl Frame<'_, '_> {
                     ),
                 );
                 self.discard(keys);
+                self.leave_after_null(&handle);
                 status
             }
             MailboxNum(handle) => {
-                let handle = self.chandle(handle)?;
-                format!("llg_mailbox_num((llg_mailbox_t*){handle})")
+                let handle = self.receiver(handle)?;
+                let length = self.scalar(
+                    "uint64_t",
+                    format!("llg_mailbox_num((llg_mailbox_t*){handle})"),
+                );
+                self.leave_after_null(&handle);
+                length
             }
             MailboxEq(left, right) => {
                 let left = self.mailbox_handle(left)?;
@@ -227,7 +233,7 @@ impl Frame<'_, '_> {
                 format!("({left} == {right})")
             }
             MailboxTryPut { mailbox, value } => {
-                let handle = self.chandle(mailbox)?;
+                let handle = self.receiver(mailbox)?;
                 let message = self.mailbox_message(value)?;
                 let status = self.scalar(
                     "int",
@@ -237,6 +243,7 @@ impl Frame<'_, '_> {
                     ),
                 );
                 self.release_message_operands(message);
+                self.leave_after_null(&handle);
                 status
             }
             MailboxTryGet {
@@ -244,15 +251,17 @@ impl Frame<'_, '_> {
                 target,
                 peek,
             } => {
-                let handle = self.chandle(mailbox)?;
+                let handle = self.receiver(mailbox)?;
                 let target = self.mailbox_destination(target)?;
-                self.scalar(
+                let status = self.scalar(
                     "int",
                     format!(
                         "llg_mailbox_try_get_value((llg_mailbox_t*){handle}, {target}, {})",
                         u8::from(*peek)
                     ),
-                )
+                );
+                self.leave_after_null(&handle);
+                status
             }
             _ => return Err(pending("object query ownership contract")),
         };
@@ -268,6 +277,18 @@ impl Frame<'_, '_> {
         Ok(result)
     }
 
+    /// The receiver of a method of a synchronization object, evaluated once.
+    fn receiver(&mut self, handle: &IrChandleExpr) -> Result<String, String> {
+        let handle = self.chandle(handle)?;
+        Ok(self.scalar("void*", handle))
+    }
+
+    /// Leave after a method call whose null receiver the runtime reported
+    /// (SV 8.4).
+    fn leave_after_null(&mut self, receiver: &str) {
+        self.exit_on_failed_access(&format!("!{receiver}"));
+    }
+
     pub(super) fn mailbox_statement(&mut self, statement: &IrObjectStmt) -> Result<(), String> {
         let cancellation_mark = self.cancellation_mark();
         use IrObjectStmt::*;
@@ -276,13 +297,14 @@ impl Frame<'_, '_> {
         }
         match statement {
             SemaphorePut(receiver, keys) | SemaphoreGet(receiver, keys) => {
-                let receiver = self.chandle(receiver)?;
+                let receiver = self.receiver(receiver)?;
                 let keys = self.expression(keys)?;
                 if matches!(statement, SemaphorePut(..)) {
                     self.line(format!(
                         "llg_semaphore_put((llg_semaphore_t*){receiver}, {});",
                         keys.code
                     ));
+                    self.leave_after_null(&receiver);
                 } else {
                     self.await_arm(
                         SuspensionOperation::SemaphoreGet,
@@ -345,7 +367,7 @@ impl Frame<'_, '_> {
             | MailboxGetLocal(_, mailbox, target, peek)
             | MailboxTryGet(_, mailbox, target, peek)
             | MailboxTryGetLocal(_, mailbox, target, peek) => {
-                let mailbox = self.chandle(mailbox)?;
+                let mailbox = self.receiver(mailbox)?;
                 let target_ir = target;
                 let target = self.mailbox_destination(target)?;
                 if matches!(statement, MailboxTryGet(..) | MailboxTryGetLocal(..)) {
@@ -353,6 +375,7 @@ impl Frame<'_, '_> {
                         "(void)llg_mailbox_try_get_value((llg_mailbox_t*){mailbox}, {target}, {});",
                         u8::from(*peek)
                     ));
+                    self.leave_after_null(&mailbox);
                 } else {
                     self.await_arm(
                         SuspensionOperation::MailboxGet,
@@ -380,13 +403,14 @@ impl Frame<'_, '_> {
         value: &IrMailboxValue,
         attempt: bool,
     ) -> Result<(), String> {
-        let mailbox = self.chandle(mailbox)?;
+        let mailbox = self.receiver(mailbox)?;
         let message = self.mailbox_message(value)?;
         if attempt {
             self.line(format!(
                 "(void)llg_mailbox_try_put_value((llg_mailbox_t*){mailbox}, {});",
                 message.code
             ));
+            self.leave_after_null(&mailbox);
         } else {
             self.await_arm(
                 SuspensionOperation::MailboxPut,

@@ -8,11 +8,9 @@ impl EmitCtx<'_, '_> {
     /// 6.21); a static one is one object per declaration and instance.
     fn lower_subroutine_event(&mut self, declaration: NodeId) -> Result<Vec<IrStmt>, String> {
         let name = self.cg.node(declaration).name.clone();
-        if self.cg.db.event_array_meta(declaration).is_some()
-            || self.cg.db.var_initializer(declaration).is_some()
-        {
+        if self.cg.db.event_array_meta(declaration).is_some() {
             return Err(format!(
-                "subroutine event `{name}` in `{}` with unpacked dimensions or an initializer is not supported",
+                "subroutine event `{name}` in `{}` with unpacked dimensions is not supported",
                 self.path
             ));
         }
@@ -22,15 +20,22 @@ impl EmitCtx<'_, '_> {
                 self.cg
                     .local_event_handles
                     .insert(declaration, handle.clone());
-                Ok(vec![IrStmt::EventDeclare { name: handle }])
+                let mut statements = vec![IrStmt::EventDeclare { name: handle }];
+                if let Some(initializer) = self.cg.db.var_initializer(declaration) {
+                    statements.push(self.cg.event_initializer(
+                        &self.path,
+                        declaration,
+                        initializer,
+                    )?);
+                }
+                Ok(statements)
             }
             VariableLifetime::Static => {
                 if !self.cg.event_globals.contains_key(&declaration) {
                     let scope = self.cg.block_storage_scope(&self.path, declaration);
-                    let info = self
-                        .cg
-                        .new_event_info(self.cg.event_global_name(&scope, &name));
-                    self.cg.event_globals.insert(declaration, info);
+                    let global = self.cg.event_global_name(&scope, &name);
+                    self.cg
+                        .collect_event_global(&self.path, declaration, global);
                 }
                 Ok(Vec::new())
             }
@@ -75,11 +80,24 @@ impl EmitCtx<'_, '_> {
             {
                 return Ok(statements);
             }
-            // Block events own model storage and have no value to set.
+            // Block events own model storage; an automatic one takes its
+            // initial value at each entry.
             if matches!(self.cg.kind(declaration), NodeKind::NamedEvent)
                 && self.cg.event_globals.contains_key(&declaration)
             {
-                return Ok(Vec::new());
+                return match self.cg.db.var_initializer(declaration) {
+                    Some(initializer)
+                        if self.cg.db.variable_lifetime(declaration)
+                            == VariableLifetime::Automatic =>
+                    {
+                        Ok(vec![self.cg.event_initializer(
+                            &self.path,
+                            declaration,
+                            initializer,
+                        )?])
+                    }
+                    _ => Ok(Vec::new()),
+                };
             }
         }
         if self.func.is_none()

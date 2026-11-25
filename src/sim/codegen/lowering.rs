@@ -918,6 +918,7 @@ fn lower_model_with(
         cg.emit_array_initializers()?;
         cg.emit_record_statement_initializers()?;
         cg.emit_block_native_initializers()?;
+        cg.emit_event_initializers()?;
         cg.emit_container_initializers()?;
         cg.emit_class_object_initializers()?;
         cg.emit_semaphore_initializers()?;
@@ -2215,6 +2216,9 @@ struct Codegen<'a> {
     /// `(declaration, initializer, path)` of static procedural-block
     /// strings and handles, lowered into the static schedule.
     block_native_initializers: Vec<(NodeId, NodeId, String)>,
+    /// Static named events with a declaration initializer: the declaration,
+    /// the initializer and the scope path.
+    event_initializers: Vec<(NodeId, NodeId, String)>,
     /// All lowered named events, in collection order (deterministic emission).
     events: Vec<EventInfo>,
     /// NamedEvent arena node → lowered event info.
@@ -2328,6 +2332,9 @@ struct Codegen<'a> {
     receiver_roots: HashMap<NodeId, Vec<IrStmt>>,
     /// The call or select whose operands `call_operand_prelude` collects.
     call_operand_scope: Option<NodeId>,
+    /// Statements that fill the arrays of the set being lowered that no
+    /// expression can name (`Codegen::with_set_arrays`).
+    set_array_prelude: Option<Vec<IrStmt>>,
     /// Statements that build operands of `call_operand_scope` no expression
     /// can name, run where that expression is evaluated.
     call_operand_prelude: Option<Vec<IrStmt>>,
@@ -2817,6 +2824,7 @@ impl<'a> Codegen<'a> {
             record_statement_initializers: Vec::new(),
             block_natives: HashMap::new(),
             block_native_initializers: Vec::new(),
+            event_initializers: Vec::new(),
             events: Vec::new(),
             event_globals: HashMap::new(),
             vpi_call_args: Vec::new(),
@@ -2858,6 +2866,7 @@ impl<'a> Codegen<'a> {
             receiver_roots: HashMap::new(),
             call_operand_scope: None,
             call_operand_prelude: None,
+            set_array_prelude: None,
             call_result_containers: HashMap::new(),
             receiver_roots_lowered: HashSet::new(),
             inst: NodeId(0),

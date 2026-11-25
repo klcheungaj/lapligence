@@ -21,6 +21,7 @@ pub mod rules;
 use std::cell::OnceCell;
 use std::collections::{HashMap, HashSet};
 
+use crate::cancel::{CancelToken, Poller};
 use crate::core::db::{Db, NodeId};
 use crate::core::model::DesignModel;
 
@@ -228,6 +229,10 @@ pub struct LintDiag {
     pub logical: Option<crate::core::compile::LogicalLine>,
 }
 
+/// Steps between two questions of [`LintCtx::poller`]: one may be a process
+/// whose whole body the rule reads.
+const POLL_INTERVAL: u32 = 128;
+
 /// Context handed to every rule: the owned db + model and the node lists the
 /// rules share.
 pub struct LintCtx<'a> {
@@ -235,6 +240,7 @@ pub struct LintCtx<'a> {
     pub model: &'a DesignModel,
     nodes: OnceCell<Vec<NodeId>>,
     design_nodes: OnceCell<Vec<NodeId>>,
+    cancel: CancelToken,
 }
 
 impl<'a> LintCtx<'a> {
@@ -244,7 +250,37 @@ impl<'a> LintCtx<'a> {
             model,
             nodes: OnceCell::new(),
             design_nodes: OnceCell::new(),
+            cancel: CancelToken::default(),
         }
+    }
+
+    /// End the pass early once `cancel` is cancelled. The findings of a
+    /// cancelled pass are incomplete: ask the token afterwards.
+    pub fn cancelled_by(mut self, cancel: CancelToken) -> Self {
+        self.cancel = cancel;
+        self
+    }
+
+    /// Whether the findings are no longer wanted: for the steps of a rule
+    /// that take long on a large design.
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.cancel.is_cancelled()
+    }
+
+    /// Asks at intervals whether the pass is cancelled.
+    pub(crate) fn poller(&self) -> Poller<'_> {
+        self.cancel.poller_every(POLL_INTERVAL)
+    }
+
+    /// `items`, which end early once the pass is cancelled: for the loops
+    /// that take long on a large design.
+    pub(crate) fn until_cancelled<'c, I>(&'c self, items: I) -> impl Iterator<Item = I::Item> + 'c
+    where
+        I: IntoIterator,
+        I::IntoIter: 'c,
+    {
+        let mut poller = self.poller();
+        items.into_iter().take_while(move |_| poller.step().is_ok())
     }
 
     /// The nodes of [`rules::analysis::all_nodes`], walked once per pass.
@@ -304,6 +340,9 @@ impl LintRegistry {
             let id = rule.id();
             if !config.is_enabled(id) {
                 continue;
+            }
+            if ctx.is_cancelled() {
+                break;
             }
             let override_sev = config.severity(id);
             for mut diag in distinct_findings(rule.as_ref(), ctx) {

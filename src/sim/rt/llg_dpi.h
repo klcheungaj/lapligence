@@ -14,7 +14,7 @@
 #include "llg_rt.h"
 
 #if defined(_MSC_VER)
-/* Import thunks with open-array formals call setjmp (llg_dpi_guard_t);
+/* Guarded import thunks call setjmp (llg_dpi_guard_t);
  * generated models contain no C++ objects whose destruction it could skip. */
 #pragma warning(disable : 4611)
 #endif
@@ -166,15 +166,18 @@ typedef struct llg_dpi_call {
     int32_t depth;
     uint8_t chain;
     uint8_t acked;
+    /* The exit of the calling process an export put off (llg_rt_exit_put_off). */
+    uint8_t exiting;
 } llg_dpi_call_t;
 
-/* The foreign call of an import with open-array formals runs under a guard
- * on the thunk's C stack. A fatal svdpi.h access in that foreign code
- * (S40-D6) abandons it: the runtime pops the innermost guard and jumps back
- * to its thunk, which restores the chain state, releases its value scopes
- * from `mark` and returns without copying anything out. The guards of one
- * native stack nest like its calls; each foreign call context keeps its own
- * guard stack (llg_dpi_context_switch). */
+/* The foreign call of an import with open-array formals, or of a context
+ * import of a model with exports, runs under a guard on the thunk's C stack.
+ * A fatal svdpi.h access in that foreign code (S40-D6), or the end of the run
+ * in an export it called (S41-D9), abandons it: the runtime pops the innermost
+ * guard and jumps back to its thunk, which restores the chain state, releases
+ * its value scopes from `mark` and returns without copying anything out. The
+ * guards of one native stack nest like its calls; each foreign call context
+ * keeps its own guard stack (llg_dpi_context_switch). */
 typedef struct llg_dpi_guard {
     jmp_buf jump;
     struct llg_dpi_guard* outer;
@@ -222,6 +225,10 @@ int32_t llg_dpi_task_status(int32_t status, const char* c_name);
  * fatal errors that return NULL. A task called from an imported function
  * runs (decision S41-D8). */
 llg_dpi_fn_t llg_dpi_export_target(uint32_t id, const char* c_name, int32_t task);
+/* SV -> C: an export is about to return to foreign code. When the run ended
+ * in it ($finish, $fatal or a run-ending error), the foreign code never
+ * continues: the call jumps to the guard of the calling import (S41-D9). */
+void llg_dpi_export_returns(void);
 /* An export thunk saves the chain state and returns the recursion depth of
  * the SystemVerilog call it makes. */
 int32_t llg_dpi_export_enter(llg_dpi_call_t* saved);

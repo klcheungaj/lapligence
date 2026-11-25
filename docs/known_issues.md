@@ -1296,38 +1296,6 @@ long-running turns, which needs frame maps for the running frame.
 ends; `repeat (100000) begin c = new; end` with no delay reaches its full
 peak before the first collection (`LLG_GC_STATS=1` reports `peak`).
 
-## Statements that go on to the next wait after the run ended in them
-
-**Status:** found by FIN-002 step 4 (failure matrix); not fixed. The report, the
-exit status and the state the run ends in are right; statements of the same
-process up to its next wait or exit check may still run.
-
-### Symptom
-
-- `num`, `try_get` and `try_put` of a null mailbox and `get`, `put` and `try_get`
-  of a null semaphore report the error and end the run, but the statements after
-  the call run up to the next wait. Every other null handle stops the process at
-  the access.
-- A value change callback of a plain assignment that calls
-  `vpi_control(vpiFinish)`: the statements after the assignment run up to the
-  next one that checks for the end of the run.
-
-### Cause
-
-The calls and plain assignments have no `ExecutionEffect::Terminate`
-(`src/sim/execution.rs`), so no exit check follows them.
-
-### Intended direction
-
-Give both the effect. It adds an exit check after each `put`/`get` of a testbench
-loop and after each assignment of a model with a VPI catalog, and `wait (mb.num())`
-needs an exit check inside its condition, so it needs instruction counts of the
-testbench performance rows first.
-
-### Reproduce
-
-`semaphore s; initial begin s.put(); $display("went on"); end`.
-
 ## Mailbox message forms without a nested value
 
 **Status:** open (SIM-017); the two message types below are kept as explicit
@@ -1570,6 +1538,8 @@ and `tests/fixtures/sim/feature_completion/ki_audit/neg_delayed_native_record_co
   class-keyed array, and `item.index` in a `with` clause over one.
 - A VPI dynamic-array view of a class-keyed array.
 - `a[f()] += 1`, a compound write whose key calls a function, as for any key.
+
+An array indexed by chandles has the same gaps.
 
 ### Cause
 
@@ -2052,38 +2022,31 @@ decision case for the pull and supply combinations. Estimate: 1 day.
 
 ## Set membership items outside packed storage
 
-**Status:** open (FIN-001 G3, F07-11). Class-handle and chandle selectors
-execute (`sim_019/handle_inside`, decision R14-D1).
+**Status:** narrowed (sim-defects-8). Arrays of strings, reals and handles,
+nested containers, elements of them and container-valued calls execute
+(`sim_019/string_inside`, `sim_019/inside_arrays`, decision R14-D2).
 
 ### Symptom
 
-These legal `inside` set items reject with explicit diagnostics: an array of
-strings, a parameter included (`s inside {sq}`, decision R14-D2); a container of
-reals, handles or records (`r inside {rq}`); an element of a container of
-containers (`x inside {qq[0]}`, "container element access ... requires a
-scalar value"); and a container-result call (`x inside {g()}`).
+These legal `inside` set items reject with explicit diagnostics: a slice of an
+element of a container of containers (`x inside {qq[0][0:1]}`) and a conditional
+expression with such an element as an operand.
 
 ### Cause
 
-String set items traverse only the string leaves of flattened aggregates; the
-container item form (`IrInsideItem::Container`) compares packed elements.
-Nested container elements and container results have no addressed-container
-operand (see
+The item is copied into a temporary container first
+(`lower_inside_array`, `src/sim/codegen/lowering/expressions/membership.rs`), and
+no container assignment has these forms as a source outside a statement that
+stages the element (see
 [resizable containers](#resizable-containers-at-subroutine-object-and-nesting-boundaries)).
 
 ### Intended direction
 
-A string container item that walks the container's string elements, a real
-comparison for real containers, and the addressed-container operand for the
-nested and call forms. Estimate: 1 day for string and real containers.
+The addressed-container operand for the two forms.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_019/neg_string_container_inside.sv`
-and `neg_real_container_inside.sv`;
-`tests/fixtures/sim/feature_completion/ki_audit/neg_inside_nested_container.sv`
-and `neg_inside_container_call.sv` (the call form reports "container result
-of `g` ... must be assigned whole to a container variable").
+`tests/fixtures/sim/feature_completion/sim_019/neg_inside_nested_slice.sv`.
 
 ## Waits on storage without a change notification
 
@@ -2649,6 +2612,32 @@ reads per bound instance.
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/sim_099/neg_vif_sensitivity_*.sv`.
+
+## Event forms through virtual interfaces
+
+**Status:** open. Both forms reject with a located diagnostic.
+
+### Symptom
+
+An element of an event array of the interface (`-> v.ea[1]`, "cannot resolve
+named event expression") and an assignment to an event of the interface
+(`v.ie = e`, "event property `ie` has no class layout"). An event of an
+interface type without an instance, which no handle can bind, rejects like the
+former.
+
+### Cause
+
+A descriptor has one event slot per named event and clocking block; the slots
+are read only and have no index.
+
+### Intended direction
+
+Give event arrays indexed slots and event assignments the slot's address.
+
+### Reproduce
+
+`tests/fixtures/sim/virtual_interfaces/neg_event_array_trigger.sv` and
+`neg_event_assignment.sv`.
 
 ## Modport expression ports through virtual interfaces
 
@@ -4236,27 +4225,63 @@ Two files that both define `module dup_top;` with
 ## Symbol lists of the last analysis (llg_ls)
 
 **Status:** found by FIN-002 step 4 (failure matrix); not fixed. Requests by
-position answer for the current text only.
+position: [positions below an unsaved edit](#positions-below-an-unsaved-edit-llg_ls).
 
 ### Symptom
 
-`textDocument/documentSymbol` and `workspace/symbol` that follow an edit at once
-list the symbols and ranges of the analysis before the edit. An editor asks for
-the outline after each change, so it can show the old one until the next change.
+`textDocument/documentSymbol` and `workspace/symbol` list the symbols and ranges
+of the last analysis, which an edit does not start. An editor asks for the outline
+after each change, so it shows the old one until the first change after the edit
+was saved and analysed.
 
 ### Cause
 
-Both answer from `last_good` at once. Dropping the symbols whose text moved would
-leave the outline empty while an edit is analysed, and nothing asks the editor to
-read it again.
+Both answer from `last_good`. Dropping the symbols whose text moved would leave the
+outline empty until the save, and nothing asks the editor to read it again after
+the analysis.
 
 ### Intended direction
 
-Let the two requests wait until the analysis of the current texts is committed or
-refused (a notification of the root's commits, with the request's cancellation and
-a bound), then answer from it.
+Answer `documentSymbol` for an edited document from its isolated parse, as tokens
+and definitions are, and let a request that follows a save wait for the analysis
+(a notification of the root's commits, with the request's cancellation and a
+bound).
 
 ### Reproduce
 
 Open a file with a module, send `textDocument/didChange` with a line inserted above
-it and `textDocument/documentSymbol` right behind it.
+it and `textDocument/documentSymbol`.
+
+## Positions below an unsaved edit (llg_ls)
+
+**Status:** found while analyses were made to start on a save; not fixed.
+
+### Symptom
+
+After a line is inserted, until the file is saved and analysed, below that line:
+
+- `textDocument/hover` and `textDocument/references` answer nothing, or, where the
+  last analysis has a token of the same name at that very position, answer for that
+  token, whose declaration may be another one. Moving `function int f(int v)` to the
+  line that `function int g(bit v)` had shows `bit v` for the `v` of `f`.
+- References asked for elsewhere leave out those below the line without saying so.
+
+Definitions and semantic tokens are those of the current text.
+
+### Cause
+
+The last analysis answers by the positions of its own text. `answers_at` and
+`current_locations` (`lsp/handlers/identifiers.rs`) compare the name at the same
+position of both texts; they do not map a position from one text to the other.
+
+### Intended direction
+
+Keep the analysed text of an open document, map lines that an edit left alone to
+where they are now (a line diff, made on the first request after an edit), and ask
+the analysis at the mapped position. A position in a changed line stays unanswered.
+
+### Reproduce
+
+Analyse a module with the two functions above on successive lines, each returning
+`v`, insert a line above them with `textDocument/didChange` and hover over the `v`
+that `f` returns.

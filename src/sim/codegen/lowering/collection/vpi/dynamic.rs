@@ -343,15 +343,15 @@ impl Codegen<'_> {
             IrContainerKind::Associative { key } => match key {
                 crate::sim::ir::IrAssocKey::Integral { .. } => IrVpiKey::Integral,
                 crate::sim::ir::IrAssocKey::String => IrVpiKey::String,
-                crate::sim::ir::IrAssocKey::Wildcard | crate::sim::ir::IrAssocKey::Class => {
-                    IrVpiKey::Other
-                }
+                crate::sim::ir::IrAssocKey::Wildcard
+                | crate::sim::ir::IrAssocKey::Handle { .. } => IrVpiKey::Other,
             },
             _ if array_type == IrVpiArrayType::Assoc => IrVpiKey::Other,
             _ => IrVpiKey::None,
         };
-        if let ArrayKind::Associative(AssociativeIndex::Class | AssociativeIndex::Unsupported(_)) =
-            array
+        if let ArrayKind::Associative(
+            AssociativeIndex::Class | AssociativeIndex::Chandle | AssociativeIndex::Unsupported(_),
+        ) = array
         {
             return None;
         }

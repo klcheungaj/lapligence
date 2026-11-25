@@ -227,11 +227,14 @@ impl<'a> Codegen<'a> {
         let first_array = self.model.arrays.len();
         if matches!(self.kind(child), NodeKind::Var { ty } if ty.kind == "event") {
             let global = self.event_global_name(&path, &self.node(child).name);
-            let info = self.new_event_info(global);
-            self.event_globals.insert(child, info);
-        } else {
-            self.collect_variable(&path, child, &mut HashSet::new())?;
+            let class = self.node(child).parent;
+            let scope = class.map_or_else(String::new, |class| {
+                self.node(class).full_name().to_owned()
+            });
+            self.collect_event_global(&scope, child, global);
+            return Ok(());
         }
+        self.collect_variable(&path, child, &mut HashSet::new())?;
         for signal in &mut self.model.signals[first_signal..] {
             signal.hdl_name = None;
         }
@@ -322,7 +325,7 @@ impl<'a> Codegen<'a> {
         fn holds(element: &IrContainerElement) -> bool {
             match element {
                 IrContainerElement::Container { key, element, .. } => {
-                    matches!(key, Some(IrAssocKey::Class)) || holds(element)
+                    matches!(key, Some(IrAssocKey::Handle { object: true })) || holds(element)
                 }
                 IrContainerElement::FixedArray { element, .. } => holds(element),
                 IrContainerElement::Aggregate { members, .. }
@@ -336,7 +339,7 @@ impl<'a> Codegen<'a> {
             matches!(
                 container.kind,
                 IrContainerKind::Associative {
-                    key: IrAssocKey::Class
+                    key: IrAssocKey::Handle { object: true }
                 }
             ) || holds(&container.element)
         });

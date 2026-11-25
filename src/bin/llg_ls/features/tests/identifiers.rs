@@ -131,7 +131,8 @@ fn every_token_follows_the_rule_of_its_kind_in_the_project_and_open_buffer_table
         assert!(!project.is_empty(), "{name}");
 
         let isolated =
-            open_document_identifiers(file, &defines(), text, &context).expect("isolated parse");
+            open_document_identifiers(file, &defines(), text, &context, &CancelToken::default())
+                .expect("isolated parse");
         let (nodes, bindings) = isolated.parts();
         let open = check_rules(nodes, bindings, &format!("open {name}"));
         for (position, project) in &project {
@@ -266,8 +267,14 @@ endmodule
 ";
     let file = hp("/x/attr.sv");
     let a = analyze_sources(&[("/x/attr.sv", text)]);
-    let isolated =
-        open_document_identifiers(file, &[], text, &Default::default()).expect("isolated parse");
+    let isolated = open_document_identifiers(
+        file,
+        &[],
+        text,
+        &Default::default(),
+        &CancelToken::default(),
+    )
+    .expect("isolated parse");
     let project = &file_tokens(&a, file).expect("tokens").nodes;
     for (what, nodes, bindings) in [
         ("project", project.as_slice(), &a.bindings),

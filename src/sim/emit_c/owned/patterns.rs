@@ -226,7 +226,11 @@ fn type_entry(
             element = format!("{inner}u");
             "LLG_PATTERN_DYNAMIC"
         }
-        IrPatternType::Associative { element: inner } => {
+        IrPatternType::Associative {
+            element: inner,
+            chandle_key,
+        } => {
+            count = usize::from(*chandle_key);
             element = format!("{inner}u");
             "LLG_PATTERN_ASSOC"
         }

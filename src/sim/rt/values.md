@@ -199,6 +199,10 @@ permutation in place by cycles; a key count that differs from the receiver
 size warns and leaves the receiver unchanged. `llg_{dyn,queue}_value_copy_from_*`
 copy between a descriptor-backed dynamic array and queue.
 
+Set membership over descriptor-backed arrays (`container/membership.c`) walks
+every nested level in one call and compares the leaves with a borrowed
+selector; generated code compares the elements of packed containers itself.
+
 ## Item locators
 
 A run-time index below a value tree (`r.a[k]`, `nb[1].e[k].s`) reaches its item

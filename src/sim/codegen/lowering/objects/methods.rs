@@ -30,12 +30,18 @@ impl Codegen<'_> {
     }
 
     /// The object whose stream a built-in random method call addresses: its
-    /// explicit receiver or the enclosing method's `this`. Marks the model as
-    /// keeping object streams.
+    /// explicit receiver or the enclosing method's `this`. The state methods
+    /// of a null receiver address the calling process instead (S28-D10).
+    /// Marks the model as keeping object streams.
     fn object_random_target(&mut self, path: &str, node: NodeId) -> Result<IrChandleExpr, String> {
-        let target = self
+        let mut target = self
             .class_method_receiver(path, node)?
             .ok_or_else(|| format!("built-in random method without an object in `{path}`"))?;
+        if self.object_random_method(node) != Some("srandom") {
+            if let IrChandleExpr::Required { handle, .. } = target {
+                target = *handle;
+            }
+        }
         self.model.random.threads = true;
         self.model.random.objects = true;
         Ok(target)

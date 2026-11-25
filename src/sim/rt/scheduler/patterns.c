@@ -436,7 +436,8 @@ static void llg_pattern_value(llg_pattern_out_t* out,
     }
 }
 
-static void llg_pattern_assoc_key(llg_pattern_out_t* out, uint8_t key_kind,
+static void llg_pattern_assoc_key(llg_pattern_out_t* out,
+                                  const llg_pattern_type_t* type, uint8_t key_kind,
                                   uint8_t key_class, const sv4_t* integral,
                                   const uint8_t* text, size_t length) {
     if (key_kind == LLG_ASSOC_STRING)
@@ -447,6 +448,8 @@ static void llg_pattern_assoc_key(llg_pattern_out_t* out, uint8_t key_kind,
         if (handle) llg_pattern_object(out, handle);
         else llg_pattern_text(out, "null");
     }
+    else if (type->count)
+        llg_pattern_handle(out, NULL, (void*)(uintptr_t)sv4_to_u64(*integral));
     else
         llg_pattern_scalar(out, *integral);
 }
@@ -488,7 +491,7 @@ static void llg_pattern_container(llg_pattern_out_t* out,
             for (size_t i = 0; i < array->size && !out->truncated; ++i) {
                 const llg_assoc_entry_t* entry = &array->entries[i];
                 if (i) llg_pattern_separator(out);
-                llg_pattern_assoc_key(out, array->key_kind, array->key_class, &entry->integral_key,
+                llg_pattern_assoc_key(out, type, array->key_kind, array->key_class, &entry->integral_key,
                                       entry->string_key, entry->string_length);
                 llg_pattern_put(out, ":", 1);
                 llg_pattern_flat(out, element, entry->value, 0);
@@ -510,7 +513,7 @@ static void llg_pattern_container(llg_pattern_out_t* out,
         for (size_t i = 0; i < array->size && !out->truncated; ++i) {
             const llg_assoc_value_entry_t* entry = &array->entries[i];
             if (i) llg_pattern_separator(out);
-            llg_pattern_assoc_key(out, array->key_kind, array->key_class, &entry->integral_key,
+            llg_pattern_assoc_key(out, type, array->key_kind, array->key_class, &entry->integral_key,
                                   entry->string_key, entry->string_length);
             llg_pattern_put(out, ":", 1);
             llg_pattern_value(out, element, &entry->value);

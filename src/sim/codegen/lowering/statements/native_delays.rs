@@ -252,7 +252,7 @@ fn nba_hold_declare(held: &str) -> IrStmt {
 /// Splits a lowered untimed nonblocking write into what runs at issue and
 /// what the detached process runs after the event control.
 struct EventNbaSplit<'e, 'c, 'a> {
-    ctx: &'e EmitCtx<'c, 'a>,
+    ctx: &'e mut EmitCtx<'c, 'a>,
     frame: FrameId,
     prefix: String,
     sequence: usize,

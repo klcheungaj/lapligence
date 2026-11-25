@@ -604,6 +604,7 @@ impl<'a> SlangTypeProjector<'a> {
                             TypeKind::Class if !is_builtin_class(&index.display_name) => {
                                 AssociativeIndex::Class
                             }
+                            TypeKind::Chandle => AssociativeIndex::Chandle,
                             _ => AssociativeIndex::Unsupported(if index.display_name.is_empty() {
                                 format!("{:?}", index.kind)
                             } else {

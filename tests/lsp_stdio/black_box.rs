@@ -285,7 +285,7 @@ fn lsp_stdio_unknown_module_edit_publishes_fresh_analysis() {
     wait_for_diagnostics(&mut client, &uri, has_no_severity_1);
 
     client
-        .change(&path, 2, unknown)
+        .change_and_save(&path, 2, unknown)
         .expect("introduce an unknown module");
     let published = wait_for_diagnostics(&mut client, &uri, |params| {
         diagnostics_of(params).iter().any(is_unknown_module)
@@ -324,7 +324,7 @@ fn lsp_stdio_unknown_module_edit_publishes_fresh_analysis() {
     assert_eq!(child["moduleType"], json!("missing_mod"));
 
     client
-        .change(&path, 3, valid)
+        .change_and_save(&path, 3, valid)
         .expect("remove the unknown module");
     wait_for_diagnostics(&mut client, &uri, |params| {
         !diagnostics_of(params).iter().any(is_unknown_module)

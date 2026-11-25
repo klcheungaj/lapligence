@@ -22,10 +22,10 @@ use effects::{is_context_import, EffectSet};
 
 use crate::sim::ir::{
     IrArrayQueryTarget, IrCallArg, IrChandleExpr, IrContainerExpr, IrContainerStmt, IrDependency,
-    IrDisplayArg, IrExpr, IrExprKind, IrInsideItem, IrJumpStateOp, IrLhs, IrMailboxExpr,
-    IrMailboxValue, IrMemoryImage, IrMemoryStorage, IrModel, IrObjectQuery, IrObjectStmt, IrShape,
-    IrStmt, IrStochasticStmt, IrStreamSelector, IrStreamTarget, IrStringExpr, IrStringInsideItem,
-    IrSysFunc, IrValidationError, VirtualDispatch,
+    IrDisplayArg, IrEventRef, IrExpr, IrExprKind, IrInsideArray, IrInsideItem, IrJumpStateOp,
+    IrLhs, IrMailboxExpr, IrMailboxValue, IrMemoryImage, IrMemoryStorage, IrModel, IrObjectQuery,
+    IrObjectStmt, IrShape, IrStmt, IrStochasticStmt, IrStreamSelector, IrStreamTarget,
+    IrStringExpr, IrStringInsideItem, IrSysFunc, IrValidationError, IrWaitSrc, VirtualDispatch,
 };
 use crate::sim::semantic::{ExtensionRef, Origin};
 
@@ -912,6 +912,16 @@ impl<'a> CallVisits<'a> {
         }
     }
 
+    /// Add the `Terminate` effect of an access whose rendered code leaves the
+    /// frame on its own failure path (`Frame::exit_on_failed_access`): the
+    /// callers of a subprogram must leave after the call, but the statement
+    /// with the access needs no check after it.
+    fn push_checked_exit(&self, effects: &mut EffectSet) {
+        if self.nested.is_none() {
+            effects.push(ExecutionEffect::Terminate);
+        }
+    }
+
     fn record(&mut self, target: CallTarget) {
         if let Callees::Recorded { targets, .. } = &mut self.callees {
             targets.insert(target);
@@ -921,10 +931,10 @@ impl<'a> CallVisits<'a> {
 
 /// Whether a statement may run a callback of a VPI application before its
 /// process continues (`cbForce` and `cbRelease`, an error or assertion
-/// callback, the thread callbacks of a fork). The callback may end the run
-/// with `vpi_control(vpiFinish)`, and the process must not go on then
-/// (38.4, S43-D8). The value change callbacks of a plain assignment are not
-/// included: see `docs/known_issues.md`.
+/// callback, the thread callbacks of a fork, an event trigger, and the value
+/// changes an output task delivers at its check, T1-D11). The callback may end the run with
+/// `vpi_control(vpiFinish)`, and the process must not go on then (38.4,
+/// S43-D8).
 fn runs_application_callbacks(statement: &IrStmt) -> bool {
     matches!(
         statement,
@@ -935,7 +945,19 @@ fn runs_application_callbacks(statement: &IrStmt) -> bool {
             | IrStmt::Fork { .. }
             | IrStmt::CapturedFork { .. }
             | IrStmt::DisableFork
+            | IrStmt::EventTrigger { .. }
+            | IrStmt::Display { .. }
+            | IrStmt::DisplayTyped { .. }
+            | IrStmt::MonitorSet { .. }
     )
+}
+
+/// The effect of a call that checks for changes (T1-D11): a value change
+/// callback of a VPI application may end the run there.
+fn push_check_effects(ir: &IrModel, effects: &mut EffectSet) {
+    if ir.vpi_catalog {
+        effects.push(ExecutionEffect::Terminate);
+    }
 }
 
 fn collect_effects(
@@ -1074,9 +1096,20 @@ fn collect_effects(
             }
             IrStmt::EventTrigger { .. }
             | IrStmt::ClockingEventTrigger { .. }
-            | IrStmt::NonblockingEventTrigger { .. }
-            | IrStmt::NonblockingEventTriggerWhen { .. }
-            | IrStmt::NonblockingEventAssignWhen { .. } => effects.push(ExecutionEffect::Trigger),
+            | IrStmt::NonblockingEventTrigger { .. } => effects.push(ExecutionEffect::Trigger),
+            IrStmt::NonblockingEventTriggerWhen { specs, .. }
+            | IrStmt::NonblockingEventAssignWhen { specs, .. } => {
+                effects.push(ExecutionEffect::Trigger);
+                // Waiting on a null event ends the simulation (S14-D8).
+                if specs.iter().any(|(source, _)| {
+                    matches!(
+                        source,
+                        IrWaitSrc::Event(_) | IrWaitSrc::FilteredEvent { .. }
+                    )
+                }) {
+                    effects.push(ExecutionEffect::Terminate);
+                }
+            }
             IrStmt::Fork {
                 join_kind,
                 branches,
@@ -1653,6 +1686,11 @@ fn collect_statement_expression_effects(
         IrStmt::DelayedChandleAssign { rhs, .. } => {
             collect_chandle_effects(ir, rhs, effects, visited_calls)
         }
+        IrStmt::EventTrigger { ev }
+        | IrStmt::NonblockingEventTrigger { ev, .. }
+        | IrStmt::NonblockingEventTriggerWhen { ev, .. } => {
+            collect_event_effects(ir, ev, effects, visited_calls)
+        }
         IrStmt::EventAssign { .. }
         | IrStmt::EventCapture { .. }
         | IrStmt::EventDeclare { .. }
@@ -2172,7 +2210,9 @@ fn collect_expression_effects(
                             collect_expression_effects(ir, high, effects, visited_calls);
                         }
                     }
-                    IrInsideItem::Container { .. } => {}
+                    IrInsideItem::Array(array) => {
+                        collect_inside_array_effects(ir, array, effects, visited_calls)
+                    }
                     IrInsideItem::Cells(cells) => cells.expressions(&mut |child| {
                         collect_expression_effects(ir, child, effects, visited_calls)
                     }),
@@ -2283,6 +2323,7 @@ fn collect_expression_effects(
             IrSysFunc::LegacyRandom { seed, args, .. } => {
                 effects.push(ExecutionEffect::ImmediateStore);
                 effects.push(ExecutionEffect::RuntimeService);
+                push_check_effects(ir, effects);
                 if let Some(seed) = seed {
                     collect_lhs_expression_effects(ir, seed, effects, visited_calls);
                 }
@@ -2292,12 +2333,14 @@ fn collect_expression_effects(
             }
             IrSysFunc::Urandom { seed } => {
                 effects.push(ExecutionEffect::RuntimeService);
+                push_check_effects(ir, effects);
                 if let Some(seed) = seed {
                     collect_expression_effects(ir, seed, effects, visited_calls);
                 }
             }
             IrSysFunc::UrandomRange { max, min } => {
                 effects.push(ExecutionEffect::RuntimeService);
+                push_check_effects(ir, effects);
                 collect_expression_effects(ir, max, effects, visited_calls);
                 if let Some(min) = min {
                     collect_expression_effects(ir, min, effects, visited_calls);
@@ -2507,15 +2550,32 @@ fn collect_expression_effects(
             collect_expression_effects(ir, fallback, effects, visited_calls);
             collect_stream_selector_effects(ir, selector, effects, visited_calls)
         }
+        IrExprKind::EventTriggered(event) => {
+            collect_event_effects(ir, event, effects, visited_calls)
+        }
         IrExprKind::Const(_)
         | IrExprKind::SigRead(_)
         | IrExprKind::FormalRead(_)
         | IrExprKind::Fill(_)
         | IrExprKind::UdpState(_)
-        | IrExprKind::EventTriggered(_)
         | IrExprKind::RuntimeQuery(_)
         | IrExprKind::FixedArrayCompare { .. }
         | IrExprKind::Verbatim { .. } => {}
+    }
+}
+
+fn collect_event_effects(
+    ir: &IrModel,
+    event: &IrEventRef,
+    effects: &mut EffectSet,
+    visited_calls: &mut CallVisits,
+) {
+    if let IrEventRef::Handle(handle) = event {
+        collect_chandle_effects(ir, handle, effects, visited_calls);
+    } else {
+        event.expressions(&mut |index| {
+            collect_expression_effects(ir, index, effects, visited_calls)
+        });
     }
 }
 
@@ -2541,7 +2601,9 @@ fn collect_object_statement_effects(
         IrObjectStmt::ChandleAssign(_, value) | IrObjectStmt::ChandleAssignLocal(_, value) => {
             collect_chandle_effects(ir, value, effects, visited_calls)
         }
+        // A null receiver ends the simulation (SV 8.4), here and below.
         IrObjectStmt::SemaphorePut(receiver, keys) | IrObjectStmt::SemaphoreGet(receiver, keys) => {
+            visited_calls.push_checked_exit(effects);
             collect_chandle_effects(ir, receiver, effects, visited_calls);
             collect_expression_effects(ir, keys, effects, visited_calls);
         }
@@ -2552,13 +2614,16 @@ fn collect_object_statement_effects(
         | IrObjectStmt::MailboxPutLocal(_, mailbox, value, try_put) => {
             collect_chandle_effects(ir, mailbox, effects, visited_calls);
             collect_mailbox_value_effects(ir, value, effects, visited_calls);
-            if !*try_put {
+            if *try_put {
+                visited_calls.push_checked_exit(effects);
+            } else {
                 effects.push(ExecutionEffect::Suspend);
                 effects.push(ExecutionEffect::Terminate);
             }
         }
         IrObjectStmt::MailboxTryPut(_, mailbox, value)
         | IrObjectStmt::MailboxTryPutLocal(_, mailbox, value) => {
+            visited_calls.push_checked_exit(effects);
             collect_chandle_effects(ir, mailbox, effects, visited_calls);
             collect_mailbox_value_effects(ir, value, effects, visited_calls);
         }
@@ -2573,6 +2638,7 @@ fn collect_object_statement_effects(
         }
         IrObjectStmt::MailboxTryGet(_, mailbox, _, _)
         | IrObjectStmt::MailboxTryGetLocal(_, mailbox, _, _) => {
+            visited_calls.push_checked_exit(effects);
             collect_chandle_effects(ir, mailbox, effects, visited_calls);
         }
         // Kill may cancel the caller; any control or random method through a
@@ -2616,6 +2682,17 @@ fn collect_object_statement_effects(
     }
 }
 
+fn collect_inside_array_effects(
+    ir: &IrModel,
+    array: &IrInsideArray,
+    effects: &mut EffectSet,
+    visited_calls: &mut CallVisits,
+) {
+    if let IrInsideArray::Value { element, .. } = array {
+        collect_chandle_effects(ir, element, effects, visited_calls);
+    }
+}
+
 fn collect_object_query_effects(
     ir: &IrModel,
     query: &IrObjectQuery,
@@ -2643,6 +2720,9 @@ fn collect_object_query_effects(
                     IrStringInsideItem::Value(value) => {
                         collect_string_effects(ir, value, effects, visited_calls)
                     }
+                    IrStringInsideItem::Array(array) => {
+                        collect_inside_array_effects(ir, array, effects, visited_calls)
+                    }
                     IrStringInsideItem::Range { low, high } => {
                         collect_string_effects(ir, low, effects, visited_calls);
                         collect_string_effects(ir, high, effects, visited_calls);
@@ -2659,6 +2739,10 @@ fn collect_object_query_effects(
                     collect_expression_effects(ir, index, effects, visited_calls);
                 }
             }
+        }
+        IrObjectQuery::HandleInside { handle, array } => {
+            collect_chandle_effects(ir, handle, effects, visited_calls);
+            collect_inside_array_effects(ir, array, effects, visited_calls);
         }
         IrObjectQuery::ChandleEq(a, b) => {
             collect_chandle_effects(ir, a, effects, visited_calls);
@@ -2678,19 +2762,23 @@ fn collect_object_query_effects(
             }
         }
         IrObjectQuery::SemaphoreTryGet(receiver, keys) => {
+            visited_calls.push_checked_exit(effects);
             collect_chandle_effects(ir, receiver, effects, visited_calls);
             collect_expression_effects(ir, keys, effects, visited_calls);
         }
         IrObjectQuery::MailboxNum(mailbox) => {
+            visited_calls.push_checked_exit(effects);
             collect_chandle_effects(ir, mailbox, effects, visited_calls);
             effects.push(ExecutionEffect::RuntimeService);
         }
         IrObjectQuery::MailboxTryPut { mailbox, value } => {
+            visited_calls.push_checked_exit(effects);
             collect_chandle_effects(ir, mailbox, effects, visited_calls);
             collect_mailbox_value_effects(ir, value, effects, visited_calls);
             effects.push(ExecutionEffect::RuntimeService);
         }
         IrObjectQuery::MailboxTryGet { mailbox, .. } => {
+            visited_calls.push_checked_exit(effects);
             collect_chandle_effects(ir, mailbox, effects, visited_calls);
             effects.push(ExecutionEffect::RuntimeService);
         }
@@ -2906,12 +2994,14 @@ fn collect_string_effects(
                 }
             }
         }
-        IrStringExpr::RandomState | IrStringExpr::ProcessRandState(_) => {
-            effects.push(ExecutionEffect::RuntimeService)
+        IrStringExpr::RandomState => effects.push(ExecutionEffect::RuntimeService),
+        // A null handle ends the simulation (SV 8.4).
+        IrStringExpr::ProcessRandState(_) => {
+            effects.push(ExecutionEffect::RuntimeService);
+            visited_calls.push_checked_exit(effects);
         }
         IrStringExpr::ObjectRandState(target) => {
             effects.push(ExecutionEffect::RuntimeService);
-            effects.push(ExecutionEffect::Terminate);
             collect_chandle_effects(ir, target, effects, visited_calls);
         }
         IrStringExpr::LocalRead(name) => {
@@ -2999,13 +3089,7 @@ fn collect_chandle_effects(
             collect_mailbox_expr_effects(ir, mailbox, effects, visited_calls)
         }
         IrChandleExpr::EventObject(event) => {
-            if let crate::sim::ir::IrEventRef::Handle(handle) = event.as_ref() {
-                collect_chandle_effects(ir, handle, effects, visited_calls);
-            } else {
-                event.expressions(&mut |index| {
-                    collect_expression_effects(ir, index, effects, visited_calls)
-                });
-            }
+            collect_event_effects(ir, event, effects, visited_calls)
         }
         IrChandleExpr::Call {
             function,
@@ -3376,6 +3460,14 @@ mod tests {
         assert!(!terminates(fork(), false));
         assert!(terminates(IrStmt::DisableFork, true));
         assert!(!terminates(IrStmt::DisableFork, false));
+        let display = || IrStmt::Display {
+            fmt: String::new(),
+            args: Vec::new(),
+            newline: true,
+            default_radix: crate::sim::ir::IrDisplayRadix::Decimal,
+        };
+        assert!(terminates(display(), true));
+        assert!(!terminates(display(), false));
     }
 
     #[test]

@@ -15,7 +15,7 @@ macro_rules! try_form {
 }
 
 /// `value`, read after `statements` have run.
-fn after_statements(statements: Vec<IrStmt>, value: IrExpr) -> IrExpr {
+pub(in super::super) fn after_statements(statements: Vec<IrStmt>, value: IrExpr) -> IrExpr {
     let (width, signed) = (value.width, value.signed);
     IrExpr::new(
         IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {

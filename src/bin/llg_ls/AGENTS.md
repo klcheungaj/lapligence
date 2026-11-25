@@ -11,7 +11,7 @@ read-only module explorer. Components: [readme](readme.md); user behavior:
   handlers ([guide](lsp/AGENTS.md)).
 - `features.rs`, `features/`: analysis, bindings, indexes and projections
   ([guide](features/AGENTS.md)).
-- `scheduler.rs`: debounce and follow-up policy (module docs).
+- `scheduler.rs`: delay, cancellation and follow-up policy (module docs).
 - `semantic_tokens.rs`: token types and modifiers (the mapping is in the code).
 - `request_cache.rs`: bounded request caches; `logging.rs`: `LLG_LOG`/`LLG_LOG_FILE`.
 - `config.rs`: re-exports `llg::config` and builds Slang options; add or change
@@ -20,7 +20,7 @@ read-only module explorer. Components: [readme](readme.md); user behavior:
 
 ## Rules
 
-- tower-lsp, tokio and dashmap stay in this binary behind default-on `lsp`.
+- tower-lsp and tokio stay in this binary behind default-on `lsp`.
 - Serving stdout is JSON-RPC only; logs go to stderr or the configured file.
   Help, version and `--dump-tokens` print ordinary text without serving; invalid
   arguments exit 2 with usage on stderr.

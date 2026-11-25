@@ -699,7 +699,7 @@ impl<'a> Codegen<'a> {
                         if matches!(
                             self.model.containers[container.ir].kind,
                             IrContainerKind::Associative {
-                                key: IrAssocKey::Class
+                                key: IrAssocKey::Handle { .. }
                             }
                         ) {
                             let (target, read) = self.lower_chandle_lvalue(path, *key)?;

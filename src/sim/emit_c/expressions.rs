@@ -6,8 +6,8 @@ use super::EmitError;
 use crate::sim::ir::{
     IrBinOp, IrBitQuery, IrCallArg, IrContainerElement, IrContainerKind, IrElemSel, IrEnumMethod,
     IrEnumQuery, IrExpr, IrExprKind, IrFileInput, IrFileInputTarget, IrFileReadTarget,
-    IrInsideItem, IrLhs, IrPlusArgText, IrRandomFunc, IrRealBinOp, IrRealUnOp, IrStreamDirection,
-    IrStringExpr, IrSysFunc, IrType, IrUnOp,
+    IrInsideArray, IrInsideItem, IrLhs, IrPlusArgText, IrRandomFunc, IrRealBinOp, IrRealUnOp,
+    IrStreamDirection, IrStringExpr, IrSysFunc, IrType, IrUnOp,
 };
 
 mod queries;
@@ -570,7 +570,10 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                             "_inside_result = sv4_logor(_inside_result, {comparison}); "
                         ));
                     }
-                    IrInsideItem::Container { container } => {
+                    IrInsideItem::Array(IrInsideArray::Value { .. }) => {
+                        return Err("located arrays as inside items require structured whole-model emission".to_owned());
+                    }
+                    IrInsideItem::Array(IrInsideArray::Container(container)) => {
                         let container_model =
                             ctx.model.containers.get(*container).ok_or_else(|| {
                                 "inside container index is out of bounds".to_owned()

@@ -19,7 +19,7 @@ skip or an expected-success substitute.
 | `function_numeric_input.sv` | Runtime numeric input conversion; `42` |
 | `numeric_default_argument.sv` | Default referring to an earlier stable numeric argument; `42` |
 | `numeric_inout_argument.sv` | Numeric inout copy-in and output copy-out across a delay; `42 43` |
-| `event_array_owners.sv` | Indexed named-event wait; an X-index waiter stays dormant; `event` |
+| `event_array_owners.sv` | Indexed named-event wait; an X index names no event, so its trigger does nothing and `.triggered` is false; `event` |
 | `evaluated_event_owners.sv` | Evaluated arithmetic event and `iff` qualification; `qualified` |
 | `captured_fork_owners.sv` | Detached numeric automatic captures preserve `0`, `1`, `2` |
 

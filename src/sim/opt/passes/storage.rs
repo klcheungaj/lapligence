@@ -1532,7 +1532,9 @@ fn collect_expr_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
                             collect_expr_reads(high, model, rw);
                         }
                     }
-                    IrInsideItem::Container { .. } => {}
+                    IrInsideItem::Array(array) => {
+                        array.expressions(&mut |child| collect_expr_reads(child, model, rw))
+                    }
                     IrInsideItem::Cells(cells) => {
                         cells.expressions(&mut |child| collect_expr_reads(child, model, rw))
                     }

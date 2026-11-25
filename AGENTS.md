@@ -52,7 +52,7 @@ You are the owner and long-term maintainer of this codebase, and its design is u
 - `core::db::Db::from_slang` is the single owned semantic import. Consumers read
   owned data; extend capture instead of adding native AST traversals. Safe APIs
   expose neither AST pointers nor borrowed native memory.
-- tower-lsp, tokio and dashmap stay in `llg_ls` behind default-on `lsp`
+- tower-lsp and tokio stay in `llg_ls` behind default-on `lsp`
   (`required-features = ["lsp"]`); `cargo build --lib --no-default-features`
   must work.
 - The C11 runtime, including `llg_co`, ships only with generated models, never

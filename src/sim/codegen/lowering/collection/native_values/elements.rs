@@ -7,7 +7,9 @@
 //! module records, native roots, patterns and calls share the SIM-003
 //! transfers. Copies are deep except for handles (SV 7.5-7.10, 8.4).
 use super::*;
-use crate::sim::ir::{IrElementItem, IrElementItemValue, IrValueItemRoot, IrValueSlot};
+use crate::sim::ir::{
+    IrElementItem, IrElementItemValue, IrInsideArray, IrValueItemRoot, IrValueSlot,
+};
 
 /// How one whole element of a container is selected.
 #[derive(Clone)]
@@ -23,6 +25,58 @@ enum ElementSelector {
 pub(in crate::sim::codegen) struct ElementSelection {
     pub(in crate::sim::codegen) container: usize,
     selector: ElementSelector,
+}
+
+/// The item positions of `path` below a value of type `element`, which
+/// becomes the type reached; `None` when the path crosses a union, selects a
+/// row of a multidimensional array or an index outside one.
+fn member_items(
+    element: &mut IrContainerElement,
+    mut path: &[AggregatePathPart],
+) -> Option<Vec<u32>> {
+    let mut items = Vec::new();
+    while !path.is_empty() {
+        let mut reached = std::mem::replace(element, IrContainerElement::String);
+        let next = match &mut reached {
+            // A member of a tagged union needs a check of its tag.
+            IrContainerElement::Aggregate { members, .. }
+                if members
+                    .first()
+                    .is_some_and(|member| member.name != NATIVE_TAG_MEMBER) =>
+            {
+                let AggregatePathPart::Member(name) = &path[0] else {
+                    return None;
+                };
+                let position = members.iter().position(|member| member.name == *name)?;
+                items.push(u32::try_from(position).ok()?);
+                path = &path[1..];
+                &mut members[position].element
+            }
+            IrContainerElement::FixedArray {
+                dimensions,
+                element,
+            } => {
+                let mut flat = 0u64;
+                for (slot, (left, right)) in dimensions.iter().enumerate() {
+                    let Some(AggregatePathPart::Index(index)) = path.get(slot) else {
+                        return None;
+                    };
+                    let (low, high) = (*left.min(right), *left.max(right));
+                    if *index < low || *index > high {
+                        return None;
+                    }
+                    let extent = u64::from(left.abs_diff(*right)) + 1;
+                    flat = flat.checked_mul(extent)? + u64::from(index.abs_diff(*left));
+                }
+                items.push(u32::try_from(flat).ok()?);
+                path = &path[dimensions.len()..];
+                element
+            }
+            _ => return None,
+        };
+        *element = std::mem::replace(next, IrContainerElement::String);
+    }
+    Some(items)
 }
 
 impl ElementSelection {
@@ -427,6 +481,53 @@ impl Codegen<'_> {
                 key: None,
             },
         })
+    }
+
+    /// The array that `node` names as an element of container storage, or as
+    /// a member below one: a nested queue, dynamic or associative array or a
+    /// fixed-size array. An invalid index locates an empty or default array
+    /// (SV 7.4.6).
+    pub(in crate::sim::codegen) fn lower_element_array(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrInsideArray>, String> {
+        let whole = self
+            .nested_element_selection(node)
+            .or_else(|| self.record_element_of(node));
+        let (selection, member) = match whole {
+            Some(selection) => (selection, Vec::new()),
+            None => match self.element_member_parts(node) {
+                Some((_, selection, member)) => (selection, member),
+                None => return Ok(None),
+            },
+        };
+        let Some(mut array) = self.container_element_type(selection.container, selection.depth())
+        else {
+            return Ok(None);
+        };
+        let Some(items) = member_items(&mut array, &member) else {
+            return Ok(None);
+        };
+        if !matches!(
+            array,
+            IrContainerElement::Container { .. } | IrContainerElement::FixedArray { .. }
+        ) {
+            return Ok(None);
+        }
+        let IrValueSlot::Element { indices, key } = self.lower_element_slot(path, &selection)?
+        else {
+            unreachable!("element selections lower to element slots");
+        };
+        Ok(Some(IrInsideArray::Value {
+            element: IrChandleExpr::ContainerElement {
+                container: selection.container,
+                indices,
+                key: key.map(Box::new),
+                write: false,
+            },
+            items,
+        }))
     }
 
     /// Store any record source into a container slot: the source fills a

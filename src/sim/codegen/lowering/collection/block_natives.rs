@@ -107,11 +107,6 @@ impl Codegen<'_> {
             return Ok(());
         }
         let name = self.node(declaration).name.clone();
-        if self.db.var_initializer(declaration).is_some() {
-            return Err(format!(
-                "procedural-block event `{name}` in `{path}` with an initializer is not supported"
-            ));
-        }
         if self.db.variable_lifetime(declaration) == VariableLifetime::Automatic
             && self.concurrent_block_activation(statement, declaration)
         {
@@ -120,8 +115,13 @@ impl Codegen<'_> {
             ));
         }
         let scope = self.block_storage_scope(path, declaration);
-        let info = self.new_event_info(self.event_global_name(&scope, &name));
-        self.event_globals.insert(declaration, info);
+        let global = self.event_global_name(&scope, &name);
+        if self.db.variable_lifetime(declaration) == VariableLifetime::Automatic {
+            let info = self.new_event_info(global);
+            self.event_globals.insert(declaration, info);
+        } else {
+            self.collect_event_global(path, declaration, global);
+        }
         Ok(())
     }
 

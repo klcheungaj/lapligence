@@ -517,8 +517,14 @@ impl Codegen<'_> {
         ) {
             return Ok(IrChandleExpr::Null);
         }
-        if let NodeKind::Expr(ExprKind::ScopeRef { target }) = self.kind(node) {
-            if let Some((descriptor, instance)) = self.virtual_interface_instances.get(target) {
+        let scope = match self.kind(node) {
+            NodeKind::Expr(ExprKind::ScopeRef { target }) => Some(*target),
+            // An element of an array of interface instances.
+            NodeKind::ModuleInst { .. } => Some(node),
+            _ => None,
+        };
+        if let Some(target) = scope {
+            if let Some((descriptor, instance)) = self.virtual_interface_instances.get(&target) {
                 let env = self
                     .model
                     .virtual_interfaces
@@ -527,7 +533,7 @@ impl Codegen<'_> {
                     .ok_or_else(|| {
                         format!(
                             "virtual interface target `{}` has no runtime environment in `{path}`",
-                            self.node(*target).full_name
+                            self.node(target).full_name
                         )
                     })?;
                 let _ = env;
@@ -537,7 +543,7 @@ impl Codegen<'_> {
                 });
             }
             if matches!(
-                self.kind(*target),
+                self.kind(target),
                 NodeKind::ModuleInst {
                     is_interface: true,
                     ..
@@ -545,7 +551,7 @@ impl Codegen<'_> {
             ) {
                 return Err(format!(
                     "virtual interface target `{}` has no compatible runtime descriptor in `{path}`",
-                    self.node(*target).full_name
+                    self.node(target).full_name
                 ));
             }
         }

@@ -2770,7 +2770,7 @@ impl Codegen<'_> {
                                     .as_ref()
                                     .is_none_or(|value| self.sampled_compatible(value))
                         }
-                        crate::sim::ir::IrInsideItem::Container { .. }
+                        crate::sim::ir::IrInsideItem::Array(_)
                         | crate::sim::ir::IrInsideItem::Cells(_) => false,
                         crate::sim::ir::IrInsideItem::FixedArray { value, .. } => {
                             self.sampled_compatible(value)
@@ -2971,7 +2971,7 @@ pub(super) fn sampled_signal_reads(
                         crate::sim::ir::IrInsideItem::OpenRange { low, high } => {
                             pending.extend(low.iter().chain(high.iter()))
                         }
-                        crate::sim::ir::IrInsideItem::Container { .. }
+                        crate::sim::ir::IrInsideItem::Array(_)
                         | crate::sim::ir::IrInsideItem::Cells(_) => {}
                     }
                 }

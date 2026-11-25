@@ -159,7 +159,7 @@ fn suspension_protocol_violations_are_fatal_errors() {
         "neg_function_wait",
         &args,
         &fatal_after(
-            "start\nc_func enter\nc_func status=0\n",
+            "start\nc_func enter\n",
             "ERROR: [SIM-017] DPI-C exported task `sv_wait_e` can consume time, but its foreign caller cannot suspend: only a context imported task may call it (SV 35.8)",
         ),
     );

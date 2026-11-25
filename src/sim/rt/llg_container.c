@@ -20,4 +20,5 @@
 #include "container/native_references.c"
 #include "container/destinations.c"
 #include "container/method_gather.c"
+#include "container/membership.c"
 #include "container/bitstreams.c"

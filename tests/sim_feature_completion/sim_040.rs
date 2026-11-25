@@ -375,6 +375,22 @@ fn native_leaves_of_aggregates_use_the_c_layout() {
     );
 }
 
+/// An associative array indexed by chandles (6.14).
+#[test]
+fn chandles_index_associative_arrays() {
+    let directory = sim_harness::TempDir::new("sim040").expect("temporary directory");
+    let Some(library) = companion(&directory, "chandle_keys") else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "chandle_keys",
+        include_str!("../fixtures/sim/feature_completion/sim_040/chandle_keys.out"),
+        &["--dpi-lib", &library],
+        &[],
+    );
+}
+
 #[test]
 fn open_arrays_take_native_elements() {
     let directory = sim_harness::TempDir::new("sim040").expect("temporary directory");

@@ -8,14 +8,8 @@ use tower_lsp::lsp_types::DiagnosticRelatedInformation;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenDocumentTokensError {
     message: String,
-}
-
-impl OpenDocumentTokensError {
-    pub(crate) fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-        }
-    }
+    /// The parse was stopped: no statement about the buffer.
+    pub(crate) cancelled: bool,
 }
 
 impl std::fmt::Display for OpenDocumentTokensError {
@@ -253,12 +247,13 @@ impl DocumentIdentifiers {
 /// names resolve as in the project stream. Frontend diagnostics do not make
 /// this return an error and do not empty the table: the tokens the frontend
 /// recovered stay (missing and skipped tokens are never captured), so a syntax
-/// error or an unknown macro degrades it per token.
+/// error or an unknown macro degrades it per token. `cancel` stops the parse.
 pub(crate) fn open_document_identifiers(
     file: &str,
     defines: &[String],
     source: &str,
     includes: &IncludeContext,
+    cancel: &CancelToken,
 ) -> Result<DocumentIdentifiers, OpenDocumentTokensError> {
     let parsed = compile::parse_source_in_context(
         file,
@@ -267,21 +262,22 @@ pub(crate) fn open_document_identifiers(
         &includes.include_dirs,
         includes.sources(),
         includes.packages.sources_for(file, source),
+        cancel,
     )
     .map_err(|error| {
+        let mut message = error.to_string();
         if error.kind() == compile::StartupErrorKind::LimitExceeded {
             crate::llg_error!(
                 "event=semantic_tokens.resource_limit file={} error={} advice={}",
                 crate::logging::bounded_field(file),
-                crate::logging::bounded_field(&error.to_string()),
+                crate::logging::bounded_field(&message),
                 crate::config::TOKEN_PARSE_LIMIT_GUIDANCE
             );
-            OpenDocumentTokensError::new(format!(
-                "{error}. {}",
-                crate::config::TOKEN_PARSE_LIMIT_GUIDANCE
-            ))
-        } else {
-            OpenDocumentTokensError::new(error.to_string())
+            message = format!("{message}. {}", crate::config::TOKEN_PARSE_LIMIT_GUIDANCE);
+        }
+        OpenDocumentTokensError {
+            message,
+            cancelled: error.kind() == compile::StartupErrorKind::Cancelled,
         }
     })?;
     let blocking_diagnostics = parsed

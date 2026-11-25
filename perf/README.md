@@ -478,5 +478,6 @@ the nested wrapper-side `wrapper.stream`) and `db.import`. Generation stages are
 `lowering.sdf_read` (reading and resolving SDF files) and `lowering.sdf_map`
 (mapping annotations to model rows) time SDF annotation; nested
 `render.artifacts`, `render.sharing`, `render.assemble` and
-`render.identifiers` split C emission. Compare medians and retain individual runs because host contention affects
+`render.identifiers` split C emission. `llg_ls` times its own work in `ls.*` and
+`lint`. Compare medians and retain individual runs because host contention affects
 wall time. See [known issues](../docs/known_issues.md) for remaining limits.

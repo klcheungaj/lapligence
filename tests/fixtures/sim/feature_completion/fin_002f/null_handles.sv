@@ -20,6 +20,8 @@ module tb;
     mailbox #(int) mb;
     node next;
     rand int r;
+    covergroup emb; coverpoint v; endgroup
+    function new(); emb = new; endfunction
     static int st = 5;
     constraint c { r inside {[1:3]}; }
     function int get(); return v; endfunction
@@ -40,7 +42,7 @@ module tb;
   mailbox #(int) mb;
   semaphore sem;
   process p;
-  event e;
+  event e, ev2;
   node n, m;
   dnode d;
   int x, ctx, k;
@@ -53,6 +55,11 @@ module tb;
   node an[string];
   covergroup cg with function sample(int a); cp: coverpoint a { bins b[] = {[0:3]}; } endgroup
   cg cgh;
+  event en = null, eq[$];
+  event em[2];
+  function automatic int fnum(); int l = mb.num(); $display("fnum went on"); return l; endfunction
+  function automatic void fput(); sem.put(1); $display("fput went on"); endfunction
+  task automatic wait_formal(event x); @x; endtask
   task run(int c);
     case (c)
       0: x = n.v;
@@ -161,6 +168,34 @@ module tb;
       103: wait_order (e, n.ev) x = 1;
       104: ;
       105: disable fork;
+      106: @(posedge clk or en);
+      107: @(en or ev2);
+      108: @(en iff clk);
+      109: @(eq[0]);
+      110: @(em[k + 5]);
+      111: wait (em[k + 5].triggered);
+      112: x = @en 1;
+      113: x <= @en 1;
+      114: ->> @en ev2;
+      115: repeat (2) @en;
+      116: wait_order (ev2, en) x = 1;
+      117: wait_formal(en);
+      118: begin m = new; m.ev = null; @(m.ev); end
+      119: -> en;
+      120: ->> em[k + 5];
+      121: x = fnum();
+      122: fput();
+      123: wait (mb.num() == 0);
+      124: if (sem.try_get(1) == 0) $display("no key");
+      125: void'(mb.try_put(1));
+      126: void'(mb.try_peek(k));
+      127: s = {"a", p.get_randstate()};
+      128: begin s = n.get_randstate(); n.set_randstate(s); end
+      129: $display("%0.1f", n.emb.get_coverage());
+      130: $strobe("%0d", mb.num());
+      131: x = 1 + (mb.num() > 0 ? 1 : fnum());
+      132: begin repeat (2) @en; end
+      133: if (em[k + 5].triggered || en.triggered || m == null) $display("false");
       default: $display("none");
     endcase
   endtask

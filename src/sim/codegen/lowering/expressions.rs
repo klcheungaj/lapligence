@@ -21,6 +21,7 @@ mod conditional_expansion;
 pub(super) use conditional_expansion::ExpandedConditional;
 mod conditionals;
 pub(super) use conditionals::fixed_cell_leaves;
+pub(super) use dispatch::after_statements;
 mod dispatch;
 mod external_input;
 mod membership;

@@ -674,7 +674,19 @@ impl Frame<'_, '_> {
                     }
                     matched
                 }
-                IrInsideItem::Container { container } => {
+                IrInsideItem::Array(array) if !self.packed_container(array) => {
+                    let selector = if source.width == 0 {
+                        format!("llg_inside_real_selector({})", source.code)
+                    } else {
+                        format!("llg_inside_packed_selector({})", source.address())
+                    };
+                    let search = self.inside_array(array, &selector)?;
+                    self.value(format!("llg_inside_result({search})"), 1, false)
+                }
+                IrInsideItem::Array(IrInsideArray::Value { .. }) => {
+                    return Err("a located array is not a packed container".to_owned())
+                }
+                IrInsideItem::Array(IrInsideArray::Container(container)) => {
                     let container_name = self.container_name(*container)?;
                     let mut container = self.ctx.model.containers[*container].clone();
                     container.c_name = container_name;
@@ -777,5 +789,37 @@ impl Frame<'_, '_> {
         }
         self.discard(source);
         Ok(result)
+    }
+
+    /// Whether `array` is a container of packed elements, which the generated
+    /// loop compares.
+    fn packed_container(&self, array: &IrInsideArray) -> bool {
+        matches!(array, IrInsideArray::Container(container)
+            if self.ctx.model.containers[*container].element.is_packed())
+    }
+
+    /// The runtime search of `array` for `selector`, an
+    /// `llg_inside_selector_t` expression: an `LLG_VALUE_EQUALITY_*` value.
+    pub(super) fn inside_array(
+        &mut self,
+        array: &IrInsideArray,
+        selector: &str,
+    ) -> Result<String, String> {
+        match array {
+            IrInsideArray::Container(container) => {
+                let name = self.container_name(*container)?;
+                let search = match self.ctx.model.containers[*container].kind {
+                    IrContainerKind::Dynamic => "llg_dyn_value_inside",
+                    IrContainerKind::Queue { .. } => "llg_queue_value_inside",
+                    IrContainerKind::Associative { .. } => "llg_assoc_value_inside",
+                };
+                Ok(format!("{search}(&{name}, {selector})"))
+            }
+            IrInsideArray::Value { element, items } => {
+                let root = IrValueItemRoot::Element(element.clone());
+                let value = self.value_item_root(&root, items)?;
+                Ok(format!("llg_value_inside({value}, {selector})"))
+            }
+        }
     }
 }

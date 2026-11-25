@@ -108,12 +108,14 @@ pub(super) fn render(
                 }
                 IrContainerKind::Queue { .. } => "llg_queue_value_get",
                 IrContainerKind::Associative {
-                    key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard | IrAssocKey::Class,
+                    key:
+                        IrAssocKey::Integral { .. } | IrAssocKey::Wildcard | IrAssocKey::Handle { .. },
                 } if ctx.model.containers[*container].element.is_packed() => {
                     "llg_assoc_get_integral"
                 }
                 IrContainerKind::Associative {
-                    key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard | IrAssocKey::Class,
+                    key:
+                        IrAssocKey::Integral { .. } | IrAssocKey::Wildcard | IrAssocKey::Handle { .. },
                 } => "llg_assoc_value_get_integral",
                 IrContainerKind::Associative {
                     key: IrAssocKey::String,

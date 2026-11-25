@@ -9,3 +9,15 @@ parameter 1 0
 parameter dimensions 1 0
 parameter wildcard 1 0
 constant 1 0
+string fixed 1 1 0
+string dimensions 1 0
+string row 1 0
+string const 1 0
+string dynamic 1 0
+string queue 1 0
+string associative 1 0 1
+string parameter 1 0
+string parameter dimensions 1 0
+string constant 1 0 1
+string mixed 1 1
+case fixed

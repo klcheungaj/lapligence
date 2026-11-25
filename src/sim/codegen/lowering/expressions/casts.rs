@@ -1265,7 +1265,7 @@ impl<'a> Codegen<'a> {
         if matches!(
             key,
             IrAssocKey::String
-                | IrAssocKey::Class
+                | IrAssocKey::Handle { .. }
                 | IrAssocKey::Integral {
                     two_state: true,
                     ..

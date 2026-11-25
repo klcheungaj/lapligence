@@ -601,10 +601,10 @@ static int32_t semaphore_key_count(sv4_t value, uint64_t* result) {
 }
 
 static int32_t semaphore_valid(llg_semaphore_t* semaphore, const char* action) {
-    if (semaphore) return 1;
+    if (LLG_CO_LIKELY(semaphore)) return 1;
     llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "semaphore %s requires a live semaphore handle", action);
     llg_last_failure = 1;
-    g.finish = 1;
+    llg_rt_request_finish();
     return 0;
 }
 

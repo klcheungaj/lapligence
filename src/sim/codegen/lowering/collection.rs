@@ -10,6 +10,7 @@ use crate::sim::ir::{
 use std::collections::BTreeSet;
 
 mod aggregates;
+pub(super) use aggregates::ir_container_kind;
 mod arguments;
 mod block_natives;
 mod block_records;
@@ -108,7 +109,9 @@ fn lower_member_element(descriptor: &TypeDescriptor) -> Result<IrContainerElemen
     }
 }
 
-fn lower_container_element(descriptor: &TypeDescriptor) -> Result<IrContainerElement, String> {
+pub(super) fn lower_container_element(
+    descriptor: &TypeDescriptor,
+) -> Result<IrContainerElement, String> {
     let packed = || {
         descriptor
             .info

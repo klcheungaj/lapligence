@@ -613,6 +613,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   depends on neither time nor addresses (S07-D9). A key is a collection root
   ([sim_006](../tests/fixtures/sim/feature_completion/sim_006/readme.md),
   [known issue](known_issues.md#class-keyed-associative-arrays-have-explicit-gaps)).
+  A chandle index (SV 6.14) has the same forms, ordered by pointer value
+  ([sim_040](../tests/fixtures/sim/feature_completion/sim_040/readme.md)).
   `ref` formals of queue, dynamic and associative type alias the caller's
   container variable, including from timed tasks and fork branches
   ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
@@ -1228,7 +1230,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   repeated-event controls, `.triggered`, `wait_order`, event assignment,
   null and comparison execute. Nonblocking triggers name their event at issue
   and do not suspend the issuer; `.triggered` holds for the time step and is
-  false for null; events test false only when null; `wait_order` lets its
+  false for null (S14-D9); waiting on a null event ends the run (S14-D8);
+  scalar declaration initializers (an event or `null`) execute in every scope;
+  events test false only when null; `wait_order` lets its
   first event use the triggered state, and a failure without an `else` is a
   run-time error that ends the run at once, without final procedures
   (S14-D6)
@@ -1406,9 +1410,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   are single set items; casts are not bypassed; unpacked structures are illegal
   member bags. Definite matches dominate an X fallback. Class-handle and
   chandle selectors compare identity with each handle item or `null`
-  (`sim_019/handle_inside`, decision R14-D1). Arrays of strings
-  (decision R14-D2), containers of reals, handles or records, elements of nested containers and container-result
-  calls as set items reject explicitly
+  (`sim_019/handle_inside`, decision R14-D1), also in arrays. Arrays of strings
+  (decision R14-D2), reals and handles, nested containers, their elements and container-valued
+  expressions are traversed (`sim_019/string_inside`, `inside_arrays`); slices of nested
+  containers reject explicitly
   ([known issue](known_issues.md#set-membership-items-outside-packed-storage)),
   as do over-limit payloads.
   SV §11.4.13 **[SV-2005]**.
@@ -2690,16 +2695,21 @@ These are bounded implementations, not full verification-infrastructure support.
   position that ends the run before the rest of the statement runs, without
   the final procedures (S99-D8)
   ([sim_012](../tests/fixtures/sim/feature_completion/sim_012/readme.md)).
+  An array of interface instances assigns and passes as an array of handles.
+  Named events of the bound instance trigger, wait and read `.triggered`
+  through a handle
+  ([virtual_interfaces](../tests/fixtures/sim/virtual_interfaces/readme.md),
+  [known issue](known_issues.md#event-forms-through-virtual-interfaces)).
   Synchronous drives through handles, views, class properties and array
   elements (output, skewed, cycle-delayed, selected and inout-net drives) go
   to the instance the handle names when the drive executes; rebinding never
   redirects a pending drive
   ([sim_034](../tests/fixtures/sim/feature_completion/sim_034/readme.md)).
-  Blocking and nonblocking procedural writes of whole members and of bit,
-  part and indexed part selects through a handle (class property or
-  automatic task formal) wake exactly the waiters, continuous assignments and
-  VPI value-change callbacks whose value changed, and a view's input member
-  stays read-only for selects
+  Blocking and nonblocking (untimed, `#d` and event-controlled) procedural
+  writes of whole members and of bit, part and indexed part selects through
+  a handle (class property or automatic task formal) wake exactly the
+  waiters, continuous assignments and VPI value-change callbacks whose value
+  changed, and a view's input member stays read-only for selects
   ([sim_099](../tests/fixtures/sim/feature_completion/sim_099/readme.md)).
   A member that an instance's output port also drives (illegal by SV
   §23.3.3.2, but run, as a verification library's bus example needs) keeps
@@ -2710,8 +2720,8 @@ These are bounded implementations, not full verification-infrastructure support.
   interface is a located compile error (SV §23.3.3.2, decision A21-D7,
   [ki_illegal_port_writes](../tests/fixtures/sim/feature_completion/ki_illegal_port_writes/readme.md)).
   Elements of unpacked array members (`v.mem[i]`, `v.grid[i][j]`, and their
-  bit, part and indexed part selects) are read and written with `=` or `<=`
-  through a handle on the array of the instance bound when the access
+  bit, part and indexed part selects) are read and written with `=`, `<=` or
+  `<= #d` through a handle on the array of the instance bound when the access
   executes; whole-array, slice, compound, increment, output-argument,
   event-control and wait uses of such a member are located compile-time
   errors.
@@ -2990,7 +3000,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   ("1800-2005") and the time services `svGetTime`, `svGetTimeUnit` and
   `svGetTimePrecision`, which answer for the time scale of the scope they
   are given (S40-D7). An element access with the wrong number of indices ends the
-  run and abandons the import's C code at the access (S40-D6). DPI-C libraries compile against the `svdpi.h` that llg
+  run and abandons the import's C code at the access (S40-D6), and the end of
+  the run in an exported subroutine abandons the C code of the whole chain
+  (S41-D9). DPI-C libraries compile against the `svdpi.h` that llg
   writes beside the generated model (`--gen-only` shows it); it is the Annex I
   header with `<inttypes.h>` for the fixed-width types on every host (I.2).
   `byte` is C `char` (Table H.1) in llg's prototypes; its signedness is the

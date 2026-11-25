@@ -637,13 +637,15 @@ pub(super) fn render(
                     "llg_queue_set"
                 }
                 IrContainerKind::Associative {
-                    key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard | IrAssocKey::Class,
+                    key:
+                        IrAssocKey::Integral { .. } | IrAssocKey::Wildcard | IrAssocKey::Handle { .. },
                 } if ctx.model.containers[*container].element.is_packed() => {
                     "llg_assoc_set_integral"
                 }
                 IrContainerKind::Queue { .. } => "llg_queue_value_set",
                 IrContainerKind::Associative {
-                    key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard | IrAssocKey::Class,
+                    key:
+                        IrAssocKey::Integral { .. } | IrAssocKey::Wildcard | IrAssocKey::Handle { .. },
                 } => "llg_assoc_value_set_integral",
                 IrContainerKind::Dynamic => {
                     return Err(

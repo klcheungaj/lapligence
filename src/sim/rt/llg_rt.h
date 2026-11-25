@@ -439,7 +439,8 @@ typedef struct {
     const uint64_t* words;
 } llg_pattern_enum_t;
 // `flat_width` is the packed or flattened width; `count` the members, enum
-// members or fixed dimensions (`bounds` holds left/right per dimension).
+// members or fixed dimensions (`bounds` holds left/right per dimension); of an
+// associative array, 1 when its keys are chandles.
 // `spaced` marks an array whose non-empty full-form pattern is followed by
 // one space after its closing brace (decided by the generator).
 struct llg_pattern_type {
@@ -1743,6 +1744,14 @@ void llg_rt_finish_with_level(int32_t verbosity, const char* location);
 // generated functions and the initialization frame; coroutine code reads its
 // chain with LLG_CO_EXIT_CHECK.
 int32_t llg_rt_exiting(void);
+// llg_rt_exiting() because the run ended, not because the process did.
+int32_t llg_rt_run_ended(void);
+// The foreign code of a killed process goes on until it returns, and a
+// subroutine it calls runs to its end: put the exit of the current process off
+// for the call and take it up again. Zero when no exit is pending or the run
+// ended.
+int32_t llg_rt_exit_put_off(void);
+void llg_rt_exit_resume(int32_t exiting);
 // Deferred stop for generated functions and vpi_control(vpiStop). Reports the
 // stop now and, when called during a scheduler process turn, records a request
 // that the scheduler observes immediately after llg_co_run returns and before
@@ -1912,8 +1921,9 @@ int32_t llg_process_set_randstate(llg_string_t state);
 // Class-object streams. A generated class layout owns the state when the
 // model inspects object streams; `llg_object_rng_create` seeds it from the
 // creating thread (or only consumes that draw when `object` is NULL). The
-// srandom/get/set operations take the object's state; NULL is a no-op for a
-// receiver already reported as null. set_randstate consumes `state`.
+// srandom/get/set operations take the object's state. NULL is a null receiver:
+// srandom is a no-op, the access having been reported, and the state operations
+// address the calling process (S28-D10). set_randstate consumes `state`.
 // A model that observes random streams calls this before spawning: static
 // processes then seed from their instance's initialization stream (18.14.1)
 // instead of the root stream in model spawn order. Reset by llg_rt_cleanup.
@@ -3291,6 +3301,8 @@ void llg_nba_event_after(llg_event_t* ev, uint64_t ticks);
 // `evs` and llg_arm_order copies `evs` (it keeps only the resolved event
 // objects, never the array or the handles), so generated coroutines pass the
 // list as a compound literal; `result` is kept and must stay a frame field.
+// Waiting on a null event reports a null event access, ends the simulation and
+// returns EXIT.
 llg_co_arm_t llg_arm_event(llg_proc_t* self, llg_event_t* ev);
 llg_co_arm_t llg_arm_events(llg_proc_t* self,
                             const llg_event_t* const* evs, int32_t n);

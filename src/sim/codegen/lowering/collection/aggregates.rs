@@ -1388,7 +1388,7 @@ impl<'a> Codegen<'a> {
 
 /// Runtime container kind of a queue, dynamic or associative array type.
 /// Fixed arrays of handles reuse the dynamic-array runtime.
-pub(super) fn ir_container_kind(
+pub(in crate::sim::codegen::lowering) fn ir_container_kind(
     array: &ArrayKind,
     name: &str,
     path: &str,
@@ -1415,7 +1415,8 @@ pub(super) fn ir_container_kind(
                     two_state: *two_state,
                 },
                 AssociativeIndex::String => IrAssocKey::String,
-                AssociativeIndex::Class => IrAssocKey::Class,
+                AssociativeIndex::Class => IrAssocKey::Handle { object: true },
+                AssociativeIndex::Chandle => IrAssocKey::Handle { object: false },
                 AssociativeIndex::Unsupported(kind) => {
                     return Err(format!(
                         "associative array `{name}` in `{path}` has unsupported index type `{kind}`"

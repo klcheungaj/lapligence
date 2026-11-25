@@ -13,6 +13,7 @@
 //!
 //! Declarations never constructed produce nothing, so a model without
 //! covergroup instances pays nothing.
+use super::expressions::after_statements;
 use super::*;
 use crate::core::db::{
     CoverageBinKind, CoverageEvent, CoverageRepeat, CoverageSelect, CoverageSelectKind,
@@ -24,8 +25,8 @@ use crate::sim::ir::{
     IrCoverItem, IrCoverRepeat, IrCoverSelect, IrCoverageCrossSample, IrCoverageOption,
     IrCoverageQuery, IrCoverageSample, IrCoverageStmt, IrCoverageText, IrCoverageTextQuery,
     IrCoverageType, IrCoverageTypeItem, IrCoverageTypeOption, IrCovergroup, IrCoverpoint, IrFormal,
-    IrFunc, IrNativeAccessKind, IrObjectQuery, IrPlusArgTarget, IrPreFn, IrProcess, IrShape,
-    IrStringExpr, IrUniquePriorityCheck,
+    IrFunc, IrNativeAccessKind, IrObjectQuery, IrObjectStmt, IrPlusArgTarget, IrPreFn, IrProcess,
+    IrShape, IrStringExpr, IrUniquePriorityCheck,
 };
 
 /// Lowering state of one constructed covergroup declaration.
@@ -3107,6 +3108,19 @@ impl<'a> Codegen<'a> {
         point.and_then(|point| self.covergroups.get(&group)?.points.get(&point).copied())
     }
 
+    /// Whether reading `handle` accesses another object or calls a
+    /// subroutine.
+    fn reads_through_handle(&self, handle: &IrChandleExpr) -> bool {
+        match handle {
+            IrChandleExpr::Read(_) | IrChandleExpr::FormalRead(_) | IrChandleExpr::Null => false,
+            IrChandleExpr::LocalRead(name) => self
+                .model
+                .native_access(name)
+                .is_some_and(|(_, access)| self.reads_through_handle(&access.receiver)),
+            _ => true,
+        }
+    }
+
     /// A coverage query in expression position: `get_coverage()`,
     /// `get_inst_coverage()` (19.8) and `$get_coverage()` (19.9).
     pub(in super::super) fn lower_coverage_expr(
@@ -3158,7 +3172,23 @@ impl<'a> Codegen<'a> {
             }),
             None => None,
         };
+        let mut receiver = None;
         let query = if method == CoverageMethod::GetCoverage {
+            // A static method needs no instance (19.8): only the expression
+            // that names the handle is evaluated.
+            if matches!(
+                self.kind(node),
+                NodeKind::MethodCall {
+                    receiver: Some(_),
+                    ..
+                }
+            ) {
+                if let IrChandleExpr::Required { handle, .. } =
+                    self.coverage_receiver(path, node, point)?
+                {
+                    receiver = self.reads_through_handle(&handle).then_some(*handle);
+                }
+            }
             IrCoverageQuery::Type {
                 coverage_type: self.coverage_type_index(group),
                 point: point_index,
@@ -3178,8 +3208,18 @@ impl<'a> Codegen<'a> {
             .into_iter()
             .filter(|arg| self.node(*arg).parent == Some(node))
             .collect::<Vec<_>>();
+        let after_receiver = |value: IrExpr| match receiver {
+            Some(handle) => after_statements(
+                vec![IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
+                    format!("_llg_cover_recv{}", node.0),
+                    Some(handle),
+                )))],
+                value,
+            ),
+            None => value,
+        };
         if explicit.is_empty() {
-            return Ok(Some(real(query)));
+            return Ok(Some(after_receiver(real(query))));
         }
         let [covered, total] = explicit.as_slice() else {
             return Err(self.coverage_error(
@@ -3212,7 +3252,7 @@ impl<'a> Codegen<'a> {
         }
         let total = targets.pop().ok_or("coverage bin count target vanished")?;
         let covered = targets.pop().ok_or("coverage bin count target vanished")?;
-        Ok(Some(IrExpr::new(
+        Ok(Some(after_receiver(IrExpr::new(
             IrExprKind::SysFunc(Box::new(IrSysFunc::CoverageCounts {
                 query: Box::new(query),
                 covered,
@@ -3221,7 +3261,7 @@ impl<'a> Codegen<'a> {
             REAL_EXPR_WIDTH,
             true,
             None,
-        )))
+        ))))
     }
 
     /// The actual a `ref` formal names while a covergroup body or waiter

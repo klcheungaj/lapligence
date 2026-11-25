@@ -176,3 +176,13 @@ reason 30
 callback: finish done
 [5] final steps=101
 === 0
+### +do=finish +reason=value +stmt=write
+reason 1
+callback: finish done
+[2] final steps=1
+=== 0
+### +do=finish +reason=value +stmt=func
+reason 1
+callback: finish done
+[2] final steps=5
+=== 0

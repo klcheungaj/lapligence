@@ -135,9 +135,8 @@ static void single_and_heap_paths(void) {
           llg_sv4_word(padded, 0, LLG_SV4_Z) == 4 && llg_sv4_signed(padded) == 1);
     ready_again(proc);
     sv4_destroy(&padded);
-    CHECK(llg_arm_event(proc, NULL) == LLG_CO_ARM_SUSPEND);
-    CHECK(proc->wait.payload.event.evs[0] == NULL);
-    ready_again(proc);
+    CHECK(llg_arm_event(proc, NULL) == LLG_CO_ARM_EXIT);
+    CHECK(proc->wait.kind == W_NONE && g.finish);
     g.current = NULL;
     llg_rt_cleanup();
     llg_event_object_reset(&first_object);
