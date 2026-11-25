@@ -963,6 +963,7 @@ impl LanguageServer for Backend {
                 let range = placement.current(text.range())?;
                 Some(text.render(range, |definition| places.line(definition)))
             });
+            places.log("textDocument/hover", usize::from(value.is_some()));
             (text, value)
         };
         let (text, value) = if hit && settled {

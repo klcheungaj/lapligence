@@ -132,12 +132,18 @@ impl TextPair {
             let started = std::time::Instant::now();
             let map = PositionMap::new(&self.analysed, Arc::clone(&self.current));
             crate::llg_debug!(
-                "event=positions.map analysed_bytes={} current_bytes={} complete={} elapsed_us={}",
+                "event=positions.map analysed_bytes={} current_bytes={} elapsed_us={}",
                 self.analysed.len(),
                 self.current.len(),
-                map.is_complete(),
                 started.elapsed().as_micros()
             );
+            if !map.is_complete() {
+                crate::llg_info!(
+                    "event=positions.map outcome=capped analysed_bytes={} current_bytes={}: places among the edited lines are unknown until the next analysis",
+                    self.analysed.len(),
+                    self.current.len()
+                );
+            }
             map
         })
     }
@@ -433,16 +439,19 @@ pub(super) struct Query {
 impl Query {
     /// [`Placement::analysed`] of the document.
     pub(super) async fn analysed(&self, position: Position) -> Option<Position> {
-        if self.placement.is_same() {
-            return Some(position);
+        match &self.placement {
+            Placement::Same => Some(position),
+            Placement::Unknown => None,
+            Placement::Edited(_) => {
+                let served = self.served.clone()?;
+                let (placement, path) = (self.placement.clone(), self.path.clone());
+                blocking("position", move || {
+                    placement.analysed(&served.analysis, &path, position)
+                })
+                .await
+                .flatten()
+            }
         }
-        let served = self.served.clone()?;
-        let (placement, path) = (self.placement.clone(), self.path.clone());
-        blocking("position", move || {
-            placement.analysed(&served.analysis, &path, position)
-        })
-        .await
-        .flatten()
     }
 
     /// The id of the root that answers for a document which several roots
@@ -594,7 +603,10 @@ impl Places {
     /// Where the identifier `name` starts now that the analysis has at `start`
     /// of `file`.
     pub(super) fn name(&mut self, file: &str, name: &str, start: Position) -> Option<Position> {
-        let uri = Url::from_file_path(file).ok()?;
+        let Ok(uri) = Url::from_file_path(file) else {
+            // No document has that name.
+            return Some(start);
+        };
         let range = features::name_range(start, name);
         let place = self.location(Some(name), &Location::new(uri, range))?;
         Some(place.range.start)

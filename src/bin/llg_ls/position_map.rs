@@ -31,8 +31,8 @@ use crate::features::utf16_byte_offset;
 
 /// Lines of both texts that the search for unchanged lines may look at,
 /// repetitions included. Over the rest of this budget, a part of the texts
-/// keeps only the equal lines at its beginning and end. Texts within the
-/// default file limit stay below it.
+/// keeps only the equal lines at its beginning and end. Two texts of the
+/// default size limit have about 60,000 lines of the usual length.
 const MAX_DIFF_LINES: usize = 1 << 18;
 
 /// Edited lines in a row whose counterparts are looked for, which compares each
