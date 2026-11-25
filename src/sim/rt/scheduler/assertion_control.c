@@ -117,7 +117,7 @@ void llg_rt_failed_access(const char* failure, const char* site) {
     if (framed)
         failed_access(failure, site, (size_t)(framed - site), framed + 1, "");
     else
-        failed_access(failure, site, strlen(site), "", site);
+        failed_access(failure, site, strlen(site), "", "");
 }
 
 void llg_rt_failed_arm(const char* failure, const char* site) {

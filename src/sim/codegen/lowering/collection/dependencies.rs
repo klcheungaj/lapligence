@@ -84,24 +84,29 @@ impl CallWalk {
 }
 
 /// The storage declared inside subroutines, as the dependencies of reads and
-/// writes name it.
+/// writes name it, with the subroutine.
 #[derive(Default)]
 pub(super) struct DeclaredStorage {
-    storage: HashSet<IrDependency>,
-    arrays: HashSet<usize>,
-    containers: HashSet<usize>,
+    subroutines: IdSet<NodeId>,
+    storage: HashMap<IrDependency, NodeId>,
+    arrays: HashMap<usize, NodeId>,
+    containers: HashMap<usize, NodeId>,
 }
 
 impl DeclaredStorage {
     pub(super) fn holds(&self, dependency: &IrDependency) -> bool {
+        self.subroutine(dependency).is_some()
+    }
+
+    fn subroutine(&self, dependency: &IrDependency) -> Option<NodeId> {
         match dependency {
-            IrDependency::PackedRange { storage, .. } => self.holds(storage),
+            IrDependency::PackedRange { storage, .. } => self.subroutine(storage),
             IrDependency::ArrayContents(array) | IrDependency::ArrayElement { array, .. } => {
-                self.arrays.contains(array)
+                self.arrays.get(array).copied()
             }
             IrDependency::ContainerContents(container)
-            | IrDependency::ContainerShape(container) => self.containers.contains(container),
-            other => self.storage.contains(other),
+            | IrDependency::ContainerShape(container) => self.containers.get(container).copied(),
+            other => self.storage.get(other).copied(),
         }
     }
 }
@@ -377,35 +382,59 @@ impl<'a> Codegen<'a> {
             .collect())
     }
 
-    /// Add the storage declared inside subroutine `function` (its formals,
-    /// result and locals) to `declared`.
-    pub(super) fn add_declared_storage(&self, function: NodeId, declared: &mut DeclaredStorage) {
-        let mut declarations = vec![function];
-        while let Some(node) = declarations.pop() {
-            declarations.extend(self.node(node).children.iter().copied());
-            if !matches!(
+    /// Subroutine `function` and the declarations in it.
+    fn subroutine_declarations(&self, function: NodeId) -> std::rc::Rc<[NodeId]> {
+        if let Some(declarations) = self.subroutine_declarations.borrow().get(&function) {
+            return declarations.clone();
+        }
+        let mut pending = vec![function];
+        let mut declarations = Vec::new();
+        while let Some(node) = pending.pop() {
+            pending.extend(self.node(node).children.iter().copied());
+            if matches!(
                 self.kind(node),
                 NodeKind::FuncArg { .. }
                     | NodeKind::FuncTask { .. }
                     | NodeKind::Var { .. }
                     | NodeKind::Array { .. }
             ) {
-                continue;
+                declarations.push(node);
             }
+        }
+        let declarations = std::rc::Rc::<[NodeId]>::from(declarations);
+        self.subroutine_declarations
+            .borrow_mut()
+            .insert(function, declarations.clone());
+        declarations
+    }
+
+    /// Add the storage declared inside subroutine `function` (its formals,
+    /// result and locals) to `declared`.
+    pub(super) fn add_declared_storage(&self, function: NodeId, declared: &mut DeclaredStorage) {
+        if !declared.subroutines.insert(function) {
+            return;
+        }
+        for node in self.subroutine_declarations(function).iter().copied() {
             if let Some(info) = self
                 .signal_of(node)
                 .or_else(|| self.static_proc_local_signal(node))
             {
-                declared.storage.insert(self.signal_dependency(info));
+                declared
+                    .storage
+                    .insert(self.signal_dependency(info), function);
             }
             if let Some(array) = self.array_of(node) {
-                declared.arrays.insert(self.reference_array(array.ir));
+                declared
+                    .arrays
+                    .insert(self.reference_array(array.ir), function);
             }
             if let Some(container) = self.container_of(node) {
-                declared.containers.insert(container.ir);
+                declared.containers.insert(container.ir, function);
             }
             if let Some(object) = self.object_of("", node) {
-                declared.storage.insert(IrDependency::Object(object));
+                declared
+                    .storage
+                    .insert(IrDependency::Object(object), function);
             }
             for dependency in self
                 .unpacked_storage_dependencies(node)
@@ -415,14 +444,14 @@ impl<'a> Codegen<'a> {
                 match dependency {
                     IrDependency::ArrayContents(array)
                     | IrDependency::ArrayElement { array, .. } => {
-                        declared.arrays.insert(array);
+                        declared.arrays.insert(array, function);
                     }
                     IrDependency::ContainerContents(container)
                     | IrDependency::ContainerShape(container) => {
-                        declared.containers.insert(container);
+                        declared.containers.insert(container, function);
                     }
                     storage => {
-                        declared.storage.insert(storage);
+                        declared.storage.insert(storage, function);
                     }
                 }
             }
@@ -874,7 +903,7 @@ impl<'a> Codegen<'a> {
         &self,
         root: NodeId,
     ) -> Result<HashSet<IrDependency>, String> {
-        self.walk_process_writes(root, ProcessWriteMode::Sensitivity)
+        self.walk_process_writes(root, ProcessWriteMode::Sensitivity, None)
     }
 
     /// Whether evaluating `reader` can observe storage written through any
@@ -969,11 +998,27 @@ impl<'a> Codegen<'a> {
     /// on storage another process owns; their operands still count. Storage
     /// declared inside a called subroutine is not a variable the process
     /// owns: a static local is written by each caller (decision S09-D16).
+    /// `declared` keeps the storage of the subroutines met from one root to
+    /// the next.
     pub(super) fn collect_ownership_writes(
         &self,
         root: NodeId,
+        declared: &mut DeclaredStorage,
     ) -> Result<HashSet<IrDependency>, String> {
-        self.walk_process_writes(root, ProcessWriteMode::Ownership)
+        let mut callees = HashSet::new();
+        let mut writes =
+            self.walk_process_writes(root, ProcessWriteMode::Ownership, Some(&mut callees))?;
+        if !writes.is_empty() {
+            for callee in &callees {
+                self.add_declared_storage(*callee, declared);
+            }
+            writes.retain(|write| {
+                declared
+                    .subroutine(write)
+                    .is_none_or(|subroutine| !callees.contains(&subroutine))
+            });
+        }
+        Ok(writes)
     }
 
     /// Ordinary procedural assignments conflict with a continuous variable
@@ -982,7 +1027,7 @@ impl<'a> Codegen<'a> {
         &self,
         root: NodeId,
     ) -> Result<HashSet<IrDependency>, String> {
-        self.walk_process_writes(root, ProcessWriteMode::ContinuousConflict)
+        self.walk_process_writes(root, ProcessWriteMode::ContinuousConflict, None)
     }
 
     /// The storage `root` writes, with the bodies of the subroutines it calls
@@ -992,6 +1037,7 @@ impl<'a> Codegen<'a> {
         &self,
         root: NodeId,
         mode: ProcessWriteMode,
+        callees: Option<&mut HashSet<NodeId>>,
     ) -> Result<HashSet<IrDependency>, String> {
         let mut writes = HashSet::new();
         let mut calls = CallWalk::default();
@@ -1009,12 +1055,8 @@ impl<'a> Codegen<'a> {
                     if mode != ProcessWriteMode::Sensitivity {
                         writes.retain(|write| !self.activation_dependency(write));
                     }
-                    if mode == ProcessWriteMode::Ownership && !writes.is_empty() {
-                        let mut declared = DeclaredStorage::default();
-                        for (callee, _) in &calls.walked {
-                            self.add_declared_storage(*callee, &mut declared);
-                        }
-                        writes.retain(|write| !declared.holds(write));
+                    if let Some(callees) = callees {
+                        callees.extend(calls.walked.iter().map(|(callee, _)| *callee));
                     }
                     return Ok(writes);
                 };

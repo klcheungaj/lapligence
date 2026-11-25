@@ -1681,6 +1681,9 @@ struct Codegen<'a> {
     /// ([`crate::sim::ir::IrNativeValue::marker`], set when the model is finished). Read
     /// walks borrow the lowering state, hence the cell.
     native_value_markers: std::cell::RefCell<std::collections::BTreeSet<usize>>,
+    /// Declarations of the subroutines walked so far; every process that
+    /// calls one asks.
+    subroutine_declarations: std::cell::RefCell<IdMap<NodeId, std::rc::Rc<[NodeId]>>>,
     /// The shapes [`Self::call_shape`] found: a function of the database.
     call_shapes: std::cell::RefCell<IdMap<(NodeId, NodeId), std::rc::Rc<collection::CallShape>>>,
     /// CODEGEN-010 warnings, framed like errors (`error::located`) when
@@ -2642,6 +2645,7 @@ impl<'a> Codegen<'a> {
             user_system_functions: HashSet::new(),
             comb_excludes_class_references: std::cell::Cell::new(false),
             native_value_markers: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            subroutine_declarations: std::cell::RefCell::default(),
             call_shapes: std::cell::RefCell::default(),
             warnings: Vec::new(),
             model: IrModel::new(String::new(), default_timescale.precision_fs)
