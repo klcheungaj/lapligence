@@ -876,9 +876,9 @@ fn render_class_descriptor(
 /// Collector frame maps (SIM-018): for every coroutine whose suspended frame
 /// can hold handles, the traced field offsets at each resume state, and the
 /// descriptor table registering them. Identical maps (instances of one
-/// process or task) share one table. Recursive subprogram coroutines run
-/// synchronously inside a process turn and are never suspended at a
-/// collection, so they have none.
+/// process or task) share one table, and the states of one frame share slots.
+/// Recursive subprogram coroutines run synchronously inside a process turn and
+/// are never suspended at a collection, so they have none.
 fn render_gc_frame_maps<'a>(
     artifacts: impl Iterator<Item = &'a CoroutineArtifact>,
     analysis: &ExecutionAnalysis,
@@ -904,27 +904,25 @@ fn render_gc_frame_maps<'a>(
             .ok_or_else(|| format!("missing coroutine sites for {:?}", artifact.owner))?
             .len()
             + 1;
+        if let Some((state, _)) = artifact
+            .layout
+            .gc_map()
+            .iter()
+            .find(|(state, _)| *state as usize >= states)
+        {
+            return Err(format!(
+                "collector frame map of {} names resume state {state} beyond its {states} sites",
+                artifact.desc_name
+            ));
+        }
+        let (runs, first, count) =
+            super::frame_layout::gc_slot_runs(artifact.layout.gc_map(), states);
         let mut slots = String::new();
-        let mut first = vec![0usize; states];
-        let mut count = vec![0usize; states];
-        let mut index = 0usize;
-        for (state, entries) in artifact.layout.gc_map() {
-            let state = *state as usize;
-            if state >= states {
-                return Err(format!(
-                    "collector frame map of {} names resume state {state} beyond its {states} sites",
-                    artifact.desc_name
-                ));
-            }
-            first[state] = index;
-            count[state] = entries.len();
-            for entry in entries {
-                slots.push_str(&format!(
-                    "{{ (uint32_t)offsetof({}, {}), {} }}, ",
-                    artifact.frame_type, entry.path, entry.kind
-                ));
-                index += 1;
-            }
+        for slot in runs {
+            slots.push_str(&format!(
+                "{{ (uint32_t)offsetof({}, {}), {} }}, ",
+                artifact.frame_type, slot.path, slot.kind
+            ));
         }
         let join = |values: &[usize]| {
             values
