@@ -36,6 +36,8 @@
 #define LLG_VPI_MAX_ARGS 256
 #define LLG_VPI_MAX_PLUGINS 16
 #define LLG_VPI_MAX_CALL_DEPTH 64
+/* Handle slots allocated at a time after the first block (vpi_slots_ready). */
+#define LLG_VPI_SLOT_CHUNK 256u
 
 #define LLG_VPI_INDEX_BITS (UINTPTR_MAX > UINT32_MAX ? 32u : 22u)
 #define LLG_VPI_INDEX_MASK ((((uintptr_t)1) << LLG_VPI_INDEX_BITS) - 1u)
@@ -263,9 +265,11 @@ typedef struct {
     uint32_t tsmember_base;   /* then typespec members */
     uint32_t enumconst_base;  /* then enum constants */
     uint32_t static_count;    /* slots below this index are never freed */
-    llg_vpi_slot_t* slots;
+    llg_vpi_slot_t* slots;        /* the first `slot_base` slots: the static ones and a few more */
+    llg_vpi_slot_t** slot_chunks; /* the rest, LLG_VPI_SLOT_CHUNK each: a slot never moves */
+    size_t slot_base;
+    size_t slot_chunk_count;
     size_t slot_count;
-    size_t slot_capacity;
     uint32_t free_slots;      /* free list: index + 1 through next_owned */
     size_t live_dynamic;
     llg_vpi_registration_t** registrations;
@@ -356,6 +360,12 @@ typedef struct {
 } llg_vpi_state_t;
 
 static llg_vpi_state_t g_vpi;
+
+static llg_vpi_slot_t* slot_at(size_t index) {
+    if (index < g_vpi.slot_base) return &g_vpi.slots[index];
+    index -= g_vpi.slot_base;
+    return &g_vpi.slot_chunks[index / LLG_VPI_SLOT_CHUNK][index % LLG_VPI_SLOT_CHUNK];
+}
 static uint32_t g_vpi_generation;
 
 /* Dynamic objects: llg_vpi_dynamic.c, appended to this translation unit. */
@@ -852,13 +862,13 @@ static int32_t vpi_slots_ready(void) {
         g_vpi.failed = 1;
         return 0;
     }
-    size_t capacity = static_count + 64u;
-    g_vpi.slots = (llg_vpi_slot_t*)vpi_calloc(capacity, sizeof(*g_vpi.slots));
+    size_t base = static_count + 64u;
+    g_vpi.slots = (llg_vpi_slot_t*)vpi_calloc(base, sizeof(*g_vpi.slots));
     if (!g_vpi.slots) {
         vpi_set_error(vpiPLI, vpiError, "LLG_VPI_NOMEM", "VPI catalog index allocation failed");
         return 0;
     }
-    g_vpi.slot_capacity = capacity;
+    g_vpi.slot_base = base;
     g_vpi.slot_count = static_count;
     g_vpi.typespec_base = (uint32_t)count;
     g_vpi.tsmember_base = (uint32_t)(count + typespecs);
@@ -914,7 +924,7 @@ static int32_t vpi_ready(void) {
     /* Typespecs, their members and enum constants are static slots after
      * the catalog rows, so each has one handle for the whole run. */
     for (size_t i = count; i < static_count; ++i) {
-        llg_vpi_slot_t* slot = &g_vpi.slots[i];
+        llg_vpi_slot_t* slot = slot_at(i);
         slot->generation = g_vpi.model_generation;
         slot->object = LLG_VPI_NONE;
         slot->element = LLG_VPI_NO_ELEMENT;
@@ -936,7 +946,7 @@ static int32_t vpi_ready(void) {
     /* Children keep catalog order: link in reverse. */
     for (size_t i = count; i-- > 0;) {
         llg_vpi_model_object_t* object = &g_vpi.objects[i];
-        llg_vpi_slot_t* slot = &g_vpi.slots[i];
+        llg_vpi_slot_t* slot = slot_at(i);
         slot->generation = g_vpi.model_generation;
         slot->kind = SLOT_OBJECT;
         slot->object = (uint32_t)i;
@@ -965,7 +975,7 @@ static int32_t vpi_ready(void) {
 /* ── handle slots ───────────────────────────────────────────────────────── */
 
 static vpiHandle encode_handle(uint32_t index) {
-    uintptr_t value = ((uintptr_t)g_vpi.slots[index].generation << LLG_VPI_INDEX_BITS) |
+    uintptr_t value = ((uintptr_t)slot_at(index)->generation << LLG_VPI_INDEX_BITS) |
                       ((uintptr_t)index + 1u);
     return (vpiHandle)value;
 }
@@ -981,7 +991,7 @@ static llg_vpi_slot_t* decode_handle(vpiHandle handle, uint32_t* index_out) {
     uintptr_t index = value & LLG_VPI_INDEX_MASK;
     uint32_t generation = (uint32_t)(value >> LLG_VPI_INDEX_BITS);
     if (index == 0 || index - 1u >= g_vpi.slot_count) return NULL;
-    llg_vpi_slot_t* slot = &g_vpi.slots[index - 1u];
+    llg_vpi_slot_t* slot = slot_at(index - 1u);
     if (slot->kind == SLOT_FREE || slot->generation != generation) return NULL;
     if (index_out) *index_out = (uint32_t)(index - 1u);
     return slot;
@@ -995,8 +1005,7 @@ static llg_vpi_slot_t* checked_handle(vpiHandle handle, uint32_t* index) {
 
 static uint32_t alloc_unindexed_slot(llg_vpi_slot_kind_t kind);
 
-/* Allocate a dynamic slot; returns its index or LLG_VPI_NONE. The slot
- * array may move, so callers re-derive slot pointers after allocating. */
+/* Allocate a dynamic slot; returns its index or LLG_VPI_NONE. */
 static uint32_t alloc_slot(llg_vpi_slot_kind_t kind) {
     if (!vpi_ready()) return LLG_VPI_NONE;
     return alloc_unindexed_slot(kind);
@@ -1013,28 +1022,25 @@ static uint32_t alloc_unindexed_slot(llg_vpi_slot_kind_t kind) {
     uint32_t index;
     if (g_vpi.free_slots) {
         index = g_vpi.free_slots - 1u;
-        g_vpi.free_slots = g_vpi.slots[index].next_owned;
+        g_vpi.free_slots = slot_at(index)->next_owned;
     } else {
         if (g_vpi.slot_count >= LLG_VPI_INDEX_MASK - 1u) {
             vpi_error("LLG_VPI_LIMIT", "VPI handle index space exhausted");
             return LLG_VPI_NONE;
         }
-        if (g_vpi.slot_count == g_vpi.slot_capacity) {
-            size_t capacity = g_vpi.slot_capacity * 2u;
-            llg_vpi_slot_t* grown =
-                (llg_vpi_slot_t*)vpi_realloc(g_vpi.slots, capacity * sizeof(*grown));
-            if (!grown) {
-                vpi_error("LLG_VPI_NOMEM", "VPI handle allocation failed");
-                return LLG_VPI_NONE;
-            }
-            memset(grown + g_vpi.slot_capacity, 0,
-                   (capacity - g_vpi.slot_capacity) * sizeof(*grown));
-            g_vpi.slots = grown;
-            g_vpi.slot_capacity = capacity;
+        size_t chunks = g_vpi.slot_chunk_count;
+        if (g_vpi.slot_count == g_vpi.slot_base + chunks * LLG_VPI_SLOT_CHUNK) {
+            /* The directory doubles when its length reaches a power of two. */
+            if ((chunks & (chunks - 1u)) == 0)
+                g_vpi.slot_chunks = (llg_vpi_slot_t**)vpi_realloc(
+                    g_vpi.slot_chunks, (chunks ? 2u * chunks : 1u) * sizeof(*g_vpi.slot_chunks));
+            g_vpi.slot_chunks[chunks] =
+                (llg_vpi_slot_t*)vpi_calloc(LLG_VPI_SLOT_CHUNK, sizeof(llg_vpi_slot_t));
+            g_vpi.slot_chunk_count = chunks + 1u;
         }
         index = (uint32_t)g_vpi.slot_count++;
     }
-    llg_vpi_slot_t* slot = &g_vpi.slots[index];
+    llg_vpi_slot_t* slot = slot_at(index);
     uint32_t generation = next_generation(slot->generation);
     if (generation == g_vpi.model_generation) generation = next_generation(generation);
     memset(slot, 0, sizeof(*slot));
@@ -1051,7 +1057,7 @@ static uint32_t alloc_unindexed_slot(llg_vpi_slot_kind_t kind) {
 static void unlink_owned(uint32_t index);
 
 static void release_slot(uint32_t index) {
-    llg_vpi_slot_t* slot = &g_vpi.slots[index];
+    llg_vpi_slot_t* slot = slot_at(index);
     if (slot->kind == SLOT_FREE || index < g_vpi.static_count) return;
     /* A call-owned slot released early leaves its call's list first, since
      * the free list reuses next_owned. */
@@ -1071,10 +1077,10 @@ static void release_slot(uint32_t index) {
 /* Register a slot as owned by the active invocation. */
 static void own_by_call(uint32_t index, llg_vpi_call_t* call) {
     if (!call) return;
-    g_vpi.slots[index].owned = 1;
-    g_vpi.slots[index].next_owned = call->owned;
-    g_vpi.slots[index].prev_owned = 0;
-    if (call->owned) g_vpi.slots[call->owned - 1u].prev_owned = index + 1u;
+    slot_at(index)->owned = 1;
+    slot_at(index)->next_owned = call->owned;
+    slot_at(index)->prev_owned = 0;
+    if (call->owned) slot_at(call->owned - 1u)->prev_owned = index + 1u;
     call->owned = index + 1u;
 }
 
@@ -1082,10 +1088,10 @@ static void own_by_call(uint32_t index, llg_vpi_call_t* call) {
  * found on the active call stack (owners are the invocations still running;
  * the stack is at most LLG_VPI_MAX_CALL_DEPTH deep). */
 static void unlink_owned(uint32_t index) {
-    llg_vpi_slot_t* slot = &g_vpi.slots[index];
+    llg_vpi_slot_t* slot = slot_at(index);
     uint32_t next = slot->next_owned, previous = slot->prev_owned;
     if (previous) {
-        g_vpi.slots[previous - 1u].next_owned = next;
+        slot_at(previous - 1u)->next_owned = next;
     } else {
         for (llg_vpi_call_t* call = g_vpi.active_call; call; call = call->previous) {
             if (call->owned == index + 1u) {
@@ -1094,7 +1100,7 @@ static void unlink_owned(uint32_t index) {
             }
         }
     }
-    if (next) g_vpi.slots[next - 1u].prev_owned = previous;
+    if (next) slot_at(next - 1u)->prev_owned = previous;
     slot->owned = 0;
     slot->next_owned = 0;
     slot->prev_owned = 0;
@@ -1104,9 +1110,9 @@ static void release_call_slots(llg_vpi_call_t* call) {
     uint32_t cursor = call->owned;
     while (cursor) {
         uint32_t index = cursor - 1u;
-        cursor = g_vpi.slots[index].next_owned;
+        cursor = slot_at(index)->next_owned;
         /* The whole list goes, so no unlinking. */
-        g_vpi.slots[index].owned = 0;
+        slot_at(index)->owned = 0;
         release_slot(index);
     }
     call->owned = 0;
@@ -1120,8 +1126,8 @@ static vpiHandle object_handle(uint32_t row) {
 static vpiHandle make_element(uint32_t row, uint64_t element, llg_vpi_call_t* owner) {
     uint32_t index = alloc_slot(SLOT_ELEMENT);
     if (index == LLG_VPI_NONE) return NULL;
-    g_vpi.slots[index].object = row;
-    g_vpi.slots[index].element = element;
+    slot_at(index)->object = row;
+    slot_at(index)->element = element;
     own_by_call(index, owner);
     return encode_handle(index);
 }
@@ -1130,7 +1136,7 @@ static vpiHandle make_select(uint32_t row, uint64_t element, uint32_t lsb, uint3
                              int64_t left, int64_t right, llg_vpi_call_t* owner) {
     uint32_t index = alloc_slot(SLOT_SELECT);
     if (index == LLG_VPI_NONE) return NULL;
-    llg_vpi_slot_t* slot = &g_vpi.slots[index];
+    llg_vpi_slot_t* slot = slot_at(index);
     slot->object = row;
     slot->element = element;
     slot->lsb = lsb;
@@ -1151,9 +1157,9 @@ static vpiHandle make_select(uint32_t row, uint64_t element, uint32_t lsb, uint3
 static vpiHandle make_constant(int64_t value, int32_t const_type, uint32_t scope) {
     uint32_t index = alloc_slot(SLOT_CONSTANT);
     if (index == LLG_VPI_NONE) return NULL;
-    g_vpi.slots[index].left = value;
-    g_vpi.slots[index].aux = const_type;
-    g_vpi.slots[index].span = scope == LLG_VPI_NONE ? 0u : scope + 1u;
+    slot_at(index)->left = value;
+    slot_at(index)->aux = const_type;
+    slot_at(index)->span = scope == LLG_VPI_NONE ? 0u : scope + 1u;
     return encode_handle(index);
 }
 
@@ -1173,10 +1179,10 @@ static vpiHandle make_string_constant(const char* bytes, uint32_t length, uint32
         free(copy);
         return NULL;
     }
-    g_vpi.slots[index].aux = vpiStringConst;
-    g_vpi.slots[index].items = (uintptr_t*)(void*)copy;
-    g_vpi.slots[index].count = length;
-    g_vpi.slots[index].span = scope == LLG_VPI_NONE ? 0u : scope + 1u;
+    slot_at(index)->aux = vpiStringConst;
+    slot_at(index)->items = (uintptr_t*)(void*)copy;
+    slot_at(index)->count = length;
+    slot_at(index)->span = scope == LLG_VPI_NONE ? 0u : scope + 1u;
     return encode_handle(index);
 }
 
@@ -1250,13 +1256,12 @@ static llg_vpi_range_origin_t row_range_origin(uint32_t flavor, uint32_t row) {
     return origin;
 }
 
-/* A range handle of dimension `dimension` with bounds `left`, `right`.
- * alloc_slot may move the slot table: keep no slot pointer across it. */
+/* A range handle of dimension `dimension` with bounds `left`, `right`. */
 static vpiHandle make_range(const llg_vpi_range_origin_t* origin, uint32_t dimension, int64_t left,
                             int64_t right) {
     uint32_t index = alloc_slot(SLOT_RANGE);
     if (index == LLG_VPI_NONE) return NULL;
-    llg_vpi_slot_t* slot = &g_vpi.slots[index];
+    llg_vpi_slot_t* slot = slot_at(index);
     slot->object = origin->parent;
     slot->lsb = origin->flavor;
     slot->element = origin->owner;
@@ -1389,7 +1394,7 @@ static vpiHandle declared_typespec_handle(const llg_vpi_typespec_t* typespec, ui
         return typespec_handle(typespec);
     uint32_t index = alloc_slot(SLOT_TYPESPEC);
     if (index == LLG_VPI_NONE) return NULL;
-    llg_vpi_slot_t* slot = &g_vpi.slots[index];
+    llg_vpi_slot_t* slot = slot_at(index);
     slot->aux = (int32_t)typespec_index(typespec);
     slot->object = row;
     slot->left = member;
@@ -1599,7 +1604,7 @@ static vpiHandle make_member(uint32_t row, uint64_t element, uint32_t node_index
     if (!node) return NULL;
     uint32_t index = alloc_slot(SLOT_MEMBER);
     if (index == LLG_VPI_NONE) return NULL;
-    llg_vpi_slot_t* slot = &g_vpi.slots[index];
+    llg_vpi_slot_t* slot = slot_at(index);
     slot->object = row;
     slot->element = element;
     slot->aux = (int32_t)node_index;
@@ -2059,8 +2064,8 @@ static const llg_vpi_conn_t* row_conn(uint32_t row, uint32_t index) {
 static vpiHandle make_aux_slot(llg_vpi_slot_kind_t kind, uint32_t row, uint32_t aux) {
     uint32_t index = alloc_slot(kind);
     if (index == LLG_VPI_NONE) return NULL;
-    g_vpi.slots[index].object = row;
-    g_vpi.slots[index].aux = (int32_t)aux;
+    slot_at(index)->object = row;
+    slot_at(index)->aux = (int32_t)aux;
     return encode_handle(index);
 }
 
@@ -2384,7 +2389,6 @@ static vpiHandle iterate_packed_ranges(const llg_vpi_slot_t* slot) {
         count = 1;
     }
     if (!count) return NULL;
-    /* alloc_slot may move the slot table: keep no slot pointer across it. */
     uint32_t row = slot->object;
     uintptr_t* items = (uintptr_t*)vpi_calloc(count, sizeof(*items));
     if (!items) {
@@ -2438,7 +2442,6 @@ static vpiHandle iterate_indices(const llg_vpi_slot_t* slot) {
                                           : "vpiIndex iteration of a variable outside an array");
         return NULL;
     }
-    /* make_constant may move the slot table: keep no slot pointer across it. */
     int64_t bit_index = slot->left;
     uint32_t scope = constant_scope(slot);
     uintptr_t* items = (uintptr_t*)vpi_calloc(count, sizeof(*items));
@@ -3235,10 +3238,10 @@ static vpiHandle intermodule_path(PLI_INT32 type, vpiHandle ref1, vpiHandle ref2
     }
     uint32_t index = alloc_slot(SLOT_IMP);
     if (index == LLG_VPI_NONE) return NULL;
-    g_vpi.slots[index].object = load;
-    g_vpi.slots[index].aux = load_bit;
-    g_vpi.slots[index].left = source;
-    g_vpi.slots[index].right = source_bit;
+    slot_at(index)->object = load;
+    slot_at(index)->aux = load_bit;
+    slot_at(index)->left = source;
+    slot_at(index)->right = source_bit;
     return encode_handle(index);
 }
 
@@ -3249,7 +3252,6 @@ static vpiHandle iterate_imp_ports(const llg_vpi_slot_t* slot) {
         vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
         return NULL;
     }
-    /* make_aux_slot may move the slot table: copy the fields first. */
     uint32_t source = (uint32_t)slot->left, load = slot->object;
     int32_t source_bit = (int32_t)slot->right, load_bit = slot->aux;
     uint32_t made = 0;
@@ -4057,7 +4059,7 @@ vpiHandle vpi_register_systf(p_vpi_systf_data data) {
     registration->name = name;
     registration->data.tfname = (PLI_BYTE8*)name;
     registration->slot = slot;
-    g_vpi.slots[slot].pointer = registration;
+    slot_at(slot)->pointer = registration;
     g_vpi.registrations[g_vpi.registration_count++] = registration;
     return encode_handle(slot);
 }
@@ -4671,7 +4673,7 @@ static int32_t assertion_type(const llg_acov_item_t* item) {
 static vpiHandle assertion_handle(size_t item) {
     uint32_t index = alloc_slot(SLOT_ASSERTION);
     if (index == LLG_VPI_NONE) return NULL;
-    g_vpi.slots[index].left = (int64_t)item;
+    slot_at(index)->left = (int64_t)item;
     return encode_handle(index);
 }
 
@@ -5185,8 +5187,8 @@ static const llg_fcov_fsm_t* slot_fsm(const llg_vpi_slot_t* slot) {
 static vpiHandle fsm_handle(llg_vpi_slot_kind_t kind, size_t fsm, uint32_t state) {
     uint32_t index = alloc_slot(kind);
     if (index == LLG_VPI_NONE) return NULL;
-    g_vpi.slots[index].left = (int64_t)fsm;
-    g_vpi.slots[index].aux = (int32_t)state;
+    slot_at(index)->left = (int64_t)fsm;
+    slot_at(index)->aux = (int32_t)state;
     return encode_handle(index);
 }
 
@@ -5334,12 +5336,12 @@ static int32_t fsm_property(const llg_vpi_slot_t* slot, int32_t property, uint64
 static vpiHandle call_handle_for(llg_vpi_callsite_t* site) {
     if (site->call_slot) {
         uint32_t index = site->call_slot - 1u;
-        if (g_vpi.slots[index].kind == SLOT_CALL && g_vpi.slots[index].pointer == site)
+        if (slot_at(index)->kind == SLOT_CALL && slot_at(index)->pointer == site)
             return encode_handle(index);
     }
     uint32_t index = alloc_slot(SLOT_CALL);
     if (index == LLG_VPI_NONE) return NULL;
-    g_vpi.slots[index].pointer = site;
+    slot_at(index)->pointer = site;
     site->call_slot = index + 1u;
     return encode_handle(index);
 }
@@ -6373,7 +6375,7 @@ static vpiHandle iterate_code(uint32_t index, int32_t relation) {
     if (code_child(node, relation) == LLG_VPI_NONE) return NULL;
     uint32_t slot_index = alloc_slot(SLOT_ITERATOR);
     if (slot_index == LLG_VPI_NONE) return NULL;
-    llg_vpi_slot_t* iterator = &g_vpi.slots[slot_index];
+    llg_vpi_slot_t* iterator = slot_at(slot_index);
     iterator->iter_kind = ITER_CODE;
     iterator->left = node->first;
     iterator->count = node->count;
@@ -6382,7 +6384,7 @@ static vpiHandle iterate_code(uint32_t index, int32_t relation) {
 }
 
 static vpiHandle scan_code(uint32_t slot_index) {
-    llg_vpi_slot_t* iterator = &g_vpi.slots[slot_index];
+    llg_vpi_slot_t* iterator = slot_at(slot_index);
     while (iterator->position < iterator->count) {
         uint32_t child = (uint32_t)iterator->left + iterator->position++;
         if (g_vpi.code->nodes[child].role == iterator->aux) return code_handle(child);
@@ -9401,7 +9403,7 @@ static vpiHandle make_list_iterator(int32_t type, uintptr_t* items, uint32_t cou
         free(items);
         return NULL;
     }
-    llg_vpi_slot_t* slot = &g_vpi.slots[index];
+    llg_vpi_slot_t* slot = slot_at(index);
     slot->iter_kind = ITER_LIST;
     slot->items = items;
     slot->count = count;
@@ -9610,7 +9612,7 @@ static vpiHandle iterate_members(const llg_vpi_slot_t* slot) {
     uint64_t element = slot->element;
     uint32_t index = alloc_slot(SLOT_ITERATOR);
     if (index == LLG_VPI_NONE) return NULL;
-    llg_vpi_slot_t* iterator = &g_vpi.slots[index];
+    llg_vpi_slot_t* iterator = slot_at(index);
     iterator->iter_kind = ITER_MEMBERS;
     iterator->object = row;
     iterator->element = element;
@@ -9743,7 +9745,7 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
         if (call->arg_count <= 0) return NULL;
         uint32_t index = alloc_slot(SLOT_ITERATOR);
         if (index == LLG_VPI_NONE) return NULL;
-        llg_vpi_slot_t* iterator = &g_vpi.slots[index];
+        llg_vpi_slot_t* iterator = slot_at(index);
         iterator->iter_kind = ITER_ARGUMENTS;
         iterator->pointer = site;
         iterator->count = (uint32_t)call->arg_count;
@@ -9824,9 +9826,9 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
         }
         uint32_t index = alloc_slot(SLOT_ITERATOR);
         if (index == LLG_VPI_NONE) return NULL;
-        llg_vpi_slot_t* iterator = &g_vpi.slots[index];
+        llg_vpi_slot_t* iterator = slot_at(index);
         iterator->iter_kind = ITER_ELEMENTS;
-        iterator->object = g_vpi.slots[ref_index].object;
+        iterator->object = slot_at(ref_index)->object;
         iterator->count = (uint32_t)(g_vpi.element_counts[iterator->object] > UINT32_MAX
                                          ? UINT32_MAX : g_vpi.element_counts[iterator->object]);
         iterator->aux = type;
@@ -9944,7 +9946,7 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
         uint32_t row = slot->object, lsb = slot->lsb, span = slot->span;
         uint32_t index = alloc_slot(SLOT_ITERATOR);
         if (index == LLG_VPI_NONE) return NULL;
-        llg_vpi_slot_t* iterator = &g_vpi.slots[index];
+        llg_vpi_slot_t* iterator = slot_at(index);
         iterator->iter_kind = ITER_BITS;
         iterator->object = row;
         iterator->element = element;
@@ -9964,7 +9966,7 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
         uint32_t row = slot->object;
         uint32_t index = alloc_slot(SLOT_ITERATOR);
         if (index == LLG_VPI_NONE) return NULL;
-        llg_vpi_slot_t* iterator = &g_vpi.slots[index];
+        llg_vpi_slot_t* iterator = slot_at(index);
         iterator->iter_kind = ITER_BITS;
         iterator->object = row;
         iterator->element = element;
@@ -10038,7 +10040,7 @@ static vpiHandle argument_handle(llg_vpi_callsite_t* site, llg_vpi_call_t* call,
     }
     uint32_t index = alloc_slot(SLOT_ARGUMENT);
     if (index == LLG_VPI_NONE) return NULL;
-    llg_vpi_slot_t* slot = &g_vpi.slots[index];
+    llg_vpi_slot_t* slot = slot_at(index);
     slot->pointer = site;
     slot->aux = position;
     slot->count = shape && shape->ref_kind == LLG_VPI_ARG_CONSTANT ? 1u : 0u;
@@ -11621,7 +11623,7 @@ static vpiHandle schedule_put(const llg_vpi_target_t* target, llg_vpi_datum_t* d
     if (!return_event) return NULL;
     uint32_t index = alloc_slot(SLOT_EVENT);
     if (index == LLG_VPI_NONE) return NULL;
-    g_vpi.slots[index].pointer = event;
+    slot_at(index)->pointer = event;
     event->slot = index + 1u;
     return encode_handle(index);
 }
@@ -12673,12 +12675,12 @@ typedef struct {
 } llg_vpi_cb_done_t;
 
 static llg_vpi_cb_done_t* fired_at(uint32_t link) {
-    return (llg_vpi_cb_done_t*)g_vpi.slots[link - 1u].pointer;
+    return (llg_vpi_cb_done_t*)slot_at(link - 1u)->pointer;
 }
 
 /* Free a fired callback's copy and its handle. */
 static void fired_free(uint32_t index) {
-    llg_vpi_cb_done_t* done = (llg_vpi_cb_done_t*)g_vpi.slots[index].pointer;
+    llg_vpi_cb_done_t* done = (llg_vpi_cb_done_t*)slot_at(index)->pointer;
     if (done->prev) fired_at(done->prev)->next = done->next;
     else g_vpi.fired_head = done->next;
     if (done->next) fired_at(done->next)->prev = done->prev;
@@ -12702,8 +12704,8 @@ static llg_vpi_cb_done_t* cb_done_new(const s_cb_data* data) {
 
 /* Give slot `index` to `done`, the newest fired callback. */
 static void fired_attach(uint32_t index, llg_vpi_cb_done_t* done) {
-    g_vpi.slots[index].kind = SLOT_FIRED_CB;
-    g_vpi.slots[index].pointer = done;
+    slot_at(index)->kind = SLOT_FIRED_CB;
+    slot_at(index)->pointer = done;
     done->prev = g_vpi.fired_tail;
     done->next = 0;
     if (g_vpi.fired_tail) fired_at(g_vpi.fired_tail)->next = index + 1u;
@@ -13211,9 +13213,9 @@ static void vpi_force_event(int32_t release, const llg_force_part_t* parts, int3
     uint32_t generation = 0;
     vpiHandle handle = NULL;
     if (index != LLG_VPI_NONE) {
-        g_vpi.slots[index].aux = release ? vpiRelease : vpiForce;
-        g_vpi.slots[index].pointer = &stmt;
-        generation = g_vpi.slots[index].generation;
+        slot_at(index)->aux = release ? vpiRelease : vpiForce;
+        slot_at(index)->pointer = &stmt;
+        generation = slot_at(index)->generation;
         handle = encode_handle(index);
     }
     for (size_t i = 0; i < count; ++i) {
@@ -13235,8 +13237,8 @@ static void vpi_force_event(int32_t release, const llg_force_part_t* parts, int3
     }
     /* The application may have released the handle (and the slot may have
      * been reused) while a callback ran. */
-    if (index != LLG_VPI_NONE && g_vpi.slots[index].kind == SLOT_STMT &&
-        g_vpi.slots[index].generation == generation)
+    if (index != LLG_VPI_NONE && slot_at(index)->kind == SLOT_STMT &&
+        slot_at(index)->generation == generation)
         release_slot(index);
     datum_destroy(&datum);
     if (items != buffer) free(items);
@@ -13978,7 +13980,7 @@ vpiHandle vpi_register_cb(p_cb_data data) {
         vpi_error("LLG_VPI_NOMEM", "VPI value-change watch allocation failed");
         return NULL;
     }
-    g_vpi.slots[index].pointer = cb;
+    slot_at(index)->pointer = cb;
     cb->slot = index;
     cb->sequence = g_vpi.cb_sequence++;
     cb->registered_at = llg_time();
@@ -14483,11 +14485,8 @@ void llg_vpi_shutdown(void) {
         g_vpi_dpi_shutdown = NULL;
         hook();
     }
-    while (g_vpi.events) {
-        llg_vpi_event_t* event = g_vpi.events;
-        event->slot = 0;
-        vpi_event_cancel(event);
-    }
+    /* A vpiSchedEvent handle keeps its record for the slot loop below. */
+    while (g_vpi.events) vpi_event_cancel(g_vpi.events);
     /* Callback records: cancel queued region callbacks and drop watches
      * (no-ops once the runtime lifetime ended) before freeing them. */
     llg_value_watch_hook(NULL);
@@ -14501,7 +14500,7 @@ void llg_vpi_shutdown(void) {
     svc_shutdown();
     free(g_vpi.watch_buckets);
     for (size_t i = g_vpi.static_count; i < g_vpi.slot_count; ++i) {
-        llg_vpi_slot_t* slot = &g_vpi.slots[i];
+        llg_vpi_slot_t* slot = slot_at(i);
         if (slot->kind == SLOT_EVENT && slot->pointer) {
             llg_vpi_event_t* event = (llg_vpi_event_t*)slot->pointer;
             if (!event->pending) free(event);
@@ -14510,6 +14509,8 @@ void llg_vpi_shutdown(void) {
         free(slot->items);
     }
     free(g_vpi.slots);
+    for (size_t i = 0; i < g_vpi.slot_chunk_count; ++i) free(g_vpi.slot_chunks[i]);
+    free(g_vpi.slot_chunks);
     free(g_vpi.sorted);
     free(g_vpi.first_child);
     free(g_vpi.next_sibling);
@@ -14862,7 +14863,7 @@ vpiHandle vpi_register_assertion_cb(vpiHandle assertion, PLI_INT32 reason,
         vpi_cb_free(cb);
         return NULL;
     }
-    g_vpi.slots[index].pointer = cb;
+    slot_at(index)->pointer = cb;
     cb->slot = index;
     cb->sequence = g_vpi.cb_sequence++;
     cb->registered_at = llg_time();
@@ -14918,7 +14919,7 @@ vpiHandle vpi_create(PLI_INT32 type, vpiHandle collection, vpiHandle object) {
         collection = encode_handle(index);
     }
     if (!object) return collection;
-    llg_vpi_slot_t* slot = &g_vpi.slots[index];
+    llg_vpi_slot_t* slot = slot_at(index);
     uintptr_t* items = (uintptr_t*)vpi_realloc(slot->items, (slot->count + 1u) * sizeof(*items));
     if (!items) {
         vpi_error("LLG_VPI_NOMEM", "VPI collection allocation failed");
@@ -14933,16 +14934,12 @@ vpiHandle vpi_create(PLI_INT32 type, vpiHandle collection, vpiHandle object) {
 static vpiHandle iterate_collection(const llg_vpi_slot_t* slot) {
     if (!slot->count) return NULL;
     uint32_t count = slot->count;
-    uintptr_t* members = (uintptr_t*)vpi_malloc(count * sizeof(*members));
+    const uintptr_t* members = slot->items;
     uintptr_t* items = (uintptr_t*)vpi_calloc(count, sizeof(*items));
-    if (!members || !items) {
-        free(members);
-        free(items);
+    if (!items) {
         vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
         return NULL;
     }
-    /* Making handles may move the slot array: copy the members first. */
-    memcpy(members, slot->items, count * sizeof(*members));
     uint32_t made = 0;
     for (uint32_t i = 0; i < count; ++i) {
         vpiHandle handle = (members[i] & 1u) ? assertion_handle((size_t)(members[i] >> 1))
@@ -14950,7 +14947,6 @@ static vpiHandle iterate_collection(const llg_vpi_slot_t* slot) {
         if (!handle) break;
         items[made++] = (uintptr_t)handle;
     }
-    free(members);
     return make_list_iterator(vpiMember, items, made);
 }
 

@@ -50,8 +50,8 @@ static int32_t rts_identity(const llg_vpi_slot_t* slot, uint64_t identity[4]) {
 static vpiHandle rts_make(llg_vpi_slot_kind_t kind, uint32_t aux, int64_t left) {
     uint32_t index = alloc_slot(kind);
     if (index == LLG_VPI_NONE) return NULL;
-    g_vpi.slots[index].aux = (int32_t)aux;
-    g_vpi.slots[index].left = left;
+    slot_at(index)->aux = (int32_t)aux;
+    slot_at(index)->left = left;
     return encode_handle(index);
 }
 
@@ -611,7 +611,6 @@ static int32_t rts_runtime_slot(const llg_vpi_slot_t* slot) {
 
 /* The automatic variables of a frame (37.39 detail 1), in table order. */
 static vpiHandle rts_automatics(const llg_vpi_slot_t* frame_slot) {
-    /* Copied first: making handles may move the slot table. */
     int32_t thread_slot = frame_slot->aux;
     int64_t identity = frame_slot->left;
     uint64_t serial = frame_slot->element;
@@ -826,16 +825,11 @@ static int32_t rts_part_type(const llg_vpi_slot_t* slot) {
 /* A new handle to part (`count`, `member`, `span`) of automatic `base`. */
 static LLG_OUTLYING vpiHandle rts_part_make_at(const llg_vpi_slot_t* base, uint32_t count, uint32_t member,
                                   uint32_t span) {
-    /* Copied first: making the handle may move the slot table. */
-    int32_t thread_slot = base->aux;
-    int64_t identity = base->left;
-    uint64_t serial = base->element;
-    int64_t index = base->right;
-    vpiHandle handle = rts_make(SLOT_AUTO, (uint32_t)thread_slot, identity);
+    vpiHandle handle = rts_make(SLOT_AUTO, (uint32_t)base->aux, base->left);
     llg_vpi_slot_t* slot = handle ? decode_handle(handle, NULL) : NULL;
     if (slot) {
-        slot->element = serial;
-        slot->right = index;
+        slot->element = base->element;
+        slot->right = base->right;
         slot->count = count;
         slot->lsb = member;
         slot->span = span;
@@ -1279,10 +1273,8 @@ static vpiHandle rts_part_member_list(const llg_vpi_slot_t* slot, const rts_part
                                           : "vpiMember iterates a structure or union variable");
         return NULL;
     }
-    /* Copied: each new handle may move the slot table under `slot`. */
-    llg_vpi_slot_t base = *slot;
     rts_handles_t list = {0};
-    for (uint32_t i = 0; i < count; ++i) rts_push(&list, rts_part_make(&base, base.count, first + i + 1u));
+    for (uint32_t i = 0; i < count; ++i) rts_push(&list, rts_part_make(slot, slot->count, first + i + 1u));
     return rts_list(vpiMember, list.items, list.count, list.failed);
 }
 
@@ -1330,10 +1322,8 @@ static vpiHandle rts_fixed_elements(int32_t type, const llg_vpi_slot_t* slot, co
         vpi_error("LLG_VPI_RELATION", "this automatic variable is not declared yet in its frame");
         return NULL;
     }
-    /* Copied: each new handle may move the slot table under `slot`. */
-    llg_vpi_slot_t base = *slot;
     rts_handles_t list = {0};
-    for (uint32_t i = 0; i < part->entry->size; ++i) rts_push(&list, rts_part_make(&base, i + 1u, 0u));
+    for (uint32_t i = 0; i < part->entry->size; ++i) rts_push(&list, rts_part_make(slot, i + 1u, 0u));
     return rts_list(type, list.items, list.count, list.failed);
 }
 
@@ -1780,10 +1770,9 @@ static LLG_OUTLYING uint32_t rts_auto_block_by_name(const rts_frame_t* frame, co
     for (uint32_t i = 0; table[i].name; ++i) {
         if (!(table[i].flags & LLG_VPI_AUTO_BLOCK)) continue;
         size_t length = strlen(table[i].name);
+        if (length <= best || strncmp(table[i].name, rest, length) != 0) continue;
         char next = rest[length];
-        if (length <= best || strncmp(table[i].name, rest, length) != 0 ||
-            (next != '\0' && next != '.' && next != '['))
-            continue;
+        if (next != '\0' && next != '.' && next != '[') continue;
         if (!frame->slots[LLG_VPI_AUTOS_FIRST + i]) continue;
         found = i;
         best = length;
@@ -2274,7 +2263,7 @@ static vpiHandle rts_runtime_handle(int32_t type, llg_vpi_slot_t* slot) {
              * vpiSysTfCall handle valid. */
             uint32_t index = alloc_slot(SLOT_CALL);
             if (index == LLG_VPI_NONE) return NULL;
-            g_vpi.slots[index].pointer = g_vpi.active_call->site;
+            slot_at(index)->pointer = g_vpi.active_call->site;
             return encode_handle(index);
         }
         if (type == vpiOrigin) {
@@ -2684,7 +2673,6 @@ static vpiHandle rts_iterate(int32_t type, vpiHandle reference, int32_t* handled
     if (type == vpiCallback && rts_callback_owner(object_type)) return rts_callbacks(reference, slot);
     if (type == vpiUse && rts_simple_expr(object_type)) return rts_uses(slot);
     if (slot->kind == SLOT_UDPDEFN) {
-        /* Copied: each new handle may move the slot table under `slot`. */
         uint32_t defn = (uint32_t)slot->aux;
         const llg_vpi_udp_t* udp = rts_udp(slot->aux);
         rts_handles_t list = {0};
