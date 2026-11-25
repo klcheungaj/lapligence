@@ -219,7 +219,8 @@ fn run_storage_stages_with_flags(
         build.arg("--target").args(targets);
     }
     let ctest = Path::new(&cmake).with_file_name(format!("ctest{}", std::env::consts::EXE_SUFFIX));
-    let mut test = Command::new(ctest);
+    // The probes that expect_failure.cmake runs abort.
+    let mut test = sim_harness::command_without_core_dumps(ctest);
     test.arg("--test-dir")
         .arg(dir.path())
         .args(["--build-config", config, "--output-on-failure"]);

@@ -1678,6 +1678,8 @@ struct Codegen<'a> {
     /// ([`crate::sim::ir::IrNativeValue::marker`], set when the model is finished). Read
     /// walks borrow the lowering state, hence the cell.
     native_value_markers: std::cell::RefCell<std::collections::BTreeSet<usize>>,
+    /// The shapes [`Self::call_shape`] found: a function of the database.
+    call_shapes: std::cell::RefCell<HashMap<(NodeId, NodeId), std::rc::Rc<collection::CallShape>>>,
     /// CODEGEN-010 warnings, framed like errors (`error::located`) when
     /// they have a location; `GeneratedModel` splits the frame out.
     warnings: Vec<String>,
@@ -2276,8 +2278,6 @@ struct Codegen<'a> {
     param_vals: HashMap<NodeId, Val>,
     /// instance/gen-scope path → (signal name → info), for name fallback.
     scope_sig_names: HashMap<String, HashMap<String, SignalInfo>>,
-    /// gen_scope node → its path (e.g. "top.genblk").
-    gen_scope_paths: HashMap<NodeId, String>,
     /// FuncTask arena node → emitted C function name.
     func_names: HashMap<NodeId, String>,
     func_labels: HashMap<NodeId, String>,
@@ -2286,7 +2286,9 @@ struct Codegen<'a> {
     func_scope_labels: HashMap<NodeId, String>,
     /// Raw source components, separate from historical display-path spelling.
     c_paths: HashMap<String, Vec<String>>,
-    instance_paths: HashMap<NodeId, String>,
+    /// Instance, runtime-environment or generate-scope node → its lowering
+    /// path (e.g. `top.u0`, `top.g_0_`).
+    scope_paths: HashMap<NodeId, String>,
     display_paths: HashMap<String, String>,
     /// Instance, runtime-environment and generate-scope node for each
     /// lowering path; resolves `%l` for formats lowered by path alone.
@@ -2621,6 +2623,7 @@ impl<'a> Codegen<'a> {
             user_system_functions: HashSet::new(),
             comb_excludes_class_references: std::cell::Cell::new(false),
             native_value_markers: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            call_shapes: std::cell::RefCell::default(),
             warnings: Vec::new(),
             model: IrModel::new(String::new(), default_timescale.precision_fs)
                 .expect("the default timescale has non-zero precision"),
@@ -2824,12 +2827,11 @@ impl<'a> Codegen<'a> {
             scope_array_names: HashMap::new(),
             param_vals: HashMap::new(),
             scope_sig_names: HashMap::new(),
-            gen_scope_paths: HashMap::new(),
             func_names: HashMap::new(),
             func_labels: HashMap::new(),
             func_scope_labels: HashMap::new(),
             c_paths: HashMap::new(),
-            instance_paths: HashMap::new(),
+            scope_paths: HashMap::new(),
             display_paths: HashMap::new(),
             scope_nodes: HashMap::new(),
             func: None,
@@ -2947,10 +2949,11 @@ impl<'a> Codegen<'a> {
         self.db.node_kind(id)
     }
 
-    /// Instance path used for global names: `"top.u0"` for child instances,
+    /// Lowering path of an instance or generate scope, used for global names:
+    /// the path it was collected under, else `"top.u0"` for child instances,
     /// the (library-prefix-stripped) name for top instances.
-    fn instance_path_of(&self, id: NodeId) -> String {
-        if let Some(path) = self.instance_paths.get(&id) {
+    fn scope_path_of(&self, id: NodeId) -> String {
+        if let Some(path) = self.scope_paths.get(&id) {
             return path.clone();
         }
         let path = self.db.instance_path(id);

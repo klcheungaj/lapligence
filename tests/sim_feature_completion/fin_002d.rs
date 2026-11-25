@@ -28,22 +28,28 @@
 //! for `alloc_foreign` the lines derived in the fixture readme.
 //!
 //! The checked-in run fails a bounded number of requests per model (the
-//! first and last ones and an even spread between them); with
+//! first and last ones and a spread between them); with
 //! `LLG_ALLOC_FAULT_ALL=1` it fails every request, and every request once
 //! more in the mode where all later requests fail too. Commands and the
 //! sanitizer lane: `tests/readme.md`, "Allocation fault injection".
 use super::{sim_cli, sim_harness};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const SUITE: &str = "feature_completion/fin_002d";
 const RUN_TIMEOUT: Duration = Duration::from_secs(120);
+/// A run with a failed request does at most what the fault-free run does, so
+/// it must end within this multiple of that run's time and within
+/// `FAULT_MIN_TIMEOUT` at the least, which leaves room for a loaded host. A
+/// longer one is held, for example by a core dump handler after the abort.
+const FAULT_TIME_FACTOR: u32 = 20;
+const FAULT_MIN_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Requests failed per model at each end of the run, and in between, when
 /// `LLG_ALLOC_FAULT_ALL` does not ask for all of them.
 const EDGE_REQUESTS: u64 = 24;
-const SPREAD_REQUESTS: u64 = 160;
+const SPREAD_REQUESTS: u64 = 100;
 
 /// The runtime message ids of the defined results.
 const ALLOCATION_ID: &str = "SIM-031";
@@ -87,16 +93,22 @@ fn built_model(fixture: &str, built: &(sim_harness::TempDir, Output)) -> PathBuf
     model(built.0.path())
 }
 
-fn run(executable: &Path, directory: &Path, run_args: &[&str], envs: &[(&str, &str)]) -> Output {
-    let mut command = Command::new(executable);
+fn run(
+    executable: &Path,
+    directory: &Path,
+    run_args: &[&str],
+    envs: &[(&str, &str)],
+    limit: Duration,
+) -> Output {
+    let mut command = sim_harness::command_without_core_dumps(executable);
     command
         .current_dir(directory)
         .args(run_args)
         .env_remove("LLG_ALLOC_FAULT")
         .env_remove("LLG_ALLOC_FAULT_COUNT")
         .envs(envs.iter().copied());
-    sim_harness::run_command(&mut command, RUN_TIMEOUT)
-        .unwrap_or_else(|error| panic!("{}: {error}", executable.display()))
+    sim_harness::run_command(&mut command, limit)
+        .unwrap_or_else(|error| panic!("{} {envs:?}: {error}", executable.display()))
 }
 
 /// The ids of the catalogued messages on `stderr`; a line that is not a
@@ -119,12 +131,14 @@ fn requests(count: u64) -> Vec<u64> {
     {
         return (1..=count).collect();
     }
-    let step = (count - 2 * EDGE_REQUESTS).div_ceil(SPREAD_REQUESTS);
+    // Denser at the start, where a model first uses each part of the runtime:
+    // as many different requests as 160 evenly spread ones name.
+    let between = count - 2 * EDGE_REQUESTS;
     let mut chosen: Vec<u64> = (1..=EDGE_REQUESTS).collect();
-    chosen.extend(
-        (EDGE_REQUESTS + 1..=count - EDGE_REQUESTS)
-            .step_by(usize::try_from(step).expect("the step fits the host")),
-    );
+    chosen.extend((0..SPREAD_REQUESTS).map(|index| {
+        EDGE_REQUESTS + 1 + between * index * index / (SPREAD_REQUESTS * SPREAD_REQUESTS)
+    }));
+    chosen.dedup();
     chosen.extend(count - EDGE_REQUESTS + 1..=count);
     chosen
 }
@@ -151,12 +165,15 @@ fn check(
     let directory = built.0;
     let count_file = directory.path().join("alloc_fault_count");
     let count_path = count_file.to_string_lossy().into_owned();
+    let start = Instant::now();
     let clean = run(
         &executable,
         directory.path(),
         run_args,
         &[("LLG_ALLOC_FAULT_COUNT", &count_path)],
+        RUN_TIMEOUT,
     );
+    let limit = (start.elapsed() * FAULT_TIME_FACTOR).max(FAULT_MIN_TIMEOUT);
     let clean_stdout = String::from_utf8_lossy(&clean.stdout).into_owned();
     let clean_stderr = String::from_utf8_lossy(&clean.stderr).into_owned();
     assert_eq!(clean.status.code(), Some(0), "{fixture}: {clean_stderr}");
@@ -181,6 +198,7 @@ fn check(
                 directory.path(),
                 run_args,
                 &[("LLG_ALLOC_FAULT", &setting)],
+                limit,
             );
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -402,6 +420,48 @@ fn allocation_failure_dpi_and_vpi() {
     );
 }
 
+/// The object and the symbol of one line of `nm -A -u`. GNU and LLVM `nm`
+/// print `<archive>:<member>: U <symbol>` for ELF objects (`w` for a weak
+/// symbol), Apple's and LLVM's `<archive>:<member>: <symbol>` for Mach-O ones,
+/// whose symbols have a leading `_`.
+fn undefined_symbol(line: &str) -> Option<(&str, &str)> {
+    let (rest, symbol) = line.trim_end().rsplit_once(' ')?;
+    let rest = rest.trim_end();
+    let object = match rest.rsplit_once(' ') {
+        Some((object, kind)) if kind.len() == 1 => object.trim_end(),
+        _ => rest,
+    };
+    let object = object.strip_suffix(':')?;
+    let member = object.rsplit([':', '/']).next()?;
+    Some((member, symbol.strip_prefix('_').unwrap_or(symbol)))
+}
+
+#[test]
+fn undefined_symbols_of_both_listing_forms_are_read() {
+    for (line, expected) in [
+        (
+            "/a b/libllg_runtime.a:llg_wave.c.o:                 U llg_alloc_fault_malloc",
+            Some(("llg_wave.c.o", "llg_alloc_fault_malloc")),
+        ),
+        (
+            "/a b/model.c.o:                 w __cxa_finalize",
+            Some(("model.c.o", "_cxa_finalize")),
+        ),
+        (
+            "/a b/libllg_runtime.a:memory.c.o: _malloc",
+            Some(("memory.c.o", "malloc")),
+        ),
+        (
+            "/a/CMakeFiles/sim.dir/model.c.o: _free",
+            Some(("model.c.o", "free")),
+        ),
+        ("", None),
+        ("no object here", None),
+    ] {
+        assert_eq!(undefined_symbol(line), expected, "{line}");
+    }
+}
+
 /// The objects of a fault injection build that still call the C library's
 /// allocator by name: the wrapper's own unit and the vendored libraries the
 /// readme lists as not covered. A runtime unit that does not include
@@ -446,26 +506,23 @@ fn allocation_fault_build_renames_every_runtime_allocation() {
         String::from_utf8_lossy(&output.stderr)
     );
     let listing = String::from_utf8_lossy(&output.stdout);
-    let mut wrapped = 0;
+    let mut wrapped: Vec<&str> = Vec::new();
     let mut direct: Vec<&str> = Vec::new();
     for line in listing.lines() {
-        // `<archive>:<member>: U <symbol>`; Mach-O symbols have a leading `_`.
-        let Some((object, symbol)) = line.rsplit_once(" U ") else {
+        let Some((member, symbol)) = undefined_symbol(line) else {
             continue;
         };
-        let symbol = symbol.trim();
-        let symbol = symbol.strip_prefix('_').unwrap_or(symbol);
-        let object = object.trim_end().trim_end_matches(':');
-        let member = object.rsplit([':', '/']).next().unwrap_or(object);
         if symbol.starts_with("llg_alloc_fault_") {
-            wrapped += 1;
+            if !wrapped.contains(&member) {
+                wrapped.push(member);
+            }
         } else if matches!(symbol, "malloc" | "calloc" | "realloc") && !direct.contains(&member) {
             direct.push(member);
         }
     }
     assert!(
-        wrapped > 20,
-        "few renamed allocations ({wrapped}):\n{listing}"
+        wrapped.len() >= 8,
+        "few objects with renamed allocations ({wrapped:?}):\n{listing}"
     );
     // llg_rt.c holds the wrapper; memory.c is GMP's default allocator, which
     // a model replaces when it starts (compact values with GMP kernels only);

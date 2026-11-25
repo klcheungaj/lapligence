@@ -30,7 +30,7 @@ use std::collections::HashSet;
 
 use crate::core::db::{AlwaysKind, Db, NodeId, NodeKind, ProcessKind, StmtKind};
 use crate::core::lint::rules::analysis::{
-    has_implicit_event, has_timing_control, scope_path, signal_of_ref,
+    has_implicit_event, has_timing_control, holding_scope_path, signal_of_ref,
 };
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
@@ -62,11 +62,7 @@ impl LintRule for IfLatchRule {
             if maybes.is_empty() {
                 continue;
             }
-            let path = db
-                .node(id)
-                .parent
-                .map(|p| scope_path(db, p))
-                .unwrap_or_default();
+            let path = holding_scope_path(db, id);
             let node = db.node(id);
             for sig in maybes {
                 out.push(LintDiag {

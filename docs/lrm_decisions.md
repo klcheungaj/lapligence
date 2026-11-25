@@ -1161,6 +1161,7 @@ input grammar is ADV-011. Line numbers refer to `SystemVerilog-1800-2009.txt`.
 | ID | Decision | Clause (SV) | Case | Kind |
 | --- | --- | --- | --- | --- |
 | R14-D1 | **`inside` over chandles.** A chandle selector or set item is compared with `==`, as class handles are: null matches null and two chandles match when they name the same C pointer. | 11.4.13 L15363, L15376; 6.14 L5576-5577 | `R14-D1_chandle_inside` | industry-standard behaviour (11.4.13 defines nonintegral membership through `==`, which 6.14 allows on chandles, but 6.14 does not list `inside` among the valid chandle operators) |
+| R14-D2 | **`inside` traverses unpacked arrays, and rejects arrays of strings.** A fixed (also multidimensional), dynamic, queue or associative array of integral elements in the list is traversed to its elements, a parameter as a variable, also in a constant expression. An array of strings is a located compile error, whatever its kind and whether it is a variable, a `const` variable or a parameter, unless the frontend folds the whole expression. | 11.4.13 L15365-15367 | `R14-D2_inside_arrays` (the accepted forms) | LRM text for integral elements; llg limitation for strings (the text traverses them too). Industry-standard behaviour traverses dynamic arrays, queues and associative arrays of strings but answers 0 for every fixed array of strings, variable or parameter, except in a constant expression, where it traverses the parameter; open for a decision |
 
 ## Invalid indices of nested containers (FIN-001 follow-up)
 

@@ -232,7 +232,9 @@ impl Codegen<'_> {
     fn vpi_package_name(&self, id: NodeId) -> Option<String> {
         match self.kind(id) {
             NodeKind::Package => Some(strip_lib(&self.node(id).name)),
-            _ if self.is_compilation_unit(id) => Some("$unit".to_owned()),
+            _ if self.is_compilation_unit(id) => {
+                Some(crate::core::db::COMPILATION_UNIT_NAME.to_owned())
+            }
             _ => None,
         }
     }

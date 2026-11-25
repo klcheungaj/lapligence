@@ -103,3 +103,49 @@ endmodule
     wait_for_definition(&mut client);
     client.shutdown();
 }
+
+/// A class that specializes itself without end is an error where it names
+/// itself, and the server serves the rest of the source.
+#[test]
+fn lsp_stdio_endless_specialization_is_reported() {
+    const ENDLESS: &str = "\
+class c #(int N = 1);
+  c #(N + 1) v;
+  c #(2 * N) w;
+endclass
+module user;
+  c #(1) handle;
+  int counted = 3;
+  initial $display(counted, handle.v == null);
+endmodule
+";
+    let ended = ENDLESS
+        .replace("N + 1", "N > 0 ? N - 1 : 0")
+        .replace("2 * N", "N / 2");
+    let (_guard, ws) = rename_workspace("endless-specialization", &[("endless.sv", ENDLESS)]);
+    let path = ws.join("endless.sv");
+    let uri = file_uri(&path);
+    let mut client = LspProcess::spawn(&ws);
+    client
+        .initialize(&[("endless-specialization", &ws)], default_init_options())
+        .expect("initialize the workspace");
+    client.open(&path, ENDLESS).expect("open the source");
+    let reported = wait_for_diagnostics(&mut client, &uri, has_severity_1).to_string();
+    assert!(
+        reported.contains("potentially infinitely recursive specialization of class 'c'"),
+        "{reported}"
+    );
+    let hover = client
+        .request(
+            "textDocument/hover",
+            json!({
+                "textDocument": { "uri": uri },
+                "position": position_at(ENDLESS, "counted, ", 1),
+            }),
+        )
+        .expect("hover");
+    assert!(hover.to_string().contains("counted"), "{hover}");
+    client.change(&path, 2, &ended).expect("end the chain");
+    wait_for_diagnostics(&mut client, &uri, has_no_severity_1);
+    client.shutdown();
+}

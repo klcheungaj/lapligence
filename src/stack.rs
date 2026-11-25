@@ -6,7 +6,8 @@
 //! every stage and every build profile; both are stated here only.
 //!
 //! - [`MAX_NESTING_DEPTH`] bounds what one source nests. The parser refuses
-//!   the rest at the token that exceeds it.
+//!   the rest at the token that exceeds it. It also bounds the specializations
+//!   of one class that name each other in their bodies, which no source nests.
 //! - A walk that also follows what the source only names (the body a call
 //!   enters, the class a constructor builds) is as deep as a chain of such
 //!   names. Those walks keep their steps in a list where they can and ask

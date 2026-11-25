@@ -447,7 +447,7 @@ impl<'a> Codegen<'a> {
             Some(p) => {
                 if self.is_runtime_environment(p) {
                     let namespace = if self.is_compilation_unit(p) {
-                        "$unit".to_string()
+                        crate::core::db::COMPILATION_UNIT_NAME.to_string()
                     } else {
                         strip_lib(&self.node(p).name)
                     };
@@ -695,7 +695,7 @@ impl<'a> Codegen<'a> {
                 }
             } else if self.is_runtime_environment(scope_id) {
                 let name = if self.is_compilation_unit(scope_id) {
-                    "$unit"
+                    crate::core::db::COMPILATION_UNIT_NAME
                 } else {
                     scope.name.as_str()
                 };

@@ -531,7 +531,7 @@ pub struct Db {
     /// context import reach, so only then can it write SystemVerilog storage
     /// (SV 35.5.3).
     dpi_exports: HashMap<NodeId, String>,
-    /// Nets declared implicitly by Slang's semantic analysis, and the
+    /// Nets and variables declared implicitly by Slang's semantic analysis, and the
     /// implicit scopes of unnamed generate blocks.
     implicit_declarations: HashSet<NodeId>,
     /// Nets and ports with a [`DeclarationQualifiers`] fact.
@@ -1432,10 +1432,11 @@ impl Db {
         self.void_cast_statements.contains(&id)
     }
 
-    /// Whether `id` declares a member of a structure or union type. Every
-    /// variable of the type shares the declaration, so it is no object.
+    /// Whether `id` declares a member of a structure or union type, which a
+    /// pattern may be the first to name. Every variable of the type shares the
+    /// declaration, so it is no object.
     pub fn is_record_member(&self, id: NodeId) -> bool {
-        self.semantic_detail(id) == Some("Field")
+        matches!(self.semantic_detail(id), Some("Field" | "PatternField"))
     }
 
     /// Random qualifier of a class property (IEEE 1800-2009 18.4).
@@ -1665,6 +1666,15 @@ impl Db {
 
     pub fn is_implicit_net(&self, id: NodeId) -> bool {
         matches!(self.node(id).kind, NodeKind::Net { .. })
+            && self.implicit_declarations.contains(&id)
+    }
+
+    /// Whether variable `id` is the `this` handle of a class, a method or a
+    /// constraint (IEEE 1800-2009 8.11), which no source declares.
+    pub fn is_this_handle(&self, id: NodeId) -> bool {
+        let node = self.node(id);
+        matches!(node.kind, NodeKind::Var { .. })
+            && node.name == "this"
             && self.implicit_declarations.contains(&id)
     }
 

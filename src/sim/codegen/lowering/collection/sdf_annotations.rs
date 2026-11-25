@@ -672,7 +672,7 @@ impl Codegen<'_> {
             let Some(port) = port else { continue };
             let name = format!(
                 "{}.{}",
-                self.source_path(&self.instance_path_of(load.instance)),
+                self.source_path(&self.scope_path_of(load.instance)),
                 self.node(port).name
             );
             let NodeKind::Port { low, .. } = self.kind(port) else {

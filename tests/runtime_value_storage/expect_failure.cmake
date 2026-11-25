@@ -1,17 +1,7 @@
-# A core dump handler (a piped core_pattern) can hold an aborting process for
-# long on a busy host, and a core limit of 0 does not stop one: the kernel
-# skips it for a limit of 1 (do_coredump).
-set(launcher)
-if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
-  find_program(prlimit prlimit)
-  if(prlimit)
-    set(launcher "${prlimit}" --core=1:1)
-  endif()
-endif()
 # Below the CTest limit of the tests that run this, which prints no reason.
 set(limit 60)
 execute_process(
-  COMMAND ${launcher} "${PROBE}" "${MODE}"
+  COMMAND "${PROBE}" "${MODE}"
   RESULT_VARIABLE result
   OUTPUT_VARIABLE output
   ERROR_VARIABLE diagnostic

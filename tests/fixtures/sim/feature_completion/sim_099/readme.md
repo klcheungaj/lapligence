@@ -335,6 +335,19 @@ collector setting instead of comparing it with a fixed value.
   function. At 1 each instance of `sub` names its own class `L` (`tb.u1.L.k`,
   `tb.u2.L.k`), and at 2 each generate block its class `G` (`tb.g[0].G.t`,
   `tb.g[1].G.t`).
+- `generate_subroutine_scope.sv`: the same rule for subroutines that generate
+  blocks declare: the instance, the generate blocks, the subroutine and the
+  named blocks in it. SV 27.4 L46318-46319: "the generate block identifier for
+  the loop is indexed by adding the "[genvar value]" to the end of the generate
+  block identifier"; 27.6 L46614-46615: "All unnamed generate blocks will be
+  given the name "genblk<n>" where <n> is the number assigned to its enclosing
+  generate construct", so the `case` of `lp` (after its `if`) is `genblk2`, the
+  unnamed loop of `leaf` (its third construct) `genblk3`, and the `else` of
+  `tb` (its only construct in `g`) `genblk1`. The four instances of `leaf` act
+  at 100, 200, 300 and 400 and print the same lines below `tb.g[0].q.u`,
+  `tb.g[1].genblk1.u`, `tb.one` and `tb.arr[1]`; `one` was right before, the
+  others printed the loop's array as a scope of its own (`tb.g.g[0]`) and left
+  the subroutine out.
 
 ## Procedural concurrent assertions (`procedural_assertions.sv`, gate item G5)
 

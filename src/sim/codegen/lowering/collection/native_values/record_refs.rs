@@ -724,8 +724,8 @@ impl Codegen<'_> {
             };
             return self.record_ref_family(function, records, watched);
         }
-        let waited = self.call_shape(function, inst).static_refs;
-        let watched = self.unbound_record_formals(formals, &waited, &records);
+        let shape = self.call_shape(function, inst);
+        let watched = self.unbound_record_formals(formals, &shape.static_refs, &records);
         self.task_specialization_watching(function, inst, Vec::new(), records, watched)
     }
 

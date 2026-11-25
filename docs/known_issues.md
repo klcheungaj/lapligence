@@ -1954,15 +1954,15 @@ execute (`sim_019/handle_inside`, decision R14-D1).
 
 ### Symptom
 
-These legal `inside` set items reject with explicit diagnostics: a queue,
-dynamic or associative array of strings (`s inside {sq}`); a container of
+These legal `inside` set items reject with explicit diagnostics: an array of
+strings, a parameter included (`s inside {sq}`, decision R14-D2); a container of
 reals, handles or records (`r inside {rq}`); an element of a container of
 containers (`x inside {qq[0]}`, "container element access ... requires a
 scalar value"); and a container-result call (`x inside {g()}`).
 
 ### Cause
 
-String set items traverse only fixed and aggregate string storage; the
+String set items traverse only the string leaves of flattened aggregates; the
 container item form (`IrInsideItem::Container`) compares packed elements.
 Nested container elements and container results have no addressed-container
 operand (see

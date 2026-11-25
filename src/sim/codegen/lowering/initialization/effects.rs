@@ -137,7 +137,8 @@ impl Codegen<'_> {
             .static_effect_graph(&roots)
             .sites
             .keys()
-            .find(|statement| !self.static_effect_sites.contains_key(statement))
+            .filter(|statement| !self.static_effect_sites.contains_key(statement))
+            .min_by_key(|statement| statement.index())
         {
             Some(statement) => Err(self.locate_error(
                 *statement,

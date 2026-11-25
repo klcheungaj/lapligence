@@ -193,7 +193,7 @@ impl Codegen<'_> {
         instance: NodeId,
         checks: &[&TimingCheck],
     ) -> Result<(), String> {
-        let scope = self.instance_path_of(instance);
+        let scope = self.scope_path_of(instance);
         let mut terminals: Vec<IrTimingTerminal> = Vec::new();
         let mut conditions: Vec<IrExpr> = Vec::new();
         let mut lowered = Vec::with_capacity(checks.len());

@@ -20,7 +20,8 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 fn run_llg(directory: &Path, source: &Path, library: Option<&Path>, no_opt: bool) -> Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
+    // crash.c aborts.
+    let mut command = sim_harness::command_without_core_dumps(env!("CARGO_BIN_EXE_llg"));
     command.current_dir(directory).args(["--top", "tb"]);
     if no_opt {
         command.arg("--no-opt");

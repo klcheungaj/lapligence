@@ -103,7 +103,7 @@ impl<'a> Codegen<'a> {
     ) {
         if self.unpacked_aggregates.insert(node, aggregate).is_none() {
             self.aggregates_by_scope
-                .entry(self.instance_path_of(node))
+                .entry(self.scope_path_of(node))
                 .or_default()
                 .entry(&self.db.node(node).name)
                 .or_default()
@@ -116,7 +116,7 @@ impl<'a> Codegen<'a> {
         if self.unpacked_aggregates.remove(&node).is_none() {
             return;
         }
-        let path = self.instance_path_of(node);
+        let path = self.scope_path_of(node);
         let name = self.db.node(node).name.as_str();
         if let Some(nodes) = self
             .aggregates_by_scope

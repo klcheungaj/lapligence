@@ -2,6 +2,15 @@
 
 use super::*;
 
+/// Deepest nest of calls inlined into a read-only evaluator callback.
+pub(in crate::sim) const CALLBACK_CALL_DEPTH: usize = 32;
+
+/// Most bodies the calls of one expression expand to in a read-only evaluator
+/// callback. Every call is inlined, so a call graph with many paths to one
+/// function would repeat its body once for each; beyond this the process
+/// evaluates the expression with ordinary calls.
+pub(in crate::sim) const CALLBACK_INLINED_CALLS: usize = 256;
+
 /// Passing mode of a lowered function/task formal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IrFormalMode {

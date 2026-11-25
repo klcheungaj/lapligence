@@ -1,0 +1,132 @@
+diff --git a/include/slang/ast/Symbol.h b/include/slang/ast/Symbol.h
+index c7a8297c2..3afa324d2 100644
+--- a/include/slang/ast/Symbol.h
++++ b/include/slang/ast/Symbol.h
+@@ -120,7 +120,8 @@ enum class RandMode;
+     x(SystemTimingCheck) \
+     x(AnonymousProgram) \
+     x(NetAlias) \
+-    x(ConfigBlock)
++    x(ConfigBlock) \
++    x(OperatorOverload)
+ // clang-format on
+ 
+ SLANG_ENUM(SymbolKind, SYMBOLKIND)
+@@ -160,6 +161,12 @@ public:
+     /// This is the same as getParentScope except for instance body symbols.
+     const Scope* getHierarchicalParent() const;
+ 
++    /// Gets the scope that brought this symbol's parameter values about: the one
++    /// that names the specialization for a specialized class, the one that holds
++    /// the instance for an instance body, otherwise the parent scope. Can be null
++    /// for an instance that is still being created.
++    const Scope* getSpecializingParent() const;
++
+     /// Gets the syntax node that was used to create this symbol, if any. Symbols can
+     /// be created without any originating syntax; in those cases, this returns nullptr.
+     const syntax::SyntaxNode* getSyntax() const { return originatingSyntax; }
+diff --git a/source/ast/Symbol.cpp b/source/ast/Symbol.cpp
+index b11613478..d802a8a5f 100644
+--- a/source/ast/Symbol.cpp
++++ b/source/ast/Symbol.cpp
+@@ -56,6 +56,24 @@ const Scope* Symbol::getHierarchicalParent() const {
+     return parentScope;
+ }
+ 
++const Scope* Symbol::getSpecializingParent() const {
++    if (kind == SymbolKind::ClassType) {
++        auto& classType = as<ClassType>();
++        if (classType.specializingScope)
++            return classType.specializingScope;
++    }
++    else if (kind == SymbolKind::InstanceBody) {
++        // The instance is not set yet while the body is being created.
++        auto parentInst = as<InstanceBodySymbol>().parentInstance;
++        return parentInst ? parentInst->getParentScope() : nullptr;
++    }
++    else if (kind == SymbolKind::CheckerInstanceBody) {
++        auto parentInst = as<CheckerInstanceBodySymbol>().parentInstance;
++        return parentInst ? parentInst->getParentScope() : nullptr;
++    }
++    return parentScope;
++}
++
+ bool Symbol::isType() const {
+     return Type::isKind(kind);
+ }
+diff --git a/source/ast/symbols/CheckerSymbols.cpp b/source/ast/symbols/CheckerSymbols.cpp
+index 3b6d17f82..34afd0b8f 100644
+--- a/source/ast/symbols/CheckerSymbols.cpp
++++ b/source/ast/symbols/CheckerSymbols.cpp
+@@ -305,6 +305,18 @@ static const Symbol* createCheckerFormal(Compilation& comp, const AssertionPortS
+     }
+ }
+ 
++// Indicates whether an instance of the given checker encloses the given scope.
++static bool isInInstanceOf(const CheckerSymbol& checker, const Scope& scope) {
++    for (auto curr = &scope; curr; curr = curr->asSymbol().getSpecializingParent()) {
++        auto& sym = curr->asSymbol();
++        if (sym.kind == SymbolKind::CheckerInstanceBody &&
++            &sym.as<CheckerInstanceBodySymbol>().checker == &checker) {
++            return true;
++        }
++    }
++    return false;
++}
++
+ CheckerInstanceSymbol& CheckerInstanceSymbol::fromSyntax(
+     Compilation& comp, const ASTContext& parentContext, const CheckerSymbol& checker,
+     const HierarchicalInstanceSyntax& syntax,
+@@ -320,6 +332,9 @@ CheckerInstanceSymbol& CheckerInstanceSymbol::fromSyntax(
+         if (parentSym->kind == SymbolKind::CheckerInstanceBody) {
+             auto& checkerBody = parentSym->as<CheckerInstanceBodySymbol>();
+             depth = checkerBody.instanceDepth + 1;
++            if (comp.isHierarchyTooDeep() && isInInstanceOf(checker, checkerBody))
++                return createInvalid(checker, depth);
++
+             if (depth > comp.getOptions().maxCheckerInstanceDepth) {
+                 auto& diag = context.addDiag(diag::MaxInstanceDepthExceeded, loc);
+                 diag << "checker"sv;
+@@ -547,7 +562,9 @@ CheckerInstanceSymbol& CheckerInstanceSymbol::createInvalid(const CheckerSymbol&
+     for (auto member : checkerSyntax->as<CheckerDeclarationSyntax>().members)
+         body->addMembers(*member);
+ 
+-    auto instance = comp.emplace<CheckerInstanceSymbol>(checker.name, checker.location, *body);
++    // Give this instance an empty name so that it can't hide the checker: it becomes
++    // a member of the scope whose instantiation was refused.
++    auto instance = comp.emplace<CheckerInstanceSymbol>("", checker.location, *body);
+     instance->setSyntax(*checkerSyntax);
+     instance->connections = connections.copy(comp);
+     return *instance;
+diff --git a/source/ast/types/AllTypes.cpp b/source/ast/types/AllTypes.cpp
+index ed6616df6..ed78304f4 100644
+--- a/source/ast/types/AllTypes.cpp
++++ b/source/ast/types/AllTypes.cpp
+@@ -1233,13 +1233,15 @@ const Type& VirtualInterfaceType::fromSyntax(const ASTContext& context,
+     }
+ 
+     auto loc = syntax.name.location();
+-    auto& iface = InstanceSymbol::createVirtual(context, loc, def->as<DefinitionSymbol>(),
+-                                                syntax.parameters);
++    auto iface = InstanceSymbol::createVirtual(context, loc, def->as<DefinitionSymbol>(),
++                                               syntax.parameters);
++    if (!iface)
++        return comp.getErrorType();
+ 
+     const ModportSymbol* modport = nullptr;
+     std::string_view modportName = syntax.modport ? syntax.modport->member.valueText() : ""sv;
+     if (!modportName.empty() && syntax.modport) {
+-        auto sym = iface.body.find(modportName);
++        auto sym = iface->body.find(modportName);
+         if (!sym || sym->kind != SymbolKind::Modport) {
+             SLANG_ASSERT(syntax.modport);
+             auto& diag = context.addDiag(diag::NotAModport, syntax.modport->member.range());
+@@ -1251,7 +1253,7 @@ const Type& VirtualInterfaceType::fromSyntax(const ASTContext& context,
+         }
+     }
+ 
+-    return *comp.emplace<VirtualInterfaceType>(iface, modport, /* isRealIface */ false, loc);
++    return *comp.emplace<VirtualInterfaceType>(*iface, modport, /* isRealIface */ false, loc);
+ }
+ 
+ ConstantValue VirtualInterfaceType::getDefaultValueImpl() const {

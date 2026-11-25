@@ -558,6 +558,157 @@ fn component_chains_of_expansions_are_limited() {
     }
 }
 
+/// Classes, interfaces, modules and checkers that name themselves with ever new
+/// parameter values: no source line nests, and nothing ends the chain but a
+/// limit on it. Those with two branches per level never get wide.
+#[test]
+fn component_endless_specializations_are_refused() {
+    const CLASS: &str =
+        "[SLANG-RecursiveClassSpecialization] potentially infinitely recursive specialization of class";
+    const INTERFACE: &str =
+        "[SLANG-MaxInstanceDepthExceeded] interface instantiation exceeded maximum depth of 128";
+    const MODULE: &str =
+        "[SLANG-MaxInstanceDepthExceeded] module instantiation exceeded maximum depth of 128";
+    const CHECKER: &str =
+        "[SLANG-MaxInstanceDepthExceeded] checker instantiation exceeded maximum depth of 64";
+    const USE: &str = "module tb; c #(1) h; endmodule";
+    let used = |class: &str| format!("{class}\n{USE}\n");
+    for (name, source, message) in [
+        (
+            "member",
+            used("class c #(int N = 1); c #(N + 1) v; endclass"),
+            CLASS,
+        ),
+        (
+            "typedef",
+            used("class c #(int N = 1); typedef c #(N + 1) next; endclass"),
+            CLASS,
+        ),
+        (
+            "scope of a typedef",
+            used("class c #(int N = 1); typedef c #(N + 1)::t t; t v; endclass"),
+            CLASS,
+        ),
+        (
+            "base class",
+            used("class c #(int N = 1) extends c #(N + 1); endclass"),
+            CLASS,
+        ),
+        (
+            "two classes",
+            used(
+                "typedef class d;\nclass c #(int N = 1); d #(N + 1) v; endclass\n\
+                 class d #(int N = 1); c #(N + 1) v; endclass",
+            ),
+            CLASS,
+        ),
+        (
+            "nested class",
+            used(
+                "class c #(int N = 1);\n  class d #(int M = 1); c #(N + M) v; endclass\n\
+                 \x20 d #(1) v;\nendclass",
+            ),
+            CLASS,
+        ),
+        (
+            "two branches",
+            used("class c #(bit [511:0] N = 1); c #(2 * N) v; c #(2 * N + 1) w; endclass"),
+            CLASS,
+        ),
+        (
+            "type parameter",
+            used("class c #(type T = int); c #(c #(T)) v; endclass"),
+            CLASS,
+        ),
+        (
+            "growing type parameter",
+            used(
+                "class p #(type A = int, type B = int); A a; B b; endclass\n\
+                 class c #(type T = int); c #(p #(T, T)) v; endclass",
+            )
+            .replace("c #(1) h", "c #(int) h"),
+            CLASS,
+        ),
+        (
+            "parameter",
+            used("class c #(int N = 1); localparam int P = c #(N + 1)::P; endclass"),
+            CLASS,
+        ),
+        (
+            "static function",
+            "class c #(int N = 1);\n  static function int f(); return c #(N + 1)::f(); endfunction\n\
+             endclass\nmodule tb; initial $display(c #(1)::f()); endmodule\n"
+                .to_string(),
+            CLASS,
+        ),
+        (
+            "static task",
+            "class c #(int N = 1);\n  static task t(); c #(N + 1)::t(); endtask\n\
+             endclass\nmodule tb; initial c #(1)::t(); endmodule\n"
+                .to_string(),
+            CLASS,
+        ),
+        (
+            "virtual interface",
+            "interface i #(int N = 1); class k; virtual i #(N + 1) v; endclass endinterface\n\
+             module tb; i #(1) u(); endmodule\n"
+                .to_string(),
+            INTERFACE,
+        ),
+        (
+            "virtual interface of a class",
+            "typedef class c;\ninterface i #(int N = 1, type T = c #(N + 1)); T v; endinterface\n\
+             class c #(int N = 1); virtual i #(N) v; endclass\nmodule tb; c #(1) h; endmodule\n"
+                .to_string(),
+            INTERFACE,
+        ),
+        (
+            "two modules",
+            "module m #(bit [511:0] N = 1); m #(2 * N) u(); m #(2 * N + 1) v(); endmodule\n\
+             module tb; m #(1) u(); endmodule\n"
+                .to_string(),
+            MODULE,
+        ),
+        (
+            "two checkers",
+            "checker k(logic clk); k u(clk); k v(clk); endchecker\n\
+             module tb; logic clk; k u(clk); endmodule\n"
+                .to_string(),
+            CHECKER,
+        ),
+    ] {
+        let source = format!("`timescale 1ns/1ns\n{source}");
+        refused(name, &source, message);
+    }
+}
+
+/// A chain that ends is as long as the nesting limit allows.
+#[test]
+fn component_long_chains_of_specializations_are_accepted() {
+    let chain = |length: usize| {
+        format!(
+            "`timescale 1ns/1ns\nclass c #(int N = 1);\n  c #(N > 0 ? N - 1 : 0) v;\nendclass\n\
+             module tb; c #({length}) h; endmodule\n"
+        )
+    };
+    let limit = MAX_NESTING_DEPTH as usize;
+    accepted("chain", &chain(limit), &["--lint-only"]);
+    refused(
+        "chain",
+        &chain(limit + 1),
+        "t.sv:3:5: [SLANG-RecursiveClassSpecialization]",
+    );
+    let nest = wrap(200, "c #(", "int", ")");
+    accepted(
+        "nest",
+        &format!(
+            "`timescale 1ns/1ns\nclass c #(type T = int); T v; endclass\n\
+             module tb; {nest} h; endmodule\n"
+        ),
+        &["--lint-only"],
+    );
+}
+
 /// The macros and files an include directive goes through.
 #[test]
 fn component_chains_of_includes_are_limited() {

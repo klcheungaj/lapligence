@@ -46,7 +46,7 @@ impl Codegen<'_> {
             let Some(instance) = self.coverage_instances().index.get(&fsm.instance).copied() else {
                 continue;
             };
-            let path = self.instance_path_of(fsm.instance);
+            let path = self.scope_path_of(fsm.instance);
             let at = format!("{}:{}:{}", fsm.file, fsm.line, fsm.column);
             let mut parts = Vec::with_capacity(fsm.state.len());
             let mut width = 0u32;

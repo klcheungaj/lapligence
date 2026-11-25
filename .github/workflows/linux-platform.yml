@@ -319,12 +319,15 @@ jobs:
       # Extracting into /workspace restores target/ at the build container's
       # compile-time paths. ccache activation self-checks with the container's
       # cc and degrades to an uncached run on failure; statistics print at the
-      # end whatever the suite's status was.
+      # end whatever the suite's status was. Tests expect aborts by the hundred,
+      # and the runner's core dump handler holds an aborting process of a
+      # container for seconds; a core limit of exactly 1 keeps the kernel from
+      # starting a piped handler (0 does not).
       - name: Run release suite
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/ccache" "$RUNNER_TEMP/ccache-bin"
-          docker run --rm \
+          docker run --rm --ulimit core=1:1 \
             --volume "$GITHUB_WORKSPACE:/workspace" \
             --volume "$RUNNER_TEMP/nextest-archive:/nextest-archive:ro" \
             --volume "$RUNNER_TEMP/nextest-bin:/nextest-bin:ro" \
