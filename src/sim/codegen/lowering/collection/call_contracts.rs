@@ -983,15 +983,9 @@ impl<'a> Codegen<'a> {
         if self.waits_on_record_ref(ft, inst) {
             return true;
         }
-        let Some(slot) = self.method_virtual_slots.get(&ft) else {
-            return false;
-        };
-        self.db.classes().iter().any(|class| {
-            self.class_method_nodes(*class).into_iter().any(|method| {
-                self.method_virtual_slots.get(&method) == Some(slot)
-                    && self.waits_on_record_ref(method, *class)
-            })
-        })
+        self.virtual_family(ft)
+            .iter()
+            .any(|(method, class)| self.waits_on_record_ref(*method, *class))
     }
 
     /// Whether a task waits on its `ref` formal number `index`, or any
@@ -1011,14 +1005,9 @@ impl<'a> Codegen<'a> {
         if waits(ft, inst) {
             return true;
         }
-        let Some(slot) = self.method_virtual_slots.get(&ft) else {
-            return false;
-        };
-        self.db.classes().iter().any(|class| {
-            self.class_method_nodes(*class).into_iter().any(|method| {
-                self.method_virtual_slots.get(&method) == Some(slot) && waits(method, *class)
-            })
-        })
+        self.virtual_family(ft)
+            .iter()
+            .any(|(method, class)| waits(*method, *class))
     }
 
     /// Whether a wait can observe fork-shared native storage `declaration`
@@ -1361,14 +1350,17 @@ impl<'a> Codegen<'a> {
     /// declaration-level check: every invocation shares the same runtime
     /// activation identity.
     pub(in super::super) fn task_is_disable_target(&self, ft: NodeId) -> bool {
-        self.db.node_ids().any(|node| {
-            matches!(
-                self.kind(node),
-                NodeKind::Stmt(StmtKind::Disable {
-                    target: Some(target)
-                }) if *target == ft
-            )
-        })
+        self.disable_targets
+            .get_or_init(|| {
+                self.db
+                    .node_ids()
+                    .filter_map(|node| match self.kind(node) {
+                        NodeKind::Stmt(StmtKind::Disable { target }) => *target,
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .contains(&ft)
     }
 
     /// Whether an NBA in `node` targets subroutine storage which does not

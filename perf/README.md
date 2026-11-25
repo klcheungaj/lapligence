@@ -83,10 +83,12 @@ preprocessed for the expanded size and once with GCC `-ftime-report` or Clang
 sources, objects and the executable; `--run` also runs each model once and
 hashes its stdout. `--no-phases` skips the per-TU compiles.
 
-Designs form a size ladder so super-linear growth is visible: `pca-512` through
-`pca-4100` (`perf/corpus/pca_sites.sv`, one small process per procedural
-continuous assignment site), `tasks-16/64/128` (`testbench_tasks.sv`) and
-`many-registers-10k/20k/100k`. `--set smoke` (default) selects the two
+Designs form a size ladder so super-linear growth is visible: `sites-512` through
+`sites-4100` (`perf/corpus/process_sites.sv`, one small suspending process per
+generate-block instance), `tasks-16/64/128` (`testbench_tasks.sv`) and
+`many-registers-10k/20k/100k`. Results named `pca-N` are from the procedural
+continuous assignment design that `sites-N` replaced (unsupported, IEEE
+1800-2009 C.4.2), and do not compare with it. `--set smoke` (default) selects the two
 smallest, `ladder` everything but the 100k design, `large` everything;
 `--design NAME` picks individual designs and `--list-designs` prints them.
 `results.tsv` holds one row per design, binary and repetition (`--repeat`),

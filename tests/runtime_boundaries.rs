@@ -26,7 +26,7 @@ fn scheduler_time_overflow_fails_with_a_diagnostic() {
 
     let output = sim_harness::run_command(
         Command::new(&executable).arg("--time-overflow-probe"),
-        Duration::from_secs(10),
+        sim_harness::MODEL_TIMEOUT,
     )
     .expect("runtime boundary probe should start");
 
@@ -42,7 +42,7 @@ fn scheduler_time_overflow_fails_with_a_diagnostic() {
 
     let output = sim_harness::run_command(
         Command::new(&executable).arg("--scaled-time-overflow-probe"),
-        Duration::from_secs(10),
+        sim_harness::MODEL_TIMEOUT,
     )
     .expect("scaled-time boundary probe should start");
     assert!(
@@ -277,8 +277,9 @@ int main(void) {
         .expect("create coroutine report directory");
     let executable = sim::build::build_model_cmake(dir.path(), &[("probe.c", PROBE)])
         .expect("coroutine report probe should compile");
-    let output = sim_harness::run_command(&mut Command::new(&executable), Duration::from_secs(10))
-        .expect("coroutine report probe should start");
+    let output =
+        sim_harness::run_command(&mut Command::new(&executable), sim_harness::MODEL_TIMEOUT)
+            .expect("coroutine report probe should start");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success(), "probe unexpectedly succeeded");
     assert!(

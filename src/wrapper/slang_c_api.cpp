@@ -1361,6 +1361,88 @@ struct Capture {
       semanticEdge(source, LLG_SLANG_EDGE_TYPEDEF, target, static_cast<uint32_t>(depth));
   }
 
+  /// Appends the two-plane words of an integer constant.
+  void integerWords(const SVInt& integer, uint64_t wordCount,
+                    std::vector<uint64_t>& words) {
+    const size_t valueStart = words.size();
+    const size_t unknownStart = valueStart + wordCount;
+    words.resize(unknownStart + wordCount, 0);
+    for (uint64_t bit = 0; bit < integer.getBitWidth(); bit++) {
+      const logic_t digit = integer[static_cast<int32_t>(bit)];
+      const uint64_t mask = uint64_t{1} << (bit % 64);
+      if (digit.isUnknown()) {
+        words[unknownStart + bit / 64] |= mask;
+        if (exactlyEqual(digit, logic_t::z))
+          words[valueStart + bit / 64] |= mask;
+      }
+      else if (static_cast<bool>(digit)) {
+        words[valueStart + bit / 64] |= mask;
+      }
+    }
+  }
+
+  /// Appends the item of a value of a fixed unpacked type
+  /// (LLG_SLANG_VALUE_ELEMENTS); false when a part has another kind of value.
+  bool elementItem(const ConstantValue& value, std::vector<uint64_t>& words) {
+    if (value.isInteger()) {
+      const SVInt& integer = value.integer();
+      const uint64_t wordCount = (uint64_t{integer.getBitWidth()} + 63) / 64;
+      words.insert(words.end(), {LLG_SLANG_VALUE_INTEGER, integer.isSigned() ? 1u : 0u,
+                                 integer.getBitWidth()});
+      integerWords(integer, wordCount, words);
+      return true;
+    }
+    if (value.isReal()) {
+      words.insert(words.end(), {LLG_SLANG_VALUE_REAL,
+                                 std::bit_cast<uint64_t>(value.real().v)});
+      return true;
+    }
+    if (value.isShortReal()) {
+      words.insert(words.end(), {LLG_SLANG_VALUE_SHORT_REAL,
+                                 std::bit_cast<uint32_t>(value.shortReal().v)});
+      return true;
+    }
+    if (value.isString()) {
+      const std::string& text = value.str();
+      words.insert(words.end(), {LLG_SLANG_VALUE_STRING, text.size()});
+      const size_t start = words.size();
+      words.resize(start + (text.size() + 7) / 8, 0);
+      for (size_t index = 0; index < text.size(); index++)
+        words[start + index / 8] |= uint64_t{static_cast<unsigned char>(text[index])}
+                                    << (index % 8 * 8);
+      return true;
+    }
+    if (value.isUnpacked()) {
+      words.insert(words.end(), {LLG_SLANG_VALUE_ELEMENTS, value.elements().size()});
+      return std::ranges::all_of(value.elements(), [&](const ConstantValue& element) {
+        return elementItem(element, words);
+      });
+    }
+    if (value.isUnion() && value.unionVal()->activeMember) {
+      words.insert(words.end(), {LLG_SLANG_VALUE_UNION, *value.unionVal()->activeMember});
+      return elementItem(value.unionVal()->value, words);
+    }
+    return false;
+  }
+
+  /// The constant of a parameter, with the elements of a fixed unpacked one.
+  uint64_t parameterConstant(const ParameterSymbol& parameter) {
+    const ConstantValue& value = parameter.getValue();
+    const uint64_t id = constant(value);
+    std::vector<uint64_t> words;
+    if (!simulationFacts() || (!value.isUnpacked() && !value.isUnion()) || !elementItem(value, words))
+      return id;
+    LlgSlangConstant& result = output.constants[id];
+    addChecked(valueBits, uint64_t{words.size()} * 64, maxValueBits(), "constant bit");
+    chargeRecord(output, words.size() * sizeof(uint64_t));
+    result.kind = static_cast<uint32_t>(words.front());
+    result.text = {};
+    result.value_word_start = output.value_words.size();
+    result.word_count = words.size();
+    output.value_words.insert(output.value_words.end(), words.begin(), words.end());
+    return id;
+  }
+
   uint64_t constant(const ConstantValue& value) {
     if (output.constants.size() >= maxConstants())
       throwCountLimit("constant", maxConstants());
@@ -1383,21 +1465,8 @@ struct Capture {
                             "constant word byte size overflow");
       chargeRecord(output, result.word_count * 2 * sizeof(uint64_t));
       result.value_word_start = output.value_words.size();
-      output.value_words.resize(output.value_words.size() + result.word_count, 0);
-      result.unknown_word_start = output.value_words.size();
-      output.value_words.resize(output.value_words.size() + result.word_count, 0);
-      for (uint64_t bit = 0; bit < result.bit_width; bit++) {
-        const logic_t digit = integer[static_cast<int32_t>(bit)];
-        const uint64_t mask = uint64_t{1} << (bit % 64);
-        if (digit.isUnknown()) {
-          output.value_words[result.unknown_word_start + bit / 64] |= mask;
-          if (exactlyEqual(digit, logic_t::z))
-            output.value_words[result.value_word_start + bit / 64] |= mask;
-        }
-        else if (static_cast<bool>(digit)) {
-          output.value_words[result.value_word_start + bit / 64] |= mask;
-        }
-      }
+      result.unknown_word_start = result.value_word_start + result.word_count;
+      integerWords(integer, result.word_count, output.value_words);
     }
     else if (value.isReal()) {
       result.kind = LLG_SLANG_VALUE_REAL;
@@ -3425,7 +3494,7 @@ public:
     if constexpr (std::same_as<T, SubroutineSymbol>)
       result.type_id = capture.type(symbol.getReturnType());
     if constexpr (std::same_as<T, ParameterSymbol>) {
-      result.constant_id = capture.constant(symbol.getValue());
+      result.constant_id = capture.parameterConstant(symbol);
       if (symbol.isOverridden())
         result.auxiliary |= LLG_SLANG_PARAMETER_OVERRIDDEN;
       if (isStringLiteralParameter(symbol))

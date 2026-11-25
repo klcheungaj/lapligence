@@ -14,6 +14,7 @@ use crate::sim::execution::{
 };
 use crate::sim::ir::{
     IrConcurrentAssertionKind, IrFunc, IrModel, IrProcessKind, IrSequence, IrType, IrVpiObjectKind,
+    VirtualDispatch,
 };
 use crate::sim::located::{locate_at, locate_at_origin};
 use std::borrow::Cow;
@@ -1719,10 +1720,12 @@ fn render_model(
     out.push_str(&coroutine_metadata);
     // After the descriptors and instance records its entries name.
     out.push_str(&udp_puts);
-    render_virtual_dispatch_prototypes(model, &mut out);
+    let dispatch = execution.analysis().virtual_dispatch();
+    render_virtual_dispatch_prototypes(model, dispatch, &mut out);
     render_virtual_interface_call_prototypes(model, &mut out);
     render_virtual_dispatch_bodies(
         model,
+        dispatch,
         |function| execution.analysis().is_coroutine_function(function),
         &mut out,
     );
@@ -1838,6 +1841,7 @@ fn render_model(
     out.push_str(&super::owned::assertions::registrations(model)?);
     super::owned::model::storage_lifecycle(
         model,
+        execution.analysis().virtual_dispatch(),
         &constants,
         config.backend,
         &sharing.evaluators,

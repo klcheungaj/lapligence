@@ -29,7 +29,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-use crate::sim::ir::{IrModel, IrObjectStmt, IrPreFn, IrProcessControl, IrStmt};
+use crate::sim::ir::{IrModel, IrObjectStmt, IrPreFn, IrProcessControl, IrStmt, VirtualDispatch};
 
 use super::recursion::RecursionAnalysis;
 use super::{
@@ -177,6 +177,7 @@ pub struct ExecutionAnalysis {
     function_depths: Vec<Option<usize>>,
     sites: BTreeMap<CoroutineId, BTreeMap<OperationPath, SuspensionSite>>,
     recursion: RecursionAnalysis,
+    virtual_dispatch: VirtualDispatch,
     suspending_slots: BTreeSet<usize>,
     suspending_interface_methods: BTreeSet<(usize, usize)>,
 }
@@ -425,7 +426,8 @@ impl ExecutionAnalysis {
             sites.insert(owner, numbered);
         }
 
-        let recursion = RecursionAnalysis::analyze(ir, &coroutine_functions);
+        let virtual_dispatch = VirtualDispatch::new(ir);
+        let recursion = RecursionAnalysis::analyze(ir, &virtual_dispatch, &coroutine_functions);
         Ok(Self {
             options,
             forced_arena_callees: forced_arena_callees.clone(),
@@ -434,6 +436,7 @@ impl ExecutionAnalysis {
             function_depths,
             sites,
             recursion,
+            virtual_dispatch,
             suspending_slots,
             suspending_interface_methods,
         })
@@ -456,6 +459,11 @@ impl ExecutionAnalysis {
     /// Coroutine owners in deterministic identity order.
     pub fn coroutines(&self) -> impl Iterator<Item = CoroutineId> + '_ {
         self.sites.keys().copied()
+    }
+
+    /// The functions emitted as coroutines.
+    pub fn coroutine_functions(&self) -> &BTreeSet<usize> {
+        &self.coroutine_functions
     }
 
     pub fn is_coroutine_function(&self, function: usize) -> bool {
@@ -493,7 +501,13 @@ impl ExecutionAnalysis {
     /// Whether a call from `caller` to `target` is an arena call: `caller`
     /// is recursive and some implementation of `target` shares its component.
     pub fn is_recursive_call(&self, ir: &IrModel, caller: usize, target: &CallTarget) -> bool {
-        self.recursion.recursive_call(ir, caller, target)
+        self.recursion
+            .recursive_call(ir, &self.virtual_dispatch, caller, target)
+    }
+
+    /// The virtual methods of the analyzed model.
+    pub(in crate::sim) fn virtual_dispatch(&self) -> &VirtualDispatch {
+        &self.virtual_dispatch
     }
 
     /// Class virtual slots with an arena-dispatch helper.

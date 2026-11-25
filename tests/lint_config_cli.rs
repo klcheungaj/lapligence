@@ -486,6 +486,29 @@ fn cli_lint_json_exposes_expanded_shared_rules_and_severity_override() {
     assert!(stdout.contains("\"errors\": 1"), "stdout: {stdout}");
 }
 
+/// Assignment pattern keys and selects name the member declarations of a
+/// record type, which every variable and constant of the type shares.
+#[test]
+fn cli_lint_json_reports_no_record_member_as_undriven() {
+    let dir = TempDir::new("record_members");
+    let design = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/feature_completion/ki_block_parameters/types.sv");
+    let out = run_llg(
+        &dir.path,
+        &["--lint-json", "--top", "tb", design.to_str().unwrap()],
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "stderr: {}", stderr(&out));
+    let report: serde_json::Value = serde_json::from_str(&stdout).expect("valid lint JSON");
+    let undriven = report["diagnostics"]
+        .as_array()
+        .expect("diagnostics")
+        .iter()
+        .filter(|diag| diag["rule"] == "undriven-signal")
+        .collect::<Vec<_>>();
+    assert!(undriven.is_empty(), "{undriven:?}");
+}
+
 #[test]
 fn cli_lint_json_exposes_control_rules_and_honors_config() {
     let dir = TempDir::new("control_rules");

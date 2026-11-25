@@ -66,7 +66,8 @@ See [shared lint](../readme.md).
   `ref` port connections. Constraint `foreach` loop variables are never reported.
   Skipped: top-level external inputs/inouts, explicitly open child ports,
   signals connected to a black box (an instance of an unknown module),
-  implicit nets and intrinsic pull/supply nets. Input/inout actuals are read
+  implicit nets, intrinsic pull/supply nets and the members that a structure or
+  union type declares (a selected member counts for its variable). Input/inout actuals are read
   through the owned port `high_expr`; the direct `high` target stays for
   model/codegen consumers. Nothing in an untaken generate block reads or
   drives: its declaration initializers, processes, continuous assignments,

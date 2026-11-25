@@ -84,6 +84,8 @@ impl LintRule for UndrivenSignalRule {
                 || drivers.contains(&id)
                 || exempt.contains(&id)
                 || has_intrinsic_net_driver(db, id)
+                // A selected member counts for the variable it selects from.
+                || db.is_record_member(id)
                 || db.is_implicit_net(id)
                 // A `rand`/`randc` property is assigned by every call of
                 // `randomize()` (IEEE 1800-2009 18.4, 18.6.1).
@@ -734,6 +736,33 @@ mod tests {
             "top",
         );
         assert_eq!(names, ["never"], "{names:?}");
+    }
+
+    #[test]
+    fn record_type_members_are_no_signals() {
+        // The keys of an assignment pattern name the member declarations,
+        // which every variable and constant of the type shares.
+        let body = "typedef struct packed { logic [3:0] a; logic [3:0] b; } st_t;\n\
+               typedef union packed { logic [7:0] w; st_t s; } un_t;\n\
+               typedef struct { int n; string s; st_t k[2]; } us_t;\n\
+               localparam st_t ST = '{a: 4'h3, b: 4'h9};\n\
+               localparam un_t UN = 8'h5a;\n  us_t us; st_t st, never;\n";
+        let uses =
+            "us = '{n: 9, s: \"z\", k: '{'{a: 1, b: 2}, '{a: 3, b: 4}}}; st = '{a: 1, b: 2};\n\
+               $display(UN.w, UN.s.b, ST.a, us.n, us.s, us.k[1].a, st.b, never.a);\n";
+        for source in [
+            format!("module top;\n  {body}  initial begin {uses} end\nendmodule\n"),
+            format!("module top;\n  initial begin : b {body} {uses} end\nendmodule\n"),
+            format!(
+                "package p;\n  {body}endpackage\n\
+                 module top;\n  import p::*;\n  initial begin {uses} end\nendmodule\n"
+            ),
+            format!("module top;\n  if (1) begin : g\n {body} initial begin {uses} end\n  end\nendmodule\n"),
+        ] {
+            let names = undriven_names(&source, "top");
+            let expected: &[&str] = if source.contains("package p") { &[] } else { &["never"] };
+            assert_eq!(names, expected, "{source}\n{names:?}");
+        }
     }
 
     #[test]

@@ -1,0 +1,11 @@
+type=41 const=6 <str> tb.S
+type=41 const=6 <> tb.E
+type=41 const=6 <str-x> tb.L
+type=41 const=6 <block> tb.blk.B
+type=7 const=6 <literal>
+type=41 const=6 <leaf> tb.a.NAME
+type=41 const=6 <block> tb.blk.B
+type=41 const=6 <leaf> tb.a.NAME
+type=41 const=6 <other name> tb.b.NAME
+type=41 const=6 <task> tb.t.T
+str str-x

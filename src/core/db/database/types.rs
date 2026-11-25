@@ -164,6 +164,20 @@ pub(crate) struct TypedefNames {
     pub(crate) members: HashMap<(TypeId, u32), TypedefRef>,
 }
 
+/// The elaborated value of a parameter of a fixed unpacked type.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ElementValue {
+    Singular(Val),
+    /// The elements of an array from its left bound, or the members of a
+    /// structure in declaration order.
+    Elements(Vec<ElementValue>),
+    /// The member of a union that its value was assigned to.
+    Union {
+        member: usize,
+        value: Box<ElementValue>,
+    },
+}
+
 /// One declared member of an enumerated type, retained in declaration order.
 ///
 /// Enum values are copied from Slang's resolved constants while the snapshot

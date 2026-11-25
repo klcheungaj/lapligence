@@ -111,6 +111,36 @@ fn vpi_reads_block_parameters() {
 }
 
 #[test]
+fn defparams_of_block_parameters() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "defparam",
+        include_str!("../fixtures/sim/feature_completion/ki_block_parameters/defparam.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn illegal_defparams_of_local_parameters_are_rejected() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_defparam_localparam",
+        "neg_defparam_localparam.sv:6:12 'L' is a localparam",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_defparam_generate",
+        "neg_defparam_generate.sv:6:12 'P' is a localparam",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_defparam_package",
+        "neg_defparam_package.sv:8:12 'P' is a localparam",
+    );
+}
+
+#[test]
 fn illegal_uses_of_block_parameters_are_rejected() {
     sim_cli::reject_case(
         SUITE,

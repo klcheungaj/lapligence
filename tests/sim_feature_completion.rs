@@ -363,6 +363,10 @@ mod ki_untaken_generate;
 mod ki_bits_of_strings;
 #[path = "sim_feature_completion/ki_block_parameters.rs"]
 mod ki_block_parameters;
+#[path = "sim_feature_completion/ki_unpacked_parameters.rs"]
+mod ki_unpacked_parameters;
+#[path = "sim_feature_completion/ki_vpi_string_parameters.rs"]
+mod ki_vpi_string_parameters;
 
 #[path = "sim_feature_completion/ki_timescale_option.rs"]
 mod ki_timescale_option;

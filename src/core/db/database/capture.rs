@@ -145,6 +145,20 @@ impl Db {
         };
         let overridden_parameters = parameters_with(SEMANTIC_PARAMETER_OVERRIDDEN);
         let string_literal_parameters = parameters_with(SEMANTIC_PARAMETER_STRING_LITERAL);
+        let parameter_elements = snapshot
+            .semantic_nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, semantic)| semantic.kind == SemanticKind::Parameter)
+            .filter_map(|(index, semantic)| {
+                let constant = snapshot.constants.get(semantic.constant_id()? as usize)?;
+                Some((
+                    NodeId::from_index(index),
+                    values::element_value_from_slang(&constant.value)?,
+                ))
+            })
+            .filter(|(_, value)| !matches!(value, ElementValue::Singular(_)))
+            .collect();
         let semantic_kinds = snapshot
             .semantic_nodes
             .iter()
@@ -1698,6 +1712,7 @@ impl Db {
             declared_time_scale_element,
             overridden_parameters,
             string_literal_parameters,
+            parameter_elements,
             semantic_kinds,
             semantic_details,
             conditional_patterns,

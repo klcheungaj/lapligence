@@ -79,8 +79,8 @@ class Design:
 def design_catalog():
     designs = {}
     for count, level in ((512, "smoke"), (1024, "ladder"), (2048, "ladder"), (4100, "ladder")):
-        designs[f"pca-{count}"] = Design(
-            "pca_sites.sv", "pca_sites", (f"LLG_CORPUS_N={count}",), level
+        designs[f"sites-{count}"] = Design(
+            "process_sites.sv", "process_sites", (f"LLG_CORPUS_N={count}",), level
         )
     for count, level in ((16, "smoke"), (64, "ladder"), (128, "ladder")):
         designs[f"tasks-{count}"] = Design(

@@ -43,7 +43,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 83;
+const ABI_VERSION: u32 = 84;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -725,6 +725,14 @@ pub enum ConstantValue {
     ShortReal(f32),
     /// Raw SystemVerilog string bytes; the language permits non-UTF-8 values.
     String(Vec<u8>),
+    /// The elements of a fixed unpacked array from its left bound, or the
+    /// members of an unpacked structure in declaration order.
+    Elements(Vec<ConstantValue>),
+    /// The member of an unpacked union that holds its value.
+    Union {
+        member: usize,
+        value: Box<ConstantValue>,
+    },
     Other(String),
 }
 

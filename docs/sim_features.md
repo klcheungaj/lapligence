@@ -678,11 +678,19 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   positional overrides and `defparam` re-elaboration propagate values and widths;
   overriding `localparam` is illegal. Finite constant functions, type-dependent
   defaults, nominal enums, `type()`, constant queries and folded real/string
-  values support finite extents and names. Fixed struct/union parameters are
-  readable whole or by member; override expressions retain their parent scope.
+  values support finite extents and names. Fixed struct/union and
+  unpacked array parameters are read whole, by member and by constant or
+  run-time index, with their elaborated value
+  ([ki_unpacked_parameters](../tests/fixtures/sim/feature_completion/ki_unpacked_parameters/readme.md));
+  one that holds strings or reals is read by element or member only, with at
+  most one run-time index into strings; override expressions retain their parent scope.
   Parameters declared in procedural blocks, subroutines and methods are read
-  like module parameters
+  like module parameters; a `parameter` of a block, task or function of an
+  instance can be a `defparam` target (23.10.2)
   ([ki_block_parameters](../tests/fixtures/sim/feature_completion/ki_block_parameters/readme.md)).
+  A `string` parameter is an argument of a user system task like any other
+  parameter
+  ([ki_vpi_string_parameters](../tests/fixtures/sim/feature_completion/ki_vpi_string_parameters/readme.md)).
   [Elaboration regression sources](../tests/sim_syn016_elaboration.rs) exercise
   bounded function/type/namespace cases; source presence is not fresh acceptance.
   Constant functions reading `defparam`-affected parameters have

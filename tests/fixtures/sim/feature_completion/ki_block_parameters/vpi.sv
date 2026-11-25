@@ -9,5 +9,6 @@ module tb;
   end
   function int f(int x); localparam FK = 2; return x * FK; endfunction
   initial $display("%0d", f(3));
-  initial fork : fk localparam FF = 9; $display("%0d", FF); join
+  initial fork : fk parameter FF = 9; $display("%0d", FF); join
+  defparam fk.FF = 11;
 endmodule

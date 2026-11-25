@@ -56,7 +56,7 @@ Its graph has one node per non-inline subprogram with a body that is not
 suspendable; edges come from `direct_call_targets` (statement, expression,
 string/chandle, fixed-value and inline-constructor calls, without following
 callee bodies). A class virtual call contributes an edge to every method with
-the slot, a virtual-interface call to every instance implementation. Every
+the slot (`ir::VirtualDispatch`, indexed once per analysis and read by emission), a virtual-interface call to every instance implementation. Every
 member of a cyclic SCC is also emitted as a coroutine; a call from a member to
 any implementation in its own SCC is an arena call (`is_recursive_call`), and
 the slots/methods of such dynamic calls get arena-dispatch helpers. Calls into

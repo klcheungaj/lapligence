@@ -41,7 +41,7 @@ sidecar format.
   symbols. Internal dependency sort keys and function diagnostic labels stay
   separate from display labels and C symbols. Escaping, collision and length
   rules belong to the [emitter](../emit_c/model/readme.md).
-- Generation stays linear in the instance count (`tests/sim_scale.rs`).
+- Generation stays linear in the instance and class counts (`tests/sim_scale.rs`).
   Per-net, per-signal and per-name lookups use the one-pass indexes
   `nets/writer_index.rs`, `nets/global_index.rs` and
   `collection/signal_names.rs` (equivalence with the scan: their module docs).

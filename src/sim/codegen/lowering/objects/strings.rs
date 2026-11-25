@@ -44,6 +44,9 @@ impl Codegen<'_> {
         {
             return Ok(value);
         }
+        if let Some(value) = self.lower_parameter_string(path, node)? {
+            return Ok(value);
+        }
         if let Some(operands) = self.enter_call_operands(path, node)? {
             let value = self.lower_string(path, node);
             let before = self.leave_call_operands(operands);

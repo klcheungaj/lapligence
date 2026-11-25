@@ -99,10 +99,90 @@ index 1feab96e6..cc7efe1af 100644
      else {
          // Nets can't be assigned in procedural contexts.
 diff --git a/source/ast/symbols/InstanceSymbols.cpp b/source/ast/symbols/InstanceSymbols.cpp
-index b6cf0f2f2..a1ae407fd 100644
+index b6cf0f2f2..75395461a 100644
 --- a/source/ast/symbols/InstanceSymbols.cpp
 +++ b/source/ast/symbols/InstanceSymbols.cpp
-@@ -1665,6 +1665,42 @@ void PrimitiveInstanceSymbol::fromSyntax(const PrimitiveInstantiationSyntax& syn
+@@ -196,37 +196,6 @@ void getInstanceArrayDimensions(const InstanceArraySymbol& array,
+     dimensions.push_back(array.range);
+ }
+ 
+-const HierarchyOverrideNode* findParentOverrideNode(const Scope& scope) {
+-    auto& sym = scope.asSymbol();
+-    if (sym.kind == SymbolKind::InstanceBody)
+-        return sym.as<InstanceBodySymbol>().hierarchyOverrideNode;
+-
+-    auto parentScope = sym.getParentScope();
+-    SLANG_ASSERT(parentScope);
+-
+-    auto node = findParentOverrideNode(*parentScope);
+-    if (!node)
+-        return nullptr;
+-
+-    if (sym.kind == SymbolKind::GenerateBlock &&
+-        parentScope->asSymbol().kind == SymbolKind::GenerateBlockArray) {
+-
+-        auto it = node->childNodes.find(sym.as<GenerateBlockSymbol>().constructIndex);
+-        if (it == node->childNodes.end())
+-            return nullptr;
+-
+-        return &it->second;
+-    }
+-
+-    auto syntax = sym.getSyntax();
+-    SLANG_ASSERT(syntax);
+-
+-    if (auto it = node->childNodes.find(*syntax); it != node->childNodes.end())
+-        return &it->second;
+-
+-    return nullptr;
+-}
+-
+ void checkForInvalidNestedConfigNodes(const ASTContext& context,
+                                       const ConfigBlockSymbol::InstanceOverride& node,
+                                       const ConfigBlockSymbol& configBlock) {
+@@ -341,6 +310,41 @@ void resolveInstanceOverrides(const ResolvedConfig& resolvedConfig, const ASTCon
+ 
+ namespace slang::ast {
+ 
++const HierarchyOverrideNode* findParentOverrideNode(const Scope& scope) {
++    auto& sym = scope.asSymbol();
++    if (sym.kind == SymbolKind::InstanceBody)
++        return sym.as<InstanceBodySymbol>().hierarchyOverrideNode;
++
++    auto parentScope = sym.getParentScope();
++    SLANG_ASSERT(parentScope);
++
++    // Procedural scopes add no level of their own.
++    if (sym.kind == SymbolKind::StatementBlock || sym.kind == SymbolKind::Subroutine)
++        return findParentOverrideNode(*parentScope);
++
++    auto node = findParentOverrideNode(*parentScope);
++    if (!node)
++        return nullptr;
++
++    if (sym.kind == SymbolKind::GenerateBlock &&
++        parentScope->asSymbol().kind == SymbolKind::GenerateBlockArray) {
++
++        auto it = node->childNodes.find(sym.as<GenerateBlockSymbol>().constructIndex);
++        if (it == node->childNodes.end())
++            return nullptr;
++
++        return &it->second;
++    }
++
++    auto syntax = sym.getSyntax();
++    SLANG_ASSERT(syntax);
++
++    if (auto it = node->childNodes.find(*syntax); it != node->childNodes.end())
++        return &it->second;
++
++    return nullptr;
++}
++
+ std::string_view InstanceSymbolBase::getArrayName() const {
+     auto scope = getParentScope();
+     if (scope && scope->asSymbol().kind == SymbolKind::InstanceArray)
+@@ -1665,6 +1669,42 @@ void PrimitiveInstanceSymbol::fromSyntax(const PrimitiveInstantiationSyntax& syn
      createPrims(defResult, nullptr);
  }
  
@@ -145,7 +225,7 @@ index b6cf0f2f2..a1ae407fd 100644
  std::span<const Expression* const> PrimitiveInstanceSymbol::getPortConnections() const {
      if (!ports) {
          auto syntax = getSyntax();
-@@ -1721,7 +1757,10 @@ std::span<const Expression* const> PrimitiveInstanceSymbol::getPortConnections()
+@@ -1721,7 +1761,10 @@ std::span<const Expression* const> PrimitiveInstanceSymbol::getPortConnections()
                      dir = (i == conns.size() - 1) ? ArgumentDirection::In : ArgumentDirection::Out;
  
                  SLANG_ASSERT(conns[i]);
@@ -157,7 +237,7 @@ index b6cf0f2f2..a1ae407fd 100644
              }
          }
          else {
-@@ -1760,12 +1799,25 @@ std::span<const Expression* const> PrimitiveInstanceSymbol::getPortConnections()
+@@ -1760,12 +1803,25 @@ std::span<const Expression* const> PrimitiveInstanceSymbol::getPortConnections()
                      ASTContext argCtx = context;
                      argCtx.flags &= ~ASTFlags::DisallowUDNT;
                      argCtx.flags |= ASTFlags::LAndRValue;

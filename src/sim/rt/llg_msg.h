@@ -44,14 +44,20 @@ typedef enum {
     LLG_MSG_ID_COUNT
 } llg_msg_id_t;
 
+// LLG_MSG_INTERNAL_API: LLG_MSG_API for a function that is also LLG_INTERNAL,
+// which its one definition says.
 #if defined(LLG_MSG_IMPLEMENTATION)
+#include "llg_compiler.h"
 #define LLG_MSG_API
+#define LLG_MSG_INTERNAL_API LLG_INTERNAL
 #define LLG_MSG_DEFINE 1
 #elif defined(LLG_MSG_SHARED)
 #define LLG_MSG_API extern
+#define LLG_MSG_INTERNAL_API extern
 #define LLG_MSG_DEFINE 0
 #else
 #define LLG_MSG_API static inline
+#define LLG_MSG_INTERNAL_API static inline
 #define LLG_MSG_DEFINE 1
 #endif
 
@@ -106,7 +112,7 @@ LLG_MSG_API _Noreturn void llg_msg_abort(llg_msg_id_t id, const char* fmt, ...);
 // The one report of a failed allocation, for every runtime unit and the
 // generated model: fatal message SIM-031 naming what the memory was for (and
 // `count` elements of `size` bytes when `count` is not 0), then abort.
-LLG_MSG_API _Noreturn void llg_msg_abort_allocation(const char* what, size_t count, size_t size);
+LLG_MSG_INTERNAL_API _Noreturn void llg_msg_abort_allocation(const char* what, size_t count, size_t size);
 // The end-of-run summary text for `counts` from the layout's SUMMARY template.
 LLG_MSG_API void llg_msg_summary_text(llg_report_t* out, const uint64_t counts[4]);
 
@@ -386,7 +392,7 @@ LLG_MSG_API _Noreturn void llg_msg_abort(llg_msg_id_t id, const char* fmt, ...) 
     abort();
 }
 
-LLG_MSG_API _Noreturn void llg_msg_abort_allocation(const char* what, size_t count, size_t size) {
+LLG_MSG_INTERNAL_API _Noreturn void llg_msg_abort_allocation(const char* what, size_t count, size_t size) {
     if (count == 0) llg_msg_abort(LLG_MSG_ALLOCATION, "cannot allocate memory for %s", what);
     llg_msg_abort(LLG_MSG_ALLOCATION, "cannot allocate %zu element(s) of %zu byte(s) for %s",
                   count, size, what);

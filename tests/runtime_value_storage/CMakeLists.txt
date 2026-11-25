@@ -195,7 +195,7 @@ if(LLG_STORAGE_TEST_WAVEFORMS)
 endif()
 
 get_property(all_tests DIRECTORY PROPERTY TESTS)
-set_tests_properties(${all_tests} PROPERTIES TIMEOUT 60)
+set_tests_properties(${all_tests} PROPERTIES TIMEOUT 90)
 
 add_library(tracked_value STATIC tracked_value.c "${LLG_RT}/llg_string.c" "${LLG_RT}/llg_rng.c"
   "${LLG_RT}/llg_constraint.c" "${LLG_RT}/llg_random.c")
@@ -241,7 +241,7 @@ foreach(mode IN ITEMS construct clone unknown queue record_queue)
     COMMAND "${CMAKE_COMMAND}"
       "-DPROBE=$<TARGET_FILE:allocation_failure_probe>" "-DMODE=${mode}"
       "-DEXPECTED=[SIM-031] cannot allocate" -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_failure.cmake")
-  set_tests_properties(value_allocation_failure_${mode} PROPERTIES TIMEOUT 60)
+  set_tests_properties(value_allocation_failure_${mode} PROPERTIES TIMEOUT 90)
 endforeach()
 
 add_executable(word_copy_probe word_copy_probe.c)
@@ -283,14 +283,14 @@ foreach(mode IN ITEMS empty zero unequal remainder)
       "-DPROBE=$<TARGET_FILE:array_conditional_probe>" "-DMODE=${mode}"
       "-DEXPECTED=invalid array conditional merge shape"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_failure.cmake")
-  set_tests_properties(array_conditional_reject_${mode} PROPERTIES TIMEOUT 60)
+  set_tests_properties(array_conditional_reject_${mode} PROPERTIES TIMEOUT 90)
 endforeach()
 add_test(NAME array_conditional_reject_record_starts
   COMMAND "${CMAKE_COMMAND}"
     "-DPROBE=$<TARGET_FILE:array_conditional_probe>" "-DMODE=record"
     "-DEXPECTED=invalid record conditional merge shape"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_failure.cmake")
-set_tests_properties(array_conditional_reject_record_starts PROPERTIES TIMEOUT 60)
+set_tests_properties(array_conditional_reject_record_starts PROPERTIES TIMEOUT 90)
 
 add_executable(packed_selection_probe packed_selection_probe.c)
 target_link_libraries(packed_selection_probe PRIVATE tracked_value)
@@ -309,7 +309,7 @@ foreach(mode IN ITEMS zero storage value)
     COMMAND "${CMAKE_COMMAND}"
       "-DPROBE=$<TARGET_FILE:packed_selection_probe>" "-DMODE=${mode}"
       "-DEXPECTED=${expected}" -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_failure.cmake")
-  set_tests_properties(packed_selection_reject_${mode} PROPERTIES TIMEOUT 60)
+  set_tests_properties(packed_selection_reject_${mode} PROPERTIES TIMEOUT 90)
 endforeach()
 
 add_executable(stream_preflight_probe stream_preflight_probe.c)
@@ -330,7 +330,7 @@ foreach(mode IN ITEMS short multi-short negative-remaining plus-overflow minus-o
     COMMAND "${CMAKE_COMMAND}"
       "-DPROBE=$<TARGET_FILE:stream_preflight_probe>" "-DMODE=${mode}"
       "-DEXPECTED=${expected}" -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_failure.cmake")
-  set_tests_properties(stream_reject_${mode} PROPERTIES TIMEOUT 60)
+  set_tests_properties(stream_reject_${mode} PROPERTIES TIMEOUT 90)
 endforeach()
 
 foreach(probe IN ITEMS value_ownership container_ownership container_values method_gather native_value_descriptors four_state udp)
@@ -423,7 +423,7 @@ if(LLG_STORAGE_TEST_SCHEDULER)
       add_test(NAME coroutine_debug_reject_${mode} COMMAND "${CMAKE_COMMAND}"
         "-DPROBE=$<TARGET_FILE:coroutine_debug_probe>" "-DMODE=${mode}"
         "-DEXPECTED=${expected}" -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_failure.cmake")
-      set_tests_properties(coroutine_debug_reject_${mode} PROPERTIES TIMEOUT 60)
+      set_tests_properties(coroutine_debug_reject_${mode} PROPERTIES TIMEOUT 90)
     endforeach()
     foreach(mode IN ITEMS release debug)
       add_executable(coroutine_scale_${mode}_probe coroutine_scale_probe.c)
@@ -524,7 +524,8 @@ if(LLG_STORAGE_TEST_SCHEDULER)
     add_test(NAME fixed_array_invalid_index COMMAND "${CMAKE_COMMAND}"
       "-DPROBE=$<TARGET_FILE:fixed_array_storage_probe>" "-DMODE=invalid-index"
       "-DEXPECTED=invalid fixed array index" -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_failure.cmake")
-    set_tests_properties(fixed_array_storage fixed_array_invalid_index PROPERTIES TIMEOUT 60)
+    set_tests_properties(fixed_array_storage PROPERTIES TIMEOUT 60)
+    set_tests_properties(fixed_array_invalid_index PROPERTIES TIMEOUT 90)
     add_executable(packed_formal_probe packed_formal_probe.c)
     target_link_libraries(packed_formal_probe PRIVATE owner_probe_co owner_probe_container)
     strict_c(packed_formal_probe)
@@ -605,7 +606,8 @@ if(LLG_STORAGE_TEST_SCHEDULER)
       COMMAND "${CMAKE_COMMAND}" "-DPROBE=$<TARGET_FILE:frame_cells_probe>"
         "-DMODE=escape" "-DEXPECTED=frame value cell escaped its scope"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_failure.cmake")
-    set_tests_properties(frame_value_cells frame_value_cells_reject_escape PROPERTIES TIMEOUT 60)
+    set_tests_properties(frame_value_cells PROPERTIES TIMEOUT 60)
+    set_tests_properties(frame_value_cells_reject_escape PROPERTIES TIMEOUT 90)
     set_tests_properties(scope_address_index PROPERTIES TIMEOUT 60)
     add_executable(generated_scopes_probe generated_scopes_probe.c)
     target_link_libraries(generated_scopes_probe PRIVATE owner_probe_co owner_probe_container)

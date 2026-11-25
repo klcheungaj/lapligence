@@ -108,6 +108,30 @@ impl<'a> Codegen<'a> {
         all_slots.insert(class, slots);
     }
 
+    /// Index the methods of every virtual slot, in class order, once all
+    /// slots are assigned.
+    pub(super) fn index_virtual_methods(&mut self) {
+        for class in self.db.classes() {
+            for method in self.class_method_nodes(*class) {
+                if let Some(slot) = self.method_virtual_slots.get(&method) {
+                    self.virtual_slot_methods
+                        .entry(*slot)
+                        .or_default()
+                        .push((method, *class));
+                }
+            }
+        }
+    }
+
+    /// The methods that a virtual call of `method` may run, with their
+    /// classes; empty when the method is not virtual.
+    pub(in super::super) fn virtual_family(&self, method: NodeId) -> &[(NodeId, NodeId)] {
+        self.method_virtual_slots
+            .get(&method)
+            .and_then(|slot| self.virtual_slot_methods.get(slot))
+            .map_or(&[], Vec::as_slice)
+    }
+
     pub(in super::super) fn emit_class_func_prototypes(&mut self) -> Result<(), String> {
         for class in self.db.classes().to_vec() {
             self.emit_func_prototypes(class)?;

@@ -253,7 +253,7 @@ LLG_OUTLYING static void g4_gmp_free(void* memory, size_t bytes) {
 }
 #endif
 
-LLG_OUTLYING void llg_gmp_sv4_kernel_start(void) {
+LLG_INTERNAL LLG_OUTLYING void llg_gmp_sv4_kernel_start(void) {
 #if LLG_SV4_GMP_KERNELS
     __gmp_allocate_func = g4_gmp_allocate;
     __gmp_reallocate_func = g4_gmp_reallocate;

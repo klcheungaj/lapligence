@@ -418,15 +418,12 @@ impl Check<'_, '_, '_> {
             || callee.is_inline_expanded()
             || self.frame.coroutine_functions.contains(&function)
             || *self.may_disable.entry(function).or_insert_with(|| {
-                crate::sim::execution::effects_for_function(model, function)
-                    .iter()
-                    .any(|effect| {
-                        matches!(
-                            effect,
-                            crate::sim::execution::ExecutionEffect::Disable
-                                | crate::sim::execution::ExecutionEffect::Suspend
-                        )
-                    })
+                [
+                    crate::sim::execution::ExecutionEffect::Disable,
+                    crate::sim::execution::ExecutionEffect::Suspend,
+                ]
+                .into_iter()
+                .any(|effect| crate::sim::execution::function_has_effect(model, function, effect))
             })
         {
             self.reject();

@@ -428,6 +428,7 @@ fn alias_visible_lifecycle(table: &str, initialize: &mut String, destroy: &mut S
 
 pub(in crate::sim::emit_c) fn storage_lifecycle(
     model: &IrModel,
+    dispatch: &VirtualDispatch,
     constants: &super::super::super::constants::PackedConstants,
     backend: crate::sim::value_backend::ValueBackend,
     evaluators: &HashMap<String, (String, String)>,
@@ -835,12 +836,14 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
             IrInitStep::StaticScopeLeave => scope_location = None,
             _ => {}
         }
-        initialization_step(&mut frame, step).map_err(|error| match (step, scope_location) {
-            (IrInitStep::Initialize(initialization), _) => {
-                locate_at_origin(initialization.origin(), error)
+        initialization_step(&mut frame, dispatch, step).map_err(|error| {
+            match (step, scope_location) {
+                (IrInitStep::Initialize(initialization), _) => {
+                    locate_at_origin(initialization.origin(), error)
+                }
+                (_, Some(location)) => locate_at(location, error),
+                (_, None) => error,
             }
-            (_, Some(location)) => locate_at(location, error),
-            (_, None) => error,
         })?;
     }
     for object in &model.objects {
@@ -925,7 +928,11 @@ fn set_initial(frame: &mut Frame<'_, '_>, target: Binding, value: Value) {
     frame.discard(value);
 }
 
-fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(), String> {
+fn initialization_step(
+    frame: &mut Frame<'_, '_>,
+    dispatch: &VirtualDispatch,
+    step: &IrInitStep,
+) -> Result<(), String> {
     let model = frame.ctx.model;
     match step {
         IrInitStep::FillArrayX(index) | IrInitStep::FillArrayZ(index) => {
@@ -1095,8 +1102,12 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
         } => {
             // The model initialization frame is an ordinary C function, not
             // a coroutine, so a suspending body cannot be represented here.
-            if crate::sim::execution::effects_for_initializer(model, std::slice::from_ref(body))
-                .contains(&crate::sim::execution::ExecutionEffect::Suspend)
+            if crate::sim::execution::effects_for_initializer(
+                model,
+                dispatch,
+                std::slice::from_ref(body),
+            )
+            .contains(&crate::sim::execution::ExecutionEffect::Suspend)
             {
                 return Err("static declaration initializer cannot suspend".to_owned());
             }

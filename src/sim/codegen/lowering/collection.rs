@@ -36,7 +36,9 @@ mod fixed_patterns;
 mod fixed_projections;
 mod fixed_transport;
 mod fixed_values;
-pub(super) use fixed_values::fixed_path_descriptor;
+pub(super) use fixed_values::{
+    element_descriptor, fixed_path_descriptor, image_path_descriptor, image_width,
+};
 mod function_bodies;
 mod gates;
 mod initialization;

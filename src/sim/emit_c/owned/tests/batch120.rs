@@ -316,6 +316,7 @@ fn alias_lifecycle_initializes_visible_owners_and_resets_bindings() {
     let mut source = String::new();
     model::storage_lifecycle(
         &model,
+        &crate::sim::ir::VirtualDispatch::new(&model),
         &super::super::super::constants::PackedConstants::default(),
         crate::sim::value_backend::ValueBackend::Legacy,
         &std::collections::HashMap::new(),

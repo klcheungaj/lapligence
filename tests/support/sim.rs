@@ -18,7 +18,7 @@ static CWD_LOCK: Mutex<()> = Mutex::new(());
 thread_local! {
     static CWD_DEPTH: Cell<usize> = const { Cell::new(0) };
 }
-const MODEL_TIMEOUT: Duration = Duration::from_secs(60);
+pub(crate) const MODEL_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Job count for `cmake --build --parallel` in tests that run plain `cmake`
 /// commands instead of `sim::build`: `$CMAKE_BUILD_PARALLEL_LEVEL` when set,

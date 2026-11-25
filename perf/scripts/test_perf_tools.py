@@ -164,7 +164,7 @@ class CompileTimeTests(unittest.TestCase):
         designs = compile_time.design_catalog()
         smoke = compile_time.designs_in_set(designs, "smoke")
         ladder = compile_time.designs_in_set(designs, "ladder")
-        self.assertEqual(sorted(smoke), ["pca-512", "tasks-16"])
+        self.assertEqual(sorted(smoke), ["sites-512", "tasks-16"])
         self.assertTrue(set(smoke) < set(ladder) < set(compile_time.designs_in_set(designs, "large")))
         for design in designs.values():
             self.assertTrue((compile_time.CORPUS_DIR / design.file).is_file())

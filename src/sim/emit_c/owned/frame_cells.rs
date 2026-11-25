@@ -139,10 +139,13 @@ impl CellEligibility {
         // Foreign/dynamic dispatch can retain addresses through unrepresented
         // callbacks. Effects also reject spawning callees: no descendant may
         // borrow a caller cell after the ordinary call has returned.
-        let effects = crate::sim::execution::effects_for_statements(ctx.model, &callee.body);
         if dynamic
             || callee.dpi.is_some()
-            || effects.contains(&crate::sim::execution::ExecutionEffect::Spawn)
+            || crate::sim::execution::statements_have_effect(
+                ctx.model,
+                &callee.body,
+                crate::sim::execution::ExecutionEffect::Spawn,
+            )
         {
             self.proven = false;
         }
