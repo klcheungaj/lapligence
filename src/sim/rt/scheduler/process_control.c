@@ -173,8 +173,8 @@ static void reap_retired_procs(void) {
 // Retire a completed top-level process (static, assertion action or detached
 // spawn) once no runtime structure can reach its record or root frame, so
 // repeatedly spawned processes do not accumulate until teardown. Fork children
-// are reclaimed with their zombie groups, and final procedures run on a
-// caller-owned record that never reaches this path. A completed process is
+// are reclaimed with their zombie groups, and the runner of the final
+// procedures frees their records itself. A completed process is
 // never killed, so its same-slot NBAs need no cancellable owner list and
 // commit from their region queues alone. Live join_none groups may still use
 // the parent; fork_group_unlink retries when the last one detaches.

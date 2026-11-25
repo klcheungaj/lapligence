@@ -910,6 +910,25 @@ impl<'a> CallVisits<'a> {
     }
 }
 
+/// Whether a statement may run a callback of a VPI application before its
+/// process continues (`cbForce` and `cbRelease`, an error or assertion
+/// callback, the thread callbacks of a fork). The callback may end the run
+/// with `vpi_control(vpiFinish)`, and the process must not go on then
+/// (38.4, S43-D8). The value change callbacks of a plain assignment are not
+/// included: see `docs/known_issues.md`.
+fn runs_application_callbacks(statement: &IrStmt) -> bool {
+    matches!(
+        statement,
+        IrStmt::Force { .. }
+            | IrStmt::Release { .. }
+            | IrStmt::Severity { .. }
+            | IrStmt::ImmediateAssertion { .. }
+            | IrStmt::Fork { .. }
+            | IrStmt::CapturedFork { .. }
+            | IrStmt::DisableFork
+    )
+}
+
 fn collect_effects(
     ir: &IrModel,
     statements: &[IrStmt],
@@ -1204,6 +1223,9 @@ fn collect_effects(
             | IrStmt::For { .. }
             | IrStmt::Forever { .. } => effects.push(ExecutionEffect::Terminate),
             _ => {}
+        }
+        if ir.vpi_catalog && runs_application_callbacks(statement) {
+            effects.push(ExecutionEffect::Terminate);
         }
         collect_statement_expression_effects(ir, statement, effects, visited_calls);
         match statement {
