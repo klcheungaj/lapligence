@@ -37,10 +37,12 @@ static llg_nba_t* new_nba_in_region(uint64_t ticks, llg_region_t region) {
     return n;
 }
 
+static llg_region_t nba_region(void) {
+    return region_is_reactive(g.current_region) ? LLG_REGION_RE_NBA : LLG_REGION_NBA;
+}
+
 static llg_nba_t* new_nba(uint64_t ticks) {
-    return new_nba_in_region(
-        ticks,
-        region_is_reactive(g.current_region) ? LLG_REGION_RE_NBA : LLG_REGION_NBA);
+    return new_nba_in_region(ticks, nba_region());
 }
 
 static llg_nba_t* new_clocking_nba(uint64_t ticks) {
@@ -426,17 +428,24 @@ void llg_clocking_nba_d_sync_after(double* target, double value, uint64_t ticks,
     clocking_drive_schedule(&drive, cycles, specs, n_specs);
 }
 
-void llg_nba_event_after(llg_event_t* ev, uint64_t ticks) {
-    if (!ev || !ev->object) return;
+// A trigger of `target` in the NBA region `ticks` from now.
+static llg_nba_t* nba_event_queue(llg_event_object_t* target, uint64_t ticks) {
     llg_nba_t* n = new_nba(ticks);
-    if (!n) return;
-    n->event_target = ev->object;
+    if (!n) return NULL;
+    n->event_target = target;
     n->is_event = 1;
     enqueue_nba(n);
+    return n;
+}
+
+void llg_nba_event_after(llg_event_t* ev, uint64_t ticks) {
+    if (!ev || !ev->object) return;
+    llg_nba_t* n = nba_event_queue(ev->object, ticks);
+    if (n) nba_bind(n);
 }
 
 void llg_nba_event(llg_event_t* ev) {
-    llg_nba_event_after(ev, 0);
+    if (ev && ev->object) nba_event_queue(ev->object, 0);
 }
 
 void llg_nba(sv4_t* target, sv4_t value) {

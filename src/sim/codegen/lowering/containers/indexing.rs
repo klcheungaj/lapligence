@@ -564,10 +564,7 @@ impl<'a> Codegen<'a> {
     /// names, whatever the receiver (SV 8.8).
     fn static_property_container(&self, refs: &[Option<NodeId>]) -> Option<ContainerInfo> {
         let property = refs.last().copied().flatten()?;
-        let class = self.node(property).parent?;
-        if !self.class_nodes.contains_key(&class)
-            || self.db.variable_lifetime(property) != VariableLifetime::Static
-        {
+        if !self.is_static_property(property) {
             return None;
         }
         self.container_globals

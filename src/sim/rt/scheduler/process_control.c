@@ -42,8 +42,9 @@ static llg_proc_t* process_handle_live(const llg_process_handle_t* handle) {
 }
 
 // Holding descendants (SV 9.6.3, 9.7): a finished process whose fork groups
-// or held groups still contain live descendants stays reachable, so kill and
-// disable fork of an ancestor, and kill() through its handle, reach them.
+// or held groups still contain live descendants or bound updates
+// (bound_updates.c) stays reachable, so kill, disable and disable fork of an
+// ancestor, and kill() through its handle, reach them.
 // Its handle stays linked (process_handle_terminal); as a fork child it
 // counts in its group's `holding`, and a group that ends with a nonzero
 // count moves to the parent's `held_groups` instead of the zombie list.
@@ -56,6 +57,12 @@ static int32_t proc_tree_unlink_handle(llg_proc_t* proc) {
     handle->proc = NULL;
     llg_process_release(handle);
     return 1;
+}
+
+static void held_group_link(llg_fork_group_t* grp) {
+    grp->next_g = grp->parent->held_groups;
+    if (grp->next_g) grp->next_g->prev_g = grp;
+    grp->parent->held_groups = grp;
 }
 
 static void held_group_unlink(llg_fork_group_t* grp) {
@@ -89,7 +96,8 @@ static void release_killed_proc_resources(llg_proc_t* proc) {
 }
 
 // Unlink a suspended or queued proc from every scheduler queue and retire its
-// storage. The updates it has scheduled commit (S09-D8). A named disable may
+// storage. Of the updates it has scheduled, those bound to it are gone
+// (llg_kill_proc_groups) and the others commit (S09-D8). A named disable may
 // cancel the executing coroutine; its destruction is deferred until the
 // scheduler resumes.
 static void llg_kill_proc(llg_proc_t* p, int32_t notify_parent) {
@@ -213,11 +221,16 @@ static void proc_tree_released(llg_proc_t* p) {
     }
 }
 
-// Kill every child of the groups in list `grp` (and its descendants); the
-// group structs go onto the zombie list.
+// Kill every child of the groups in list `grp` (and its descendants) and drop
+// the updates bound to the process; the group structs go onto the zombie list.
 static void llg_kill_group_list(llg_fork_group_t* grp) {
     while (grp) {
         llg_fork_group_t* next_g = grp->next_g;
+        if (grp->join_kind == LLG_JOIN_UPDATE) {
+            bound_update_drop(grp);
+            grp = next_g;
+            continue;
+        }
         llg_fork_child_t* c = grp->children;
         while (c) {
             llg_fork_child_t* next_c = c->next;
@@ -238,7 +251,7 @@ static void llg_kill_group_list(llg_fork_group_t* grp) {
 
 // Kill every descendant of `p` (SV 9.6.3, 9.7): the children of its live
 // groups and of the ended groups it holds for finished children with live
-// descendants. `p` itself is untouched — used by disable_fork, which kills
+// descendants, and its bound updates. `p` itself is untouched — used by disable_fork, which kills
 // only descendants. A killed `p` has none left, and its held-list slot may
 // already link the retired list.
 static void llg_kill_proc_groups(llg_proc_t* p) {
@@ -259,6 +272,17 @@ static void llg_kill_proc_tree(llg_proc_t* p) {
 static void llg_kill_proc_tree_internal(llg_proc_t* p, int32_t notify_parent) {
     llg_kill_proc_groups(p);
     llg_kill_proc(p, notify_parent);
+}
+
+// End `p`, or the subprocesses a finished `p` left running: it stays FINISHED
+// (SV 9.7).
+static void process_end_tree(llg_proc_t* p) {
+    if (p->completed) {
+        llg_kill_proc_groups(p);
+        proc_tree_released(p);
+    } else {
+        llg_kill_proc_tree(p);
+    }
 }
 
 // Calling a process method through a null handle is a null object access
@@ -401,15 +425,7 @@ void llg_process_kill(llg_proc_t* self, llg_process_handle_t* handle) {
     if (handle->status == LLG_PROCESS_RUNNING && !process_handle_live(handle))
         handle->status = LLG_PROCESS_KILLED;
     if (!handle->proc || !region_can_mutate("process control")) return;
-    llg_proc_t* target = handle->proc;
-    if (target->completed) {
-        // SV 9.7: kill() ends the subprocesses a finished process left
-        // running; the process itself stays FINISHED.
-        llg_kill_proc_groups(target);
-        proc_tree_released(target);
-    } else {
-        llg_kill_proc_tree(target);
-    }
+    process_end_tree(handle->proc);
     service_program_completions();
     reap_retired_procs();
     if (self && self->killed)

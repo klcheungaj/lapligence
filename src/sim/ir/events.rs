@@ -111,6 +111,10 @@ pub enum IrJoinKind {
     /// never observe it. Only [`IrStmt::CapturedFork`] uses it, and the
     /// issuing process does not suspend.
     Detached,
+    /// The same, but the process ends with its issuer like a descendant that
+    /// `wait fork` does not wait for (`llg_spawn_bound_with_frame`, decision
+    /// S09-D8).
+    Bound,
 }
 
 impl IrJoinKind {

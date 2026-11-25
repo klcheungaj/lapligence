@@ -195,6 +195,8 @@ pub(super) struct Frame<'a, 'm> {
     return_publishes: bool,
     allow_calls: bool,
     read_only_callback: bool,
+    /// Between `IrContainerStmt::NbaBindOpen` and `NbaBindClose`.
+    nba_bound: bool,
     /// A `$strobe`/`$monitor` evaluator, run only in the read-only Postponed
     /// region. A user VPI function may run there: the runtime rejects its
     /// design-state writes (vpi_put_value in a read-only region), so it can
@@ -538,6 +540,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             return_publishes: false,
             allow_calls: true,
             read_only_callback: false,
+            nba_bound: false,
             branch_formals: None,
             postponed_reader: false,
             deferred_action: false,

@@ -40,6 +40,63 @@ impl Codegen<'_> {
         }
     }
 
+    /// Whether `node` is a class handle (also of a built-in class) or a fixed
+    /// array of them.
+    pub(in super::super) fn holds_class_handles(&self, node: NodeId) -> bool {
+        let mut descriptor = self.query_descriptor(node);
+        while let Some(TypeDescriptor {
+            shape: TypeShape::FixedArray { element, .. },
+            ..
+        }) = descriptor
+        {
+            descriptor = Some(element);
+        }
+        descriptor
+            .is_some_and(|ty| matches!(&ty.shape, TypeShape::Opaque { kind } if kind == "Class"))
+    }
+
+    /// Whether a write to `destination` writes a static class property or a
+    /// part of one, named by its class or through an object. A member of an
+    /// interface a static virtual interface property names is not one.
+    pub(in super::super) fn writes_static_property(&self, destination: NodeId) -> bool {
+        let mut node = destination;
+        loop {
+            match self.kind(node) {
+                NodeKind::Expr(
+                    ExprKind::BitSelect { base, .. }
+                    | ExprKind::PartSelect { base, .. }
+                    | ExprKind::IndexedPartSelect { base, .. }
+                    | ExprKind::ArraySelect { base, .. }
+                    | ExprKind::MemberSelect { base, .. },
+                ) => node = *base,
+                NodeKind::Expr(ExprKind::Ref { target }) => {
+                    return target.is_some_and(|target| self.is_static_property(target))
+                }
+                NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+                    let mut later = refs.iter().rev().flatten().copied();
+                    let property = later.find(|target| self.is_class_property(*target));
+                    return property.is_some_and(|property| {
+                        let last = refs.iter().rev().flatten().next() == Some(&property);
+                        self.is_static_property(property)
+                            && (last
+                                || !matches!(self.kind(property), NodeKind::Var { ty } if ty.kind == "virtual_interface"))
+                    });
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    fn is_class_property(&self, node: NodeId) -> bool {
+        self.node(node)
+            .parent
+            .is_some_and(|class| self.class_nodes.contains_key(&class))
+    }
+
+    pub(in super::super) fn is_static_property(&self, node: NodeId) -> bool {
+        self.is_class_property(node) && self.db.variable_lifetime(node) == VariableLifetime::Static
+    }
+
     /// The instance record property with string, real or handle members
     /// that a member path writes when it is the last property on the path
     /// (`c.r`, `c.r.s`, `c.r.arr[1]`); [`Self::class_field_target`] leaves it

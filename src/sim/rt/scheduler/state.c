@@ -713,6 +713,9 @@ static void clocking_drive_event_match(llg_event_object_t* event);
 // target is submitted to the ordinary NBA queue.
 typedef struct llg_deferred_trigger {
     struct llg_deferred_trigger* next;
+    struct llg_deferred_trigger* prev;
+    // Binding of an event trigger to its issuer (S09-D8), or NULL.
+    llg_bound_update_t* bound;
     llg_event_object_t* target;
     llg_event_assignment_fn action;
     llg_frame_t* action_frame;
@@ -777,6 +780,7 @@ typedef struct {
     uint64_t nba_sequence;
     // Destination of the next NBA, set by llg_nba_locate_*.
     struct llg_nba_locator* nba_locator;
+    uint64_t nba_bind_mark; // updates from this sequence on are bound (llg_nba_bind_end)
     llg_wait_t* timed_head;   // sorted ascending by time
     llg_wait_queue_t zero_waits[LLG_REGION_COUNT];
     llg_wait_t* waiters;      // all active waits

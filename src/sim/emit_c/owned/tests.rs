@@ -586,5 +586,6 @@ fn event_array_indices_are_owned_and_invalid_handles_are_inert() {
 }
 
 mod batch120;
+mod bound_updates;
 
 mod udp;

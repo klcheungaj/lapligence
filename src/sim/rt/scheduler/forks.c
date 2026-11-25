@@ -45,12 +45,14 @@ static void llg_fork_group_child_done(llg_fork_group_t* grp) {
         // so wait_fork still works. A group whose finished children still
         // hold live descendants is held instead (see "Holding descendants" in
         // process_control.c).
-        fork_group_detach(grp);
-        if (grp->holding) {
-            grp->next_g = parent->held_groups;
-            if (grp->next_g) grp->next_g->prev_g = grp;
-            parent->held_groups = grp;
-        } else {
+        // A bound process's group is in the held list already.
+        if (grp->join_kind != LLG_JOIN_BOUND) {
+            fork_group_detach(grp);
+            if (grp->holding) held_group_link(grp);
+        } else if (!grp->holding) {
+            held_group_unlink(grp);
+        }
+        if (!grp->holding) {
             grp->next_g = g.zombie_groups;
             g.zombie_groups = grp;
         }
@@ -300,13 +302,13 @@ void llg_program_exit(llg_proc_t* self) {
         for (int32_t i = 0; i < g.n_procs; i++) {
             llg_proc_t* proc = g.all_procs[i];
             if (proc && proc->program == origin && !proc->killed &&
-                !proc->completed) {
+                (!proc->completed || proc->held_groups)) {
                 victim = proc;
                 break;
             }
         }
         if (!victim) break;
-        llg_kill_proc_tree(victim);
+        process_end_tree(victim);
     }
     service_program_completions();
     reap_retired_procs();
@@ -338,7 +340,13 @@ static llg_fork_group_t* fork_group_of_target(llg_fork_group_t* grp,
 
 static void llg_kill_named_group(llg_fork_group_t* grp) {
     llg_proc_t* parent = grp->parent;
-    int32_t held = grp->terminal;
+    if (grp->join_kind == LLG_JOIN_UPDATE) {
+        held_group_unlink(grp);
+        bound_update_drop(grp);
+        proc_tree_released(parent);
+        return;
+    }
+    int32_t held = grp->terminal || grp->join_kind == LLG_JOIN_BOUND;
     llg_fork_child_t* child = grp->children;
     while (child) {
         if (child->proc) {

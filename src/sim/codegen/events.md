@@ -86,8 +86,9 @@ reads the bound instance's slot, so every member read, write, wait, drive and
 method call through the path (`v.tx.x`) uses the nested instance's
 descriptor; a null handle is the same failure, reported quietly for a wait's
 receiver. `->>` captures delay at issue and queues NBA;
-event/repeat timing uses an independent detached waiter, whose final trigger is
-still NBA. Every repeat count (loop, intra-assignment, `->>`) goes through
+event/repeat timing uses an independent waiter, whose final trigger is still
+NBA and which, unlike the waiter of an assignment, ends with its issuer
+(decision S09-D8). `update_ends_with_issuer` names the assignments that do too. Every repeat count (loop, intra-assignment, `->>`) goes through
 `lower_repeat_count`: real counts convert by rounding (SV 6.12.2) and the
 runtime's `sv4_repeat_count` maps X/Z and nonpositive signed counts to zero.
 Blocking delay and event intra-assignment timing share

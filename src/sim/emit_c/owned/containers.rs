@@ -375,6 +375,10 @@ impl Frame<'_, '_> {
         &mut self,
         operation: &IrContainerStmt,
     ) -> Result<(), String> {
+        if let IrContainerStmt::NbaBindOpen | IrContainerStmt::NbaBindClose = operation {
+            self.nba_bound = matches!(operation, IrContainerStmt::NbaBindOpen);
+            return Ok(());
+        }
         if let IrContainerStmt::Declare(container) = operation {
             if !self.ctx.model.containers[*container].activation {
                 return Err("only activation containers are declared lexically".to_owned());
@@ -443,7 +447,12 @@ impl Frame<'_, '_> {
         let mut values = Vec::new();
         let mut strings = Vec::new();
         let code = statements::render(self, operation, &mut values, &mut strings)?;
-        self.line(code);
+        match operation {
+            IrContainerStmt::Nonblocking { .. }
+            | IrContainerStmt::ContainerNonblocking { .. }
+            | IrContainerStmt::RealColumnAssign { nba: true, .. } => self.queue_update(code),
+            _ => self.line(code),
+        }
         for value in values {
             self.discard(value);
         }

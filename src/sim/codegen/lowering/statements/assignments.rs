@@ -769,6 +769,31 @@ impl EmitCtx<'_, '_> {
         })
     }
 
+    /// Whether the update of nonblocking assignment `h` ends with the process
+    /// that issues it (decision S09-D8): a destination is a class handle, also
+    /// a whole array of them, or a static class property.
+    pub(super) fn update_ends_with_issuer(&self, h: NodeId) -> bool {
+        let mut pending = self
+            .cg
+            .node(h)
+            .children
+            .first()
+            .copied()
+            .into_iter()
+            .collect::<Vec<_>>();
+        while let Some(destination) = pending.pop() {
+            if let NodeKind::Expr(ExprKind::Operation { operands, .. }) = self.cg.kind(destination)
+            {
+                pending.extend(operands.iter().copied());
+            } else if self.cg.writes_static_property(destination)
+                || self.cg.holds_class_handles(destination)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Capture a delayed assignment's RHS immediately. Blocking assignments
     /// suspend; nonblocking assignments enqueue a future NBA and continue.
     /// Reject a nonblocking write to an instance class property. SV 6.21:
@@ -1486,15 +1511,17 @@ impl EmitCtx<'_, '_> {
             captures,
             action,
             "event_nba",
+            IrJoinKind::Detached,
         )?])
     }
 
     /// Arm a process-evaluated event control in the issuing process and
-    /// return the statement that spawns the detached process which waits for
-    /// it (repeated `count` times) and then runs `action`. `captures` already
-    /// holds the issue-time values `action` reads; the repeat count and the
-    /// armed event state are appended. The detached process sees only module,
-    /// package and static storage plus its captured frame.
+    /// return the statement that spawns the `join_kind` (detached or bound)
+    /// process which waits for it (repeated `count` times) and then runs
+    /// `action`. `captures` already holds the issue-time values `action`
+    /// reads; the repeat count and the armed event state are appended. The
+    /// process sees only module, package and static storage plus its captured
+    /// frame.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn spawn_process_evaluated_action(
         &mut self,
@@ -1505,6 +1532,7 @@ impl EmitCtx<'_, '_> {
         mut captures: Vec<IrCapture>,
         action: Vec<IrStmt>,
         kind: &str,
+        join_kind: IrJoinKind,
     ) -> Result<IrStmt, String> {
         fn expressions(spec: &EventSpec, out: &mut Vec<NodeId>) {
             match spec {
@@ -1562,7 +1590,7 @@ impl EmitCtx<'_, '_> {
             body,
         });
         Ok(IrStmt::CapturedFork {
-            join_kind: IrJoinKind::Detached,
+            join_kind,
             branches: vec![IrCapturedBranch::new(name, label, frame, captures)],
             target: None,
         })
@@ -1677,6 +1705,7 @@ impl EmitCtx<'_, '_> {
             vec![IrCapture::new(storage, initial)],
             vec![write],
             "event_native_nba",
+            IrJoinKind::Detached,
         )?;
         Ok(vec![IrStmt::Block(vec![declare, spawn])])
     }

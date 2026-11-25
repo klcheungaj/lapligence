@@ -697,7 +697,11 @@ impl Frame<'_, '_> {
             }
         }
         let join_kind = kind;
-        if join_kind == IrJoinKind::Detached {
+        if matches!(join_kind, IrJoinKind::Detached | IrJoinKind::Bound) {
+            let spawn = match join_kind {
+                IrJoinKind::Bound => "llg_spawn_bound_with_frame",
+                _ => "llg_spawn_detached_with_frame",
+            };
             if target.is_some() {
                 return Err("a detached process has no disable target".to_owned());
             }
@@ -705,7 +709,7 @@ impl Frame<'_, '_> {
                 let frame = self.name("capture_frame");
                 let frame = self.publish_captures(&frame, values);
                 self.line(format!(
-                    "llg_spawn_detached_with_frame(&{}_desc, {}, {frame});",
+                    "{spawn}(&{}_desc, {}, {frame});",
                     branch.c_name(),
                     c_string_literal(branch.label())
                 ));
@@ -717,7 +721,9 @@ impl Frame<'_, '_> {
             IrJoinKind::Join => "LLG_JOIN",
             IrJoinKind::Any => "LLG_JOIN_ANY",
             IrJoinKind::None => "LLG_JOIN_NONE",
-            IrJoinKind::Detached => unreachable!("detached spawns returned above"),
+            IrJoinKind::Detached | IrJoinKind::Bound => {
+                unreachable!("detached spawns returned above")
+            }
         };
         let group = self.fork_group(kind, target);
         for (branch, values) in branches.iter().zip(prepared) {

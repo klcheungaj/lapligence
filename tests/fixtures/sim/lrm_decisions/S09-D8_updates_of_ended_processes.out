@@ -1,18 +1,57 @@
-returns      v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1 v5=0
-             v5=5 ve=6 after=1
-kill         v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1 v5=0
-             v5=5 ve=6 after=0
-kills itself v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1 v5=0
-             v5=5 ve=6 after=0
-disable fork v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1 v5=0
-             v5=5 ve=6 after=0
-grandchild   v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1 v5=0
-             v5=5 ve=6 after=0
-block        v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1 v5=0
-             v5=5 ve=6 after=0
-fork block   v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1 v5=0
-             v5=5 ve=6 after=0
-task         v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1 v5=0
-             v5=5 ve=6 after=0
-own block    v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1 v5=0
-             v5=5 ve=6 after=0
+returns        v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1
+               v5=5 ve=6 after=1
+               e0=1 e5=1 ec=1 er=1 en=1 h=111 static=4,1,2.5,9,8
+kill           v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1
+               v5=5 ve=6 after=0
+               e0=0 e5=0 ec=0 er=0 en=0 h=000 static=0,0,0.0,0,0
+kill, later    v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1
+               v5=5 ve=6 after=1
+               e0=1 e5=0 ec=0 er=0 en=1 h=111 static=4,1,2.5,9,8
+kills itself   v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1
+               v5=5 ve=6 after=0
+               e0=0 e5=0 ec=0 er=0 en=0 h=000 static=0,0,0.0,0,0
+finished       v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1
+               v5=5 ve=6 after=0
+               e0=0 e5=0 ec=0 er=0 en=0 h=000 static=0,0,0.0,0,0
+finished, later v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1
+               v5=5 ve=6 after=0
+               e0=1 e5=0 ec=0 er=0 en=1 h=111 static=4,1,2.5,9,8
+parent         v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1
+               v5=5 ve=6 after=0
+               e0=0 e5=0 ec=0 er=0 en=0 h=000 static=0,0,0.0,0,0
+disable fork   v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1
+               v5=5 ve=6 after=0
+               e0=0 e5=0 ec=0 er=0 en=0 h=000 static=0,0,0.0,0,0
+own updates    v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1
+               v5=5 ve=6 after=0
+               e0=1 e5=0 ec=0 er=0 en=1 h=111 static=4,1,2.5,9,8
+grandchild     v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1
+               v5=5 ve=6 after=0
+               e0=0 e5=0 ec=0 er=0 en=0 h=000 static=0,0,0.0,0,0
+block          v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1
+               v5=5 ve=6 after=0
+               e0=0 e5=0 ec=0 er=0 en=0 h=000 static=0,0,0.0,0,0
+left block     v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1
+               v5=5 ve=6 after=0
+               e0=0 e5=0 ec=0 er=0 en=0 h=000 static=0,0,0.0,0,0
+left, later    v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1
+               v5=5 ve=6 after=0
+               e0=1 e5=0 ec=0 er=0 en=1 h=111 static=4,1,2.5,9,8
+other block    v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1
+               v5=5 ve=6 after=4
+               e0=1 e5=1 ec=1 er=1 en=1 h=111 static=4,1,2.5,9,8
+fork block     v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1
+               v5=5 ve=6 after=0
+               e0=0 e5=0 ec=0 er=0 en=0 h=000 static=0,0,0.0,0,0
+task           v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1
+               v5=5 ve=6 after=0
+               e0=0 e5=0 ec=0 er=0 en=0 h=000 static=0,0,0.0,0,0
+left task      v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1
+               v5=5 ve=6 after=1
+               e0=1 e5=0 ec=0 er=0 en=1 h=111 static=4,1,2.5,9,8
+own block      v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1
+               v5=5 ve=6 after=0
+               e0=0 e5=0 ec=0 er=0 en=0 h=000 static=0,0,0.0,0,0
+wait fork      v=1 bits=fc r=1.5 st=3 fa=7 fw=123 pa=0a d=13 e=1
+               v5=5 ve=6 after=0
+               e0=1 e5=1 ec=1 er=1 en=1 h=111 static=4,1,2.5,9,8

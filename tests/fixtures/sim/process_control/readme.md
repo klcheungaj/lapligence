@@ -54,6 +54,9 @@ prints too. Clause lines are from `SystemVerilog-1800-2009.txt`:
 | `wait_fork_orphans` | `wait fork` returns when the immediate child finishes, not when its grandchild does; `disable fork` then ends the grandchild. |
 | `disable_fork_orphans` | `disable fork` ends leaves below a finished child's finished child, a live child's finished child and a finished `join_any` branch; another initial's tree runs on. The status of the finished processes is decision KO-D1 (the industry-standard simulator reports `KILLED` for those that still had live children). |
 | `orphan_records_reclaimed` | 2000 trees ended by a kill of the live root, `disable fork`, the leaves' own completion and a kill of the finished root: `fired=1000`, and the `$finish(2)` statistics show one registered process, so the records kept for finished processes are reclaimed (llg-specific stderr). |
+| `bound_updates_reclaimed` | 2000 sets of timed triggers and handle and static property updates whose issuers are killed live or finished, end with `disable fork` or a `disable` of the block they were started in, or commit: only the last fire, the ordinary updates between them commit in issue order, and the `$finish(2)` statistics show the six static processes (llg-specific stderr), with updates of every kind still pending. |
+| `bound_updates_exit` | `$exit` drops the timed triggers of its program's processes, also of a finished one; another program's fire. |
+| `bound_updates_times` | Dropped triggers leave no time to advance to; an ordinary update of the same time keeps it. |
 
 The owning Rust suite runs every fixture through `llg` and `llg --no-opt`.
 Process formals, process arrays, semaphores/mailboxes, and the broader class

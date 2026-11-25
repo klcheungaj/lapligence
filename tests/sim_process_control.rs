@@ -198,3 +198,43 @@ fn records_kept_for_finished_subtrees_are_reclaimed() {
         &[],
     );
 }
+
+/// Updates bound to their issuer (decision S09-D8) are dropped with it or
+/// commit; either way nothing keeps the issuer's record.
+#[test]
+fn bound_updates_release_their_issuers() {
+    sim_cli::run_case(
+        "process_control",
+        "bound_updates_reclaimed",
+        include_str!("fixtures/sim/process_control/bound_updates_reclaimed.out"),
+        concat!(
+            "INFO: bound_updates_reclaimed.sv:80:5: [SIM-001] (tb @ 10002 ns) $finish called\n",
+            "INFO: [SIM-008] simulation statistics: processes=6\n",
+        ),
+        &[],
+    );
+}
+
+/// `$exit` drops the bound updates of its program, also those of a process
+/// that has finished.
+#[test]
+fn exit_drops_the_timed_triggers_of_its_program() {
+    sim_cli::run_case_with_runtime_args(
+        "process_control",
+        "bound_updates_exit",
+        include_str!("fixtures/sim/process_control/bound_updates_exit.out"),
+        "",
+        &["+exit"],
+    );
+}
+
+#[test]
+fn dropped_triggers_leave_no_time_to_advance_to() {
+    sim_cli::run_case(
+        "process_control",
+        "bound_updates_times",
+        include_str!("fixtures/sim/process_control/bound_updates_times.out"),
+        "INFO: [SIM-022] simulation ended without $finish (no processes remain) at time 20\n",
+        &[],
+    );
+}

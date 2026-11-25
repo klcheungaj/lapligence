@@ -743,6 +743,10 @@ pub enum IrContainerStmt {
     /// [`IrChandleExpr::NbaHold`] `.0` instead of queueing them.
     NbaHoldOpen(IrChandleExpr),
     NbaHoldClose,
+    /// Until [`Self::NbaBindClose`], the updates nonblocking writes queue in
+    /// this time slot end with the issuing process (decision S09-D8).
+    NbaBindOpen,
+    NbaBindClose,
     /// Queue the updates of hold `held`, `delay` ticks later than they were
     /// issued, and end the hold (SV 9.4.5, 10.4.2).
     NbaHoldRelease {
@@ -2020,7 +2024,7 @@ impl IrContainerStmt {
                 Ok(())
             }
             Self::NbaLocateEnd => Ok(()),
-            Self::NbaHoldClose => Ok(()),
+            Self::NbaHoldClose | Self::NbaBindOpen | Self::NbaBindClose => Ok(()),
             Self::NbaHoldOpen(held) | Self::NbaHoldRelease { held, .. } => {
                 held.validate(model, &[], None)
             }
@@ -3201,7 +3205,7 @@ impl IrContainerStmt {
                 }
             }
             Self::NbaHoldOpen(held) => held.expressions(visit),
-            Self::NbaHoldClose => {}
+            Self::NbaHoldClose | Self::NbaBindOpen | Self::NbaBindClose => {}
             Self::Nonblocking {
                 dst_start,
                 src_start,
@@ -3367,7 +3371,7 @@ impl IrContainerStmt {
                 }
             }
             Self::NbaHoldOpen(held) => held.expressions_mut(visit),
-            Self::NbaHoldClose => {}
+            Self::NbaHoldClose | Self::NbaBindOpen | Self::NbaBindClose => {}
             Self::Nonblocking {
                 dst_start,
                 src_start,

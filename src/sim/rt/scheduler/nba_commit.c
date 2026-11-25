@@ -111,6 +111,13 @@ static LLG_OUTLYING void nba_located_committed(const llg_nba_locator_t* locator)
 // fixed at issue; one out of range writes nothing (SV 7.4.6).
 static void apply_located_nba(llg_nba_t* next) {
     const llg_nba_locator_t* locator = next->locator;
+    if (locator->bound) {
+        bound_update_end(locator->bound);
+        if (!locator->root && !locator->array) {
+            apply_nba_target(next);
+            return;
+        }
+    }
     llg_value_t* item = locator->root;
     if (locator->array)
         item = llg_dyn_value_element(locator->array, locator->indices,
