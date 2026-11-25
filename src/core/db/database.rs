@@ -1421,10 +1421,11 @@ impl Db {
         self.parenthesized_assertions.contains(&id)
     }
 
-    /// Whether `id` declares a member of a structure or union type. Every
-    /// variable of the type shares the declaration, so it is no object.
+    /// Whether `id` declares a member of a structure or union type, which a
+    /// pattern may be the first to name. Every variable of the type shares the
+    /// declaration, so it is no object.
     pub fn is_record_member(&self, id: NodeId) -> bool {
-        self.semantic_detail(id) == Some("Field")
+        matches!(self.semantic_detail(id), Some("Field" | "PatternField"))
     }
 
     /// Random qualifier of a class property (IEEE 1800-2009 18.4).

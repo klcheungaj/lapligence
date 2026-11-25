@@ -793,15 +793,19 @@ mod tests {
 
     #[test]
     fn record_type_members_are_no_signals() {
-        // The keys of an assignment pattern name the member declarations,
-        // which every variable and constant of the type shares.
+        // The keys of an assignment pattern or a `matches` pattern name the
+        // member declarations, which every variable and constant of the type
+        // shares.
         let body = "typedef struct packed { logic [3:0] a; logic [3:0] b; } st_t;\n\
                typedef union packed { logic [7:0] w; st_t s; } un_t;\n\
                typedef struct { int n; string s; st_t k[2]; } us_t;\n\
+               typedef logic [3:0] pb_t;\n\
+               typedef struct packed { pb_t a; logic [3:0] b; } pm_t;\n\
                localparam st_t ST = '{a: 4'h3, b: 4'h9};\n\
-               localparam un_t UN = 8'h5a;\n  us_t us; st_t st, never;\n";
+               localparam un_t UN = 8'h5a;\n  us_t us; st_t st, never; pm_t pm = 8'h31;\n";
         let uses =
             "us = '{n: 9, s: \"z\", k: '{'{a: 1, b: 2}, '{a: 3, b: 4}}}; st = '{a: 1, b: 2};\n\
+               if (pm matches '{a: pb_t'(4'h3), b: 4'h1}) $display(pm.b);\n\
                $display(UN.w, UN.s.b, ST.a, us.n, us.s, us.k[1].a, st.b, never.a);\n";
         for source in [
             format!("module top;\n  {body}  initial begin {uses} end\nendmodule\n"),
