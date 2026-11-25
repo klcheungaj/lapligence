@@ -2012,6 +2012,8 @@ struct Codegen<'a> {
     /// Whether the statement being staged left a called selector to the lazy
     /// operand holding it.
     deferred_selectors: std::cell::Cell<bool>,
+    /// The answers of `expansion_levels`.
+    expansion_levels: std::cell::RefCell<IdMap<NodeId, u32>>,
     /// While the elements of a lazy operand that names no nested array selected
     /// by a call are collected.
     no_called_selectors: std::cell::Cell<bool>,
@@ -2755,6 +2757,7 @@ impl<'a> Codegen<'a> {
             staged_nested_elements: HashMap::new(),
             inner_stagings: Vec::new(),
             deferred_selectors: std::cell::Cell::new(false),
+            expansion_levels: Default::default(),
             no_called_selectors: std::cell::Cell::new(false),
             hoisted_values: HashMap::new(),
             hoisted_source: None,

@@ -1171,6 +1171,7 @@ fn classify_simulation_node(
 }
 
 fn simulation_node_detail(db: &Db, id: NodeId) -> String {
+    crate::work::count(crate::work::Work::NodeDescriptions, 1);
     match db.node_kind(id) {
         NodeKind::Stmt(StmtKind::IfElse { predicate, .. })
         | NodeKind::Expr(ExprKind::Conditional { predicate, .. })

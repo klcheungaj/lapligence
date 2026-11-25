@@ -608,6 +608,7 @@ impl<'a> Codegen<'a> {
                         .len()
                         .min(self.aggregate_scope_separators.saturating_add(1));
                     (0..scopes).rev().find_map(|base_index| {
+                        crate::work::count(crate::work::Work::AggregateScopes, base_index);
                         let mut scope = self.design_name.clone();
                         for part in &parts[..base_index] {
                             scope.push('.');

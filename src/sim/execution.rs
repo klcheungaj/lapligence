@@ -929,8 +929,7 @@ fn collect_effects(
         if effects.found() {
             return;
         }
-        #[cfg(test)]
-        effects::WALKED_STATEMENTS.with(|walked| walked.set(walked.get() + 1));
+        crate::work::count(crate::work::Work::EffectStatements, 1);
         let statement = statement.unlocated();
         if let Some((known, mark)) = visited_calls.nested {
             match known.get(&std::ptr::from_ref(statement)) {

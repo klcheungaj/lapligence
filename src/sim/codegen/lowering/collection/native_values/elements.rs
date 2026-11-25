@@ -195,6 +195,7 @@ impl Codegen<'_> {
             // Of the indices only the last is a child: the others belong to
             // the selects below.
             let index = inner.last();
+            crate::work::count(crate::work::Work::SelectIndices, 1);
             // The element select shares the flattened select's base; a
             // member array below a record element (`q[i].a[j]`) does not.
             let (child, consumed) =

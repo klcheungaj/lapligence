@@ -1,3 +1,5 @@
+use crate::work::{count, Work};
+
 /// Strip an optional frontend library prefix from a top-instance name.
 pub(crate) fn strip_lib(name: &str) -> String {
     match name.split_once('@') {
@@ -203,6 +205,7 @@ pub(super) fn identifier_spans_in_comments(
 fn spans<const SKIP_COMMENTS: bool>(
     text: &str,
 ) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
+    count(Work::NameScanBytes, text.len());
     let bytes = text.as_bytes();
     let mut index = 0;
     std::iter::from_fn(move || next_identifier::<SKIP_COMMENTS>(bytes, &mut index))
@@ -211,6 +214,7 @@ fn spans<const SKIP_COMMENTS: bool>(
 /// The identifiers of `text` of at least `shortest` bytes wherever they stand,
 /// literals and comments included.
 pub(super) fn identifiers_anywhere(text: &str, shortest: usize) -> impl Iterator<Item = &str> {
+    count(Work::NameScanBytes, text.len());
     let mut names = LongNames::new(shortest);
     std::iter::from_fn(move || {
         names
@@ -240,6 +244,7 @@ fn spans_held<const SKIP_COMMENTS: bool>(
     text: &str,
     names: NameFilter,
 ) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
+    count(Work::NameScanBytes, text.len());
     let mut long = LongNames::new(names.shortest());
     std::iter::from_fn(move || long.next::<true, SKIP_COMMENTS>(text.as_bytes()))
         .filter(move |span| names.may_hold(&text[span.clone()]))
@@ -348,6 +353,22 @@ fn opaque_end(bytes: &[u8], start: usize) -> Option<usize> {
 fn next_opening<const SKIP_COMMENTS: bool>(bytes: &[u8], at: usize) -> Option<usize> {
     let slash = if SKIP_COMMENTS { b'/' } else { b'"' };
     first_of(bytes, at, [b'"', b'\'', slash])
+}
+
+/// Where `marker` occurs in `text`, found by its first byte: for markers that
+/// begin with one that generated code holds few of.
+pub(super) fn marker_starts<'t>(
+    text: &'t str,
+    marker: &'t str,
+) -> impl Iterator<Item = usize> + 't {
+    let (text, marker) = (text.as_bytes(), marker.as_bytes());
+    let mut at = 0;
+    std::iter::from_fn(move || {
+        let start = first_of(text, at, [*marker.first()?])?;
+        at = start + 1;
+        Some(start)
+    })
+    .filter(move |start| text[*start..].starts_with(marker))
 }
 
 /// The first of `wanted` in `bytes` at or after `at`, looked for in several

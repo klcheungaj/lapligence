@@ -1977,11 +1977,15 @@ fn validate_model_abi_for(
 }
 
 /// What follows `start` on the lines of `text` that begin with it. The search
-/// is for `start`, not for lines: few lines of a model are looked for.
+/// is for the first byte of `start`, which a model holds less often than lines.
 fn lines_after<'t>(text: &'t str, start: &'t str) -> impl Iterator<Item = &'t str> {
-    text.match_indices(start)
+    start
+        .chars()
+        .next()
+        .into_iter()
+        .flat_map(|first| text.match_indices(first))
         .filter(|(at, _)| *at == 0 || text.as_bytes()[at - 1] == b'\n')
-        .filter_map(move |(at, _)| text[at + start.len()..].split('\n').next())
+        .filter_map(move |(at, _)| text[at..].strip_prefix(start)?.split('\n').next())
         .map(|rest| rest.strip_suffix('\r').unwrap_or(rest))
 }
 

@@ -1072,6 +1072,7 @@ impl IrStringExpr {
     /// arguments of typed calls, which may legitimately be real or carry
     /// native leaves and so are not string-operation operands.
     fn visit_expressions(&self, typed_call_args: bool, visit: &mut impl FnMut(&IrExpr)) {
+        crate::work::count(crate::work::Work::StringOperands, 1);
         match self {
             Self::Literal(_)
             | Self::RandomState

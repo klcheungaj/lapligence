@@ -1192,6 +1192,7 @@ pub fn all_design_nodes(db: &Db) -> Vec<NodeId> {
         if !seen.insert(id) {
             return;
         }
+        crate::work::count(crate::work::Work::ListedNodes, 1);
         out.push(id);
         for child in &db.node(id).children {
             walk(db, *child, seen, out);

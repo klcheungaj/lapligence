@@ -11,13 +11,6 @@ use crate::sim::ir::{IrFunc, IrModel, IrStmt};
 
 use super::{collect_effects, CallTarget, CallVisits, ExecutionEffect, ScheduleRegion};
 
-#[cfg(test)]
-thread_local! {
-    /// Statements the effect walks visited.
-    pub(super) static WALKED_STATEMENTS: std::cell::Cell<usize> =
-        const { std::cell::Cell::new(0) };
-}
-
 /// A set of effects, one bit per effect in ascending effect order.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(in crate::sim) struct EffectMask(u64);
@@ -373,6 +366,7 @@ mod tests {
     use super::*;
     use crate::sim::execution::{statements_have_effect, ExecutionModel};
     use crate::sim::ir::{IrActivationTarget, IrCall, IrDepth, IrDpiExport, IrDpiImport, IrStmt};
+    use crate::work::{counted, Work};
 
     fn call(function: usize) -> IrStmt {
         IrStmt::Call(Box::new(IrCall::new(
@@ -507,20 +501,22 @@ mod tests {
             .collect::<Vec<_>>();
         bodies.push(vec![disable()]);
         let ir = model(bodies);
-        let walked = || WALKED_STATEMENTS.with(|walked| walked.replace(0));
-        walked();
-        let summaries = EffectSummaries::new(&ir);
-        assert_eq!(walked(), FUNCTIONS);
+        let walked = |run: &mut dyn FnMut()| counted(Work::EffectStatements, run);
+        let mut summaries = None;
+        assert_eq!(
+            walked(&mut || summaries = Some(EffectSummaries::new(&ir))),
+            FUNCTIONS
+        );
+        let summaries = summaries.expect("summaries");
         assert!((0..FUNCTIONS).all(|function| summaries
             .of_running(function)
             .contains(ExecutionEffect::Disable)));
         // Lowering, every refresh and a full validation each stay linear too:
         // they summarize the model and walk the processes.
         let mut model = ExecutionModel::lower(ir).unwrap();
-        walked();
-        model.refresh_effects().unwrap();
-        assert!(walked() <= 2 * FUNCTIONS, "refresh");
-        model.validate().unwrap();
-        assert!(walked() <= 2 * FUNCTIONS, "validation");
+        let refreshed = walked(&mut || model.refresh_effects().unwrap());
+        assert!(refreshed <= 2 * FUNCTIONS, "refresh");
+        let validated = walked(&mut || model.validate().unwrap());
+        assert!(validated <= 2 * FUNCTIONS, "validation");
     }
 }

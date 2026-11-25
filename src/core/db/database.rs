@@ -14,8 +14,8 @@ use super::{
     JoinKind, NetType, ObjectType, Operation, PrimitiveType, Strength, UnconnectedDrive,
     UniquePriorityCheck,
 };
-use crate::IdMap;
-use crate::IdSet;
+use crate::work::{count, Work};
+use crate::{IdMap, IdSet};
 
 use crate::core::elab::Val;
 use crate::core::model::TypeInfo;
@@ -551,17 +551,6 @@ pub struct Db {
     fsm_pragma_errors: Vec<FsmPragmaError>,
 }
 
-#[cfg(test)]
-thread_local! {
-    /// The node lookups of this thread, for tests of how work grows.
-    pub(crate) static NODE_READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
-#[cfg(test)]
-fn count_node_read() {
-    NODE_READS.with(|reads| reads.set(reads.get() + 1));
-}
-
 impl Db {
     #[cfg(test)]
     pub(super) fn empty_for_validation_test() -> Self {
@@ -784,8 +773,7 @@ impl Db {
 
     /// The node at `id`.
     pub fn node(&self, id: NodeId) -> &Node {
-        #[cfg(test)]
-        count_node_read();
+        count(Work::NodeReads, 1);
         &self.nodes[id.index()]
     }
 
@@ -796,8 +784,7 @@ impl Db {
 
     /// The kind of the node at `id`.
     pub fn node_kind(&self, id: NodeId) -> &NodeKind {
-        #[cfg(test)]
-        count_node_read();
+        count(Work::NodeReads, 1);
         &self.nodes[id.index()].kind
     }
 
@@ -847,6 +834,7 @@ impl Db {
     /// except as [`Self::walk_children`] says.
     pub(crate) fn elaborated_nodes(&self) -> Vec<NodeId> {
         fn walk(db: &Db, id: NodeId, out: &mut Vec<NodeId>) {
+            count(Work::ListedNodes, 1);
             out.push(id);
             for child in db.walk_children(id) {
                 walk(db, child, out);
@@ -1198,8 +1186,7 @@ impl Db {
 
     /// Return owned clocking block metadata, if `id` names a clocking block.
     pub fn clocking_block(&self, id: NodeId) -> Option<&ClockingBlockInfo> {
-        #[cfg(test)]
-        count_node_read();
+        count(Work::NodeReads, 1);
         self.clocking_blocks.get(&id)
     }
 

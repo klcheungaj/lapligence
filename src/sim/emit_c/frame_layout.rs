@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use crate::sim::execution::CallMechanism;
 
 use super::names::NameFilter;
+use crate::work::{count, Work};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FrameStorage {
@@ -318,7 +319,10 @@ impl FrameLayout {
     fn field_entry(&self, name: &str) -> Option<&FieldEntry> {
         self.field_filter
             .may_hold(name)
-            .then(|| self.fields.get(name))
+            .then(|| {
+                count(Work::FieldLookups, 1);
+                self.fields.get(name)
+            })
             .flatten()
     }
 

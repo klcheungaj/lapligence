@@ -9,7 +9,8 @@ use super::constants::{c_string_literal, emit_const, periodic_constant, round_sh
 use super::context::RCtx;
 use super::frame_layout::{declaration, FrameLayout, FrameStorage};
 use super::names::{
-    first_of, identifier_spans_in_comments, named_spans, named_spans_in_comments, NameFilter,
+    first_of, identifier_spans_in_comments, marker_starts, named_spans, named_spans_in_comments,
+    NameFilter,
 };
 use crate::sim::execution::{
     CallMechanism, CoroutineId, ExecutionAnalysis, NestedEffects, SuspensionOperation,
@@ -1552,7 +1553,7 @@ impl<'a, 'm> Frame<'a, 'm> {
         let uses = identifier_counts(code, &locals);
         let mut output = String::with_capacity(code.len());
         let mut copied = 0;
-        for (start, _) in code.match_indices(PREFIX) {
+        for start in marker_starts(code, PREFIX) {
             output.push_str(&code[copied..start]);
             let (index, end) = marker_index(code, start + PREFIX.len(), SUFFIX)
                 .ok_or_else(|| "invalid deferred coroutine local use".to_owned())?;
@@ -1591,37 +1592,32 @@ const NATIVE_USE_MARKER_END: &str = " */\n";
 /// names the local, a `(void)sizeof` use when nothing does. Names are unique
 /// within a frame, so any later occurrence is this local.
 fn resolve_native_uses(code: &str) -> String {
-    let markers = code
-        .match_indices(NATIVE_USE_MARKER)
-        .filter_map(|(start, _)| {
-            let start = start + NATIVE_USE_MARKER.len();
-            let end = start + code[start..].find(NATIVE_USE_MARKER_END)?;
-            Some(&code[start..end])
+    let markers = marker_starts(code, NATIVE_USE_MARKER)
+        .filter_map(|start| {
+            let rest = &code[start + NATIVE_USE_MARKER.len()..];
+            Some((start, &rest[..rest.find(NATIVE_USE_MARKER_END)?]))
         })
-        .collect::<HashSet<_>>();
-    let mut last_uses = HashMap::with_capacity(markers.len());
-    let filter = markers.iter().copied().collect::<NameFilter>();
+        .collect::<Vec<_>>();
+    let mut last_uses = markers
+        .iter()
+        .map(|(start, name)| (*name, *start))
+        .collect::<HashMap<_, _>>();
+    let filter = last_uses.keys().copied().collect::<NameFilter>();
     for span in named_spans(code, filter) {
-        if let Some(name) = markers.get(&code[span.clone()]) {
-            last_uses.insert(*name, span.start);
+        if let Some(last) = last_uses.get_mut(&code[span.clone()]) {
+            *last = span.start;
         }
     }
     let mut output = String::with_capacity(code.len());
     let mut copied = 0;
-    while let Some(start) = code[copied..].find(NATIVE_USE_MARKER) {
-        let start = copied + start;
+    for (start, name) in markers {
         output.push_str(&code[copied..start]);
-        let name_start = start + NATIVE_USE_MARKER.len();
-        let Some((name, _)) = code[name_start..].split_once(NATIVE_USE_MARKER_END) else {
-            output.push_str(&code[start..]);
-            return output;
-        };
-        if last_uses.get(name).is_none_or(|last| *last < start) {
+        if last_uses[name] <= start {
             output.push_str("    (void)sizeof(");
             output.push_str(name);
             output.push_str(");\n");
         }
-        copied = name_start + name.len() + NATIVE_USE_MARKER_END.len();
+        copied = start + NATIVE_USE_MARKER.len() + name.len() + NATIVE_USE_MARKER_END.len();
     }
     output.push_str(&code[copied..]);
     output
@@ -1647,7 +1643,7 @@ fn rewrite_call_paths(code: &str, flattened: &HashMap<String, String>) -> String
     const FRAME: &str = "F->";
     let mut output = String::with_capacity(code.len());
     let mut copied = 0;
-    for (start, _) in code.match_indices(FRAME) {
+    for start in marker_starts(code, FRAME) {
         let start = start + FRAME.len();
         let length = code[start..]
             .bytes()

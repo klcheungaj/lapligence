@@ -10,8 +10,6 @@ mod slang_types;
 mod source_map;
 mod validate;
 
-#[cfg(test)]
-pub(crate) use database::NODE_READS;
 pub use database::{
     AggregateKind, AggregateLayout, AggregateMember, ArrayKind, ArrayMeta, AssertionBinaryOp,
     AssertionBinding, AssertionCaseItem, AssertionExprKind, AssertionRange, AssertionRepetition,
