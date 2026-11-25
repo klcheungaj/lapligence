@@ -20,7 +20,7 @@ read-only module explorer. Components: [readme](readme.md); user behavior:
 
 ## Rules
 
-- tower-lsp, tokio and dashmap stay in this binary behind default-on `lsp`.
+- tower-lsp and tokio stay in this binary behind default-on `lsp`.
 - Serving stdout is JSON-RPC only; logs go to stderr or the configured file.
   Help, version and `--dump-tokens` print ordinary text without serving; invalid
   arguments exit 2 with usage on stderr.
