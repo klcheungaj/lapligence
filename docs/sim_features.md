@@ -2998,7 +2998,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   ("1800-2005") and the time services `svGetTime`, `svGetTimeUnit` and
   `svGetTimePrecision`, which answer for the time scale of the scope they
   are given (S40-D7). An element access with the wrong number of indices ends the
-  run and abandons the import's C code at the access (S40-D6). DPI-C libraries compile against the `svdpi.h` that llg
+  run and abandons the import's C code at the access (S40-D6), and the end of
+  the run in an exported subroutine abandons the C code of the whole chain
+  (S41-D9). DPI-C libraries compile against the `svdpi.h` that llg
   writes beside the generated model (`--gen-only` shows it); it is the Annex I
   header with `<inttypes.h>` for the fixed-width types on every host (I.2).
   `byte` is C `char` (Table H.1) in llg's prototypes; its signedness is the

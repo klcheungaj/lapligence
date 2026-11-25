@@ -873,6 +873,22 @@ pub(super) fn render_dpi_context_shim(
     Ok(out)
 }
 
+/// The packed cells of a thunk of `f`, one per formal and one for the result,
+/// in a value scope: the thunk's own storage, or the heap when the cleanup of
+/// a killed process may release the scope after the thunk `suspends`.
+pub(super) fn thunk_values(f: &IrFunc, suspends: bool) -> String {
+    let count = f.formals.len() + 1;
+    if suspends {
+        format!(
+            "    llg_value_scope_t* _dpi_scope = llg_value_scope_begin({count});\n    sv4_t* _dpi_values = llg_value_scope_values(_dpi_scope);\n    (void)_dpi_values;\n"
+        )
+    } else {
+        format!(
+            "    llg_value_scope_t _dpi_scope;\n    sv4_t _dpi_values[{count}] = {{0}};\n    (void)llg_value_scope_register(&_dpi_scope, _dpi_values, {count});\n"
+        )
+    }
+}
+
 /// The thunk of import `f`, named `name`. An `abandonable` thunk runs on a
 /// foreign call context: when the context unwinds a killed process, it
 /// returns right after the foreign call without touching the process's
@@ -951,8 +967,7 @@ fn render_thunk(
     };
     out.push_str(&format!("    if (depth >= {LLG_MAX_FUNC_DEPTH}) {{ llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, \"recursion limit exceeded\"); {guard} }}\n"));
     out.push_str("    llg_value_scope_t* _dpi_mark = llg_value_scope_mark();\n");
-    // Exact descriptor count, independent of the model's largest packed width.
-    out.push_str(&format!("    llg_value_scope_t* _dpi_scope = llg_value_scope_begin({});\n    sv4_t* _dpi_values = llg_value_scope_values(_dpi_scope);\n    (void)_dpi_values;\n", f.formals.len() + 1));
+    out.push_str(&thunk_values(f, abandonable));
     let mut arguments = Vec::with_capacity(declared);
     for (index, formal) in f.formals.iter().take(declared).enumerate() {
         let ty = formal_type(dpi, index)?;
@@ -1123,13 +1138,15 @@ fn render_thunk(
             u8::from(f.is_task)
         ));
     }
-    // Only an open-array handle can reach the fatal svdpi.h access that
-    // abandons the foreign code (S40-D6), so other imports pay no setjmp.
-    let guarded = (0..declared)
-        .map(|index| formal_type(dpi, index))
-        .collect::<Result<Vec<_>, _>>()?
-        .iter()
-        .any(|ty| matches!(ty, IrDpiType::Open { .. } | IrDpiType::OpenDynamic { .. }));
+    // Foreign code is abandoned at the fatal svdpi.h access of an open-array
+    // handle (S40-D6) and when the run ended in an export it called (S41-D9);
+    // other imports pay no setjmp.
+    let guarded = dpi.is_context() && model.dpi_exports_used()
+        || (0..declared)
+            .map(|index| formal_type(dpi, index))
+            .collect::<Result<Vec<_>, _>>()?
+            .iter()
+            .any(|ty| matches!(ty, IrDpiType::Open { .. } | IrDpiType::OpenDynamic { .. }));
     if guarded {
         let restore = if instrumented {
             "llg_dpi_import_abort(&_dpi_call);"
@@ -1137,7 +1154,7 @@ fn render_thunk(
             "llg_dpi_next_site = NULL;"
         };
         out.push_str(&format!(
-            "    llg_dpi_guard_t _dpi_guard;\n    _dpi_guard.mark = _dpi_mark;\n    llg_dpi_guard_push(&_dpi_guard);\n    if (setjmp(_dpi_guard.jump) != 0) {{\n        /* The foreign code was abandoned at a fatal svdpi.h access:\n         * nothing is copied out. */\n        {restore}\n        llg_value_scopes_end_since(_dpi_guard.mark);\n        {guard}\n    }}\n"
+            "    llg_dpi_guard_t _dpi_guard;\n    _dpi_guard.mark = _dpi_mark;\n    llg_dpi_guard_push(&_dpi_guard);\n    if (setjmp(_dpi_guard.jump) != 0) {{\n        /* The foreign code was abandoned: nothing is copied out. */\n        {restore}\n        llg_value_scopes_end_since(_dpi_guard.mark);\n        {guard}\n    }}\n"
         ));
     }
     if let Some(scalar) = ret {

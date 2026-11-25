@@ -146,8 +146,9 @@ ever before.
 
 - No `longjmp` across languages and no asynchronous kill or cancellation of
   foreign threads: foreign code only stops by returning, or blocks in a
-  runtime call. The open-array guard (S40-D6) still jumps only within one
-  context, from the `svdpi.h` access back to its own import thunk.
+  runtime call. The import guard (S40-D6, S41-D9) jumps only within one
+  context, from the `svdpi.h` access or the returning export back to the import
+  thunk whose C code is abandoned.
 - No Rust `unsafe`; the runtime C uses only the platform layer
   (`llg_platform_native.h`) for threads.
 - `llg_dpi_context.c` is its own runtime translation unit, so only models

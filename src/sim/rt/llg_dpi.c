@@ -762,8 +762,8 @@ void llg_dpi_guard_pop(llg_dpi_guard_t* guard) {
     llg_dpi_guard_top = guard->outer;
 }
 
-/* Abandon the foreign code of the innermost guarded import after a fatal
- * error it caused; without a guard the access only does nothing. */
+/* Abandon the foreign code of the innermost guarded import; without a guard
+ * it continues. */
 static void llg_dpi_abandon_foreign_code(void) {
     llg_dpi_guard_t* guard = llg_dpi_guard_top;
     if (!guard) return;
@@ -817,6 +817,10 @@ int32_t llg_dpi_task_status(int32_t status, const char* c_name) {
         return 1;
     }
     return status != 0;
+}
+
+void llg_dpi_export_returns(void) {
+    if (llg_rt_run_ended()) llg_dpi_abandon_foreign_code();
 }
 
 llg_dpi_fn_t llg_dpi_export_target(uint32_t id, const char* c_name, int32_t task) {

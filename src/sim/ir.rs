@@ -1112,10 +1112,18 @@ impl IrModel {
     /// save, set and restore the call-chain state (SV 35.5.3); otherwise no
     /// foreign code can observe it.
     pub fn dpi_context_used(&self) -> bool {
-        self.funcs.iter().any(|function| {
-            function.dpi_export.is_some()
-                || function.dpi.as_ref().is_some_and(IrDpiImport::is_context)
-        })
+        self.dpi_exports_used()
+            || self
+                .funcs
+                .iter()
+                .any(|function| function.dpi.as_ref().is_some_and(IrDpiImport::is_context))
+    }
+
+    /// Whether foreign code can call back: some subroutine is exported.
+    pub fn dpi_exports_used(&self) -> bool {
+        self.funcs
+            .iter()
+            .any(|function| function.dpi_export.is_some())
     }
 
     pub fn signal(&self, idx: usize) -> &IrSignal {

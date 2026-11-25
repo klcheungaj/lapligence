@@ -384,15 +384,11 @@ last final
 === 0
 ### +act=finish +ctx=func
 [1] sv_func take finish
-c_func: sv_func returned 0 disabled=0
 [1] final seen=0
 last final
 === 0
 ### +act=finish +ctx=funcn
 [1] sv_func take finish
-c_func: sv_func returned 0 disabled=0
-c_func: sv_func returned 0 disabled=0
-c_func: sv_func returned 0 disabled=0
 [1] final seen=0
 last final
 === 0
@@ -403,31 +399,26 @@ last final
 === 0
 ### +act=finish +ctx=pre
 [1] sv_func take finish
-c_func: sv_func returned 0 disabled=0
 [1] final seen=0
 last final
 === 0
 ### +act=finish +ctx=post
 [1] sv_func take finish
-c_func: sv_func returned 0 disabled=0
 [1] final seen=0
 last final
 === 0
 ### +act=finish +ctx=sample
 [1] sv_func take finish
-c_func: sv_func returned 0 disabled=0
 [1] final seen=0
 last final
 === 0
 ### +act=finish +ctx=expr
 [1] sv_func take finish
-c_func: sv_func returned 0 disabled=0
 [1] final seen=0
 last final
 === 0
 ### +act=finish +ctx=nba
 [5] sv_func take finish
-c_func: sv_func returned 0 disabled=0
 [5] final seen=0
 last final
 === 0
@@ -448,15 +439,11 @@ last final
 === 1 SIM-006
 ### +act=fatal +ctx=func
 [1] sv_func take fatal
-c_func: sv_func returned 0 disabled=0
 [1] final seen=0
 last final
 === 1 SIM-006
 ### +act=fatal +ctx=funcn
 [1] sv_func take fatal
-c_func: sv_func returned 0 disabled=0
-c_func: sv_func returned 0 disabled=0
-c_func: sv_func returned 0 disabled=0
 [1] final seen=0
 last final
 === 1 SIM-006
@@ -467,31 +454,26 @@ last final
 === 1 SIM-006
 ### +act=fatal +ctx=pre
 [1] sv_func take fatal
-c_func: sv_func returned 0 disabled=0
 [1] final seen=0
 last final
 === 1 SIM-006
 ### +act=fatal +ctx=post
 [1] sv_func take fatal
-c_func: sv_func returned 0 disabled=0
 [1] final seen=0
 last final
 === 1 SIM-006
 ### +act=fatal +ctx=sample
 [1] sv_func take fatal
-c_func: sv_func returned 0 disabled=0
 [1] final seen=0
 last final
 === 1 SIM-006
 ### +act=fatal +ctx=expr
 [1] sv_func take fatal
-c_func: sv_func returned 0 disabled=0
 [1] final seen=0
 last final
 === 1 SIM-006
 ### +act=fatal +ctx=nba
 [5] sv_func take fatal
-c_func: sv_func returned 0 disabled=0
 [5] final seen=0
 last final
 === 1 SIM-006
@@ -630,15 +612,11 @@ last final
 [1] victim ends
 [30] status=FINISHED seen=0 out=0
 [30] sv_func take finish
-c_func: sv_func returned 0 disabled=0
-c_func: sv_func returned 0 disabled=0
 === 0
 ### +act=fatal +ctx=final
 [1] victim ends
 [30] status=FINISHED seen=0 out=0
 [30] sv_func take fatal
-c_func: sv_func returned 0 disabled=0
-c_func: sv_func returned 0 disabled=0
 === 1 SIM-006
 ### +act=kill +ctx=final
 [1] victim ends

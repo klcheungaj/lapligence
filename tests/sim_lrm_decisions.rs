@@ -1785,6 +1785,14 @@ fn s41_d8_task_from_import_function() {
 }
 
 #[test]
+fn s41_d9_run_ends_in_export() {
+    run_dpi_decision(
+        "S41-D9_run_ends_in_export",
+        include_str!("fixtures/sim/lrm_decisions/S41-D9_run_ends_in_export.out"),
+    );
+}
+
+#[test]
 fn a18_d1_kill_unwinds_suspended_chain() {
     run_dpi_decision(
         "A18-D1_kill_unwinds_suspended_chain",

@@ -203,6 +203,10 @@ int32_t llg_rt_exiting(void) {
     return g.static_init_phase && g.finish;
 }
 
+int32_t llg_rt_run_ended(void) {
+    return g.finish && llg_rt_exiting();
+}
+
 const char* llg_static_init_variable = NULL;
 static const char* llg_static_init_location = NULL;
 

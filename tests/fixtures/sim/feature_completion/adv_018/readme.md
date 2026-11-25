@@ -162,8 +162,8 @@ also builds the model with `-DLLG_DPI_CONTEXT_STACK_BYTES=16777216` and
 `neg_function_wait`: the imported function `c_func` calls the exported task
 `sv_wait_e`, which can consume time. 35.8 (L56241-56242) makes the call
 illegal; llg reports a fatal error at the call, whether or not the call
-would wait (decision A18-D3). The export returns 0 to the C code, which
-prints `c_func status=0` and returns; nothing runs after the import.
+would wait (decision A18-D3). The C code never continues (decision S41-D9), so
+`c_func status=` is not printed.
 
 `neg_missing_ack`: `blk` is disabled at 10 while `sv_wait_e` waits; the
 export returns 1, but `c_no_ack` returns 0, which breaks item b): a fatal

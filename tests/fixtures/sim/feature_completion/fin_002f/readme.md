@@ -16,11 +16,22 @@ not decide are left out; they are listed here.
 ## Cancellation
 
 `cancel_calls`, `cancel_expressions`, `cancel_final`, `cancel_sequences` and
-`cancel_regions` are the industry-standard behaviour. Left out: `disable` and
-`kill()` in a coverpoint expression; `disable` of the block of a `final`
-procedure from a function it calls; `kill()` in `post_randomize` of a call whose
-result is assigned (the assignment is or is not made); the pass action of an
-`assert property` (decision S38-D11 runs it for vacuous successes).
+`cancel_regions` are the industry-standard behaviour. Left out: `disable` of a
+block, such as the one of a `final` procedure, from a function it calls or from
+the function of a coverpoint expression:
+
+> 12401: not be used to disable functions. In cases where a disable statement within a function disables a block or a
+> 12402: task that called the function, the behavior is undefined. Disabling an automatic task or a block inside an
+
+`kill()` of the sampling process in a coverpoint expression, where `self()` may
+be null; `kill()` in `post_randomize` of a call whose result is assigned (the
+assignment is or is not made):
+
+> 12633: other condition, such as an event, wait expression, or a delay, then the process shall be terminated at some
+> 12634: unspecified time in the current time step.
+
+and the pass action of an `assert property` (decision S38-D11 runs it for vacuous
+successes).
 
 The `act=stop` sections, here and in `cancel_dpi`, are llg's own: a batch run
 goes on after `$stop` ([stop/resume](../../../../../docs/sim_features.md)), so each is the `act=none`
@@ -37,10 +48,14 @@ ends returns 1 to its C caller, which then is in the disabled state:
 
 A `kill()` of the process in an exported *function* leaves no disabled state
 (9.7 has no counterpart of 35.9 for it) and the caller ends when the import
-returns. `$finish` and `$fatal` in an exported subroutine return to the C code,
-which returns in its own time; no statement of the process runs after that (the
-text does not say; a simulator may leave the C code at once). `disable fork` in
-an exported task ends the children of the process and nothing else (9.6.3).
+returns. `$finish` and `$fatal` in an exported subroutine never return to the C
+code (decision S41-D9). `disable fork` in an exported task ends the children of
+the process and nothing else:
+
+> 12548: The disable fork statement terminates all active descendants (subprocesses) of the calling process.
+
+A simulator may leave the children of the process that called the import alone,
+although the same task called without C in between ends them.
 
 `cancel_vpi_regions`, `cancel_vpi_statements`: the C code goes on after
 `vpi_control` and the run ends when its routine returns:

@@ -1744,6 +1744,8 @@ void llg_rt_finish_with_level(int32_t verbosity, const char* location);
 // generated functions and the initialization frame; coroutine code reads its
 // chain with LLG_CO_EXIT_CHECK.
 int32_t llg_rt_exiting(void);
+// llg_rt_exiting() because the run ended, not because the process did.
+int32_t llg_rt_run_ended(void);
 // Deferred stop for generated functions and vpi_control(vpiStop). Reports the
 // stop now and, when called during a scheduler process turn, records a request
 // that the scheduler observes immediately after llg_co_run returns and before
@@ -3286,11 +3288,11 @@ void llg_nba_event_after(llg_event_t* ev, uint64_t ticks);
 // `evs` and llg_arm_order copies `evs` (it keeps only the resolved event
 // objects, never the array or the handles), so generated coroutines pass the
 // list as a compound literal; `result` is kept and must stay a frame field.
+// Waiting on a null event reports a null event access, ends the simulation and
+// returns EXIT.
 llg_co_arm_t llg_arm_event(llg_proc_t* self, llg_event_t* ev);
 llg_co_arm_t llg_arm_events(llg_proc_t* self,
                             const llg_event_t* const* evs, int32_t n);
-// Waiting on a null event reports a null event access, ends the simulation and
-// returns EXIT.
 llg_co_arm_t llg_arm_event_triggered(llg_proc_t* self,
                                      const llg_event_t* ev);
 llg_co_arm_t llg_arm_assertion(llg_proc_t* self, uint64_t identity);

@@ -250,12 +250,16 @@ pub(super) fn render_dpi_export_bodies(
             .join(", ");
         let invoke = format!("(({ret} (*)({types}))_dpi_fn)({names})");
         out.push_str(&format!(
-            "/* llg DPI-C export: c_name={c_name} */\n{ret} {c_name}({list});\n{ret} {c_name}({list}) {{\n    llg_dpi_fn_t _dpi_fn = llg_dpi_export_target({id}u, {}, {});\n    if (!_dpi_fn) return{};\n    {}{invoke};\n{}}}\n\n",
+            "/* llg DPI-C export: c_name={c_name} */\n{ret} {c_name}({list});\n{ret} {c_name}({list}) {{\n    llg_dpi_fn_t _dpi_fn = llg_dpi_export_target({id}u, {}, {});\n    if (!_dpi_fn) return{};\n    {}{invoke};\n    llg_dpi_export_returns();\n{}}}\n\n",
             c_string_literal(c_name),
             u8::from(f.is_task),
             default_return(ret),
-            if ret == "void" { "" } else { "return " },
-            if ret == "void" { "    return;\n" } else { "" },
+            if ret == "void" {
+                String::new()
+            } else {
+                format!("{ret} _dpi_result = ")
+            },
+            if ret == "void" { "" } else { "    return _dpi_result;\n" },
         ));
     }
     Ok(out)
@@ -311,9 +315,9 @@ fn render_export_thunk(
     let mut body = String::new();
     let result_slot = f.formals.len();
     body.push_str(&format!(
-        "static {ret} {name}({}) {{\n    llg_dpi_call_t _dpi_call;\n    int depth = llg_dpi_export_enter(&_dpi_call);\n    llg_value_scope_t* _dpi_mark = llg_value_scope_mark();\n    llg_value_scope_t* _dpi_scope = llg_value_scope_begin({});\n    sv4_t* _dpi_values = llg_value_scope_values(_dpi_scope);\n    (void)_dpi_values;\n",
+        "static {ret} {name}({}) {{\n    llg_dpi_call_t _dpi_call;\n    int depth = llg_dpi_export_enter(&_dpi_call);\n    llg_value_scope_t* _dpi_mark = llg_value_scope_mark();\n{}",
         param_list(&params),
-        f.formals.len() + 1
+        super::dpi::thunk_values(f, coroutine_frame.is_some())
     ));
     let mut outputs = Vec::new();
     let mut inputs = Vec::new();
