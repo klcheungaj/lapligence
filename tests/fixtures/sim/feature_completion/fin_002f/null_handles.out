@@ -1,0 +1,319 @@
+### +ctx=0
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=1
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=2
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=3
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=4
+static 5
+[0] ctx 4 went on x=5
+[20] main ends
+[20] final
+=== 0
+### +ctx=5
+static prop 5
+[0] ctx 5 went on x=5
+[20] main ends
+[20] final
+=== 0
+### +ctx=6
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=7
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=8
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=9
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=10
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=11
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=12
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=13
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=14
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=15
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=16
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=17
+cast null 1
+[0] ctx 17 went on x=0
+[20] main ends
+[20] final
+=== 0
+### +ctx=18
+cast null ok 1
+[0] ctx 18 went on x=1
+[20] main ends
+[20] final
+=== 0
+### +ctx=20
+[0] ctx 20 went on x=0
+[20] main ends
+[20] final
+=== 0
+### +ctx=21
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=22
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=23
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=24
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=25
+handle null
+[0] ctx 25 went on x=0
+[20] main ends
+[20] final
+=== 0
+### +ctx=26
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=27
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=28
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=30
+[0] final
+=== 1 SIM-010
+### +ctx=31
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=32
+[0] ctx 32 went on x=1
+[20] main ends
+[20] final
+=== 0
+### +ctx=33
+[0] ctx 33 went on x=0
+[20] main ends
+[20] final
+=== 0
+### +ctx=34
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=35
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=36
+[0] ctx 36 went on x=0
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=37
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=38
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=39
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=40
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=41
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=42
+[0] final
+=== 1 SIM-012 SIM-010 SIM-009
+### +ctx=43
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=44
+[0] ctx 44 went on x=0
+[20] main ends
+[20] final
+=== 0
+### +ctx=45
+=== 1 SIM-010 SIM-009
+### +ctx=46
+=== 1 SIM-010 SIM-009
+### +ctx=47
+=== 1 SIM-010 SIM-009
+### +ctx=48
+=== 1 SIM-010 SIM-009
+### +ctx=49
+=== 1 SIM-010 SIM-009
+### +ctx=50
+=== 1 SIM-010 SIM-009
+### +ctx=51
+=== 1 SIM-010 SIM-009
+### +ctx=52
+=== 1 SIM-010 SIM-009
+### +ctx=53
+=== 1 SIM-010 SIM-009
+### +ctx=54
+[0] ctx 54 went on x=0
+[20] main ends
+[20] final
+=== 0
+### +ctx=55
+=== 1 SIM-010 SIM-009
+### +ctx=56
+=== 1 SIM-010 SIM-009
+### +ctx=57
+vif 1 1
+[0] ctx 57 went on x=0
+[20] main ends
+[20] final
+=== 0
+### +ctx=58
+=== 1 SIM-010 SIM-009
+### +ctx=59
+vif2 4
+=== 1 SIM-010 SIM-009
+### +ctx=60
+[0] final
+=== 1 SIM-010
+### +ctx=62
+[0] final
+=== 1 SIM-010
+### +ctx=64
+[0] final
+=== 1 SIM-010
+### +ctx=68
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=69
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=70
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=71
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=72
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=73
+trigger null event
+[0] ctx 73 went on x=0
+[20] main ends
+[20] final
+=== 0
+### +ctx=74
+nb trigger null event
+[0] ctx 74 went on x=0
+[20] main ends
+[20] final
+=== 0
+### +ctx=78
+cmp 1 1
+[0] ctx 78 went on x=0
+[20] main ends
+[20] final
+=== 0
+### +ctx=79
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=80
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=82
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=83
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=84
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=85
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=86
+chandle 1
+[0] ctx 86 went on x=0
+[20] main ends
+[20] final
+=== 0
+### +ctx=87
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=88
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=89
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=90
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=91
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=92
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=93
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=94
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=95
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=96
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=97
+[0] ctx 97 went on x=0
+[20] main ends
+[20] final
+=== 0
+### +ctx=98
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=99
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=100
+[0] ctx 100 went on x=0
+[20] main ends
+[20] final
+=== 1 SIM-010
+### +ctx=101
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=103
+[0] final
+=== 1 SIM-010 SIM-009
+### +ctx=104
+[0] ctx 104 went on x=0
+[20] main ends
+[20] final
+=== 0
+### +ctx=105
+[0] ctx 105 went on x=0
+[20] main ends
+[20] final
+=== 0

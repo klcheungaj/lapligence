@@ -1,0 +1,277 @@
+### +act=none +ctx=nba
+[5] strobe q=1
+[13] program ends
+[22] writer went on
+[25] take none nba
+[25] after take nba
+[25] strobe2 q=3
+[65] end woke=106 late=11 r=55 d=77 q=6 w=WAITING
+[65] final woke=106 late=11
+program final
+=== 0
+### +act=none +ctx=ev
+[5] strobe q=1
+[13] program ends
+[22] writer went on
+[25] take none ev
+[25] after take ev
+[25] strobe2 q=3
+[65] end woke=106 late=11 r=55 d=77 q=6 w=WAITING
+[65] final woke=106 late=11
+program final
+=== 0
+### +act=none +ctx=latenba
+[5] strobe q=1
+[13] program ends
+[22] writer went on
+[25] strobe2 q=3
+[31] take none latenba
+[31] after take latenba
+[65] end woke=106 late=11 r=55 d=77 q=6 w=WAITING
+[65] final woke=106 late=11
+program final
+=== 0
+### +act=none +ctx=prog
+[5] strobe q=1
+[13] take none prog
+[13] after take prog
+prog went on
+[13] program ends
+[22] writer went on
+[25] strobe2 q=3
+[65] end woke=106 late=11 r=55 d=77 q=6 w=WAITING
+[65] final woke=106 late=11
+program final
+=== 0
+### +act=none +ctx=exit
+[5] strobe q=1
+exit
+[13] final woke=101 late=0
+program final
+=== 0
+### +act=none +ctx=progfork
+[5] strobe q=1
+prog disabled fork
+[14] program ends
+[22] writer went on
+[25] strobe2 q=3
+[65] end woke=106 late=11 r=55 d=77 q=6 w=WAITING
+[65] final woke=106 late=11
+program final
+=== 0
+### +act=kill +ctx=nba
+[5] strobe q=1
+[13] program ends
+[22] writer went on
+[25] take kill nba
+[25] strobe2 q=3
+[65] end woke=103 late=11 r=55 d=77 q=6 w=KILLED
+[65] final woke=103 late=11
+program final
+=== 0
+### +act=kill +ctx=ev
+[5] strobe q=1
+[13] program ends
+[22] writer went on
+[25] take kill ev
+[25] strobe2 q=3
+[65] end woke=106 late=11 r=55 d=77 q=6 w=WAITING
+[65] final woke=106 late=11
+program final
+=== 0
+### +act=kill +ctx=latenba
+[5] strobe q=1
+[13] program ends
+[22] writer went on
+[25] strobe2 q=3
+[31] take kill latenba
+[65] end woke=106 late=11 r=55 d=77 q=6 w=WAITING
+[65] final woke=106 late=11
+program final
+=== 0
+### +act=kill +ctx=prog
+[5] strobe q=1
+[13] take kill prog
+[13] program ends
+[22] writer went on
+[25] strobe2 q=3
+[65] end woke=106 late=11 r=55 d=77 q=6 w=WAITING
+[65] final woke=106 late=11
+program final
+=== 0
+### +act=kill +ctx=exit
+[5] strobe q=1
+exit
+[13] final woke=101 late=0
+program final
+=== 0
+### +act=kill +ctx=progfork
+[5] strobe q=1
+prog disabled fork
+[14] program ends
+[22] writer went on
+[25] strobe2 q=3
+[65] end woke=106 late=11 r=55 d=77 q=6 w=WAITING
+[65] final woke=106 late=11
+program final
+=== 0
+### +act=finish +ctx=nba
+[5] strobe q=1
+[13] program ends
+[22] writer went on
+[25] take finish nba
+[25] final woke=103 late=1
+program final
+=== 0
+### +act=finish +ctx=ev
+[5] strobe q=1
+[13] program ends
+[22] writer went on
+[25] take finish ev
+[25] final woke=102 late=1
+program final
+=== 0
+### +act=finish +ctx=latenba
+[5] strobe q=1
+[13] program ends
+[22] writer went on
+[25] strobe2 q=3
+[31] take finish latenba
+[31] final woke=103 late=11
+program final
+=== 0
+### +act=finish +ctx=prog
+[5] strobe q=1
+[13] take finish prog
+[13] final woke=101 late=0
+program final
+=== 0
+### +act=finish +ctx=exit
+[5] strobe q=1
+exit
+[13] final woke=101 late=0
+program final
+=== 0
+### +act=finish +ctx=progfork
+[5] strobe q=1
+prog disabled fork
+[14] program ends
+[22] writer went on
+[25] strobe2 q=3
+[65] end woke=106 late=11 r=55 d=77 q=6 w=WAITING
+[65] final woke=106 late=11
+program final
+=== 0
+### +act=fatal +ctx=nba
+[5] strobe q=1
+[13] program ends
+[22] writer went on
+[25] take fatal nba
+[25] final woke=103 late=1
+program final
+=== 1 SIM-006
+### +act=fatal +ctx=ev
+[5] strobe q=1
+[13] program ends
+[22] writer went on
+[25] take fatal ev
+[25] final woke=102 late=1
+program final
+=== 1 SIM-006
+### +act=fatal +ctx=latenba
+[5] strobe q=1
+[13] program ends
+[22] writer went on
+[25] strobe2 q=3
+[31] take fatal latenba
+[31] final woke=103 late=11
+program final
+=== 1 SIM-006
+### +act=fatal +ctx=prog
+[5] strobe q=1
+[13] take fatal prog
+[13] final woke=101 late=0
+program final
+=== 1 SIM-006
+### +act=fatal +ctx=exit
+[5] strobe q=1
+exit
+[13] final woke=101 late=0
+program final
+=== 0
+### +act=fatal +ctx=progfork
+[5] strobe q=1
+prog disabled fork
+[14] program ends
+[22] writer went on
+[25] strobe2 q=3
+[65] end woke=106 late=11 r=55 d=77 q=6 w=WAITING
+[65] final woke=106 late=11
+program final
+=== 0
+### +act=killn +ctx=nba
+[5] strobe q=1
+[13] program ends
+[22] writer went on
+[25] take killn nba
+[25] strobe2 q=3
+[65] end woke=103 late=11 r=55 d=77 q=6 w=KILLED
+[65] final woke=103 late=11
+program final
+=== 0
+### +act=killn +ctx=pending
+[5] strobe q=1
+[13] program ends
+[21] take killn pending
+[21] after take pending
+[22] writer went on
+[25] strobe2 q=3
+[65] end woke=102 late=11 r=55 d=77 q=6 w=KILLED
+[65] final woke=102 late=11
+program final
+=== 0
+### +act=killn +ctx=prog
+[5] strobe q=1
+[13] take killn prog
+[13] after take prog
+prog went on
+[13] program ends
+[22] writer went on
+[25] strobe2 q=3
+[65] end woke=101 late=11 r=55 d=77 q=6 w=KILLED
+[65] final woke=101 late=11
+program final
+=== 0
+### +act=disable +ctx=nba
+[5] strobe q=1
+[13] program ends
+[22] writer went on
+[25] take disable nba
+[25] strobe2 q=3
+[65] end woke=103 late=11 r=55 d=77 q=6 w=FINISHED
+[65] final woke=103 late=11
+program final
+=== 0
+### +act=disable +ctx=pending
+[5] strobe q=1
+[13] program ends
+[21] take disable pending
+[21] after take pending
+[22] writer went on
+[25] strobe2 q=3
+[65] end woke=102 late=11 r=55 d=77 q=6 w=FINISHED
+[65] final woke=102 late=11
+program final
+=== 0
+### +act=disable +ctx=prog
+[5] strobe q=1
+[13] take disable prog
+[13] after take prog
+prog went on
+[13] program ends
+[22] writer went on
+[25] strobe2 q=3
+[65] end woke=101 late=11 r=55 d=77 q=6 w=FINISHED
+[65] final woke=101 late=11
+program final
+=== 0

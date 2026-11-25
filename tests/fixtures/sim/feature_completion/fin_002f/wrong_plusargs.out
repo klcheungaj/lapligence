@@ -1,0 +1,990 @@
+### +V=5
+d 1 5
+0d 1 5
+db 1 5
+h 1 00000005
+x 1 0000000000000000000000005
+o 1 00000000005
+b 1 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+bn 1 0000
+f 1 5.000000
+e 1 5.000000
+g 1 5.000000
+s 1 5
+sw 1    5
+dre 1 5.000000
+fi 1 5
+ds 1 5
+hs 1 5
+dt 1 5
+dig 1 5
+dli 1 5
+dsi 1 5
+de 1 5
+sre 1 53.000000
+fsr 1 5.000000
+sby 1 53
+hpk 1 00000005
+t 1
+t1 0
+tempty 0
+fmt 1 5
+ts 1
+=== 0
+### +V=0x1f
+d 1 0
+0d 1 0
+db 1 x
+h 1 00000x1f
+x 1 0000000000000000000000x1f
+o 1 xxxxxxxxxxx
+b 1 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+bn 1 0000
+f 1 0.000000
+e 1 0.000000
+g 1 0.000000
+s 1 0x1f
+sw 1 0x1f
+dre 1 0.000000
+fi 1 0
+ds 1 0x1f
+hs 1 0x1f
+dt 1 x
+dig 1 x
+dli 1 0
+dsi 1 x
+de 1 0
+sre 1 813183334.000000
+fsr 1 0.000000
+sby 1 102
+hpk 1 00000x1f
+t 1
+t1 0
+tempty 0
+fmt 1 0
+ts 1
+=== 0
+### +V=1_0
+d 1 10
+0d 1 10
+db 1 10
+h 1 00000010
+x 1 0000000000000000000000010
+o 1 00000000010
+b 1 00000000000000000000000000000010
+bn 1 0010
+f 1 0.000000
+e 1 0.000000
+g 1 0.000000
+s 1 1_0
+sw 1  1_0
+dre 1 10.000000
+fi 1 0
+ds 1 1_0
+hs 1 1_0
+dt 1 10
+dig 1 10
+dli 1 10
+dsi 1 10
+de 1 10
+sre 1 3235632.000000
+fsr 1 0.000000
+sby 1 48
+hpk 1 00000010
+t 1
+t1 1
+tempty 0
+fmt 1 10
+ts 1
+=== 0
+### +V=12ab
+d 1 0
+0d 1 0
+db 1 x
+h 1 000012ab
+x 1 00000000000000000000012ab
+o 1 xxxxxxxxxxx
+b 1 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+bn 1 0000
+f 1 0.000000
+e 1 0.000000
+g 1 0.000000
+s 1 12ab
+sw 1 12ab
+dre 1 0.000000
+fi 1 0
+ds 1 12ab
+hs 1 12ab
+dt 1 x
+dig 1 x
+dli 1 0
+dsi 1 x
+de 1 0
+sre 1 825385314.000000
+fsr 1 0.000000
+sby 1 98
+hpk 1 000012ab
+t 1
+t1 1
+tempty 0
+fmt 1 0
+ts 1
+=== 0
+### +V=1.5
+d 1 0
+0d 1 0
+db 1 x
+h 1 xxxxxxxx
+x 1 xxxxxxxxxxxxxxxxxxxxxxxxx
+o 1 xxxxxxxxxxx
+b 1 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+bn 1 0000
+f 1 1.500000
+e 1 1.500000
+g 1 1.500000
+s 1 1.5
+sw 1  1.5
+dre 1 0.000000
+fi 1 2
+ds 1 1.5
+hs 1 1.5
+dt 1 x
+dig 1 x
+dli 1 0
+dsi 1 x
+de 1 0
+sre 1 3223093.000000
+fsr 1 1.500000
+sby 1 53
+hpk 1 xxxxxxxx
+t 1
+t1 1
+tempty 0
+fmt 1 0
+ts 1
+=== 0
+### +V=1e3
+d 1 0
+0d 1 0
+db 1 x
+h 1 000001e3
+x 1 00000000000000000000001e3
+o 1 xxxxxxxxxxx
+b 1 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+bn 1 0000
+f 1 1000.000000
+e 1 1000.000000
+g 1 1000.000000
+s 1 1e3
+sw 1  1e3
+dre 1 0.000000
+fi 1 1000
+ds 1 1e3
+hs 1 1e3
+dt 1 x
+dig 1 x
+dli 1 0
+dsi 1 x
+de 1 0
+sre 1 3237171.000000
+fsr 1 1000.000000
+sby 1 51
+hpk 1 000001e3
+t 1
+t1 1
+tempty 0
+fmt 1 0
+ts 1
+=== 0
+### +V=abc
+d 1 0
+0d 1 0
+db 1 x
+h 1 00000abc
+x 1 0000000000000000000000abc
+o 1 xxxxxxxxxxx
+b 1 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+bn 1 0000
+f 1 0.000000
+e 1 0.000000
+g 1 0.000000
+s 1 abc
+sw 1  abc
+dre 1 0.000000
+fi 1 0
+ds 1 abc
+hs 1 abc
+dt 1 x
+dig 1 x
+dli 1 0
+dsi 1 x
+de 1 0
+sre 1 6382179.000000
+fsr 1 0.000000
+sby 1 99
+hpk 1 00000abc
+t 1
+t1 0
+tempty 0
+fmt 1 0
+ts 1
+=== 0
+### +V=0
+d 1 0
+0d 1 0
+db 1 0
+h 1 00000000
+x 1 0000000000000000000000000
+o 1 00000000000
+b 1 00000000000000000000000000000000
+bn 1 0000
+f 1 0.000000
+e 1 0.000000
+g 1 0.000000
+s 1 0
+sw 1    0
+dre 1 0.000000
+fi 1 0
+ds 1 0
+hs 1 0
+dt 1 0
+dig 1 0
+dli 1 0
+dsi 1 0
+de 1 0
+sre 1 48.000000
+fsr 1 0.000000
+sby 1 48
+hpk 1 00000000
+t 1
+t1 0
+tempty 0
+fmt 1 0
+ts 1
+=== 0
+### +V=0b1
+d 1 0
+0d 1 0
+db 1 x
+h 1 000000b1
+x 1 00000000000000000000000b1
+o 1 xxxxxxxxxxx
+b 1 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+bn 1 0000
+f 1 0.000000
+e 1 0.000000
+g 1 0.000000
+s 1 0b1
+sw 1  0b1
+dre 1 0.000000
+fi 1 0
+ds 1 0b1
+hs 1 0b1
+dt 1 x
+dig 1 x
+dli 1 0
+dsi 1 x
+de 1 0
+sre 1 3170865.000000
+fsr 1 0.000000
+sby 1 49
+hpk 1 000000b1
+t 1
+t1 0
+tempty 0
+fmt 1 0
+ts 1
+=== 0
+### +V=0o7
+d 1 0
+0d 1 0
+db 1 x
+h 1 xxxxxxxx
+x 1 xxxxxxxxxxxxxxxxxxxxxxxxx
+o 1 xxxxxxxxxxx
+b 1 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+bn 1 0000
+f 1 0.000000
+e 1 0.000000
+g 1 0.000000
+s 1 0o7
+sw 1  0o7
+dre 1 0.000000
+fi 1 0
+ds 1 0o7
+hs 1 0o7
+dt 1 x
+dig 1 x
+dli 1 0
+dsi 1 x
+de 1 0
+sre 1 3174199.000000
+fsr 1 0.000000
+sby 1 55
+hpk 1 xxxxxxxx
+t 1
+t1 0
+tempty 0
+fmt 1 0
+ts 1
+=== 0
+### +V=1x
+d 1 0
+0d 1 0
+db 1 x
+h 1 0000001x
+x 1 000000000000000000000001x
+o 1 0000000001x
+b 1 0000000000000000000000000000001x
+bn 1 0010
+f 1 0.000000
+e 1 0.000000
+g 1 0.000000
+s 1 1x
+sw 1   1x
+dre 1 0.000000
+fi 1 0
+ds 1 1x
+hs 1 1x
+dt 1 x
+dig 1 x
+dli 1 0
+dsi 1 x
+de 1 0
+sre 1 12664.000000
+fsr 1 0.000000
+sby 1 120
+hpk 1 0000001x
+t 1
+t1 1
+tempty 0
+fmt 1 0
+ts 1
+=== 0
+### +V=-
+d 1 0
+0d 1 0
+db 1 x
+h 1 xxxxxxxx
+x 1 xxxxxxxxxxxxxxxxxxxxxxxxx
+o 1 xxxxxxxxxxx
+b 1 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+bn 1 0000
+f 1 0.000000
+e 1 0.000000
+g 1 0.000000
+s 1 -
+sw 1    -
+dre 1 0.000000
+fi 1 0
+ds 1 -
+hs 1 -
+dt 1 x
+dig 1 x
+dli 1 0
+dsi 1 x
+de 1 0
+sre 1 45.000000
+fsr 1 0.000000
+sby 1 45
+hpk 1 xxxxxxxx
+t 1
+t1 0
+tempty 0
+fmt 1 0
+ts 1
+=== 0
+### +V=_
+d 1 0
+0d 1 0
+db 1 x
+h 1 xxxxxxxx
+x 1 xxxxxxxxxxxxxxxxxxxxxxxxx
+o 1 xxxxxxxxxxx
+b 1 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+bn 1 0000
+f 1 0.000000
+e 1 0.000000
+g 1 0.000000
+s 1 _
+sw 1    _
+dre 1 0.000000
+fi 1 0
+ds 1 _
+hs 1 _
+dt 1 x
+dig 1 x
+dli 1 0
+dsi 1 x
+de 1 0
+sre 1 95.000000
+fsr 1 0.000000
+sby 1 95
+hpk 1 xxxxxxxx
+t 1
+t1 0
+tempty 0
+fmt 1 0
+ts 1
+=== 0
+### +V=1_
+d 1 1
+0d 1 1
+db 1 1
+h 1 00000001
+x 1 0000000000000000000000001
+o 1 00000000001
+b 1 00000000000000000000000000000001
+bn 1 0001
+f 1 0.000000
+e 1 0.000000
+g 1 0.000000
+s 1 1_
+sw 1   1_
+dre 1 1.000000
+fi 1 0
+ds 1 1_
+hs 1 1_
+dt 1 1
+dig 1 1
+dli 1 1
+dsi 1 1
+de 1 1
+sre 1 12639.000000
+fsr 1 0.000000
+sby 1 95
+hpk 1 00000001
+t 1
+t1 1
+tempty 0
+fmt 1 1
+ts 1
+=== 0
+### +V=_1
+d 1 1
+0d 1 1
+db 1 1
+h 1 00000001
+x 1 0000000000000000000000001
+o 1 00000000001
+b 1 00000000000000000000000000000001
+bn 1 0001
+f 1 0.000000
+e 1 0.000000
+g 1 0.000000
+s 1 _1
+sw 1   _1
+dre 1 1.000000
+fi 1 0
+ds 1 _1
+hs 1 _1
+dt 1 1
+dig 1 1
+dli 1 1
+dsi 1 1
+de 1 1
+sre 1 24369.000000
+fsr 1 0.000000
+sby 1 49
+hpk 1 00000001
+t 1
+t1 0
+tempty 0
+fmt 1 1
+ts 1
+=== 0
+### +V=1.5e
+d 1 0
+0d 1 0
+db 1 x
+h 1 xxxxxxxx
+x 1 xxxxxxxxxxxxxxxxxxxxxxxxx
+o 1 xxxxxxxxxxx
+b 1 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+bn 1 0000
+f 1 0.000000
+e 1 0.000000
+g 1 0.000000
+s 1 1.5e
+sw 1 1.5e
+dre 1 0.000000
+fi 1 0
+ds 1 1.5e
+hs 1 1.5e
+dt 1 x
+dig 1 x
+dli 1 0
+dsi 1 x
+de 1 0
+sre 1 825111909.000000
+fsr 1 0.000000
+sby 1 101
+hpk 1 xxxxxxxx
+t 1
+t1 1
+tempty 0
+fmt 1 0
+ts 1
+=== 0
+### +V=--5
+d 1 0
+0d 1 0
+db 1 x
+h 1 xxxxxxxx
+x 1 xxxxxxxxxxxxxxxxxxxxxxxxx
+o 1 xxxxxxxxxxx
+b 1 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+bn 1 0000
+f 1 0.000000
+e 1 0.000000
+g 1 0.000000
+s 1 --5
+sw 1  --5
+dre 1 0.000000
+fi 1 0
+ds 1 --5
+hs 1 --5
+dt 1 x
+dig 1 x
+dli 1 0
+dsi 1 x
+de 1 0
+sre 1 2960693.000000
+fsr 1 0.000000
+sby 1 53
+hpk 1 xxxxxxxx
+t 1
+t1 0
+tempty 0
+fmt 1 0
+ts 1
+=== 0
+### +V=1?
+d 1 0
+0d 1 0
+db 1 x
+h 1 0000001z
+x 1 000000000000000000000001z
+o 1 0000000001z
+b 1 0000000000000000000000000000001z
+bn 1 0010
+f 1 0.000000
+e 1 0.000000
+g 1 0.000000
+s 1 1?
+sw 1   1?
+dre 1 0.000000
+fi 1 0
+ds 1 1?
+hs 1 1?
+dt 1 x
+dig 1 x
+dli 1 0
+dsi 1 x
+de 1 0
+sre 1 12607.000000
+fsr 1 0.000000
+sby 1 63
+hpk 1 0000001z
+t 1
+t1 1
+tempty 0
+fmt 1 0
+ts 1
+=== 0
+### +V=12z
+d 1 0
+0d 1 0
+db 1 x
+h 1 0000012z
+x 1 000000000000000000000012z
+o 1 0000000012z
+b 1 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+bn 1 0000
+f 1 0.000000
+e 1 0.000000
+g 1 0.000000
+s 1 12z
+sw 1  12z
+dre 1 0.000000
+fi 1 0
+ds 1 12z
+hs 1 12z
+dt 1 x
+dig 1 x
+dli 1 0
+dsi 1 x
+de 1 0
+sre 1 3224186.000000
+fsr 1 0.000000
+sby 1 122
+hpk 1 0000012z
+t 1
+t1 1
+tempty 0
+fmt 1 0
+ts 1
+=== 0
+### +V=A
+d 1 0
+0d 1 0
+db 1 x
+h 1 0000000a
+x 1 000000000000000000000000a
+o 1 xxxxxxxxxxx
+b 1 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+bn 1 0000
+f 1 0.000000
+e 1 0.000000
+g 1 0.000000
+s 1 A
+sw 1    A
+dre 1 0.000000
+fi 1 0
+ds 1 A
+hs 1 A
+dt 1 x
+dig 1 x
+dli 1 0
+dsi 1 x
+de 1 0
+sre 1 65.000000
+fsr 1 0.000000
+sby 1 65
+hpk 1 0000000a
+t 1
+t1 0
+tempty 0
+fmt 1 0
+ts 1
+=== 0
+### +V=256
+d 1 256
+0d 1 256
+db 1 0
+h 1 00000256
+x 1 0000000000000000000000256
+o 1 00000000256
+b 1 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+bn 1 0000
+f 1 256.000000
+e 1 256.000000
+g 1 256.000000
+s 1 256
+sw 1  256
+dre 1 256.000000
+fi 1 256
+ds 1 256
+hs 1 256
+dt 1 256
+dig 1 256
+dli 1 256
+dsi 1 256
+de 1 256
+sre 1 3290422.000000
+fsr 1 256.000000
+sby 1 54
+hpk 1 00000256
+t 1
+t1 0
+tempty 0
+fmt 1 256
+ts 1
+=== 0
+### +V=-1.5
+d 1 0
+0d 1 0
+db 1 x
+h 1 xxxxxxxx
+x 1 xxxxxxxxxxxxxxxxxxxxxxxxx
+o 1 xxxxxxxxxxx
+b 1 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+bn 1 0000
+f 1 -1.500000
+e 1 -1.500000
+g 1 -1.500000
+s 1 -1.5
+sw 1 -1.5
+dre 1 0.000000
+fi 1 -2
+ds 1 -1.5
+hs 1 -1.5
+dt 1 x
+dig 1 x
+dli 1 0
+dsi 1 x
+de 1 0
+sre 1 758197813.000000
+fsr 1 -1.500000
+sby 1 53
+hpk 1 xxxxxxxx
+t 1
+t1 0
+tempty 0
+fmt 1 0
+ts 1
+=== 0
+### +V=.5
+d 1 0
+0d 1 0
+db 1 x
+h 1 xxxxxxxx
+x 1 xxxxxxxxxxxxxxxxxxxxxxxxx
+o 1 xxxxxxxxxxx
+b 1 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+bn 1 0000
+f 1 0.500000
+e 1 0.500000
+g 1 0.500000
+s 1 .5
+sw 1   .5
+dre 1 0.000000
+fi 1 1
+ds 1 .5
+hs 1 .5
+dt 1 x
+dig 1 x
+dli 1 0
+dsi 1 x
+de 1 0
+sre 1 11829.000000
+fsr 1 0.500000
+sby 1 53
+hpk 1 xxxxxxxx
+t 1
+t1 0
+tempty 0
+fmt 1 0
+ts 1
+=== 0
+### +V=1e+2
+d 1 0
+0d 1 0
+db 1 x
+h 1 xxxxxxxx
+x 1 xxxxxxxxxxxxxxxxxxxxxxxxx
+o 1 xxxxxxxxxxx
+b 1 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+bn 1 0000
+f 1 100.000000
+e 1 100.000000
+g 1 100.000000
+s 1 1e+2
+sw 1 1e+2
+dre 1 0.000000
+fi 1 100
+ds 1 1e+2
+hs 1 1e+2
+dt 1 x
+dig 1 x
+dli 1 0
+dsi 1 x
+de 1 0
+sre 1 828713778.000000
+fsr 1 100.000000
+sby 1 50
+hpk 1 xxxxxxxx
+t 1
+t1 1
+tempty 0
+fmt 1 0
+ts 1
+=== 0
+### +V=nan
+d 1 0
+0d 1 0
+db 1 x
+h 1 xxxxxxxx
+x 1 xxxxxxxxxxxxxxxxxxxxxxxxx
+o 1 xxxxxxxxxxx
+b 1 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+bn 1 0000
+f 1 0.000000
+e 1 0.000000
+g 1 0.000000
+s 1 nan
+sw 1  nan
+dre 1 0.000000
+fi 1 0
+ds 1 nan
+hs 1 nan
+dt 1 x
+dig 1 x
+dli 1 0
+dsi 1 x
+de 1 0
+sre 1 7233902.000000
+fsr 1 0.000000
+sby 1 110
+hpk 1 xxxxxxxx
+t 1
+t1 0
+tempty 0
+fmt 1 0
+ts 1
+=== 0
+### +V=inf
+d 1 0
+0d 1 0
+db 1 x
+h 1 xxxxxxxx
+x 1 xxxxxxxxxxxxxxxxxxxxxxxxx
+o 1 xxxxxxxxxxx
+b 1 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+bn 1 0000
+f 1 0.000000
+e 1 0.000000
+g 1 0.000000
+s 1 inf
+sw 1  inf
+dre 1 0.000000
+fi 1 0
+ds 1 inf
+hs 1 inf
+dt 1 x
+dig 1 x
+dli 1 0
+dsi 1 x
+de 1 0
+sre 1 6909542.000000
+fsr 1 0.000000
+sby 1 102
+hpk 1 xxxxxxxx
+t 1
+t1 0
+tempty 0
+fmt 1 0
+ts 1
+=== 0
+### +V=0x1p3
+d 1 0
+0d 1 0
+db 1 x
+h 1 xxxxxxxx
+x 1 xxxxxxxxxxxxxxxxxxxxxxxxx
+o 1 xxxxxxxxxxx
+b 1 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+bn 1 0000
+f 1 0.000000
+e 1 0.000000
+g 1 0.000000
+s 1 0x1p3
+sw 1 x1p3
+dre 1 0.000000
+fi 1 0
+ds 1 0x1p3
+hs 1 0x1p3
+dt 1 x
+dig 1 x
+dli 1 0
+dsi 1 x
+de 1 0
+sre 1 208174936115.000000
+fsr 1 0.000000
+sby 1 51
+hpk 1 xxxxxxxx
+t 1
+t1 0
+tempty 0
+fmt 1 0
+ts 1
+=== 0
+### +V= 5
+d 1 0
+0d 1 0
+db 1 x
+h 1 xxxxxxxx
+x 1 xxxxxxxxxxxxxxxxxxxxxxxxx
+o 1 xxxxxxxxxxx
+b 1 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+bn 1 0000
+f 1 0.000000
+e 1 0.000000
+g 1 0.000000
+s 1  5
+sw 1    5
+dre 1 0.000000
+fi 1 0
+ds 1  5
+hs 1  5
+dt 1 x
+dig 1 x
+dli 1 0
+dsi 1 x
+de 1 0
+sre 1 8245.000000
+fsr 1 0.000000
+sby 1 53
+hpk 1 xxxxxxxx
+t 1
+t1 0
+tempty 0
+fmt 1 0
+ts 1
+=== 0
+### +V=5 
+d 1 0
+0d 1 0
+db 1 x
+h 1 xxxxxxxx
+x 1 xxxxxxxxxxxxxxxxxxxxxxxxx
+o 1 xxxxxxxxxxx
+b 1 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+bn 1 0000
+f 1 0.000000
+e 1 0.000000
+g 1 0.000000
+s 1 5 
+sw 1   5 
+dre 1 0.000000
+fi 1 0
+ds 1 5 
+hs 1 5 
+dt 1 x
+dig 1 x
+dli 1 0
+dsi 1 x
+de 1 0
+sre 1 13600.000000
+fsr 1 0.000000
+sby 1 32
+hpk 1 xxxxxxxx
+t 1
+t1 0
+tempty 0
+fmt 1 0
+ts 1
+=== 0
+### +V="5"
+d 1 0
+0d 1 0
+db 1 x
+h 1 xxxxxxxx
+x 1 xxxxxxxxxxxxxxxxxxxxxxxxx
+o 1 xxxxxxxxxxx
+b 1 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+bn 1 0000
+f 1 0.000000
+e 1 0.000000
+g 1 0.000000
+s 1 "5"
+sw 1  "5"
+dre 1 0.000000
+fi 1 0
+ds 1 "5"
+hs 1 "5"
+dt 1 x
+dig 1 x
+dli 1 0
+dsi 1 x
+de 1 0
+sre 1 2241826.000000
+fsr 1 0.000000
+sby 1 34
+hpk 1 xxxxxxxx
+t 1
+t1 0
+tempty 0
+fmt 1 0
+ts 1
+=== 0

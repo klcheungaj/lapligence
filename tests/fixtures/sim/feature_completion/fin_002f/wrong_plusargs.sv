@@ -1,0 +1,53 @@
+// Plusargs whose text does not fit the conversion or the variable (21.6).
+module tb;
+  typedef enum {A, B} e_t;
+  int r, i;
+  integer ig;
+  longint li;
+  byte by;
+  bit [3:0] n;
+  logic [7:0] b;
+  logic [31:0] w;
+  logic [99:0] wide;
+  logic [0:3][7:0] pk;
+  reg signed [15:0] si;
+  time t;
+  real re;
+  shortreal sr;
+  string s, fmt, s2;
+  e_t e;
+  initial begin
+    i = 77; b = 77; w = 77; wide = 77; re = 7.5; s = "old"; t = 77; ig = 77; n = 7; li = 77; by = 77; si = 77; sr = 0.5;
+    r = $value$plusargs("V=%d", i); $display("d %0d %0d", r, i);
+    r = $value$plusargs("V=%0d", i); $display("0d %0d %0d", r, i);
+    r = $value$plusargs("V=%d", b); $display("db %0d %0d", r, b);
+    r = $value$plusargs("V=%h", w); $display("h %0d %h", r, w);
+    r = $value$plusargs("V=%x", wide); $display("x %0d %h", r, wide);
+    r = $value$plusargs("V=%o", w); $display("o %0d %o", r, w);
+    r = $value$plusargs("V=%b", w); $display("b %0d %b", r, w);
+    r = $value$plusargs("V=%b", n); $display("bn %0d %b", r, n);
+    r = $value$plusargs("V=%f", re); $display("f %0d %f", r, re);
+    r = $value$plusargs("V=%e", re); $display("e %0d %f", r, re);
+    r = $value$plusargs("V=%g", re); $display("g %0d %f", r, re);
+    r = $value$plusargs("V=%s", s); $display("s %0d %s", r, s);
+    r = $value$plusargs("V=%s", w); $display("sw %0d %s", r, w);
+    r = $value$plusargs("V=%d", re); $display("dre %0d %f", r, re);
+    r = $value$plusargs("V=%f", i); $display("fi %0d %0d", r, i);
+    r = $value$plusargs("V=%d", s); $display("ds %0d %s", r, s);
+    r = $value$plusargs("V=%h", s); $display("hs %0d %s", r, s);
+    r = $value$plusargs("V=%d", t); $display("dt %0d %0d", r, t);
+    r = $value$plusargs("V=%d", ig); $display("dig %0d %0d", r, ig);
+    r = $value$plusargs("V=%d", li); $display("dli %0d %0d", r, li);
+    r = $value$plusargs("V=%d", si); $display("dsi %0d %0d", r, si);
+    r = $value$plusargs("V=%d", e); $display("de %0d %0d", r, e);
+    r = $value$plusargs("V=%s", re); $display("sre %0d %f", r, re);
+    r = $value$plusargs("V=%f", sr); $display("fsr %0d %f", r, sr);
+    r = $value$plusargs("V=%s", by); $display("sby %0d %0d", r, by);
+    r = $value$plusargs("V=%h", pk); $display("hpk %0d %h", r, pk);
+    r = $test$plusargs("V"); $display("t %0d", r);
+    r = $test$plusargs("V=1"); $display("t1 %0d", r);
+    r = $test$plusargs(""); $display("tempty %0d", r);
+    fmt = "V=%d"; r = $value$plusargs(fmt, i); $display("fmt %0d %0d", r, i);
+    s2 = "V"; r = $test$plusargs(s2); $display("ts %0d", r);
+  end
+endmodule

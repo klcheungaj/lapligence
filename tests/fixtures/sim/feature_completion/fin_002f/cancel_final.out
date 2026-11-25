@@ -1,0 +1,68 @@
+### +act=none
+first
+deep went on
+r=2
+after blk
+second done=0 p=WAITING q=WAITING
+sub 1 final
+sub 2 final
+sub 3 final
+=== 0
+### +act=finish
+first
+=== 0
+### +act=fatal
+first
+=== 1 SIM-006
+### +act=error
+first
+deep went on
+r=2
+after blk
+second done=0 p=WAITING q=WAITING
+sub 1 final
+sub 2 final
+sub 3 final
+=== 0 SIM-005
+### +act=killself
+first
+second done=0 p=WAITING q=WAITING
+sub 1 final
+sub 2 final
+sub 3 final
+=== 0
+### +act=killother
+first
+killed KILLED
+deep went on
+r=2
+after blk
+second done=0 p=KILLED q=KILLED
+sub 1 final
+sub 2 final
+sub 3 final
+=== 0
+### +act=disable_proc
+first
+deep went on
+r=2
+after blk
+second done=0 p=WAITING q=WAITING
+sub 1 final
+sub 2 final
+sub 3 final
+=== 0
+### +act=null
+first
+=== 1 SIM-010 SIM-009
+### +act=resume
+first
+resumed
+deep went on
+r=2
+after blk
+second done=0 p=WAITING q=WAITING
+sub 1 final
+sub 2 final
+sub 3 final
+=== 0

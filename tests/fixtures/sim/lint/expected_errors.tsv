@@ -16,6 +16,7 @@ data_type_edges/two_state_subprograms.sv	mixed-assignments	52:5
 data_types_next/string_delayed_nba.sv	mixed-assignments	7:3
 dynamic_ownership/selected_nba_capture.sv	mixed-assignments	5:5
 emit_value_traffic/arithmetic.sv	mixed-assignments	10:5
+feature_completion/fin_002f/cancel_vpi_statements.sv	mixed-assignments	12:3
 feature_completion/g1_05/owner_publication_snapshot.sv	mixed-assignments	9:5
 feature_completion/g1_19/nba_issue_capture.sv	mixed-assignments	10:5
 feature_completion/g1_19/nba_ordered_updates.sv	mixed-assignments	20:5

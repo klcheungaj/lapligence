@@ -1,0 +1,203 @@
+### +do=finish +reason=value
+reason 1
+callback: finish done
+[2] final q=0
+=== 0
+### +do=finish +reason=valueq
+reason 1
+callback: finish done
+[5] final q=1
+=== 0
+### +do=finish +reason=valuey
+reason 1
+callback: finish done
+[1] final q=0
+=== 0
+### +do=finish +reason=readwrite
+reason 6
+callback: finish done
+[3] final q=0
+=== 0
+### +do=finish +reason=readonly
+reason 7
+callback: finish done
+[3] final q=0
+=== 0
+### +do=finish +reason=nba
+reason 30
+callback: finish done
+[5] final q=0
+=== 0
+### +do=finish +reason=after
+reason 9
+callback: finish done
+[3] final q=0
+=== 0
+### +do=finish +reason=next
+reason 8
+callback: finish done
+[1] final q=0
+=== 0
+### +do=finish +reason=start
+reason 5
+callback: finish done
+[5] final q=0
+=== 0
+### +do=finish +reason=end
+reason 31
+callback: finish done
+[5] final q=1
+=== 0
+### +do=finish +reason=force
+reason 3
+callback: finish done
+[12] final q=1
+=== 0
+### +do=finish +reason=release
+reason 4
+callback: finish done
+[17] final q=2
+=== 0
+### +do=finish +reason=disable
+reason 27
+callback: finish done
+[22] final q=2
+=== 0
+### +do=finish +reason=endofsim
+[36] main ends steps=2 q=4
+[36] final q=4
+reason 12
+callback: finish done
+reason 12
+callback: finish done
+=== 0
+### +do=finish +reason=startofsim
+start: finish done
+[0] final q=0
+=== 0
+### +do=finish +reason=calltf
+calltf: finish done
+[0] final q=0
+calltf: finish done
+=== 0
+### +do=finish +reason=func
+func: finish done
+func: finish done
+[26] final q=3
+=== 0
+### +do=remove +reason=value
+reason 1
+removed 1
+callback: remove done
+[36] main ends steps=2 q=4
+[36] final q=4
+=== 0
+### +do=remove +reason=valueq
+reason 1
+removed 1
+callback: remove done
+[36] main ends steps=2 q=4
+[36] final q=4
+=== 0
+### +do=remove +reason=valuey
+reason 1
+removed 1
+callback: remove done
+[36] main ends steps=2 q=4
+[36] final q=4
+=== 0
+### +do=remove +reason=readwrite
+reason 6
+removed 1
+callback: remove done
+[36] main ends steps=2 q=4
+[36] final q=4
+=== 0
+### +do=remove +reason=readonly
+reason 7
+removed 1
+callback: remove done
+[36] main ends steps=2 q=4
+[36] final q=4
+=== 0
+### +do=remove +reason=nba
+reason 30
+removed 1
+callback: remove done
+[36] main ends steps=2 q=4
+[36] final q=4
+=== 0
+### +do=remove +reason=after
+reason 9
+removed 1
+callback: remove done
+[36] main ends steps=2 q=4
+[36] final q=4
+=== 0
+### +do=remove +reason=next
+reason 8
+removed 1
+callback: remove done
+[36] main ends steps=2 q=4
+[36] final q=4
+=== 0
+### +do=remove +reason=start
+reason 5
+removed 1
+callback: remove done
+[36] main ends steps=2 q=4
+[36] final q=4
+=== 0
+### +do=remove +reason=end
+reason 31
+removed 1
+callback: remove done
+[36] main ends steps=2 q=4
+[36] final q=4
+=== 0
+### +do=remove +reason=force
+reason 3
+removed 1
+callback: remove done
+[36] main ends steps=2 q=4
+[36] final q=4
+=== 0
+### +do=remove +reason=release
+reason 4
+removed 1
+callback: remove done
+[36] main ends steps=2 q=4
+[36] final q=4
+=== 0
+### +do=remove +reason=disable
+reason 27
+removed 1
+callback: remove done
+[36] main ends steps=2 q=4
+[36] final q=4
+=== 0
+### +do=remove +reason=endofsim
+[36] main ends steps=2 q=4
+[36] final q=4
+reason 12
+removed 1
+removed 1
+callback: remove done
+=== 0
+### +do=remove +reason=startofsim
+start: remove done
+[36] main ends steps=2 q=4
+[36] final q=4
+=== 0
+### +do=remove +reason=calltf
+calltf: remove done
+[36] main ends steps=2 q=4
+[36] final q=4
+calltf: remove done
+=== 0
+### +do=remove +reason=func
+func: remove done
+func: remove done
+[36] main ends steps=2 q=4
+[36] final q=4
+=== 0

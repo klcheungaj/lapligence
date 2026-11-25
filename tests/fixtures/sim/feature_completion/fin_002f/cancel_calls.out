@@ -1,0 +1,146 @@
+### +act=none +ctx=nested
+start act=none ctx=nested
+[1] nested: take
+[1] nested: after take
+r=3
+[1] end of victim
+[1] after victim
+[21] main ends
+[21] final
+=== 0
+### +act=none +ctx=pre
+start act=none ctx=pre
+[1] pre: take
+[1] pre: after take
+randomize=1 a=3
+[1] end of victim
+[1] after victim
+[21] main ends
+[21] final
+=== 0
+### +act=none +ctx=post
+start act=none ctx=post
+[1] post: take a=3
+[1] post: after take
+randomize=1 a=3
+[1] end of victim
+[1] after victim
+[21] main ends
+[21] final
+=== 0
+### +act=none +ctx=sample
+start act=none ctx=sample
+[1] sample: take
+[1] sample: after take
+sampled
+[1] end of victim
+[1] after victim
+[21] main ends
+[21] final
+=== 0
+### +act=none +ctx=clocking
+start act=none ctx=clocking
+[5] after clocking take
+[5] end of victim
+[5] after victim
+[25] main ends
+[25] final
+=== 0
+### +act=finish +ctx=nested
+start act=finish ctx=nested
+[1] nested: take
+[1] final
+=== 0
+### +act=finish +ctx=pre
+start act=finish ctx=pre
+[1] pre: take
+[1] final
+=== 0
+### +act=finish +ctx=post
+start act=finish ctx=post
+[1] post: take a=3
+[1] final
+=== 0
+### +act=finish +ctx=sample
+start act=finish ctx=sample
+[1] sample: take
+[1] final
+=== 0
+### +act=finish +ctx=clocking
+start act=finish ctx=clocking
+[5] final
+=== 0
+### +act=fatal +ctx=nested
+start act=fatal ctx=nested
+[1] nested: take
+[1] final
+=== 1 SIM-006
+### +act=fatal +ctx=pre
+start act=fatal ctx=pre
+[1] pre: take
+[1] final
+=== 1 SIM-006
+### +act=fatal +ctx=post
+start act=fatal ctx=post
+[1] post: take a=3
+[1] final
+=== 1 SIM-006
+### +act=fatal +ctx=sample
+start act=fatal ctx=sample
+[1] sample: take
+[1] final
+=== 1 SIM-006
+### +act=fatal +ctx=clocking
+start act=fatal ctx=clocking
+[5] final
+=== 1 SIM-006
+### +act=disable +ctx=nested
+start act=disable ctx=nested
+[1] nested: take
+[1] after victim
+[21] main ends
+[21] final
+=== 0
+### +act=disable +ctx=pre
+start act=disable ctx=pre
+[1] pre: take
+[1] after victim
+[21] main ends
+[21] final
+=== 0
+### +act=disable +ctx=post
+start act=disable ctx=post
+[1] post: take a=3
+[1] after victim
+[21] main ends
+[21] final
+=== 0
+### +act=disable +ctx=clocking
+start act=disable ctx=clocking
+[5] after victim
+[25] main ends
+[25] final
+=== 0
+### +act=kill +ctx=nested
+start act=kill ctx=nested
+[1] nested: take
+[40] bystander
+[50] final
+=== 0
+### +act=kill +ctx=pre
+start act=kill ctx=pre
+[1] pre: take
+[40] bystander
+[50] final
+=== 0
+### +act=kill +ctx=post
+start act=kill ctx=post
+[1] post: take a=3
+[40] bystander
+[50] final
+=== 0
+### +act=kill +ctx=clocking
+start act=kill ctx=clocking
+[40] bystander
+[50] final
+=== 0

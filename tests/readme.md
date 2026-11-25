@@ -1572,12 +1572,23 @@ checked-in fixture or unit test, and the count in the tree stays as it is.
 | Sources, `llg.toml`, SDF, command lines, JSON-RPC | `--test adversarial_inputs` | Library entries return a value or an error; `llg` exits 0, 1 or 2 and `llg_ls` 0 or 1; no panic, signal or hang. |
 | Run-time readers | `-E 'binary(sim_feature_completion) & test(fin_002b::runtime_readers)'` | One built model per optimizer mode runs every generated memory image and plusarg list to its last line with status 0. |
 | Expressions | `-E 'binary(sim_feature_completion) & test(fin_002b::expressions::)'` | Random integral expressions in five contexts equal an independent evaluator of the clause text, in both optimizer modes on the three value backends. |
+| VPI handles | `-E 'binary(sim_feature_completion) & test(fin_002f::vpi_routines)'` | Chosen VPI calls on live, released, dead and wild handles end with status 0. |
+| Edits and requests | `--test general -E 'test(lsp_stdio::storms)'` | Every request is answered once, no range is stale, `llg_ls` settles and exits 0. |
 
 The failure matrix of FIN-002 step 4 is the table above the `failure_*` tests of
 `sim_feature_completion/fin_002b.rs` (`-E 'binary(sim_feature_completion) &
 test(fin_002b::failure)'`): one row and one test per failure and interface, with
 the fixture that shows its defined result on the three value backends in both
 optimizer modes; run it with the generated-runtime sanitizers as well.
+
+Its other rows are the tables above the tests of
+`sim_feature_completion/fin_002f.rs` (`-E 'binary(sim_feature_completion) &
+test(fin_002f)'`): cancellation in every context, stale handles, simultaneous
+events and wrong types. `vpi_handles` there is a corpus of VPI calls on handles in
+every state; run it, `vpi_stale` and the cancellation tables with the
+generated-runtime sanitizers and `-DLLG_CO_DEBUG`. The language server's row is
+`lsp_stdio::storms` (`general` binary): edits, closes, deleted files and
+configuration reloads with requests of every kind in flight.
 
 The nesting limit (`src/stack.rs`) has its own suite, `deep_nesting` of the
 `general` binary: every construct just below and just above the limit, lists
