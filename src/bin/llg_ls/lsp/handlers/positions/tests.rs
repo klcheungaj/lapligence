@@ -1088,6 +1088,38 @@ fn positions_follow_the_text_that_was_analysed() {
     });
 }
 
+/// A character before a name makes it another one: `` `a `` is a macro, `\a;` an
+/// escaped identifier that goes on to white space.
+#[test]
+fn a_prefix_makes_another_name() {
+    let _shadow = TEST_PROCESS_SHADOW_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    run(async {
+        let text = "module m;\n  logic a;\n  assign a = 1'b0;\nendmodule\n";
+        let mut server = Server::start(project_root("prefixed"), &[("m.sv", text)]).await;
+        let position = after(text, "assign a");
+        assert!(server.hover("m.sv", position).await.is_some());
+        for prefix in ["`", "\\", "b", "$", "1"] {
+            let edited = text.replacen("assign a", &format!("assign {prefix}a"), 1);
+            server.change("m.sv", &edited).await;
+            let position = after(&edited, &format!("assign {prefix}a"));
+            assert_eq!(server.hover("m.sv", position).await, None, "{edited}");
+            assert!(server.references("m.sv", position).await.is_empty());
+            let declaration = after(&edited, "logic a");
+            let references = server.references("m.sv", declaration).await;
+            assert_eq!(references.len(), 1, "{edited}: {references:?}");
+        }
+        server
+            .change("m.sv", &text.replacen("assign a", "assign  a", 1))
+            .await;
+        assert!(server
+            .hover("m.sv", after(text, "assign a"))
+            .await
+            .is_some());
+    });
+}
+
 /// Over the budget the document that was just edited loses its analysed text,
 /// and nothing is answered for it.
 #[test]
