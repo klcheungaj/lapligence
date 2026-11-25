@@ -678,8 +678,10 @@ impl EmitCtx<'_, '_> {
         delay: Option<&IntraControl>,
     ) -> Result<Vec<IrStmt>, String> {
         let statements = self.lower_timed_assign(h, blocking, delay)?;
-        let untimed = matches!(delay, None | Some(IntraControl::Delay(_)));
-        if blocking || !untimed || !self.update_ends_with_issuer(h) {
+        // An update waiting for an event or cycle control stays pending; the
+        // runtime tells a zero delay from one that leaves the time slot.
+        let same_slot = matches!(delay, None | Some(IntraControl::Delay(_)));
+        if blocking || !same_slot || !self.update_ends_with_issuer(h) {
             return Ok(statements);
         }
         let bind = |operation| IrStmt::Container(Box::new(operation));

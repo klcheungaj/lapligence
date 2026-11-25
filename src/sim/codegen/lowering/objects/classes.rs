@@ -74,10 +74,11 @@ impl Codegen<'_> {
                     return target.is_some_and(|target| self.is_static_property(target))
                 }
                 NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
-                    let mut later = refs.iter().rev().flatten().copied();
-                    let property = later.find(|target| self.is_class_property(*target));
+                    let mut from_last = refs.iter().rev().flatten().copied().peekable();
+                    let last = from_last.peek().copied();
+                    let property = from_last.find(|target| self.is_class_property(*target));
                     return property.is_some_and(|property| {
-                        let last = refs.iter().rev().flatten().next() == Some(&property);
+                        let last = last == Some(property);
                         self.is_static_property(property)
                             && (last
                                 || !matches!(self.kind(property), NodeKind::Var { ty } if ty.kind == "virtual_interface"))
