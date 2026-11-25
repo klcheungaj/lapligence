@@ -12,15 +12,18 @@ part of the repository.
   individual member of an aggregate parameter may be used in an expression."
 - 7.4.6 L8236-8237: "The result of reading from an array with an invalid index
   shall return the default uninitialized value for the array element type."
+- 6.16 L5779-5781: "Str[index]  Indexing. Returns a byte, the ASCII code at the
+  given index. ... If given an index out of range, returns 0."
 
 | Case | Covers |
 | --- | --- |
 | `multidimensional.sv` | constant and run-time indices, elements of packed dimensions and their parts, rows and whole arrays, `foreach` |
 | `strings_reals.sv` | arrays of strings and reals in one and two dimensions, concatenation, comparison, a block parameter |
+| `string_selects.sv` | strings selected by several run-time indices, members and empty strings, characters of a string |
 | `structures.sv` | members, whole structures and arrays of structures, nested arrays and structures, members next to strings and reals |
 | `overrides.sv` | instance and `defparam` overrides, a parameter initialized from another, pattern defaults and keys |
 | `elements.sv` | package parameters, declared bounds, enumerations, packed structures, 4-state, signed, real and shortreal elements, hierarchical names |
 | `contexts.sv` | class and interface parameters, continuous assignments, `always_comb`, function arguments |
 | `times.sv` | `realtime` and `time` elements, an element as a delay |
 | `nonexistent.sv` | unknown and out-of-range indices read the default of the element type (7.4.6) |
-| `neg_string_copy.sv`, `neg_record_copy.sv`, `neg_string_indices.sv` | a whole array or structure with strings or reals, and more than one run-time index into strings, are located errors |
+| `neg_string_copy.sv`, `neg_record_copy.sv` | a whole array or structure with strings or reals is a located error |

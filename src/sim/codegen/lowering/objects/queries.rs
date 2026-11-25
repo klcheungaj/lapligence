@@ -54,6 +54,12 @@ impl Codegen<'_> {
                     true,
                 )
             }
+            NodeKind::Expr(ExprKind::ArraySelect { .. }) => {
+                let Some(query) = self.lower_parameter_character(path, node)? else {
+                    return Ok(None);
+                };
+                (query, 8, true)
+            }
             NodeKind::Expr(ExprKind::Cast { operand, ty, .. })
                 if self.is_string_expr(path, *operand) && ty.kind != "string" =>
             {

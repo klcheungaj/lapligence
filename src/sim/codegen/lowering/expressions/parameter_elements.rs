@@ -363,33 +363,43 @@ impl<'a> Codegen<'a> {
         ))
     }
 
-    /// Whether `node` reads a string inside a parameter of a fixed unpacked
-    /// type.
-    pub(in super::super) fn is_parameter_string(&self, node: NodeId) -> bool {
-        let Some((parameter, parts)) = self.parameter_select(node) else {
-            return false;
-        };
-        let Some(mut descriptor) = self.query_descriptor(parameter).cloned() else {
-            return false;
-        };
-        for part in &parts {
-            let next = match (part, &descriptor.shape) {
+    /// The type of the part of `parameter` that `parts` select.
+    fn parameter_part_type(
+        &self,
+        parameter: NodeId,
+        parts: &[SelectPart],
+    ) -> Option<TypeDescriptor> {
+        let mut descriptor = self.query_descriptor(parameter)?.clone();
+        for part in parts {
+            descriptor = match (part, &descriptor.shape) {
                 (SelectPart::Index(_), TypeShape::FixedArray { .. }) => {
-                    element_descriptor(&descriptor)
+                    element_descriptor(&descriptor)?
                 }
                 (SelectPart::Member(name), TypeShape::Aggregate(layout)) => layout
                     .members
                     .iter()
-                    .find(|member| member.name == *name)
-                    .map(|member| member.descriptor.clone()),
-                _ => None,
+                    .find(|member| member.name == *name)?
+                    .descriptor
+                    .clone(),
+                _ => return None,
             };
-            match next {
-                Some(next) => descriptor = next,
-                None => return false,
-            }
         }
-        descriptor.shape == TypeShape::String
+        Some(descriptor)
+    }
+
+    /// The parameter of a fixed unpacked type and the selectors with which
+    /// `node` reads a string inside it.
+    fn parameter_string_select(&self, node: NodeId) -> Option<(NodeId, Vec<SelectPart>)> {
+        self.parameter_select(node).filter(|(parameter, parts)| {
+            self.parameter_part_type(*parameter, parts)
+                .is_some_and(|descriptor| descriptor.shape == TypeShape::String)
+        })
+    }
+
+    /// Whether `node` reads a string inside a parameter of a fixed unpacked
+    /// type.
+    pub(in super::super) fn is_parameter_string(&self, node: NodeId) -> bool {
+        self.parameter_string_select(node).is_some()
     }
 
     /// Lower a string inside a parameter of a fixed unpacked type.
@@ -398,54 +408,155 @@ impl<'a> Codegen<'a> {
         path: &str,
         node: NodeId,
     ) -> Result<Option<IrStringExpr>, String> {
-        if !self.is_parameter_string(node) {
-            return Ok(None);
-        }
-        let Some((parameter, parts)) = self.parameter_select(node) else {
+        let Some((parameter, parts)) = self.parameter_string_select(node) else {
             return Ok(None);
         };
-        let Some((value, descriptor, rest)) = self.constant_parameter_part(parameter, &parts)
-        else {
+        self.parameter_string(path, parameter, &parts).map(Some)
+    }
+
+    /// Lower a character of a string inside a parameter of a fixed unpacked
+    /// type (SV 6.16).
+    pub(in super::super) fn lower_parameter_character(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrObjectQuery>, String> {
+        let Some((parameter, mut parts)) = self.parameter_select(node) else {
             return Ok(None);
+        };
+        let Some(SelectPart::Index(character)) = parts.pop() else {
+            return Ok(None);
+        };
+        if self
+            .parameter_part_type(parameter, &parts)
+            .is_none_or(|descriptor| descriptor.shape != TypeShape::String)
+        {
+            return Ok(None);
+        }
+        let text = self.parameter_string(path, parameter, &parts)?;
+        let character = self.lower_container_index(path, character)?;
+        Ok(Some(IrObjectQuery::StringGetc(text, Box::new(character))))
+    }
+
+    /// The string that `parts` select in `parameter`.
+    fn parameter_string(
+        &mut self,
+        path: &str,
+        parameter: NodeId,
+        parts: &[SelectPart],
+    ) -> Result<IrStringExpr, String> {
+        let unsupported = |cg: &Self| {
+            format!(
+                "this selection of the strings of parameter `{}` in `{path}` is not supported",
+                cg.node(parameter).name
+            )
+        };
+        let Some((value, descriptor, rest)) = self.constant_parameter_part(parameter, parts) else {
+            return Err(unsupported(self));
         };
         let ConstantPart::Value(value) = value else {
-            return Ok(Some(IrStringExpr::Literal(Vec::new())));
+            return Ok(IrStringExpr::Literal(Vec::new()));
         };
-        let Some((SelectPart::Index(index), inner)) = rest.split_first() else {
-            return string_bytes(value).map(|bytes| Some(IrStringExpr::Literal(bytes)));
-        };
-        // One run-time index: the strings its values select.
-        let Some((left, right, leaves, _)) = self.projected_elements(value, &descriptor, inner)
-        else {
-            return Err(format!(
-                "this selection of the strings of parameter `{}` in `{path}` is not supported",
-                self.node(parameter).name
-            ));
-        };
-        let step = if left >= right { -1 } else { 1 };
-        let members = leaves
-            .into_iter()
-            .zip(0i64..)
-            .map(|(leaf, offset)| {
-                let index = i128::from(i64::from(left) + step * offset);
-                Ok(crate::sim::ir::IrEnumMember {
-                    value: IrExpr::convert_to(lhs_integer_expr(index), i64::BITS, true),
-                    name: string_bytes(leaf)?,
-                })
-            })
-            .collect::<Result<_, String>>()?;
-        let index = self.lower_expr(path, *index)?;
-        if index.is_real() || index.width == 0 || index.width > i64::BITS {
-            return Err(format!(
-                "string parameter index must be integral and at most 64 bits wide in `{path}`"
-            ));
+        if rest.is_empty() {
+            return string_bytes(value).map(IrStringExpr::Literal);
         }
-        let receiver = IrExpr::convert_to(index, i64::BITS, true);
-        Ok(Some(IrStringExpr::EnumName {
-            receiver: Box::new(receiver),
+        let mut choices = Vec::new();
+        self.string_choices(value, &descriptor, rest, &mut Vec::new(), &mut choices)
+            .ok_or_else(|| unsupported(self))?;
+        let index_constant =
+            |index: i64| IrExpr::convert_to(lhs_integer_expr(i128::from(index)), i64::BITS, true);
+        // A string that no element holds is the default.
+        let members = choices
+            .into_iter()
+            .filter(|(_, text)| !text.is_empty())
+            .map(|(indices, name)| crate::sim::ir::IrEnumMember {
+                value: joined_indices(indices.into_iter().map(index_constant).collect()),
+                name,
+            })
+            .collect::<Vec<_>>();
+        let mut indices = Vec::new();
+        for part in rest {
+            let SelectPart::Index(index) = part else {
+                continue;
+            };
+            if self.eval_bound_i128(*index).is_ok() {
+                continue;
+            }
+            let index = self.lower_expr(path, *index)?;
+            if index.is_real() || index.width == 0 || index.width > i64::BITS {
+                return Err(format!(
+                    "string parameter index must be integral and at most 64 bits wide in `{path}`"
+                ));
+            }
+            indices.push(IrExpr::convert_to(index, i64::BITS, true));
+        }
+        if members.is_empty() {
+            return Ok(IrStringExpr::Literal(Vec::new()));
+        }
+        Ok(IrStringExpr::EnumName {
+            receiver: Box::new(joined_indices(indices)),
             members,
-        }))
+        })
     }
+
+    /// The strings that `parts` select in `value`, with the values that the
+    /// run-time indices among them then have. `None` for a part that is no
+    /// element or member of a value.
+    fn string_choices(
+        &self,
+        value: &ElementValue,
+        descriptor: &TypeDescriptor,
+        parts: &[SelectPart],
+        indices: &mut Vec<i64>,
+        choices: &mut Vec<(Vec<i64>, Vec<u8>)>,
+    ) -> Option<()> {
+        let Some((part, rest)) = parts.split_first() else {
+            choices.push((indices.clone(), string_bytes(value).ok()?));
+            return Some(());
+        };
+        let ElementValue::Elements(elements) = value else {
+            return None;
+        };
+        match (part, &descriptor.shape) {
+            (SelectPart::Index(index), TypeShape::FixedArray { dimensions, .. }) => {
+                let bounds = *dimensions.first()?;
+                let element = element_descriptor(descriptor)?;
+                if let Ok(index) = self.eval_bound_i128(*index) {
+                    let Some(position) = element_position(index, bounds) else {
+                        return Some(());
+                    };
+                    let value = elements.get(position)?;
+                    return self.string_choices(value, &element, rest, indices, choices);
+                }
+                let (left, right) = (i64::from(bounds.0), i64::from(bounds.1));
+                let step = if left >= right { -1 } else { 1 };
+                for (value, offset) in elements.iter().zip(0i64..) {
+                    indices.push(left + step * offset);
+                    self.string_choices(value, &element, rest, indices, choices)?;
+                    indices.pop();
+                }
+                Some(())
+            }
+            (SelectPart::Member(name), TypeShape::Aggregate(layout)) => {
+                let position = layout
+                    .members
+                    .iter()
+                    .position(|member| member.name == *name)?;
+                let member = &layout.members[position].descriptor;
+                self.string_choices(elements.get(position)?, member, rest, indices, choices)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// The run-time indices of a selection as one value.
+fn joined_indices(mut indices: Vec<IrExpr>) -> IrExpr {
+    if indices.len() == 1 {
+        return indices.remove(0);
+    }
+    let width = indices.iter().map(|index| index.width).sum();
+    IrExpr::new(IrExprKind::Concat { parts: indices }, width, false, None)
 }
 
 /// The position from the left bound of element `index`, if it exists.

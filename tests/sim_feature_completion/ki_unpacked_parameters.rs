@@ -96,6 +96,19 @@ fn nonexistent_elements_of_array_parameters() {
 }
 
 #[test]
+fn strings_and_characters_of_unpacked_parameters() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "string_selects",
+        include_str!(
+            "../fixtures/sim/feature_completion/ki_unpacked_parameters/string_selects.out"
+        ),
+        &[],
+        &[],
+    );
+}
+
+#[test]
 fn unsupported_reads_of_unpacked_parameters_are_located() {
     sim_cli::reject_case(
         SUITE,
@@ -106,10 +119,5 @@ fn unsupported_reads_of_unpacked_parameters_are_located() {
         SUITE,
         "neg_record_copy",
         "neg_record_copy.sv:6:5 unpacked aggregate used as a scalar assignment LHS in `tb`",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_string_indices",
-        "neg_string_indices.sv:4:26 this selection of the strings of parameter `SM` in `tb` is not supported",
     );
 }
