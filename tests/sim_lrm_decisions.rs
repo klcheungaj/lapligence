@@ -6331,6 +6331,14 @@ fn r14_d1_chandle_inside() {
 }
 
 #[test]
+fn r14_d2_inside_arrays() {
+    run_decision(
+        "R14-D2_inside_arrays",
+        include_str!("fixtures/sim/lrm_decisions/R14-D2_inside_arrays.out"),
+    );
+}
+
+#[test]
 fn s06_d1_nested_element_invalid_index() {
     run_decision(
         "S06-D1_nested_element_invalid_index",
