@@ -1160,9 +1160,9 @@ impl<'a> Codegen<'a> {
                 }
                 _ => {}
             }
-            for child in children.iter().rev() {
-                nodes.push(*child);
-            }
+            let first = nodes.len();
+            nodes.extend(self.db.walk_children(node));
+            nodes[first..].reverse();
         }
     }
 

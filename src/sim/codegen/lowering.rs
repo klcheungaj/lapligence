@@ -3076,9 +3076,8 @@ impl<'a> Codegen<'a> {
             let ts = self.timescale_of_node(node);
             self.design_precision_fs = self.design_precision_fs.min(ts.precision_fs);
         }
-        let kids: Vec<NodeId> = self.node(node).children.clone();
-        for c in kids {
-            self.walk_files(c);
+        for child in self.db.walk_children(node) {
+            self.walk_files(child);
         }
     }
 }

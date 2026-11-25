@@ -868,20 +868,8 @@ impl<'a> Codegen<'a> {
     /// Every arena node of the instance tree (top instances + children +
     /// generate scopes), depth-first, in deterministic order. Walked once.
     pub(in super::super) fn design_nodes(&self) -> std::rc::Rc<[NodeId]> {
-        fn walk(db: &Db, id: NodeId, out: &mut Vec<NodeId>) {
-            out.push(id);
-            for c in &db.node(id).children {
-                walk(db, *c, out);
-            }
-        }
         self.design_nodes
-            .get_or_init(|| {
-                let mut out = Vec::new();
-                for top in self.db.tops() {
-                    walk(self.db, *top, &mut out);
-                }
-                out.into()
-            })
+            .get_or_init(|| self.db.elaborated_nodes().into())
             .clone()
     }
 

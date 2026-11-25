@@ -838,6 +838,23 @@ impl Db {
             .filter(move |child| !(scope && self.is_block_scope(*child)))
     }
 
+    /// Every node of the elaborated design, from its top instances down in
+    /// source order. A node that several others hold is listed under each,
+    /// except as [`Self::walk_children`] says.
+    pub(crate) fn elaborated_nodes(&self) -> Vec<NodeId> {
+        fn walk(db: &Db, id: NodeId, out: &mut Vec<NodeId>) {
+            out.push(id);
+            for child in db.walk_children(id) {
+                walk(db, child, out);
+            }
+        }
+        let mut out = Vec::new();
+        for top in self.tops() {
+            walk(self, *top, &mut out);
+        }
+        out
+    }
+
     /// Whether any conditional pattern declares a variable.
     pub fn has_conditional_pattern_bindings(&self) -> bool {
         !self.conditional_pattern_bindings.is_empty()

@@ -1179,17 +1179,7 @@ pub fn declaration_initializers(db: &Db) -> impl Iterator<Item = (NodeId, NodeId
 /// Every node in the design tree (from the top instances), depth-first, in
 /// deterministic order.
 pub fn all_nodes(db: &Db) -> Vec<NodeId> {
-    fn walk(db: &Db, id: NodeId, out: &mut Vec<NodeId>) {
-        out.push(id);
-        for c in &db.node(id).children {
-            walk(db, *c, out);
-        }
-    }
-    let mut out = Vec::new();
-    for top in db.tops() {
-        walk(db, *top, &mut out);
-    }
-    out
+    db.elaborated_nodes()
 }
 
 /// Every node reachable from all independent design roots.  Package and
