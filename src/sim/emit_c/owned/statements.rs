@@ -561,6 +561,8 @@ impl Frame<'_, '_> {
                     "event_local",
                     "{ llg_event_object_new() }".to_owned(),
                 );
+                // A declared event need not be used.
+                self.line(format!("(void){local};"));
                 self.event_bindings.insert(name, format!("&{local}"));
             }
             IrStmt::DeclLocal {

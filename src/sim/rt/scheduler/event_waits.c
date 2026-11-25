@@ -138,7 +138,7 @@ void llg_event_watch_remove(llg_event_object_t* ev) {
 // `.triggered` of one is false (15.5.3).
 // The wait's statement reports it (llg_arm_at).
 static inline int32_t event_control_null(const llg_event_t* ev) {
-    return LLG_CO_UNLIKELY(!ev || !ev->object);
+    return LLG_CO_UNLIKELY(!ev || !ev->object) ? 1 : 0;
 }
 
 int32_t llg_event_triggered(const llg_event_t* ev) {
