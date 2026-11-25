@@ -1,6 +1,100 @@
 //! Assignments.
 
+use super::super::expressions::ExpandedConditional;
 use super::*;
+
+/// `dst = c ? a : b` for dynamic arrays (including fixed-array views of
+/// native elements), queues and associative arrays.
+struct ContainerConditional {
+    type_node: NodeId,
+    dst: usize,
+}
+
+impl ExpandedConditional for ContainerConditional {
+    type Operand = usize;
+
+    fn nested(
+        &mut self,
+        cg: &mut Codegen<'_>,
+        _path: &str,
+        arm: NodeId,
+    ) -> Result<Option<NodeId>, String> {
+        // Any other conversion of an alternative has a lowering of its own.
+        let arm = cg.class_array_upcast_operand(arm).unwrap_or(arm);
+        Ok(cg.is_conditional(arm).then_some(arm))
+    }
+
+    fn assign(
+        &mut self,
+        cg: &mut Codegen<'_>,
+        path: &str,
+        dst: Option<&usize>,
+        arm: NodeId,
+    ) -> Result<IrStmt, String> {
+        cg.lower_container_into(path, self.type_node, *dst.unwrap_or(&self.dst), arm)
+    }
+
+    fn evaluate(
+        &mut self,
+        cg: &mut Codegen<'_>,
+        path: &str,
+        arm: NodeId,
+        out: &mut Vec<IrStmt>,
+    ) -> Result<usize, String> {
+        let value = self.declare_kept(cg, arm, out)?;
+        out.push(self.assign(cg, path, Some(&value), arm)?);
+        Ok(value)
+    }
+
+    fn reads_in_place(&mut self, _cg: &mut Codegen<'_>, _arm: NodeId) -> Result<bool, String> {
+        Ok(false)
+    }
+
+    fn declare_kept(
+        &mut self,
+        cg: &mut Codegen<'_>,
+        _node: NodeId,
+        out: &mut Vec<IrStmt>,
+    ) -> Result<usize, String> {
+        let temporary = cg.container_temporary_like(self.dst);
+        out.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
+            temporary,
+        ))));
+        Ok(temporary)
+    }
+
+    fn merge(
+        &mut self,
+        _cg: &mut Codegen<'_>,
+        _path: &str,
+        dst: Option<&usize>,
+        left: &usize,
+        right: &usize,
+    ) -> Result<Vec<IrStmt>, String> {
+        Ok(vec![IrStmt::Container(Box::new(IrContainerStmt::Merge {
+            dst: *dst.unwrap_or(&self.dst),
+            left: *left,
+            right: *right,
+        }))])
+    }
+
+    fn private_target(&self, _cg: &Codegen<'_>) -> Option<usize> {
+        None
+    }
+
+    fn copy(
+        &mut self,
+        _cg: &mut Codegen<'_>,
+        _path: &str,
+        dst: Option<&usize>,
+        src: &usize,
+    ) -> Result<IrStmt, String> {
+        Ok(IrStmt::Container(Box::new(IrContainerStmt::Copy {
+            dst: *dst.unwrap_or(&self.dst),
+            src: *src,
+        })))
+    }
+}
 
 impl<'a> Codegen<'a> {
     pub(in super::super) fn lower_container_assignment(
@@ -514,10 +608,16 @@ impl<'a> Codegen<'a> {
         if let Some((src, start, count)) = self.fixed_view_slice(path, rhs)? {
             return self.lower_slice_into(path, dst.ir, src, start, count);
         }
-        if let Some(statement) =
-            self.lower_container_conditional_into(path, type_node, dst.ir, rhs)?
-        {
-            return Ok(statement);
+        // A known predicate assigns one alternative; an ambiguous one
+        // evaluates both into temporaries and merges them leaf by leaf
+        // (SV 11.4.11, see [`IrContainerStmt::Merge`]).
+        let source = self.p30_unwrap_cast(rhs);
+        if self.is_conditional(source) {
+            let mut sink = ContainerConditional {
+                type_node,
+                dst: dst.ir,
+            };
+            return self.expand_conditional(path, &mut sink, source);
         }
         if matches!(
             self.model.containers[dst.ir].kind,
@@ -687,83 +787,6 @@ impl<'a> Codegen<'a> {
         ))));
         statements.push(self.lower_container_source_values(path, temporary, values)?);
         Ok(IrQueueSource::Whole(temporary))
-    }
-
-    /// `dst = c ? a : b` for dynamic arrays (including fixed-array views of
-    /// native elements), queues and associative arrays. A known predicate
-    /// assigns one arm; an ambiguous one evaluates both arms into
-    /// temporaries and merges them leaf by leaf (SV 11.4.11, see
-    /// [`IrContainerStmt::Merge`]).
-    fn lower_container_conditional_into(
-        &mut self,
-        path: &str,
-        type_node: NodeId,
-        dst: usize,
-        rhs: NodeId,
-    ) -> Result<Option<IrStmt>, String> {
-        let source = self.p30_unwrap_cast(rhs);
-        let (selector, if_true, if_false) = match self.kind(source) {
-            NodeKind::Expr(ExprKind::Conditional {
-                predicate,
-                if_true,
-                if_false,
-            }) => {
-                let (if_true, if_false) = (*if_true, *if_false);
-                let predicate = predicate.clone();
-                (
-                    self.lower_conditional_predicate(path, &predicate)?,
-                    if_true,
-                    if_false,
-                )
-            }
-            NodeKind::Expr(ExprKind::Operation {
-                op: Operation::Conditional,
-                operands,
-                ..
-            }) if operands.len() == 3 => {
-                let (condition, if_true, if_false) = (operands[0], operands[1], operands[2]);
-                (self.lower_boolean_expr(path, condition)?, if_true, if_false)
-            }
-            _ => return Ok(None),
-        };
-        let name = format!("_llg_container_sel_{}", source.index());
-        let (width, signed) = (selector.width, selector.signed);
-        let declare = IrStmt::DeclLocal {
-            name: name.clone(),
-            width,
-            signed,
-            two_state: false,
-            init: Some(Box::new(selector)),
-        };
-        let read = IrExpr::new(IrExprKind::LocalRead(name), width, signed, None);
-        let known_false = cmp_expr_ir(IrBinOp::CaseEq, read.clone(), const_bits_expr(width, false));
-        let take_true = self.lower_container_into(path, type_node, dst, if_true)?;
-        let take_false = self.lower_container_into(path, type_node, dst, if_false)?;
-        let left = self.container_temporary_like(dst);
-        let right = self.container_temporary_like(dst);
-        let merge = vec![
-            IrStmt::Container(Box::new(IrContainerStmt::Declare(left))),
-            self.lower_container_into(path, type_node, left, if_true)?,
-            IrStmt::Container(Box::new(IrContainerStmt::Declare(right))),
-            self.lower_container_into(path, type_node, right, if_false)?,
-            IrStmt::Container(Box::new(IrContainerStmt::Merge { dst, left, right })),
-        ];
-        // `if` takes its else branch for an unknown condition, so the inner
-        // test separates a known false from an ambiguous predicate.
-        Ok(Some(IrStmt::Block(vec![
-            declare,
-            IrStmt::If {
-                cond: read,
-                then_: vec![take_true],
-                els: Some(vec![IrStmt::If {
-                    cond: known_false,
-                    then_: vec![take_false],
-                    els: Some(merge),
-                    check: IrUniquePriorityCheck::None,
-                }]),
-                check: IrUniquePriorityCheck::None,
-            },
-        ])))
     }
 
     /// Replace container `dst` with a slice of a fixed-array view. A

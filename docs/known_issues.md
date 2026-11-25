@@ -377,47 +377,6 @@ the baseline, including both optimizer modes for the representative fixtures.
 Use the command in the frontend memory entry with `LLG_CORPUS_N` set to
 5,000, 10,000, 20,000 and 40,000, and compare wall times.
 
-## Nested conditionals over containers and native records double the generated code
-
-**Status:** found by FIN-002 step 4; not fixed. Conditional operators with
-packed, real, string, handle and fixed-array results render each alternative
-once (`Frame::conditional_chain`); the two forms below are expanded during
-lowering and still double per level.
-
-### Symptom
-
-`q = s == 0 ? q0 : s == 1 ? q1 : ... : qN` over queues, dynamic arrays,
-associative arrays, or structures with a string, handle or container member:
-`model.c` is 41 KiB for 4 levels and 513 KiB for 8 (queues: 55 KiB and
-686 KiB; a structure with a string member: 152 KiB and 2.4 MiB), and 16
-levels do not generate within 30 s.
-
-### Cause
-
-`lower_container_conditional_into`
-(`src/sim/codegen/lowering/containers/assignments.rs`) and
-`native_conditional_into`
-(`src/sim/codegen/lowering/collection/native_values/conditionals.rs`) lower
-each alternative twice: once assigned straight to the destination for a
-known predicate, and once into a temporary for the merge of an ambiguous
-one. A nested conditional in an alternative is therefore lowered twice per
-level.
-
-### Intended direction
-
-Lower an alternative that is itself a conditional once, into a temporary
-filled when the predicate is not known to select the other alternative, and
-copy or merge from it. The destination cannot take it directly as the packed
-chain's result slot does: the other alternative may read the destination. A
-container move in the runtime would keep the known paths free of the copy.
-
-### Reproduce
-
-```sh
-python3 -c "n=8; print('module tb; logic [7:0] s = 3; ' + ' '.join(f'int d{i} [\$] = {{{i}}};' for i in range(n + 1)) + ' int y [\$]; initial y = ' + ' : '.join(f's == {i} ? d{i}' for i in range(n)) + f' : d{n}; endmodule')" > queues.sv
-llg --top tb --gen-only queues.sv && wc -c build/sim/tb/model.c
-```
-
 ## Long bodies that cannot be outlined compile superlinearly
 
 **Status:** narrowed. Statement runs of long process, function, task and fork

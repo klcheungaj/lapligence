@@ -17,6 +17,8 @@ mod aggregates;
 pub(super) use aggregates::AggregateSelection;
 mod array_queries;
 mod casts;
+mod conditional_expansion;
+pub(super) use conditional_expansion::ExpandedConditional;
 mod conditionals;
 pub(super) use conditionals::fixed_cell_leaves;
 mod dispatch;

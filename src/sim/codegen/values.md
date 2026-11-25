@@ -92,6 +92,12 @@
   initializers. Capture selector once; known truth evaluates one arm, ambiguity
   evaluates both with type-specific merging. Array assignment snapshots all RHS
   cells before writes and retains explicit conversions/casts on fallback paths.
+- Conditionals over containers and native records are statements: implement
+  `ExpandedConditional` (`lowering/expressions/conditional_expansion.rs`) for a
+  new destination kind and assign through `expand_conditional`. Never lower an
+  alternative a second time outside it: nesting then doubles the code per level.
+  A record variable is read in place, when the rest of its conditional has been
+  evaluated; a container alternative is copied when it is evaluated.
 - A whole dense packed view of at least `LLG_DENSE_CELL_RUN_MIN` cells is
   captured as one image (the concatenation of its element reads) and scattered
   by slices, so the emitter reads and writes it as one cell run
