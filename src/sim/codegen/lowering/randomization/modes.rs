@@ -120,8 +120,7 @@ impl Codegen<'_> {
                         // most RAND_CYCLIC_MAX_WIDTH bits; other randc
                         // properties are rejected where they are randomized.
                         let width = self
-                            .class_static_signals
-                            .get(&child)
+                            .signal_of(child)
                             .map(|info| (info.width, info.real))
                             .or_else(|| {
                                 let (_, field) = *self.class_fields.get(&child)?;

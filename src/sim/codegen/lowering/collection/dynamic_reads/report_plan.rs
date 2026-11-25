@@ -121,9 +121,8 @@ impl Codegen<'_> {
     /// The handle object a static handle declaration names.
     fn planned_static_object(&self, target: NodeId) -> Option<usize> {
         let object = self
-            .class_static_objects
+            .object_globals
             .get(&target)
-            .or_else(|| self.object_globals.get(&target))
             .map(|object| self.reference_object(*object))?;
         (self.model.objects.get(object)?.ty == crate::sim::ir::IrObjectType::Chandle)
             .then_some(object)
@@ -155,9 +154,6 @@ impl Codegen<'_> {
         while let Some(node) = pending.pop() {
             if self.reject_unobservable_read("", node).is_err() {
                 return false;
-            }
-            if self.static_class_property(node).is_some() {
-                continue;
             }
             if self.mailbox_num_call(node) {
                 let bound = match self.kind(node) {

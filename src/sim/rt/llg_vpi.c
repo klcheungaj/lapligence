@@ -395,7 +395,9 @@ static int32_t dyn_compare(const llg_vpi_slot_t* a, uint32_t a_index, const llg_
                        uint32_t b_index);
 static vpiHandle dyn_handle_by_index(llg_vpi_slot_t* slot, PLI_INT32 index);
 static vpiHandle dyn_by_suffix(uint32_t row, const char* suffix);
-static vpiHandle dyn_static_by_name(const char* name);
+static vpiHandle dyn_method_by_name(const char* name);
+static vpiHandle lookup_row_suffix(uint32_t row, const char* suffix);
+static PLI_INT32 variable_random_property(int32_t property, const llg_vpi_model_object_t* object);
 static int32_t dyn_bind_value_cb(struct llg_vpi_cb* cb, llg_vpi_slot_t* slot);
 static void dyn_handle_cb_value(const struct llg_vpi_cb* cb, p_vpi_value output);
 static int32_t dyn_bind_size_cb(struct llg_vpi_cb* cb, llg_vpi_slot_t* slot, const s_cb_data* data);
@@ -943,7 +945,9 @@ static int32_t vpi_ready(void) {
         slot->object = (uint32_t)i;
         slot->element = LLG_VPI_NO_ELEMENT;
         uint32_t parent;
-        if (model_pointer_index(object->parent, &parent)) {
+        /* A static class property is listed through its class. */
+        if (model_pointer_index(object->parent, &parent) &&
+            !(object->flags & LLG_VPI_OBJ_CLASS_STATIC)) {
             g_vpi.next_sibling[i] = g_vpi.first_child[parent];
             g_vpi.first_child[parent] = (uint32_t)i + 1u;
         }
@@ -4048,6 +4052,13 @@ static LLG_OUTLYING int32_t unserved_member(uint32_t row, const char* name, size
     return 0;
 }
 
+/* The error of a name whose object exists but not the selected part
+ * (decision S42-D11). */
+static LLG_OUTLYING void vpi_no_such_part(const char* name) {
+    vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_NOT_FOUND",
+                   "VPI object `%s` has no such element or select", name);
+}
+
 static vpiHandle lookup_full_name(const char* name, int32_t* selected) {
     *selected = 0;
     uint32_t row = find_row(name);
@@ -4082,8 +4093,22 @@ static vpiHandle lookup_full_name(const char* name, int32_t* selected) {
         prefix[cut] = name[cut];
     }
     free(prefix);
-    /* A static class property is no catalog row (37.17 detail 25). */
-    if (!found && strstr(name, "::")) found = dyn_static_by_name(name);
+    if (!found && strstr(name, "::")) found = dyn_method_by_name(name);
+    return found;
+}
+
+/* The part of the variable at `row` its full name followed by `suffix`
+ * names, or NULL as vpi_handle_by_name answers (an error for a select that
+ * the variable does not have). */
+static LLG_OUTLYING vpiHandle lookup_row_suffix(uint32_t row, const char* suffix) {
+    const char* base = g_vpi.objects[row].full_name;
+    size_t length = strlen(base) + strlen(suffix) + 1u;
+    char* full = (char*)vpi_malloc(length);
+    snprintf(full, length, "%s%s", base, suffix);
+    int32_t selected = 0;
+    vpiHandle found = lookup_full_name(full, &selected);
+    if (!found && selected && !g_vpi.error_pending) vpi_no_such_part(full);
+    free(full);
     return found;
 }
 
@@ -4289,9 +4314,7 @@ vpiHandle vpi_handle_by_name(PLI_BYTE8* name, vpiHandle scope) {
     /* A name that denotes no object is an ordinary negative answer: NULL
      * with no error status (decision S42-D2). A select outside the range of
      * an existing object is an error (decision S42-D11). */
-    if (!result && selected && !g_vpi.error_pending)
-        vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_NOT_FOUND",
-                       "VPI object `%s` has no such element or select", (const char*)name);
+    if (!result && selected && !g_vpi.error_pending) vpi_no_such_part((const char*)name);
     return result;
 }
 
@@ -7846,6 +7869,9 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
             /* 37.25: a named event array element's parent is its array. */
             if (slot->kind == SLOT_OBJECT && object && (object->flags & LLG_VPI_OBJ_ELEMENT))
                 return object_handle(row_of(object->target));
+            /* 37.17 detail 26: a class property has no parent. */
+            if (slot->kind == SLOT_OBJECT && object && (object->flags & LLG_VPI_OBJ_CLASS_STATIC))
+                return NULL;
             if (slot->kind == SLOT_OBJECT)
                 return object && object->parent ? object_handle(row_of(object->parent)) : NULL;
             /* A typespec's range has no owning object. */
@@ -10520,8 +10546,8 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
             if (slot->kind == SLOT_OBJECT && object &&
                 (object->type == vpiTask || object->type == vpiFunction))
                 return vpiPublicVis; /* 37.37 detail 4 */
-            /* 37.17 detail 24: a variable that is not a class member. */
-            if (is_static_variable_part(slot, object)) return vpiPublicVis;
+            if (is_static_variable_part(slot, object))
+                return variable_random_property(property, object);
             return unsupported_property();
         case vpiConstantVariable:
             /* 37.17: a variable declared const (6.20.6). */
@@ -10530,11 +10556,8 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
             return unsupported_property();
         case vpiRandType:
         case vpiIsRandomized:
-            /* 37.17 details 15 and 16: only class properties are declared
-             * rand or randc; std::randomize() leaves a variable's type
-             * vpiNotRand (decision A19-D36). */
             if (is_static_variable_part(slot, object))
-                return property == vpiRandType ? vpiNotRand : 0;
+                return variable_random_property(property, object);
             return unsupported_property();
         case vpiPortIndex:
             if (slot->kind == SLOT_OBJECT && object && object->type == vpiPort)

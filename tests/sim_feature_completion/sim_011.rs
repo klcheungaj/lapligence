@@ -291,7 +291,7 @@ fn multidimensional_property_row_boundaries_reject() {
     sim_cli::reject_case(
         SUITE,
         "neg_multidim_property_real_cells",
-        "neg_multidim_property_real_cells.sv:5:15: [CODEGEN-003] multidimensional fixed array class property `grid_c.g` needs packed elements (SIM-011)",
+        "neg_multidim_property_real_cells.sv:5:8: [CODEGEN-003] multidimensional fixed array class property `grid_c.g` needs packed elements (SIM-011)",
     );
     sim_cli::reject_case(
         SUITE,

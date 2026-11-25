@@ -194,6 +194,17 @@ impl Codegen<'_> {
                 .map(str::to_owned)
                 .collect(),
             _ => {
+                // A static class property is named through its class
+                // (37.17 detail 25: `top.Packet::Id`).
+                if let Some(class) = self.static_property_class(id) {
+                    let mut path = self.vpi_class_path(class);
+                    let name = &self.node(id).name;
+                    if let Some(last) = path.last_mut() {
+                        last.push_str("::");
+                        last.push_str(name);
+                    }
+                    return path;
+                }
                 // A block statement is named by its declaration scope, which
                 // holds what the block declares (decision A19-D27).
                 if let Some(scope) = self.vpi_block_scope(id) {
@@ -1574,7 +1585,12 @@ impl Codegen<'_> {
         // The nodes of an untaken generate block keep their parent chain but
         // are no objects: the block does not exist (27.3).
         for id in self.db.instantiated_node_ids() {
-            if enclosing_roots[id.index()].is_none() && !roots.contains(&id) {
+            // A static class property is one variable of its class, which the
+            // design walk reaches through no instance.
+            if enclosing_roots[id.index()].is_none()
+                && !roots.contains(&id)
+                && !self.is_static_property(id)
+            {
                 continue;
             }
             attribute_owner.set((!self.db.attributes(id).is_empty()).then_some(id));
@@ -1958,7 +1974,10 @@ impl Codegen<'_> {
                     };
                     // Descriptor-backed and lexical storage has no stable
                     // dense element cells to expose.
-                    if array.hdl_name.is_empty() || array.activation || array.descriptor {
+                    if (array.hdl_name.is_empty() && !self.is_static_property(id))
+                        || array.activation
+                        || array.descriptor
+                    {
                         continue;
                     }
                     let net = array.net.is_some();

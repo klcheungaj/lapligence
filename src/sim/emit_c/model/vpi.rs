@@ -69,6 +69,8 @@ struct Entry {
     unnamed: bool,
     qualifier: bool,
     constant_variable: bool,
+    /// The variable of a static class property.
+    class_static: bool,
     activation: Option<(u32, u32)>,
     timing: Option<IrVpiTiming>,
     /// `(storage, dependency, shape)` of a dynamic object.
@@ -123,6 +125,7 @@ impl Entry {
             unnamed: false,
             qualifier: false,
             constant_variable: false,
+            class_static: false,
             activation: None,
             timing: None,
             dynamic: None,
@@ -196,6 +199,13 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
     // `objects`: rows keep the collector's declaration order, which the
     // runtime's relation iterations follow (decision A19-D47).
     let mut entries = BTreeMap::<String, (usize, Entry)>::new();
+    let statics: std::collections::HashSet<&str> = model
+        .vpi_dynamic
+        .classes
+        .iter()
+        .flat_map(|class| &class.statics)
+        .map(|entry| entry.row.as_str())
+        .collect();
     for object in objects {
         let mut sparse = None;
         let mut cells = Vec::new();
@@ -382,6 +392,7 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
             unnamed: object.unnamed,
             qualifier: object.qualifier,
             constant_variable: object.constant_variable,
+            class_static: statics.contains(object.full_name.as_str()),
             activation: object.activation,
             timing: object.timing.clone(),
             dynamic,
@@ -866,6 +877,9 @@ fn pack_objects(
         }
         if entry.implicit {
             flags.push("LLG_VPI_OBJ_IMPLICIT");
+        }
+        if entry.class_static {
+            flags.push("LLG_VPI_OBJ_CLASS_STATIC");
         }
         for (set, flag) in [
             (entry.qualifiers.scalared, "LLG_VPI_OBJ_SCALARED"),

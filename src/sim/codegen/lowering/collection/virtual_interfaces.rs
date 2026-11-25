@@ -1065,18 +1065,19 @@ impl<'a> Codegen<'a> {
                 }
             }
         }
+        // A member of another type (a class handle, a string) has no slot: an
+        // access through the interface finds none and reports it there.
+        let has_slot = |signal: &SignalInfo| {
+            signal.real || (signal.width != 0 && signal.width <= LLG_MAX_WIDTH)
+        };
         let members = member_names
             .iter()
+            .filter(|name| member_info.get(*name).is_none_or(has_slot))
             .enumerate()
             .map(|(member_index, name)| {
                 let signal = member_info.get(name).ok_or_else(|| {
                     format!("virtual interface member `{name}` has no signal metadata")
                 })?;
-                if !signal.real && (signal.width == 0 || signal.width > LLG_MAX_WIDTH) {
-                    return Err(format!(
-                        "virtual interface member `{name}` must be a real or packed signal within the runtime width limit"
-                    ));
-                }
                 self.virtual_interface_members
                     .insert((descriptor_index, name.clone()), member_index);
                 Ok(IrVirtualInterfaceMember {

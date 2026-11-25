@@ -3219,9 +3219,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   writes and `vpiIndex` (a string key: a `vpiStringConst` constant),
   selected by index or key at each access; nested containers list their
   innermost elements (`tb.qq[1][0]`), an element of an array of structures
-  gives its members, and static class properties (variables and events)
-  are listed by objects and definitions under `tb.C::si` full names
-  (decision A19-D87); the string, handle, unpacked array and container
+  gives its members, and static class properties (variables and events,
+  with the members and elements of a variable) are listed by objects and
+  definitions under `tb.C::si` full names (decision A19-D87); the string, handle, unpacked array and container
   members of a structure (a module's, in any storage form including
   columns, of an element of an array or queue, or of a structure property)
   and fixed-size class instance properties are objects with their elements,

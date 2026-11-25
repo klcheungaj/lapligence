@@ -1,0 +1,12 @@
+3 hi
+4 record
+5 bit
+6 text
+8 cell
+10 element
+11 handle
+12 member
+values 5 6
+counts 1 1 1
+coverage 50.00 100.00
+assertion

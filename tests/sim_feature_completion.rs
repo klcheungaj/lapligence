@@ -359,6 +359,8 @@ mod ki_record_shapes;
 #[path = "sim_feature_completion/ki_static_init_errors.rs"]
 mod ki_static_init_errors;
 
+#[path = "sim_feature_completion/ki_static_members.rs"]
+mod ki_static_members;
 #[path = "sim_feature_completion/ki_initializer_order.rs"]
 mod ki_initializer_order;
 

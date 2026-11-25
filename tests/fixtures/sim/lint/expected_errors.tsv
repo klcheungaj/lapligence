@@ -38,6 +38,9 @@ feature_completion/ki_record_shapes/shapes_st_nba.sv	mixed-assignments	46:3
 feature_completion/ki_record_shapes/shapes_str_nba.sv	mixed-assignments	18:3
 feature_completion/ki_record_shapes/shapes_str_nba.sv	mixed-assignments	46:3
 feature_completion/ki_select_bugs/element_members.sv	mixed-assignments	38:3
+feature_completion/ki_static_members/implicit.sv	mixed-assignments	28:3
+feature_completion/ki_static_members/scopes.sv	mixed-assignments	74:3
+feature_completion/ki_static_members/uses.sv	mixed-assignments	70:3
 feature_completion/rtl_002/capacity_copy.sv	mixed-assignments	8:5
 feature_completion/rtl_002/default_pattern.sv	mixed-assignments	5:5
 feature_completion/rtl_002/integration_views.sv	mixed-assignments	3:5

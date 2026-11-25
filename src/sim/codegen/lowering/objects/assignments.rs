@@ -43,10 +43,7 @@ impl Codegen<'_> {
                     return Err("virtual interface handle cannot be indexed".to_owned());
                 }
                 if !blocking {
-                    return Err(
-                        "nonblocking assignment to virtual interface handle is not supported"
-                            .to_owned(),
-                    );
+                    return Err(self.class_property_nba_error(path, lhs, field));
                 }
                 if op != Operation::Assignment {
                     return Err(
@@ -54,13 +51,6 @@ impl Codegen<'_> {
                     );
                 }
                 self.validate_virtual_interface_assignment(object_node, rhs, path)?;
-                // A static handle property is one model object (SV 8.9).
-                if let Some(index) = self.class_static_objects.get(&field).copied() {
-                    let value = self.lower_chandle(path, rhs)?;
-                    return Ok(Some(IrStmt::Object(Box::new(IrObjectStmt::ChandleAssign(
-                        index, value,
-                    )))));
-                }
                 let address = self
                     .class_field_chandle_lvalue(path, object_node)?
                     .ok_or_else(|| "class virtual interface field has no storage".to_owned())?;

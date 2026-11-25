@@ -1878,10 +1878,6 @@ struct Codegen<'a> {
     /// sensitivity cannot observe, raised only if the read walk reaches them
     /// (`with_interface_reads`).
     dynamic_read_errors: HashMap<NodeId, String>,
-    /// Static class properties use ordinary model storage and retain their
-    /// declaration identity here.
-    class_static_signals: IdMap<NodeId, SignalInfo>,
-    class_static_objects: IdMap<NodeId, usize>,
     /// Class variables with declaration-time `new(...)` initializers are
     /// deferred until class methods have prototypes and can be called.
     class_object_initializers: Vec<(NodeId, usize, NodeId, String)>,
@@ -2710,8 +2706,6 @@ impl<'a> Codegen<'a> {
             dynamic_reads: HashMap::new(),
             dynamic_read_walk: false,
             dynamic_read_errors: HashMap::new(),
-            class_static_signals: IdMap::new(),
-            class_static_objects: IdMap::new(),
             class_object_initializers: Vec::new(),
             semaphore_initializers: Vec::new(),
             string_object_initializers: Vec::new(),

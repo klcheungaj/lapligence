@@ -218,51 +218,87 @@ impl<'a> Codegen<'a> {
         })
     }
 
-    /// Capture nominal class layouts and allocate shared static properties.
-    /// Instance properties live in the emitted heap object and are mapped by
-    /// declaration identity, so same-named classes/properties cannot alias.
-    /// A static numeric class property's initializer: a constant folds into
-    /// the storage default; any other value (another static property, a
-    /// call) runs once in the static schedule before every process (SV 6.8),
-    /// lowered once subroutine prototypes exist.
-    fn class_static_initializer(
-        &mut self,
-        property: NodeId,
-        initializer: NodeId,
-        info: SignalInfo,
-    ) -> Result<(), String> {
-        if let Ok(value) = self.const_of_node(initializer) {
-            self.var_inits.push((info, value));
-            return Ok(());
+    /// A static class property (SV 8.9): one variable, with the storage of a
+    /// package variable, that the class and every object of it share. A dump
+    /// shows no class, so it has no waveform identity.
+    fn collect_static_property(&mut self, class_index: usize, child: NodeId) -> Result<(), String> {
+        let path = Self::static_property_path(class_index);
+        let first_signal = self.model.signals.len();
+        let first_array = self.model.arrays.len();
+        if matches!(self.kind(child), NodeKind::Var { ty } if ty.kind == "event") {
+            let global = self.event_global_name(&path, &self.node(child).name);
+            let info = self.new_event_info(global);
+            self.event_globals.insert(child, info);
+        } else {
+            self.collect_variable(&path, child, &mut HashSet::new())?;
         }
-        let class = self.node(property).parent.ok_or_else(|| {
-            format!(
-                "static class property `{}` has no declaring class",
-                self.node(property).full_name
-            )
-        })?;
-        self.reserve_initializer_order(property);
-        self.deferred_declaration_inits
-            .push((property, initializer, class, info));
+        for signal in &mut self.model.signals[first_signal..] {
+            signal.hdl_name = None;
+        }
+        for array in &mut self.model.arrays[first_array..] {
+            array.hdl_name.clear();
+        }
+        if self.db.var_initializer(child).is_some() {
+            self.reserve_initializer_order(child);
+        }
         Ok(())
     }
 
-    /// An `event` property (SV 8.9, 15.5): a static one is one model event,
-    /// like a module-level declaration; an instance one is a per-object
-    /// handle slot that construction points at a fresh synchronization
-    /// object.
+    /// The storage scope of the static properties of class `class_index`.
+    fn static_property_path(class_index: usize) -> String {
+        format!("llg_class{class_index}")
+    }
+
+    /// The declaration initializers of the static class properties, which
+    /// run in the static schedule before every process (SV 6.8). They may
+    /// read any class, package, module or parameter, so what does not fold is
+    /// lowered once every declaration is collected.
+    pub(super) fn collect_static_property_inits(&mut self) -> Result<(), String> {
+        for class in self.db.classes().to_vec() {
+            let path = Self::static_property_path(self.class_nodes[&class]);
+            for child in self.node(class).children.clone() {
+                if !matches!(self.kind(child), NodeKind::Var { .. })
+                    || self.db.variable_lifetime(child) != VariableLifetime::Static
+                {
+                    continue;
+                }
+                let Some(initializer) = self.db.var_initializer(child) else {
+                    continue;
+                };
+                if let Some(aggregate) = self.unpacked_aggregates.get(&child).cloned() {
+                    if self.reads_uncollected_storage(initializer) {
+                        self.record_statement_initializers
+                            .push((child, initializer, path.clone()));
+                    } else {
+                        self.collect_unpacked_aggregate_decl_init(
+                            &path,
+                            child,
+                            initializer,
+                            &aggregate,
+                        )?;
+                    }
+                } else if let Some(info) = self.signal_of(child).cloned() {
+                    match self.const_of_node(initializer) {
+                        Ok(value) => self.var_inits.push((info, value)),
+                        Err(_) => {
+                            self.deferred_declaration_inits
+                                .push((child, initializer, class, info))
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// An instance `event` property (SV 15.5): a per-object handle slot that
+    /// construction points at a fresh synchronization object.
     fn collect_class_event(
         &mut self,
         class_index: usize,
         child: NodeId,
         fields: &mut Vec<IrClassField>,
     ) {
-        if self.db.variable_lifetime(child) == VariableLifetime::Static {
-            let global = format!("E_class_{class_index}_{}", ident(&self.node(child).name));
-            let info = self.new_event_info(global);
-            self.event_globals.insert(child, info);
-            return;
-        }
         let field_index = fields.len();
         fields.push(IrClassField {
             c_name: format!(
@@ -371,6 +407,9 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// Capture nominal class layouts and allocate shared static properties.
+    /// Instance properties live in the emitted heap object and are mapped by
+    /// declaration identity, so same-named classes/properties cannot alias.
     pub(super) fn collect_classes(&mut self) -> Result<(), String> {
         let classes = self.db.classes().to_vec();
         // Allocate every nominal index before resolving bases.  Generic
@@ -383,6 +422,15 @@ impl<'a> Codegen<'a> {
             let class_index = self.class_nodes[&class];
             let mut fields = Vec::new();
             for child in self.node(class).children.clone() {
+                if self.db.variable_lifetime(child) == VariableLifetime::Static
+                    && matches!(
+                        self.kind(child),
+                        NodeKind::Var { .. } | NodeKind::Array { .. }
+                    )
+                {
+                    self.collect_static_property(class_index, child)?;
+                    continue;
+                }
                 // Resizable containers and fixed unpacked arrays (fixed-size
                 // views of the container runtime, SIM-011) are per-object
                 // container storage.
@@ -395,29 +443,7 @@ impl<'a> Codegen<'a> {
                 };
                 // A record with string, real or handle leaves is one native
                 // value per object (SIM-011).
-                let static_columns = self.db.variable_lifetime(child) == VariableLifetime::Static
-                    && self
-                        .query_descriptor(child)
-                        .is_some_and(|descriptor| self.record_column_layout(descriptor));
-                if static_columns || self.native_value_type(child).is_some() {
-                    // A static one is one record for the whole model, stored
-                    // leaf by leaf like a package record (SV 8.9).
-                    let path = format!("llg_class{class_index}");
-                    if self.db.variable_lifetime(child) == VariableLifetime::Static
-                        && self.collect_aggregate(&path, child)?
-                    {
-                        if let Some(initializer) = self.db.var_initializer(child) {
-                            let aggregate = self.unpacked_aggregates[&child].clone();
-                            self.reserve_initializer_order(child);
-                            self.collect_unpacked_aggregate_decl_init(
-                                &path,
-                                child,
-                                initializer,
-                                &aggregate,
-                            )?;
-                        }
-                        continue;
-                    }
+                if self.native_value_type(child).is_some() {
                     self.collect_class_native(class_index, child, &mut fields)?;
                     continue;
                 }
@@ -426,125 +452,6 @@ impl<'a> Codegen<'a> {
                     continue;
                 }
                 let field_ty = self.class_field_type(child, ty)?;
-                if self.db.variable_lifetime(child) == VariableLifetime::Static {
-                    match field_ty {
-                        IrClassFieldType::Packed {
-                            width,
-                            signed,
-                            two_state,
-                        } => {
-                            let ir = self.model.signals.len();
-                            let info = SignalInfo {
-                                global: format!(
-                                    "G_class_{class_index}_{}",
-                                    ident(&self.node(child).name)
-                                ),
-                                width,
-                                signed,
-                                two_state,
-                                real: false,
-                                shortreal: false,
-                                net_driver: None,
-                                ir,
-                            };
-                            self.model.signals.push(IrSignal {
-                                fixed_default: None,
-                                c_name: info.global.clone(),
-                                hdl_name: None,
-                                ty: IrType::Packed {
-                                    width,
-                                    signed,
-                                    two_state,
-                                },
-                                net_driver: None,
-                                net_alias: Vec::new(),
-                                alias: None,
-                                omit: false,
-                            });
-                            self.signals.push(info.clone());
-                            self.class_static_signals.insert(child, info.clone());
-                            if let Some(initializer) = self.db.var_initializer(child) {
-                                self.class_static_initializer(child, initializer, info)?;
-                            }
-                        }
-                        IrClassFieldType::Real { shortreal } => {
-                            let ir = self.model.signals.len();
-                            let info = SignalInfo {
-                                global: format!(
-                                    "G_class_{class_index}_{}",
-                                    ident(&self.node(child).name)
-                                ),
-                                width: 0,
-                                signed: false,
-                                two_state: false,
-                                real: true,
-                                shortreal,
-                                net_driver: None,
-                                ir,
-                            };
-                            self.model.signals.push(IrSignal {
-                                fixed_default: None,
-                                c_name: info.global.clone(),
-                                hdl_name: None,
-                                ty: IrType::Real { shortreal },
-                                net_driver: None,
-                                net_alias: Vec::new(),
-                                alias: None,
-                                omit: false,
-                            });
-                            self.signals.push(info.clone());
-                            self.class_static_signals.insert(child, info.clone());
-                            if let Some(initializer) = self.db.var_initializer(child) {
-                                self.class_static_initializer(child, initializer, info)?;
-                            }
-                        }
-                        IrClassFieldType::String => {
-                            let index = self.model.objects.len();
-                            self.model.objects.push(crate::sim::ir::IrObject {
-                                c_name: format!(
-                                    "O_class_{class_index}_{}",
-                                    ident(&self.node(child).name)
-                                ),
-                                ty: IrObjectType::String,
-                                initial: None,
-                            });
-                            self.class_static_objects.insert(child, index);
-                            // A static property initializes once before any
-                            // process (SV 6.8), in the static schedule.
-                            if let Some(initializer) = self.db.var_initializer(child) {
-                                self.reserve_initializer_order(child);
-                                self.string_object_initializers.push((
-                                    child,
-                                    index,
-                                    initializer,
-                                    "$class".to_owned(),
-                                ));
-                            }
-                        }
-                        IrClassFieldType::Chandle => {
-                            let index = self.model.objects.len();
-                            if let Some(initializer) = self.db.var_initializer(child) {
-                                self.reserve_initializer_order(child);
-                                self.class_object_initializers.push((
-                                    child,
-                                    index,
-                                    initializer,
-                                    "$class".to_owned(),
-                                ));
-                            }
-                            self.model.objects.push(crate::sim::ir::IrObject {
-                                c_name: format!(
-                                    "O_class_{class_index}_{}",
-                                    ident(&self.node(child).name)
-                                ),
-                                ty: IrObjectType::Chandle,
-                                initial: None,
-                            });
-                            self.class_static_objects.insert(child, index);
-                        }
-                    }
-                    continue;
-                }
                 let field_index = fields.len();
                 fields.push(IrClassField {
                     c_name: format!(
@@ -650,11 +557,6 @@ impl<'a> Codegen<'a> {
         fields: &mut Vec<IrClassField>,
     ) -> Result<(), String> {
         let name = self.node(child).full_name.clone();
-        if self.db.variable_lifetime(child) == VariableLifetime::Static {
-            return Err(format!(
-                "static class property `{name}` of an unpacked record or union type with string, real, handle or container members is not supported (SIM-011)"
-            ));
-        }
         let layout = self
             .native_layout(child)?
             .ok_or_else(|| format!("class property `{name}` has no native record layout"))?;
@@ -692,10 +594,9 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
-    /// A resizable-container class property (SV 8.5, 7.5-7.10). A static
-    /// property is one model-global container; an instance property is one
-    /// container per object, created with the object and addressed through
-    /// the receiver of the class's own methods.
+    /// An instance container class property (SV 8.5, 7.5-7.10): one container
+    /// per object, created with the object and addressed through the receiver
+    /// of the class's own methods.
     fn collect_class_container(
         &mut self,
         class_index: usize,
@@ -746,25 +647,23 @@ impl<'a> Codegen<'a> {
         if let Some(dimensions) = multidimensional {
             self.fixed_view_dims.insert(info.ir, dimensions);
         }
-        if self.db.variable_lifetime(child) != VariableLifetime::Static {
-            // The container initializer list is for model storage; an
-            // instance property initializes per object at construction.
-            if meta.initializer().is_some() {
-                self.container_initializers
-                    .retain(|(owner, _)| *owner != child);
-            }
-            let field_index = fields.len();
-            self.model.containers[info.ir].class_field = Some((class_index, field_index));
-            self.model.containers[info.ir].c_name =
-                format!("S_llg_class_container_{class_index}_{field_index}");
-            fields.push(IrClassField {
-                c_name: format!("f_{class_index}_{field_index}_{}", ident(&name)),
-                ty: IrClassFieldType::Chandle,
-                container: Some(info.ir),
-                native_value: None,
-                event: false,
-            });
+        // The container initializer list is for model storage; an instance
+        // property initializes per object at construction.
+        if meta.initializer().is_some() {
+            self.container_initializers
+                .retain(|(owner, _)| *owner != child);
         }
+        let field_index = fields.len();
+        self.model.containers[info.ir].class_field = Some((class_index, field_index));
+        self.model.containers[info.ir].c_name =
+            format!("S_llg_class_container_{class_index}_{field_index}");
+        fields.push(IrClassField {
+            c_name: format!("f_{class_index}_{field_index}_{}", ident(&name)),
+            ty: IrClassFieldType::Chandle,
+            container: Some(info.ir),
+            native_value: None,
+            event: false,
+        });
         self.container_globals.insert(child, info);
         Ok(())
     }

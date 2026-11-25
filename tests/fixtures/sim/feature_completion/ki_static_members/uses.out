@@ -1,0 +1,13 @@
+values 31 44 6 out 3.5
+references 103 7 44 out+ 4.5 '{5, 6, 44}  3 100
+tasks 6 41 2
+find 2 3 30
+records 10 9 2
+inside 1 0
+before 00 0
+after 14 4 out+ 40 50 26
+whole 7 8 9b
+delayed 3b 7
+scan 3 5 77 abc
+cast 1 BLUE
+write w77 5 0

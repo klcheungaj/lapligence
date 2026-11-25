@@ -32,7 +32,7 @@ pub use database::{
     TimeLiteralScale, TimeScaleElement, TimeUnit, TimingCheck, TimingCheckKind, TimingEdges,
     TimingEvent, TypeDescriptor, TypeId, TypeShape, TypedefRef, UdpLocation, UdpRow, UdpTable,
     ValueCopySemantics, ValueDefaultSemantics, ValueDestroySemantics, ValueEqualitySemantics,
-    VariableLifetime, VariableLifetimeQualifier,
+    VariableLifetime, VariableLifetimeQualifier, CONSTANT_SYSTEM_FUNCTIONS,
 };
 pub use domain::{
     AlwaysKind, CapturedSemanticKind, CaseKind, ConstantType, Direction, JoinKind, NetType,

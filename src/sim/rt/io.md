@@ -330,11 +330,13 @@ and static-property helpers are `LLG_OUTLYING` (with `dyn_element_by_index`
 and `rts_auto_iterate`), so their code sits behind `.text` and adds no
 `.cold` part in front of it: the model and the scheduler keep their
 addresses in `--vpi` models. A static class
-property is a `SLOT_PROPERTY` slot of the pseudo row `DYN_STATIC_ROW`
-whose field index carries `DYN_STATIC_FIELD`: its `llg_vpi_class_static_t`
-row names the class's storage (signal, string or handle object, container
-or event handle slot), is listed after the instance fields of objects and
-definitions and is named `scope.Class::name`. Class definitions, typespecs and extends
+property is an ordinary catalog row (with the rows of its members and
+elements) named `scope.Class::name` and flagged
+`LLG_VPI_OBJ_CLASS_STATIC`, which keeps it off its scope's lists; the
+`llg_vpi_class_static_t` table names the rows a class declares, which
+are listed after the instance fields of objects and definitions, and a
+name through a class variable (`tb.p.s.a`) is looked up below the row.
+Class definitions, typespecs and extends
 objects are static slots after the catalog rows, followed by one
 `SLOT_CLASSITEM` slot per `llg_vpi_class_item_t` (methods, their io
 declarations, parameters); a class's items are contiguous, a method's io

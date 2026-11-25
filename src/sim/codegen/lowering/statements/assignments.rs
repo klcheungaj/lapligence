@@ -821,15 +821,7 @@ impl EmitCtx<'_, '_> {
         else {
             return Ok(());
         };
-        Err(self.cg.locate_error(
-            lhs,
-            format!(
-                "nonblocking assignment to class property `{}` in `{}` is illegal \
-             (IEEE 1800-2009 6.21: class properties shall not be written with nonblocking assignments)",
-                self.cg.node(field).name,
-                self.path
-            ),
-        ))
+        Err(self.cg.class_property_nba_error(&self.path, lhs, field))
     }
 
     pub(super) fn lower_delayed_assignment(

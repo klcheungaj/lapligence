@@ -618,7 +618,8 @@ pops it), or named as the target of a timing-controlled assignment or a
 evaluation); instance class properties of a record type with container
 members (instance properties of records with string, real or handle members
 are one value per object, records of integral leaves are fixed-width
-properties, SIM-011, and static record properties are one shared record); equality of records with an associative member (and conditionals
+properties, SIM-011, and static record properties are stored like package
+records); equality of records with an associative member (and conditionals
 with an ambiguous predicate on such records);
 a run-time selection among more than 4,096 leaves of a module record
 (`NATIVE_MEMBER_SELECT_LIMIT`), and among more than 256 whole records of any
@@ -1620,6 +1621,69 @@ capturing the handle once for read-modify-write forms.
 
 `tests/fixtures/sim/feature_completion/ki_audit/neg_computed_handle_select_write.sv`
 (`get().b[2] = 1'b1;`, expected `h.b == 8'b00000100`).
+
+## Object expressions in front of static class properties
+
+**Status:** open; found by the sweep of the static-property member fix.
+
+### Symptom
+
+- `objects[next()].count = 1`, `objects[i++].rec.a` and `get().count` name a
+  static property through an object expression that calls a subroutine or
+  assigns. They stop compilation with "the object expression in front of
+  static property ... calls a subroutine or assigns" (or, for a call result,
+  with the error of the form it uses), located at the expression.
+- A method of a queue, dynamic or associative array, string, mailbox,
+  semaphore or process that is a static property of an object of an interface,
+  called through a virtual interface (`v.o.q.push_back(1)`), stops with
+  "unsupported object method receiver". Through the interface instance or the
+  class it works, and so do reads and writes of the property through the
+  virtual interface.
+
+### Cause
+
+The database starts a path into a static property at the property, so nothing
+evaluates the object expression. One without effects needs no evaluation
+(8.8: a static property needs no object); one with effects keeps its path and
+code generation refuses it.
+
+### Intended direction
+
+Evaluate the object expression once, before the operation, for its effects
+only, as computed class handles are.
+
+### Reproduce
+
+`neg_effects.sv` and `neg_interface_queue.sv` in
+`tests/fixtures/sim/feature_completion/ki_static_members/`.
+
+## Members of packed structures in dynamic arrays, queues and associative arrays
+
+**Status:** open.
+
+### Symptom
+
+A member of an element of packed structure type of a dynamic array, queue or
+associative array (`da[i].hi`, `q[0].lo`, `aa["x"].hi++`, of variables and
+class properties alike) stops compilation, located, with "hierarchical
+reference ... is not supported" (an operand) or "cannot resolve hierarchical
+assignment LHS" (a target). Elements of fixed arrays work; read or write the
+whole element instead.
+
+### Cause
+
+A packed element of a container is one value; its read and its lvalue select
+bits and parts of it but not members.
+
+### Intended direction
+
+Project the member onto the element's part select, as for an element of a
+fixed array.
+
+### Reproduce
+
+`typedef struct packed { logic [3:0] hi, lo; } p_t; p_t q[$]; initial begin
+q.push_back(0); q[0].hi = 3; end`
 
 ## Records of the leaf form: two errors a column does not have
 
@@ -3209,6 +3273,9 @@ these forms remain outside them.
   an array size or a variable before the array size of another object, or that
   names an element at a non-constant index, and a row of a multidimensional array in `inside`. A whole array in
   a constraint is also rejected, as 18.3 requires (S30-D15).
+- A `static rand` property of unpacked structure type rejects at the
+  `randomize()` call (an instance property of the type is solved): its members
+  are separate variables, and the solver feeds one packed value per property.
 - `rand_mode` of one element of a dynamic array or queue of class handles
   rejects, as a task and as a function: only fixed arrays keep a mode per
   element (S30-D16, S30-D17). The function form on a handle that is not a
@@ -3266,7 +3333,9 @@ Nested dynamic arrays and queues (each row an object of a row unit, row sizes in
 
 `tests/fixtures/sim/feature_completion/sim_029/neg_*.sv`,
 `tests/fixtures/sim/feature_completion/sim_030/neg_*.sv` and
-`search_fallback.sv`; `neg_rand_*.sv` and `neg_randomize_event_control.sv` in
+`search_fallback.sv`;
+`tests/fixtures/sim/feature_completion/ki_static_members/neg_random_record.sv`;
+`neg_rand_*.sv` and `neg_randomize_event_control.sv` in
 `tests/fixtures/sim/feature_completion/ki_audit/` (associative arrays of
 handles, with a class or wider index, nested queues, a non-constant
 `solve...before` index, an `inside` row, an element `rand_mode`, a call in an

@@ -1,0 +1,23 @@
+tb.p.pr: type 618 name pr full tb.C::pr value 35 automatic 0
+tb.p.pr.hi: type 48 name hi full tb.C::pr.hi value 3 automatic 0
+tb.p.rec: type 618 name rec full tb.C::rec automatic 0
+tb.p.rec.a: type 612 name a full tb.C::rec.a value 00000003 automatic 0
+tb.p.de.s: type 616 name s full tb.C::de.s value 616263 automatic 0
+tb.p.de.r.f: type 48 name f full tb.C::de.r.f value 02 automatic 0
+tb.p.sa[1]: type 612 name sa[1] full tb.C::sa[1] value 00000005 automatic 0
+tb.p.ra[1]: type 618 name ra[1] full tb.C::ra[1] automatic 0
+tb.p.ra[1].a: type 612 name a full tb.C::ra[1].a value 00000003 automatic 0
+tb.p.ss: type 616 name ss full tb.C::ss value 737472 automatic 0
+tb.C::pr: type 618 name pr full tb.C::pr value 35 automatic 0
+tb.C::pr.lo: type 48 name lo full tb.C::pr.lo value 5 automatic 0
+tb.C::rec.a: type 612 name a full tb.C::rec.a value 00000003 automatic 0
+tb.C::de.r.a: type 612 name a full tb.C::de.r.a value 00000001 automatic 0
+tb.C::ra[0].f: type 48 name f full tb.C::ra[0].f value 02 automatic 0
+tb.C::none: none
+tb.p.rec.none: none
+object: x pr rec de sa ra ss
+module: p
+record: s b r
+pr.hi 9
+rec.a 33
+95 33 66 abc 77 88 '{4, 55}  66 str

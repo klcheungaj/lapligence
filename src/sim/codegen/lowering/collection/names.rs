@@ -105,6 +105,20 @@ impl<'a> Codegen<'a> {
         .unwrap_or_else(|| "unnamed signal storage".to_owned())
     }
 
+    /// The source spelling of array `array`: its hierarchical name, or that of
+    /// the declaration of an array without one (a static class property).
+    fn array_label(&self, array: usize) -> Option<String> {
+        let storage = self.model.arrays.get(array)?;
+        if !storage.hdl_name.is_empty() {
+            return Some(storage.hdl_name.replace('\u{1f}', "."));
+        }
+        self.array_globals
+            .unordered()
+            .filter_map(|(node, info)| (info.ir == array).then_some(*node))
+            .min_by_key(|node| node.index())
+            .map(|node| self.storage_source_name(node))
+    }
+
     /// Diagnostic spelling of canonical storage, including source array bounds.
     pub(in super::super) fn dependency_label(&self, dependency: &IrDependency) -> String {
         match dependency {
@@ -192,15 +206,15 @@ impl<'a> Codegen<'a> {
                 .model
                 .arrays
                 .get(*array)
-                .and_then(|array| array.waveform_element_name(*index))
-                .map_or_else(
-                    || "unnamed array element".to_owned(),
-                    |name| name.replace('\u{1f}', "."),
-                ),
-            IrDependency::ArrayContents(array) => self.model.arrays.get(*array).map_or_else(
-                || "unnamed array storage".to_owned(),
-                |array| array.hdl_name.replace('\u{1f}', "."),
-            ),
+                .and_then(|storage| {
+                    let element = storage.waveform_element_name(*index)?;
+                    let name = self.array_label(*array)?;
+                    Some(format!("{name}{}", &element[storage.hdl_name.len()..]))
+                })
+                .unwrap_or_else(|| "unnamed array element".to_owned()),
+            IrDependency::ArrayContents(array) => self
+                .array_label(*array)
+                .unwrap_or_else(|| "unnamed array storage".to_owned()),
             IrDependency::ContainerContents(container)
             | IrDependency::ContainerShape(container) => {
                 let name = self
@@ -247,7 +261,6 @@ impl<'a> Codegen<'a> {
                 .or_else(|| {
                     self.object_globals
                         .unordered()
-                        .chain(self.class_static_objects.unordered())
                         .filter_map(|(node, index)| (*index == *object).then_some(*node))
                         .chain(
                             self.static_string_formals

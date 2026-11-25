@@ -1,0 +1,10 @@
+methods: 12 10 this plain 20, 33
+derived: 34 11 this plain 21, 39
+names: 54 11 object plain 21, 41
+paths: 96 7 object kept 8, 30
+no object: 9a 7 none kept 8, 34
+interface 12 b 13
+interface: ba 12 none kept 13, 46
+five 65 14 five 0
+seven 07 15 16
+package 72 5 ba
