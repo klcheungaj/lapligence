@@ -7,7 +7,7 @@
 //! containing an unresolved or opaque construct are deliberately excluded.
 
 use crate::core::db::{AlwaysKind, Db, ExprKind, NodeId, NodeKind, ProcessKind, StmtKind};
-use crate::core::lint::rules::analysis::{all_nodes, collect_reads, collect_writes, is_signal};
+use crate::core::lint::rules::analysis::{collect_reads, collect_writes, is_signal};
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
 /// Warns when a plain implicit-sensitivity block writes signals but has no
@@ -27,7 +27,7 @@ impl LintRule for EmptyImplicitSensitivityRule {
         let db = ctx.db;
         let mut out = Vec::new();
 
-        for process in all_nodes(db) {
+        for &process in ctx.nodes() {
             let NodeKind::Process {
                 kind: ProcessKind::Always { always_type },
             } = db.node_kind(process)
@@ -157,7 +157,7 @@ mod tests {
     #[test]
     fn v187_implicit_event_shape_is_complete() {
         let (db, _) = build_design("module t; logic y; always @* y = 1'b0; endmodule\n", "t");
-        let (process, event, body) = all_nodes(&db)
+        let (process, event, body) = crate::core::lint::rules::analysis::all_nodes(&db)
             .into_iter()
             .find_map(|id| {
                 matches!(db.node_kind(id), NodeKind::Process { .. })

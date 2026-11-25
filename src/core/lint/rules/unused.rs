@@ -33,7 +33,7 @@ use std::collections::HashSet;
 
 use crate::core::db::{Db, Direction, NodeId, NodeKind};
 use crate::core::lint::rules::analysis::{
-    all_design_nodes, black_box_connection_signals, collect_reads, collect_writes_with_members,
+    black_box_connection_signals, collect_reads, collect_writes_with_members,
     declaration_initializers, extend_virtual_interface_members, gate_terminal_drivers,
     gate_terminal_reads, is_signal, iter_instances, port_connected_signals, signal_scope_path,
     subroutine_body, subroutine_formal_defaults, timing_check_activity, virtual_interface_members,
@@ -70,7 +70,7 @@ impl LintRule for UnusedSignalRule {
         // A subroutine body (including an exported one) reads and writes
         // signals of its declaring scope, or of another scope by hierarchical
         // name; package and class subroutines are outside every instance.
-        for id in all_design_nodes(db) {
+        for &id in ctx.design_nodes() {
             if matches!(db.node_kind(id), NodeKind::FuncTask { .. }) {
                 if let Some(body) = subroutine_body(db, id) {
                     reads.extend(collect_reads(db, body));
@@ -92,8 +92,8 @@ impl LintRule for UnusedSignalRule {
         }
         // Primitive instances (gates and UDPs) read their input terminals and
         // drive their output terminals, like a continuous assignment does.
-        reads.extend(gate_terminal_reads(db));
-        let gate_drivers = gate_terminal_drivers(db);
+        reads.extend(gate_terminal_reads(db, ctx.nodes()));
+        let gate_drivers = gate_terminal_drivers(db, ctx.nodes());
         writes.extend(gate_drivers.iter().copied());
         cont_writes.extend(gate_drivers);
         // A covergroup reads its sampling event, coverpoint expressions and

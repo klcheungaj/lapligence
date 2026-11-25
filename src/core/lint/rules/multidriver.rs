@@ -18,8 +18,7 @@ use std::collections::HashMap;
 
 use crate::core::db::{Db, NodeId, NodeKind, StmtKind};
 use crate::core::lint::rules::analysis::{
-    all_nodes, collect_element_writes, driven_bit_interval, port_link_drivers, signal_scope_path,
-    DrivenBits,
+    collect_element_writes, driven_bit_interval, port_link_drivers, signal_scope_path, DrivenBits,
 };
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
@@ -41,7 +40,7 @@ impl LintRule for MultiDriverRule {
         for (signal, bits) in port_link_drivers(db) {
             drivers.entry((signal, Vec::new())).or_default().push(bits);
         }
-        for id in all_nodes(db) {
+        for &id in ctx.nodes() {
             match db.node_kind(id) {
                 NodeKind::Process { .. } if in_checker(db, id) => {
                     for assignment in assignments(db, id) {

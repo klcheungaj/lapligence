@@ -18,7 +18,7 @@
 //! location is never reported by both rules.
 
 use crate::core::db::{CaseKind, Db, NodeId, NodeKind, StmtKind};
-use crate::core::lint::rules::analysis::{all_nodes, is_comb_or_latch_process};
+use crate::core::lint::rules::analysis::is_comb_or_latch_process;
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
 /// Warns about case statements without a default arm outside the
@@ -37,7 +37,7 @@ impl LintRule for CaseDefaultMissingRule {
     fn check(&self, ctx: &LintCtx<'_>) -> Vec<LintDiag> {
         let db = ctx.db;
         let mut out = Vec::new();
-        for id in all_nodes(db) {
+        for &id in ctx.nodes() {
             let NodeKind::Stmt(StmtKind::Case {
                 case_type, items, ..
             }) = db.node_kind(id)

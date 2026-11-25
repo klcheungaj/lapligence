@@ -8,7 +8,6 @@
 //! and constant-expression trees are not followed.
 
 use crate::core::db::{Db, ExprKind, NodeId, NodeKind, Operation};
-use crate::core::lint::rules::analysis::all_nodes;
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 use crate::core::value::{ScalarValue, ValueData};
 
@@ -27,7 +26,7 @@ impl LintRule for XzLogicalEqualityRule {
     fn check(&self, ctx: &LintCtx<'_>) -> Vec<LintDiag> {
         let db = ctx.db;
         let mut out = Vec::new();
-        for id in all_nodes(db) {
+        for &id in ctx.nodes() {
             let NodeKind::Expr(ExprKind::Operation { op, operands, .. }) = db.node_kind(id) else {
                 continue;
             };
@@ -99,13 +98,7 @@ mod tests {
 
     fn rule_diags(sv: &str, top: &str) -> Vec<LintDiag> {
         let (db, model) = build_design(sv, top);
-        crate::core::lint::distinct_findings(
-            &XzLogicalEqualityRule,
-            &LintCtx {
-                db: &db,
-                model: &model,
-            },
-        )
+        crate::core::lint::distinct_findings(&XzLogicalEqualityRule, &LintCtx::new(&db, &model))
     }
 
     #[test]

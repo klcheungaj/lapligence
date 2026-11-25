@@ -18,9 +18,7 @@ use std::collections::{BTreeSet, HashSet};
 use crate::core::db::{
     AlwaysKind, Db, EventSpec, ExprKind, NodeId, NodeKind, ProcessKind, StmtKind,
 };
-use crate::core::lint::rules::analysis::{
-    all_nodes, collect_reads, driver_signal_of_lhs, is_signal,
-};
+use crate::core::lint::rules::analysis::{collect_reads, driver_signal_of_lhs, is_signal};
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
 /// Warns when a plain level-sensitive `always` reads a signal that is absent
@@ -40,7 +38,7 @@ impl LintRule for IncompleteSensitivityListRule {
         let db = ctx.db;
         let mut out = Vec::new();
 
-        for process in all_nodes(db) {
+        for &process in ctx.nodes() {
             let NodeKind::Process {
                 kind: ProcessKind::Always { always_type },
             } = db.node_kind(process)
@@ -710,10 +708,7 @@ mod tests {
         let (db, model) = build_design(sv, "t");
         crate::core::lint::distinct_findings(
             &IncompleteSensitivityListRule,
-            &LintCtx {
-                db: &db,
-                model: &model,
-            },
+            &LintCtx::new(&db, &model),
         )
     }
 

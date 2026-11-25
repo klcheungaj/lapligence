@@ -9,9 +9,7 @@
 //! explicit event control are not combinational and are skipped.
 
 use crate::core::db::{Db, NodeId, NodeKind, StmtKind};
-use crate::core::lint::rules::analysis::{
-    all_nodes, has_timing_control, is_comb_process, scope_path,
-};
+use crate::core::lint::rules::analysis::{has_timing_control, is_comb_process, scope_path};
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
 /// Warns about nonblocking assignments in combinational processes.
@@ -29,7 +27,7 @@ impl LintRule for NbaInCombRule {
     fn check(&self, ctx: &LintCtx<'_>) -> Vec<LintDiag> {
         let db = ctx.db;
         let mut out = Vec::new();
-        for id in all_nodes(db) {
+        for &id in ctx.nodes() {
             if !matches!(db.node_kind(id), NodeKind::Process { .. }) {
                 continue;
             }

@@ -4,7 +4,7 @@
 //! retains that fact independently of the net's resolved type.
 
 use crate::core::db::NodeKind;
-use crate::core::lint::rules::analysis::{all_nodes, signal_scope_path};
+use crate::core::lint::rules::analysis::signal_scope_path;
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
 /// Flags nets that were implicitly declared from an undeclared identifier.
@@ -22,7 +22,7 @@ impl LintRule for ImplicitNetRule {
     fn check(&self, ctx: &LintCtx<'_>) -> Vec<LintDiag> {
         let db = ctx.db;
         let mut out = Vec::new();
-        for id in all_nodes(db) {
+        for &id in ctx.nodes() {
             let NodeKind::Net { .. } = db.node_kind(id) else {
                 continue;
             };

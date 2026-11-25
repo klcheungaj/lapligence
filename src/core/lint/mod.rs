@@ -18,9 +18,10 @@
 
 pub mod rules;
 
+use std::cell::OnceCell;
 use std::collections::{HashMap, HashSet};
 
-use crate::core::db::Db;
+use crate::core::db::{Db, NodeId};
 use crate::core::model::DesignModel;
 
 /// Severity of a lint finding, mirroring the compiler severity ladder.
@@ -227,11 +228,37 @@ pub struct LintDiag {
     pub logical: Option<crate::core::compile::LogicalLine>,
 }
 
-/// Context handed to every rule: the owned db + model (+ anything rules need
-/// later, e.g. a per-signal read/write analysis cache — add fields later).
+/// Context handed to every rule: the owned db + model and the node lists the
+/// rules share.
 pub struct LintCtx<'a> {
     pub db: &'a Db,
     pub model: &'a DesignModel,
+    nodes: OnceCell<Vec<NodeId>>,
+    design_nodes: OnceCell<Vec<NodeId>>,
+}
+
+impl<'a> LintCtx<'a> {
+    pub fn new(db: &'a Db, model: &'a DesignModel) -> Self {
+        Self {
+            db,
+            model,
+            nodes: OnceCell::new(),
+            design_nodes: OnceCell::new(),
+        }
+    }
+
+    /// The nodes of [`rules::analysis::all_nodes`], walked once per pass.
+    pub fn nodes(&self) -> &[NodeId] {
+        self.nodes
+            .get_or_init(|| rules::analysis::all_nodes(self.db))
+    }
+
+    /// The nodes of [`rules::analysis::all_design_nodes`], walked once per
+    /// pass.
+    pub fn design_nodes(&self) -> &[NodeId] {
+        self.design_nodes
+            .get_or_init(|| rules::analysis::all_design_nodes(self.db))
+    }
 }
 
 /// A lint rule.  Implementations are stateless; all state lives in LintCtx.
@@ -330,7 +357,7 @@ pub fn lint(db: &Db, model: &DesignModel) -> Vec<LintDiag> {
 /// Convenience: run all default rules over a db + model with a config.
 pub fn lint_with_config(db: &Db, model: &DesignModel, config: &LintConfig) -> Vec<LintDiag> {
     let registry = LintRegistry::default_rules();
-    registry.lint(&LintCtx { db, model }, config)
+    registry.lint(&LintCtx::new(db, model), config)
 }
 
 /// Serialize lint findings as a single machine-readable JSON object

@@ -31,7 +31,7 @@
 //! and are not reached.
 
 use crate::core::db::{Db, ExprKind, NodeId, NodeKind, StmtKind};
-use crate::core::lint::rules::analysis::{all_nodes, scope_path};
+use crate::core::lint::rules::analysis::scope_path;
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
 /// Errors on processes mixing blocking and non-blocking assignments.
@@ -49,7 +49,7 @@ impl LintRule for MixedAssignRule {
     fn check(&self, ctx: &LintCtx<'_>) -> Vec<LintDiag> {
         let db = ctx.db;
         let mut out = Vec::new();
-        for id in all_nodes(db) {
+        for &id in ctx.nodes() {
             if !matches!(db.node_kind(id), NodeKind::Process { .. }) {
                 continue;
             }

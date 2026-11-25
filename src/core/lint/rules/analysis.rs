@@ -1717,9 +1717,9 @@ pub fn black_box_connection_signals(db: &Db) -> HashSet<NodeId> {
 /// Signals read by input/inout terminals of captured structural primitives.
 /// Primitive-array objects are skipped because the database has no terminal
 /// expressions for their members.
-pub fn gate_terminal_reads(db: &Db) -> HashSet<NodeId> {
+pub fn gate_terminal_reads(db: &Db, nodes: &[NodeId]) -> HashSet<NodeId> {
     let mut out = HashSet::new();
-    for id in all_nodes(db) {
+    for &id in nodes {
         let NodeKind::Gate { class, terms, .. } = db.node_kind(id) else {
             continue;
         };
@@ -1798,9 +1798,9 @@ pub fn timing_check_activity(db: &Db) -> (HashSet<NodeId>, HashSet<NodeId>) {
 /// Signals driven by output/inout terminals of captured structural
 /// primitives.  Primitive-array objects are skipped because their terminal
 /// expressions are unavailable.
-pub fn gate_terminal_drivers(db: &Db) -> HashSet<NodeId> {
+pub fn gate_terminal_drivers(db: &Db, nodes: &[NodeId]) -> HashSet<NodeId> {
     let mut out = HashSet::new();
-    for id in all_nodes(db) {
+    for &id in nodes {
         let NodeKind::Gate { class, terms, .. } = db.node_kind(id) else {
             continue;
         };
@@ -2358,8 +2358,8 @@ mod tests {
         let a = find_signal(&db, "a");
         let b = find_signal(&db, "b");
         let y = find_signal(&db, "y");
-        let reads = gate_terminal_reads(&db);
-        let drivers = gate_terminal_drivers(&db);
+        let reads = gate_terminal_reads(&db, &all_nodes(&db));
+        let drivers = gate_terminal_drivers(&db, &all_nodes(&db));
         assert!(reads.contains(&a), "gate input a is read");
         assert!(reads.contains(&b), "gate input b is read");
         assert!(drivers.contains(&y), "gate output y is driven");
