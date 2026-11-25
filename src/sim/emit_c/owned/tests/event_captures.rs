@@ -30,8 +30,8 @@ fn fork_event_capture_copies_object_identity_and_binds_a_private_handle() {
     .with_kind(StorageKind::Event);
     let initial = event_initial(IrEventRef::Formal(0));
     let mut parent = Frame::new(&ctx);
-    parent.event_bindings.last_mut().unwrap().insert(
-        super::super::events::event_formal_binding(0),
+    parent.event_bindings.insert(
+        &super::super::events::event_formal_binding(0),
         "&a0".to_owned(),
     );
     let values = parent
@@ -119,8 +119,8 @@ fn joined_event_capture_borrows_the_handle_for_sibling_rebinding() {
     .with_kind(StorageKind::Event);
     let initial = event_initial(IrEventRef::Formal(0));
     let mut parent = Frame::new(&ctx);
-    parent.event_bindings.last_mut().unwrap().insert(
-        super::super::events::event_formal_binding(0),
+    parent.event_bindings.insert(
+        &super::super::events::event_formal_binding(0),
         "&a0".to_owned(),
     );
     let values = parent

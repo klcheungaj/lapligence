@@ -8,6 +8,8 @@
 pub(crate) enum Work {
     /// Bytes of rendered bodies normalized for instance sharing.
     NormalizedBytes,
+    /// Statements weighed for outlining.
+    OutlineWeighing,
 }
 
 /// Note `amount` of `work` done by this thread.

@@ -621,8 +621,8 @@ fn render_function(
                 .iter()
                 .position(|candidate| candidate.c_name == function.c_name)
                 .ok_or_else(|| "native function is missing from model".to_owned())?;
-            frame.native_bindings[0].insert(
-                "_ret".to_owned(),
+            frame.native_bindings.insert_outermost(
+                "_ret",
                 NativeBinding {
                     address: format!("&_llg_native_ret_{index}"),
                     kind,
@@ -648,7 +648,7 @@ fn render_function(
                 ty.two_state(),
                 default.as_ref(),
             )?;
-            if let Some(binding) = frame.bindings[0].get_mut("_ret") {
+            if let Some(binding) = frame.bindings.get_outermost_mut("_ret") {
                 binding.shortreal = matches!(ty, IrType::Real { shortreal: true });
             }
         } else {
@@ -662,8 +662,8 @@ fn render_function(
                 || format!("&_llg_ret_{index}"),
                 |signal| format!("&{}", ctx.model.signal(signal).c_name),
             );
-            frame.bindings[0].insert(
-                "_ret".to_owned(),
+            frame.bindings.insert_outermost(
+                "_ret",
                 Binding {
                     address,
                     width: ty.width(),
@@ -816,9 +816,7 @@ fn render_function(
             };
             frame
                 .event_bindings
-                .first_mut()
-                .expect("event scope")
-                .insert(super::events::event_formal_binding(index), handle);
+                .insert_outermost(&super::events::event_formal_binding(index), handle);
             continue;
         }
         if formal.is_address() {
@@ -834,14 +832,10 @@ fn render_function(
             // activation, exactly like a by-value input.
             let handle = frame.declare("llg_event_t", "event_formal", name);
             frame.line(format!("(void){handle};"));
-            frame
-                .event_bindings
-                .first_mut()
-                .expect("event scope")
-                .insert(
-                    super::events::event_formal_binding(index),
-                    format!("&{handle}"),
-                );
+            frame.event_bindings.insert_outermost(
+                &super::events::event_formal_binding(index),
+                format!("&{handle}"),
+            );
             continue;
         }
         if formal.string || formal.chandle {
@@ -866,7 +860,7 @@ fn render_function(
             formal.two_state,
             None,
         )?;
-        if let Some(binding) = frame.bindings[0].get_mut(&name) {
+        if let Some(binding) = frame.bindings.get_outermost_mut(&name) {
             binding.shortreal = formal.shortreal;
         }
         let binding = frame
@@ -1011,8 +1005,7 @@ fn render_function(
         if formal.event && formal.mode == IrFormalMode::Inout {
             let handle = frame
                 .event_bindings
-                .first()
-                .and_then(|scope| scope.get(&super::events::event_formal_binding(index)))
+                .get_outermost(&super::events::event_formal_binding(index))
                 .cloned()
                 .ok_or("event output formal has no handle")?;
             frame.line(format!(

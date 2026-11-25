@@ -662,20 +662,17 @@ impl Frame<'_, '_> {
         // the original (the captured address clones it).
         let index = self.value(format!("sv4_from_i64({coordinate}, 64)"), 64, true);
         let index_name = self.name("fs_index");
-        self.bindings
-            .last_mut()
-            .expect("frame always has a binding scope")
-            .insert(
-                index_name.clone(),
-                Binding {
-                    address: format!("&{}", index.code),
-                    width: 64,
-                    signed: true,
-                    two_state: true,
-                    shortreal: false,
-                    automatic: true,
-                },
-            );
+        self.bindings.insert(
+            &index_name,
+            Binding {
+                address: format!("&{}", index.code),
+                width: 64,
+                signed: true,
+                two_state: true,
+                shortreal: false,
+                automatic: true,
+            },
+        );
         let coordinate = IrExpr::new(IrExprKind::LocalRead(index_name.clone()), 64, true, None);
         let lhs = match element {
             FixedElement::Array(array) => IrLhs::ArrayElem {
@@ -700,10 +697,7 @@ impl Frame<'_, '_> {
         self.store(&target, piece, nba, "0")?;
         self.release_target(target);
         self.discard(index);
-        self.bindings
-            .last_mut()
-            .expect("frame always has a binding scope")
-            .remove(&index_name);
+        self.bindings.remove(&index_name);
         if !closing.is_empty() {
             self.line(closing);
         }

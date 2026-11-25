@@ -5,9 +5,9 @@
 //! entering callees, and propagates the results over the call graph, so a
 //! consumer reads a callee's effects instead of walking its body again.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
-use crate::sim::ir::{IrFunc, IrModel};
+use crate::sim::ir::{IrFunc, IrModel, IrStmt};
 
 use super::{collect_effects, CallTarget, CallVisits, ExecutionEffect, ScheduleRegion};
 
@@ -104,6 +104,13 @@ impl EffectSet {
         self.effects = self.effects.union(effects);
     }
 
+    /// Add the effect the walk asks for.
+    pub(super) fn push_sought(&mut self) {
+        if let Some(effect) = self.sought {
+            self.push(effect);
+        }
+    }
+
     /// Whether the walk has its answer.
     pub(super) fn found(&self) -> bool {
         self.sought
@@ -114,6 +121,78 @@ impl EffectSet {
     pub(super) fn into_vec(self) -> Vec<ExecutionEffect> {
         self.effects.into_vec()
     }
+}
+
+/// The statements rendered inside the one being rendered that nest others,
+/// with whether they have one effect: the walk of an enclosing statement takes
+/// the answer, so a walk enters a nested statement once however deep it is.
+///
+/// Statements are told apart by address. Those recorded while a statement was
+/// rendered are used for the walk of that statement only, when everything
+/// inside it is still where it was.
+#[derive(Default)]
+pub(in crate::sim) struct NestedEffects {
+    known: HashMap<*const IrStmt, (usize, bool)>,
+    /// The recorded statements; a position in it marks when one began.
+    recorded: Vec<*const IrStmt>,
+}
+
+impl NestedEffects {
+    /// The state before a statement renders.
+    pub(in crate::sim) fn mark(&self) -> usize {
+        self.recorded.len()
+    }
+
+    /// Whether `statement`, which began at `mark`, has `effect`.
+    pub(in crate::sim) fn finish(
+        &mut self,
+        ir: &IrModel,
+        summaries: &EffectSummaries,
+        statement: &IrStmt,
+        effect: ExecutionEffect,
+        mark: usize,
+    ) -> bool {
+        let mut effects = EffectSet::seeking(effect);
+        let mut visits = CallVisits::summarized(summaries);
+        visits.nested = Some((&self.known, mark));
+        collect_effects(
+            ir,
+            std::slice::from_ref(statement),
+            &mut effects,
+            &mut visits,
+        );
+        let found = effects.found();
+        for nested in self.recorded.drain(mark..) {
+            if self.known.get(&nested).is_some_and(|(at, _)| *at >= mark) {
+                self.known.remove(&nested);
+            }
+        }
+        if nests(statement) {
+            let statement = std::ptr::from_ref(statement);
+            self.known.insert(statement, (mark, found));
+            self.recorded.push(statement);
+        }
+        found
+    }
+}
+
+/// Whether `statement` holds statements that [`collect_effects`] enters.
+fn nests(statement: &IrStmt) -> bool {
+    matches!(
+        statement,
+        IrStmt::Block(_)
+            | IrStmt::If { .. }
+            | IrStmt::Case { .. }
+            | IrStmt::While { .. }
+            | IrStmt::Repeat { .. }
+            | IrStmt::Forever { .. }
+            | IrStmt::For { .. }
+            | IrStmt::WaitCond { .. }
+            | IrStmt::WaitEventTriggered { .. }
+            | IrStmt::WaitOrder { .. }
+            | IrStmt::ActivationScope { .. }
+            | IrStmt::ImmediateAssertion { .. }
+    )
 }
 
 /// What one walk of a subprogram body found.

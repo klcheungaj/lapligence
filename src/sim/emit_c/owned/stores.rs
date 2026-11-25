@@ -1108,7 +1108,7 @@ impl<'a, 'm> Frame<'a, 'm> {
     ) -> Result<Value, String> {
         let touches = self.pending_touches.len();
         let target = self.target(&mutation.lhs)?;
-        self.bindings.push(HashMap::new());
+        self.bindings.push();
         let current = if mutation.reads_current || mutation.post {
             let value = self.read_target(&target);
             let value = self.convert(
@@ -1118,8 +1118,8 @@ impl<'a, 'm> Frame<'a, 'm> {
                 false,
                 false,
             );
-            self.bindings.last_mut().expect("mutation scope").insert(
-                "_llg_mut_current".to_owned(),
+            self.bindings.insert(
+                "_llg_mut_current",
                 Binding {
                     address: format!("&{}", value.code),
                     width: value.width,

@@ -78,16 +78,12 @@ impl Frame<'_, '_> {
             }
             IrEventRef::Formal(index) => self
                 .event_bindings
-                .iter()
-                .rev()
-                .find_map(|scope| scope.get(&event_formal_binding(*index)))
+                .get(&event_formal_binding(*index))
                 .cloned()
                 .ok_or_else(|| pending("unbound event formal handle"))?,
             IrEventRef::Captured(name) => self
                 .event_bindings
-                .iter()
-                .rev()
-                .find_map(|scope| scope.get(name))
+                .get(name)
                 .cloned()
                 .ok_or_else(|| pending(&format!("unresolved captured event handle {name}")))?,
         })

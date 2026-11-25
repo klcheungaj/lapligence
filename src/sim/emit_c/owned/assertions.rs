@@ -42,7 +42,9 @@ fn bind_sequence(frame: &mut Frame<'_, '_>, sequence: &IrSequence) {
             automatic: true,
         };
         frame.sequence_addresses.insert(address, binding.clone());
-        frame.bindings[0].insert(format!("llg_sequence_local_read(data, {index}u)"), binding);
+        frame
+            .bindings
+            .insert_outermost(&format!("llg_sequence_local_read(data, {index}u)"), binding);
     }
 }
 

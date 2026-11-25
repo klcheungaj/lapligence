@@ -9,7 +9,9 @@ use super::constants::{c_string_literal, emit_const, periodic_constant, round_sh
 use super::context::RCtx;
 use super::frame_layout::{declaration, FrameLayout, FrameStorage};
 use super::names::{identifier_spans, identifier_spans_in_comments, NameFilter};
-use crate::sim::execution::{CallMechanism, CoroutineId, ExecutionAnalysis, SuspensionOperation};
+use crate::sim::execution::{
+    CallMechanism, CoroutineId, ExecutionAnalysis, NestedEffects, SuspensionOperation,
+};
 use crate::sim::ir::*;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
@@ -58,6 +60,8 @@ pub(super) mod randomize;
 mod references;
 mod repeated_values;
 mod runtime_tasks;
+mod scopes;
+use scopes::Scopes;
 mod statements;
 mod storage_names;
 use dense_cells::dyn_position;
@@ -172,14 +176,16 @@ pub(super) struct Frame<'a, 'm> {
     containers: HashMap<usize, String>,
     slots: Vec<bool>,
     next_name: usize,
-    bindings: Vec<HashMap<String, Binding>>,
-    event_bindings: Vec<HashMap<String, String>>,
+    bindings: Scopes<Binding>,
+    event_bindings: Scopes<String>,
     /// The C variables of the jump states declared so far.
     jump_states: HashMap<String, String>,
     /// Locals that live in a shared activation frame (`IrStmt::SharedLocal`,
     /// `StorageOwnership::Shared` captures): name -> (frame expression, slot).
     shared_cells: HashMap<String, (String, u32)>,
-    native_bindings: Vec<HashMap<String, native::NativeBinding>>,
+    native_bindings: Scopes<native::NativeBinding>,
+    /// Which rendered statements can end the simulation.
+    nested_exits: NestedEffects,
     formal_overrides: Vec<Vec<Binding>>,
     callback_signal_overrides: Vec<HashMap<usize, usize>>,
     /// Per active inline call, the signal that is the function's result
@@ -522,11 +528,12 @@ impl<'a, 'm> Frame<'a, 'm> {
             containers: HashMap::new(),
             slots: Vec::new(),
             next_name: 0,
-            bindings: vec![HashMap::new()],
-            event_bindings: vec![HashMap::new()],
+            bindings: Scopes::new(),
+            event_bindings: Scopes::new(),
             jump_states: HashMap::new(),
             shared_cells: HashMap::new(),
-            native_bindings: vec![HashMap::new()],
+            native_bindings: Scopes::new(),
+            nested_exits: NestedEffects::default(),
             formal_overrides: Vec::new(),
             callback_signal_overrides: Vec::new(),
             callback_results: Vec::new(),
@@ -1134,9 +1141,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             return Some(binding.address);
         }
         self.native_bindings
-            .iter()
-            .rev()
-            .find_map(|scope| scope.get(name))
+            .get(name)
             .map(|binding| binding.address.clone())
     }
 
@@ -1218,12 +1223,10 @@ impl<'a, 'm> Frame<'a, 'm> {
     }
 
     fn lookup(&self, name: &str) -> Option<Binding> {
-        for bindings in self.bindings.iter().rev() {
-            if let Some(binding) = bindings.get(name) {
-                return Some(binding.clone());
-            }
+        match self.bindings.get(name) {
+            Some(binding) => Some(binding.clone()),
+            None => self.model_binding(name),
         }
-        self.model_binding(name)
     }
     /// The model storage `name` resolves to when no frame scope binds it.
     fn model_binding(&self, name: &str) -> Option<Binding> {
@@ -1321,10 +1324,7 @@ impl<'a, 'm> Frame<'a, 'm> {
                 &super::expressions::packed_default(width, signed, two_state),
             );
         }
-        self.bindings
-            .last_mut()
-            .expect("frame always has a binding scope")
-            .insert(name.to_owned(), binding.clone());
+        self.bindings.insert(name, binding.clone());
         if let Some(init) = init {
             let value = self.expression(init)?;
             let value = self.convert(value, width, signed, two_state, false);
@@ -1366,20 +1366,17 @@ impl<'a, 'm> Frame<'a, 'm> {
         };
         self.shared_cells
             .insert(name.to_owned(), (format!("(*{owner})"), 0));
-        self.bindings
-            .last_mut()
-            .expect("frame always has a binding scope")
-            .insert(
-                name.to_owned(),
-                Binding {
-                    address: address.clone(),
-                    width,
-                    signed,
-                    two_state,
-                    shortreal: false,
-                    automatic: true,
-                },
-            );
+        self.bindings.insert(
+            name,
+            Binding {
+                address: address.clone(),
+                width,
+                signed,
+                two_state,
+                shortreal: false,
+                automatic: true,
+            },
+        );
         if let Some(init) = init {
             let value = self.expression(init)?;
             let value = self.convert(value, width, signed, two_state, false);
