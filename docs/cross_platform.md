@@ -447,7 +447,11 @@ mismatch; items name an x86_64 reproduction where one exists.
   Linux arm64 kernels: never hard-code 4096; `src/ffi/process_memory.rs` asks
   `sysconf(_SC_PAGESIZE)`. Thread stack defaults depend on the C library, not
   the ISA (musl 128 KiB, macOS 512 KiB); threads that run HDL code reserve their
-  stack explicitly (`LLG_DPI_CONTEXT_STACK_BYTES`).
+  stack explicitly (`LLG_DPI_CONTEXT_STACK_BYTES`), and so do threads that
+  compile it (`src/stack.rs`). Rust's thread builder reserves that stack without
+  committing it: a Windows reservation (`STACK_SIZE_PARAM_IS_A_RESERVATION`), a
+  lazily backed mapping elsewhere. Linux strict overcommit
+  (`vm.overcommit_memory=2`) counts the whole mapping.
 
 ## CI shell and Python
 

@@ -623,6 +623,11 @@ pub(super) fn bounded_log_text(value: &str, max_bytes: usize) -> String {
     result
 }
 
+/// Pipeline threads (`llg::stack`) the server runs at once: one project
+/// analysis, which holds [`COMPILE_LOCK`], beside one isolated parse of an
+/// open document.
+pub(crate) const MAX_PIPELINES: usize = 2;
+
 /// Serializes native compilation so root jobs cannot oversubscribe the process.
 pub(super) static COMPILE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -696,7 +701,14 @@ pub(crate) fn analyze_with_config_context_parent(
     let _guard = COMPILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     wait_span.outcome("ok");
     drop(wait_span);
-    let analysis = analyze_inner_slang(opts, lint_cfg, root, generation, Some(analysis_span.id()));
+    let parent_id = Some(analysis_span.id());
+    let analysis = llg::stack::run_pipeline(|| {
+        analyze_inner_slang(opts, lint_cfg, root, generation, parent_id)
+    })
+    .unwrap_or_else(|error| {
+        crate::llg_error!("event=pipeline.start outcome=error error={error}");
+        Analysis::fatal_preflight(error.to_string())
+    });
     analysis_span.complete(
         match analysis.outcome {
             AnalysisOutcome::Valid => "ok",

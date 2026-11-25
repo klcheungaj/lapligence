@@ -12,6 +12,8 @@ Module ownership is in the `lib.rs` crate docs; child guides own their contracts
 - `wrapper/`: C++ Slang capture behind the C ABI ([guide](wrapper/AGENTS.md)).
 - `sim/`: simulator pipeline and C11 runtime ([guide](sim/AGENTS.md)).
 - `bin/`: `llg`, `llg_ls` and demos ([guide](bin/AGENTS.md)).
+- `stack.rs`: the nesting limit and the stack every compile runs on (module
+  docs).
 - `memory_limit.rs`: process-memory policy (module docs); platform primitives in
   `ffi/process_memory.rs`. User variables: [readme](../readme.md).
 - `profile.rs`: opt-in `LLG_PROFILE_STAGES=1` stage markers (module docs;
@@ -27,6 +29,13 @@ work; Pre-Postponed once all are empty; Postponed; advance time. Place every new
 event, wake or callback in its region
 ([scheduler](sim/rt/scheduler/readme.md),
 [T1-D11](../docs/lrm_decisions.md#changes-that-return-to-the-old-value-fin-001-follow-up)).
+
+## Nesting depth
+
+- Compile, import, lint, lower or emit a design only inside `stack::run_pipeline`.
+- A recursive walk is as deep as the source nests, which the parser bounds, or
+  asks `stack::exhausted` where it follows names. Unoptimized frames count: keep
+  the arms of a large recursive `match` in functions of their own.
 
 ## Platform code
 

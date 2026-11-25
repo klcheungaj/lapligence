@@ -5,7 +5,12 @@
 use llg::ffi::slang::{self, CompileOptions, CompileRequest, Source};
 
 fn main() -> std::process::ExitCode {
-    std::process::ExitCode::from(run(std::env::args().skip(1).collect()) as u8)
+    let arguments = std::env::args().skip(1).collect();
+    let code = llg::stack::run_pipeline(|| run(arguments)).unwrap_or_else(|error| {
+        eprintln!("llg_demo: {error}");
+        1
+    });
+    std::process::ExitCode::from(code as u8)
 }
 
 fn run(paths: Vec<String>) -> i32 {

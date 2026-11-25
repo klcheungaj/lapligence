@@ -110,10 +110,12 @@ pub fn current_usage() -> Result<MemoryUsage, MemoryError> {
 ///
 /// Windows always attempts a Job Object process-commit limit.  Unix installs
 /// `RLIMIT_AS` only when explicitly requested because address space is not the
-/// same as physical memory and allocators may reserve large virtual ranges.
+/// same as physical memory and allocators may reserve large virtual ranges:
+/// `reserved_address_space` requests it and is the address space the process
+/// reserves without using it, which comes on top of `maximum_bytes`.
 pub fn install_native_limit(
     maximum_bytes: u64,
-    address_space_limit: bool,
+    reserved_address_space: Option<u64>,
 ) -> Result<NativeLimitGuard, MemoryError> {
     if maximum_bytes == 0 {
         return Err(MemoryError::new(
@@ -121,7 +123,9 @@ pub fn install_native_limit(
             io::Error::new(io::ErrorKind::InvalidInput, "memory limit must be nonzero"),
         ));
     }
-    let (platform, mode) = platform::install_native_limit(maximum_bytes, address_space_limit)?;
+    let address_space =
+        reserved_address_space.map(|reserved| maximum_bytes.saturating_add(reserved));
+    let (platform, mode) = platform::install_native_limit(maximum_bytes, address_space)?;
     Ok(NativeLimitGuard {
         _platform: platform,
         mode,
@@ -282,17 +286,17 @@ mod platform {
     }
 
     pub fn install_native_limit(
-        maximum_bytes: u64,
-        address_space_limit: bool,
+        _maximum_bytes: u64,
+        address_space: Option<u64>,
     ) -> Result<(NativeGuard, EnforcementMode), MemoryError> {
-        if !address_space_limit {
+        let Some(maximum_bytes) = address_space else {
             return Ok((
                 NativeGuard {
                     previous_limit: None,
                 },
                 EnforcementMode::WatchdogOnly,
             ));
-        }
+        };
         install_address_space_limit(maximum_bytes)
     }
 
@@ -425,17 +429,17 @@ mod platform {
     }
 
     pub fn install_native_limit(
-        maximum_bytes: u64,
-        address_space_limit: bool,
+        _maximum_bytes: u64,
+        address_space: Option<u64>,
     ) -> Result<(NativeGuard, EnforcementMode), MemoryError> {
-        if !address_space_limit {
+        let Some(maximum_bytes) = address_space else {
             return Ok((
                 NativeGuard {
                     previous_limit: None,
                 },
                 EnforcementMode::WatchdogOnly,
             ));
-        }
+        };
 
         let mut previous = std::mem::MaybeUninit::<libc::rlimit>::uninit();
         // SAFETY: `previous` is valid writable storage for one `rlimit`.
@@ -589,7 +593,7 @@ mod platform {
 
     pub fn install_native_limit(
         maximum_bytes: u64,
-        _address_space_limit: bool,
+        _address_space: Option<u64>,
     ) -> Result<(NativeGuard, EnforcementMode), MemoryError> {
         // SAFETY: null security attributes and name request an unnamed Job
         // Object with default security settings.
@@ -724,7 +728,7 @@ mod platform {
 
     pub fn install_native_limit(
         _maximum_bytes: u64,
-        _address_space_limit: bool,
+        _address_space: Option<u64>,
     ) -> Result<(NativeGuard, EnforcementMode), MemoryError> {
         Ok((NativeGuard, EnforcementMode::WatchdogOnly))
     }
@@ -765,13 +769,13 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn disabled_address_space_limit_is_watchdog_only() {
-        let guard = install_native_limit(u64::MAX, false).expect("disabled limit is infallible");
+        let guard = install_native_limit(u64::MAX, None).expect("disabled limit is infallible");
         assert_eq!(guard.mode(), EnforcementMode::WatchdogOnly);
     }
 
     #[test]
     fn zero_native_limit_is_rejected_without_touching_process_limits() {
-        assert!(install_native_limit(0, false).is_err());
+        assert!(install_native_limit(0, None).is_err());
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -798,7 +802,7 @@ mod tests {
             return;
         }
 
-        let guard = install_native_limit(u64::MAX, true)
+        let guard = install_native_limit(u64::MAX, Some(0))
             .expect("an oversized RLIMIT_AS request is feasible");
         assert_eq!(guard.mode(), EnforcementMode::AddressSpaceAndWatchdog);
 
@@ -825,7 +829,7 @@ mod tests {
         // maximum SIZE_T value is nonrestrictive and still exercises creation,
         // configuration, assignment, and the RAII close path.  Hosts that
         // disallow nested jobs report a normal best-effort error and skip.
-        match install_native_limit(u64::MAX, false) {
+        match install_native_limit(u64::MAX, None) {
             Ok(guard) => {
                 assert_eq!(guard.mode(), EnforcementMode::WindowsJobAndWatchdog);
                 drop(guard);

@@ -118,11 +118,20 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::from(2);
     };
     let code = match start(arguments) {
-        Ok(options) => {
-            let memory_report = llg::memory_limit::install();
+        Ok(options) => llg::stack::run_pipeline(move || {
+            // Inside the pipeline: an address-space limit then finds its stack
+            // reserved, and no other thread can take that space first.
+            let memory_report = llg::memory_limit::install(1);
             let _memory_guard = memory_report.guard;
             run(options)
-        }
+        })
+        .unwrap_or_else(|error| {
+            say(Message::new(
+                &catalog::HOST_PIPELINE_START,
+                error.to_string(),
+            ));
+            1
+        }),
         Err(code) => code,
     };
     std::process::ExitCode::from(code as u8)

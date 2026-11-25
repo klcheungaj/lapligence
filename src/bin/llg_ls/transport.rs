@@ -226,7 +226,8 @@ pub(crate) async fn run(dump_target: Option<std::path::PathBuf>) -> i32 {
     let _ = logging::set_memory_sampler(llg::memory_limit::current_physical_bytes);
     // Keep this guard in scope for the entire server lifetime.  It owns both
     // the optional native limit and the independent std watchdog thread.
-    let memory_report = llg::memory_limit::install_with_logger(memory_log);
+    let memory_report =
+        llg::memory_limit::install_with_logger(memory_log, crate::features::MAX_PIPELINES);
     let _memory_guard = memory_report.guard;
 
     // Offline diagnostic mode: dump every computed token/binding for a

@@ -13,6 +13,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use crate::ffi::process_memory::{self, NativeLimitGuard};
+use crate::stack::PIPELINE_STACK_BYTES;
 
 const MEMORY_LIMIT_ENV: &str = "LLG_MEMORY_LIMIT_MB";
 const MEMORY_WARNING_ENV: &str = "LLG_MEMORY_WARNING_PERCENT";
@@ -337,18 +338,23 @@ impl Drop for WatchdogHandle {
     }
 }
 
-/// Install the configured safeguard with a stderr logger.
-pub fn install() -> InstallReport {
-    install_with_logger(stderr_logger)
+/// Install the configured safeguard with a stderr logger, for a process that
+/// runs up to `pipelines` pipeline threads at once.
+pub fn install(pipelines: usize) -> InstallReport {
+    install_with_logger(stderr_logger, pipelines)
 }
 
 /// Install the configured safeguard using the caller's non-emergency logger.
+///
+/// The stacks of the `pipelines` pipeline threads the process may run at once
+/// are address space that is never memory, so an address-space limit comes on
+/// top of them.
 ///
 /// Every failure is fail-soft: malformed configuration disables only the
 /// affected option, native-limit failures retain the portable watchdog, and a
 /// thread-spawn failure leaves any native limit in place while reporting the
 /// issue through the callback.
-pub fn install_with_logger(logger: LogCallback) -> InstallReport {
+pub fn install_with_logger(logger: LogCallback, pipelines: usize) -> InstallReport {
     let parsed = parse_environment();
     for warning in &parsed.warnings {
         logger(
@@ -359,7 +365,7 @@ pub fn install_with_logger(logger: LogCallback) -> InstallReport {
             ),
         );
     }
-    let report = install_config_with_logger(parsed.config, logger);
+    let report = install_config_with_logger(parsed.config, logger, pipelines);
     logger(
         LogLevel::Debug,
         format_args!(
@@ -373,10 +379,14 @@ pub fn install_with_logger(logger: LogCallback) -> InstallReport {
 
 #[cfg(test)]
 fn install_config(config: MemoryConfig) -> InstallReport {
-    install_config_with_logger(config, stderr_logger)
+    install_config_with_logger(config, stderr_logger, 1)
 }
 
-fn install_config_with_logger(config: MemoryConfig, logger: LogCallback) -> InstallReport {
+fn install_config_with_logger(
+    config: MemoryConfig,
+    logger: LogCallback,
+    pipelines: usize,
+) -> InstallReport {
     let Some(limit_bytes) = config.limit_bytes else {
         return InstallReport {
             guard: MemoryLimitGuard {
@@ -390,7 +400,9 @@ fn install_config_with_logger(config: MemoryConfig, logger: LogCallback) -> Inst
 
     let (native, native_mode, native_error) = match process_memory::install_native_limit(
         limit_bytes,
-        config.address_space_limit,
+        config
+            .address_space_limit
+            .then(|| (pipelines as u64).saturating_mul(PIPELINE_STACK_BYTES as u64)),
     ) {
         Ok(guard) => {
             let mode = safeguard_mode(guard.mode());
@@ -613,6 +625,7 @@ mod tests {
                 address_space_limit: false,
             },
             count_callback,
+            1,
         );
 
         assert_ne!(report.mode, super::SafeguardMode::Disabled);

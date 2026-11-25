@@ -530,12 +530,15 @@ pub(super) fn open_document_identifiers_if_current(
         .to_str()
         .ok_or_else(|| OpenTokenError::transient("semantic source path is not UTF-8"))
         .and_then(|path| {
-            features::open_document_identifiers(path, defines, text, includes)
-                .map(Arc::new)
-                .map_err(|error| OpenTokenError {
-                    message: error.to_string(),
-                    transient: false,
-                })
+            llg::stack::run_pipeline(|| {
+                features::open_document_identifiers(path, defines, text, includes)
+            })
+            .map_err(|error| OpenTokenError::transient(error.to_string()))?
+            .map(Arc::new)
+            .map_err(|error| OpenTokenError {
+                message: error.to_string(),
+                transient: false,
+            })
         });
     crate::llg_debug!(
         "event=semantic_tokens.open_parse.end outcome={} file={} token_count={} elapsed_us={}",

@@ -61,3 +61,63 @@ fn llg_usage_handling_does_not_install_the_memory_policy() {
         "usage must be side-effect free: {stderr}"
     );
 }
+
+/// Run `llg --gen-only` on a small design under `command`'s limits.
+#[cfg(target_os = "linux")]
+fn generate(mut command: Command, directory: &sim_harness::TempDir) -> (Option<i32>, String) {
+    std::fs::write(
+        directory.path().join("tb.sv"),
+        "`timescale 1ns/1ns\nmodule tb; initial $display(\"ok\"); endmodule\n",
+    )
+    .expect("write the design");
+    let output = sim_harness::run_command(
+        command
+            .current_dir(directory.path())
+            .args(["--gen-only", "tb.sv"]),
+        Duration::from_secs(60),
+    )
+    .expect("generate a small design");
+    (
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+/// The pipeline's stack is address space the design never uses, so it comes
+/// on top of a limit smaller than it.
+#[cfg(target_os = "linux")]
+#[test]
+fn llg_address_space_limit_does_not_count_the_pipeline_stack() {
+    const LIMIT_MIB: usize = 512;
+    const { assert!(LIMIT_MIB << 20 < llg::stack::PIPELINE_STACK_BYTES) };
+    let directory = sim_harness::TempDir::new("memory_pipeline_stack").expect("test directory");
+    let mut command = command();
+    command
+        .env("LLG_MEMORY_LIMIT_MB", LIMIT_MIB.to_string())
+        .env("LLG_MEMORY_ADDRESS_SPACE_LIMIT", "1");
+    let (status, stderr) = generate(command, &directory);
+    assert_eq!(status, Some(0), "{stderr}");
+    assert!(stderr.contains("mode=address-space+watchdog"), "{stderr}");
+}
+
+/// Without room for the stack nothing is compiled, and `llg` says why.
+#[cfg(target_os = "linux")]
+#[test]
+fn llg_reports_an_address_space_too_small_for_the_pipeline() {
+    let directory = sim_harness::TempDir::new("memory_no_pipeline").expect("test directory");
+    let mut command = Command::new("sh");
+    command.env_remove("LLG_MEMORY_LIMIT_MB").args([
+        "-c",
+        &format!(
+            "ulimit -v {}; exec \"$0\" \"$@\"",
+            llg::stack::PIPELINE_STACK_BYTES / 1024
+        ),
+        env!("CARGO_BIN_EXE_llg"),
+    ]);
+    let (status, stderr) = generate(command, &directory);
+    assert_eq!(status, Some(1), "{stderr}");
+    assert!(
+        stderr.contains("[HOST-005] cannot start a thread with 1024 MiB of address space"),
+        "{stderr}"
+    );
+}

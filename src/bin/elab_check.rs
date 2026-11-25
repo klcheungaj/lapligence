@@ -6,7 +6,12 @@ use llg::core::{compile, db};
 use llg::ffi::slang::{ConstantValue, Snapshot};
 
 fn main() -> std::process::ExitCode {
-    std::process::ExitCode::from(run(std::env::args().skip(1).collect()) as u8)
+    let arguments = std::env::args().skip(1).collect();
+    let code = llg::stack::run_pipeline(|| run(arguments)).unwrap_or_else(|error| {
+        eprintln!("elab_check: {error}");
+        1
+    });
+    std::process::ExitCode::from(code as u8)
 }
 
 fn run(args: Vec<String>) -> i32 {

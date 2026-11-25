@@ -67,6 +67,7 @@ Each phase that reported a warning or worse ends with a summary message, `LINT-0
 | `HOST-002` | warning | `llg` cannot write an optional file (an `$sdf_annotate` log) | - |
 | `HOST-003` | warning | process memory guard warning | unset `LLG_MEMORY_LIMIT_MB` |
 | `HOST-004` | info | process memory guard status | unset `LLG_MEMORY_LIMIT_MB` |
+| `HOST-005` | error | `llg` cannot start the thread that compiles the design (exit 1) | raise the limit on address space |
 
 ## SLANG
 

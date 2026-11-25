@@ -212,6 +212,14 @@ pub const HOST_MEMORY_INFO: MessageDef = def(
     "unset `LLG_MEMORY_LIMIT_MB`",
 );
 
+pub const HOST_PIPELINE_START: MessageDef = def(
+    Tool::Host,
+    5,
+    Severity::Error,
+    "`llg` cannot start the thread that compiles the design (exit 1)",
+    "raise the limit on address space",
+);
+
 pub const SLANG_SUMMARY: MessageDef = def(Tool::Slang, 0, Severity::Info, SUMMARY, NONE);
 
 pub const ELAB_SUMMARY: MessageDef = def(Tool::Elab, 0, Severity::Info, SUMMARY, NONE);
@@ -467,6 +475,7 @@ pub const HOST_MESSAGES: &[&MessageDef] = &[
     &HOST_WRITE_WARNING,
     &HOST_MEMORY_WARNING,
     &HOST_MEMORY_INFO,
+    &HOST_PIPELINE_START,
     &SLANG_SUMMARY,
     &ELAB_SUMMARY,
     &ELAB_FRONTEND_START,

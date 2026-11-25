@@ -434,6 +434,11 @@ enabled address-space limit, which bounds virtual rather than physical memory
 and can fail allocations before the watchdog, and Windows descendants left in
 the job may inherit its limit. Guard child memory separately.
 
+Each running compile reserves 1 GiB of address space for its stack, of which an
+ordinary design touches under 1 MiB; the address-space limit is the budget plus
+these reservations (one in `llg`, two in `llg_ls`). Under a smaller limit set
+elsewhere (`ulimit -v`, strict overcommit) `llg` reports `HOST-005`.
+
 ## Using `llg_ls`
 
 `llg_ls` is a stdio LSP server. An editor or LSP client should launch it as a
