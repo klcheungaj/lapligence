@@ -5,6 +5,7 @@ mod queries;
 
 impl Frame<'_, '_> {
     pub(super) fn chandle(&mut self, value: &IrChandleExpr) -> Result<String, String> {
+        check_stack()?;
         let code = match value {
             IrChandleExpr::Conditional { .. } => {
                 let mut levels = Vec::new();

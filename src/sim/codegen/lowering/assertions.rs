@@ -791,6 +791,7 @@ impl Codegen<'_> {
         inherited_disable: Option<usize>,
         origin: NodeId,
     ) -> Result<PropertyParts, String> {
+        self.check_stack(root)?;
         let mut current = root;
         let mut clock = inherited_clock;
         let mut disable = inherited_disable;
@@ -1660,6 +1661,7 @@ impl Codegen<'_> {
         builder: &mut SequenceBuilder,
         role: &str,
     ) -> Result<SequenceFragment, String> {
+        self.check_stack(node)?;
         self.check_multiclocked_sequence_operator(node)?;
         match self.kind(node) {
             NodeKind::AssertionExpr(AssertionExprKind::Simple {

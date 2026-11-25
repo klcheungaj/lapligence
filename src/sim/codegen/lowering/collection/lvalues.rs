@@ -405,82 +405,8 @@ impl<'a> Codegen<'a> {
     }
 
     pub(in super::super) fn analyze_lhs(&mut self, path: &str, lhs: NodeId) -> Result<Lhs, String> {
-        if let Some(value) = self.column_record_storage(lhs) {
-            return Ok(Lhs::Canonical(self.record_image_lhs(path, &value)?));
-        }
-        if let Some(target) = self.virtual_interface_select_lhs(path, lhs)? {
-            return Ok(Lhs::Canonical(target));
-        }
-        // Only `=` and `<=` statements dispatch an element of a
-        // virtual-interface array member on the bound instance.
-        if self
-            .virtual_interface_array_element(path, lhs, true)?
-            .is_some()
-        {
-            return Err(self.locate_error(
-                lhs,
-                format!(
-                    "this write to an element of an unpacked array member through a \
-                 virtual interface is not supported in `{path}`; assign it with `=` or `<=`"
-                ),
-            ));
-        }
-        if let Some(select) = self.packed_element_member_select(lhs) {
-            if self.class_packed_select(select) {
-                return Err(self.locate_error(
-                    lhs,
-                    format!(
-                        "writing a member of an element of a class array property other than by an assignment statement (as an output or inout actual, for example) is not supported in `{path}`; assign it with `=` or assign the whole element"
-                    ),
-                ));
-            }
-            if let Some(target) = self.packed_value_lhs(path, lhs)? {
-                return Ok(target);
-            }
-        }
-        if let Some(target) = self.modport_select_lhs(path, lhs)? {
-            return Ok(Lhs::Canonical(target));
-        }
-        if let Some(target) = self.activation_packed_lhs(path, lhs)? {
-            return Ok(Lhs::Canonical(target));
-        }
-        if let Some(target) = self.fixed_activation_lhs(path, lhs)? {
-            return Ok(Lhs::Canonical(target));
-        }
-        if let Some(target) = self.packed_formal_lhs(path, lhs)? {
-            return Ok(Lhs::Canonical(target));
-        }
-        if let Some(parts) = self.positional_pattern_lvalue_parts(path, lhs)? {
-            return Ok(Lhs::Stream {
-                parts,
-                slice: Some(1),
-                direction: IrStreamDirection::LeftToRight,
-            });
-        }
-        if let Some(target) = self
-            .clocking_var_target(lhs)
-            .or_else(|| self.db.is_clocking_var(lhs).then_some(lhs))
-        {
-            if let Some(info) = self.clocking_net_driver_info(target) {
-                return Ok(Lhs::Whole(info));
-            }
-            if let Some(info) = self.clocking_var_source_info(target).cloned() {
-                return Ok(Lhs::Whole(info));
-            }
-            // A clockvar bound to a select or concatenation drives the lvalue
-            // its clocking expression names (SV §14.5).
-            let expression = self
-                .db
-                .clocking_var(target)
-                .map(|var| var.expression)
-                .filter(|expression| *expression != lhs)
-                .ok_or_else(|| {
-                    format!(
-                        "clocking member `{}` has no writable source in `{path}`",
-                        self.node(target).name
-                    )
-                })?;
-            return self.analyze_lhs(path, expression);
+        if let Some(target) = self.resolved_lhs(path, lhs)? {
+            return Ok(target);
         }
         match self.kind(lhs) {
             NodeKind::Expr(ExprKind::Streaming {
@@ -550,6 +476,98 @@ impl<'a> Codegen<'a> {
                     direction: IrStreamDirection::LeftToRight,
                 })
             }
+            _ => self.storage_lhs(path, lhs),
+        }
+    }
+
+    /// The target of `lhs` where its declaration, rather than its syntax,
+    /// decides the storage written.
+    fn resolved_lhs(&mut self, path: &str, lhs: NodeId) -> Result<Option<Lhs>, String> {
+        if let Some(value) = self.column_record_storage(lhs) {
+            return Ok(Some(Lhs::Canonical(self.record_image_lhs(path, &value)?)));
+        }
+        if let Some(target) = self.virtual_interface_select_lhs(path, lhs)? {
+            return Ok(Some(Lhs::Canonical(target)));
+        }
+        // Only `=` and `<=` statements dispatch an element of a
+        // virtual-interface array member on the bound instance.
+        if self
+            .virtual_interface_array_element(path, lhs, true)?
+            .is_some()
+        {
+            return Err(self.locate_error(
+                lhs,
+                format!(
+                    "this write to an element of an unpacked array member through a \
+                 virtual interface is not supported in `{path}`; assign it with `=` or `<=`"
+                ),
+            ));
+        }
+        if let Some(select) = self.packed_element_member_select(lhs) {
+            if self.class_packed_select(select) {
+                return Err(self.locate_error(
+                    lhs,
+                    format!(
+                        "writing a member of an element of a class array property other than by an assignment statement (as an output or inout actual, for example) is not supported in `{path}`; assign it with `=` or assign the whole element"
+                    ),
+                ));
+            }
+            if let Some(target) = self.packed_value_lhs(path, lhs)? {
+                return Ok(Some(target));
+            }
+        }
+        if let Some(target) = self.modport_select_lhs(path, lhs)? {
+            return Ok(Some(Lhs::Canonical(target)));
+        }
+        if let Some(target) = self.activation_packed_lhs(path, lhs)? {
+            return Ok(Some(Lhs::Canonical(target)));
+        }
+        if let Some(target) = self.fixed_activation_lhs(path, lhs)? {
+            return Ok(Some(Lhs::Canonical(target)));
+        }
+        if let Some(target) = self.packed_formal_lhs(path, lhs)? {
+            return Ok(Some(Lhs::Canonical(target)));
+        }
+        if let Some(parts) = self.positional_pattern_lvalue_parts(path, lhs)? {
+            return Ok(Some(Lhs::Stream {
+                parts,
+                slice: Some(1),
+                direction: IrStreamDirection::LeftToRight,
+            }));
+        }
+        if let Some(target) = self
+            .clocking_var_target(lhs)
+            .or_else(|| self.db.is_clocking_var(lhs).then_some(lhs))
+        {
+            if let Some(info) = self.clocking_net_driver_info(target) {
+                return Ok(Some(Lhs::Whole(info)));
+            }
+            if let Some(info) = self.clocking_var_source_info(target).cloned() {
+                return Ok(Some(Lhs::Whole(info)));
+            }
+            // A clockvar bound to a select or concatenation drives the lvalue
+            // its clocking expression names (SV §14.5).
+            let expression = self
+                .db
+                .clocking_var(target)
+                .map(|var| var.expression)
+                .filter(|expression| *expression != lhs)
+                .ok_or_else(|| {
+                    format!(
+                        "clocking member `{}` has no writable source in `{path}`",
+                        self.node(target).name
+                    )
+                })?;
+            return self.analyze_lhs(path, expression).map(Some);
+        }
+        Ok(None)
+    }
+
+    /// [`Self::analyze_lhs`] for a target that joins no others. The levels of
+    /// nested concatenations recurse without a frame of this function
+    /// (`crate::stack`).
+    fn storage_lhs(&mut self, path: &str, lhs: NodeId) -> Result<Lhs, String> {
+        match self.kind(lhs) {
             NodeKind::Var { .. } => {
                 if let Some(info) = self.proc_local_info(lhs) {
                     if let Some(signal) = &info.static_signal {

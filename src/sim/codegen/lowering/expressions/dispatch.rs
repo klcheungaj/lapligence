@@ -2,6 +2,40 @@
 
 use super::*;
 
+/// One way of lowering an expression node; `None` leaves it to the next.
+type ExprForm<'a> = fn(&mut Codegen<'a>, &str, NodeId) -> Result<Option<IrExpr>, String>;
+
+/// `value`, read after `statements` have run.
+fn after_statements(statements: Vec<IrStmt>, value: IrExpr) -> IrExpr {
+    let (width, signed) = (value.width, value.signed);
+    IrExpr::new(
+        IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
+            statements,
+            value,
+        })),
+        width,
+        signed,
+        None,
+    )
+}
+
+fn lower_enum_constant(value: Option<&Val>) -> Result<IrExpr, String> {
+    match value {
+        Some(Val::Bits(v)) => {
+            let c = val_to_const(v)?;
+            Ok(IrExpr::new(
+                IrExprKind::Const(c.clone()),
+                c.width,
+                c.signed,
+                None,
+            ))
+        }
+        Some(Val::Real(v)) => Ok(real_literal_expr(*v)),
+        Some(Val::Str(_)) => Err("string enum constant in expression".to_string()),
+        None => Err("enum constant without value in expression".to_string()),
+    }
+}
+
 impl<'a> Codegen<'a> {
     /// The value of a referenced parameter as a constant expression.
     fn lower_parameter_value(&self, parameter: NodeId) -> Result<Option<IrExpr>, String> {
@@ -329,196 +363,55 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         h: NodeId,
     ) -> Result<IrExpr, String> {
+        self.check_stack(h)?;
         self.lower_expr_node(scope_path, h)
             .map(|value| self.settle_two_state_select(h, value))
             .map_err(|error| self.locate_error(h, error))
     }
 
-    /// [`Self::lower_expr`] before its failure is located at `h`.
-    fn lower_expr_node(&mut self, scope_path: &str, h: NodeId) -> Result<IrExpr, String> {
-        if !self.queued_values.is_empty() {
-            if let Some(value) = self.queued_value_read(h) {
-                return Ok(value);
-            }
-        }
-        if let Some(HoistedValue::Packed(name, width, signed)) = self.hoisted_value(h) {
-            return Ok(IrExpr::new(
-                IrExprKind::LocalRead(name.clone()),
-                *width,
-                *signed,
-                None,
-            ));
-        }
-        if self.checker_sampling {
-            if let Some(value) = self.checker_formal_read(scope_path, h)? {
-                return Ok(value);
-            }
-        }
-        // A random variable inside a constraint stands for its solver value.
-        if let Some(placeholder) = self.random_placeholder(h) {
-            return Ok(placeholder);
-        }
-        if let Some(value) = self.lower_random_value(scope_path, h)? {
-            return Ok(value);
-        }
-        if let Some(operands) = self.enter_call_operands(scope_path, h)? {
-            let value = self.lower_expr(scope_path, h);
-            let before = self.leave_call_operands(operands);
-            let value = value?;
-            if before.is_empty() {
-                return Ok(value);
-            }
-            let (width, signed) = (value.width, value.signed);
-            return Ok(IrExpr::new(
-                IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
-                    statements: before,
-                    value,
-                })),
-                width,
-                signed,
-                None,
-            ));
-        }
-        // A skipped or repeated operand evaluates its computed handles itself.
-        if let Some(before) = self.enter_receiver_root(h) {
-            let value = self.lower_expr(scope_path, h);
-            self.leave_receiver_root(h, &before);
-            let value = value?;
-            let (width, signed) = (value.width, value.signed);
-            return Ok(IrExpr::new(
-                IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
-                    statements: before,
-                    value,
-                })),
-                width,
-                signed,
-                None,
-            ));
-        }
-        // An expression outside a staged statement (a condition, loop bound
-        // or initializer) reads element container members from copies made
-        // before each evaluation.
-        if self.element_staging_possible {
-            if let Some((mut before, after)) = self.stage_expression_members(scope_path, h)? {
-                let value = self.lower_expr(scope_path, h);
-                self.end_element_member_staging();
-                let mut value = value?;
-                let (width, signed) = (value.width, value.signed);
-                // The value is read before the changed element is stored.
-                if !after.is_empty() {
-                    let name = format!("_llg_sv{}", h.0);
-                    before.push(IrStmt::DeclLocal {
-                        name: name.clone(),
-                        width,
-                        signed,
-                        init: Some(Box::new(value)),
-                        two_state: false,
-                    });
-                    before.extend(after);
-                    value = IrExpr::new(IrExprKind::LocalRead(name), width, signed, None);
-                }
-                return Ok(IrExpr::new(
-                    IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
-                        statements: before,
-                        value,
-                    })),
-                    width,
-                    signed,
-                    None,
-                ));
-            }
-        }
+    /// The forms that replace an expression's own lowering, in the order
+    /// they are tried: each yields the value, or `None` for the next.
+    const EXPR_FORMS: [ExprForm<'a>; 25] = [
+        |cg, scope_path, h| cg.substituted_read(scope_path, h),
+        Self::lower_with_call_operands,
+        Self::lower_with_receiver_root,
+        Self::lower_with_staged_members,
         // The iterator declaration of a generated method loop stands for its
         // current element index or key (see `inline_element_path`).
-        if let Some(key) = self.inline_key_read(h) {
-            return Ok(key);
-        }
+        |cg, _, h| Ok(cg.inline_key_read(h)),
         // Covergroup queries and `ref` covergroup arguments (SIM-044).
-        if let Some(value) = self.lower_coverage_expr(scope_path, h)? {
-            return Ok(value);
-        }
-        if let Some(value) = self.overload_current_read(scope_path, h) {
-            return value;
-        }
-        if let Some(value) = self.native_tagged_expr(scope_path, h)? {
-            return Ok(value);
-        }
-        if let Some(select) = self.native_member_select(scope_path, h)? {
-            match self.native_member_select_read(scope_path, &select)? {
-                crate::sim::ir::IrNativeLeafExpr::Packed(value)
-                | crate::sim::ir::IrNativeLeafExpr::Real(value) => return Ok(value),
-                _ => {}
-            }
-        }
-        if let Some(value) = self.lower_record_call_select(scope_path, h)? {
-            return Ok(value);
-        }
-        if let Some(value) = self.lower_native_call_select(scope_path, h)? {
-            return Ok(value);
-        }
-        if let Some(value) = self.virtual_interface_array_element_expr(scope_path, h)? {
-            return Ok(value);
-        }
-        if self.packed_element_member_select(h).is_some() {
-            if let Some(value) = self.packed_value_read_ir(scope_path, h)? {
+        Self::lower_coverage_expr,
+        |cg, scope_path, h| cg.overload_current_read(scope_path, h).transpose(),
+        Self::native_tagged_expr,
+        Self::lower_native_member_read,
+        Self::lower_record_call_select,
+        Self::lower_native_call_select,
+        Self::virtual_interface_array_element_expr,
+        Self::lower_packed_element_member,
+        Self::lower_parameter_elements,
+        Self::fixed_activation_read,
+        Self::fixed_pattern_value,
+        Self::lower_aggregate_bitstream,
+        Self::packed_formal_read,
+        Self::lower_fixed_array_reduction,
+        Self::lower_container_query,
+        Self::lower_object_query,
+        Self::virtual_interface_member_expr,
+        Self::class_field_expr,
+        Self::lower_enum_method,
+        Self::lower_method_value,
+    ];
+
+    /// [`Self::lower_expr`] before its failure is located at `h`.
+    ///
+    /// Every nesting level of the source keeps one frame of this function on
+    /// the stack (`crate::stack`), so it holds no more than one result: the
+    /// forms and the arms of the match live in functions of their own.
+    fn lower_expr_node(&mut self, scope_path: &str, h: NodeId) -> Result<IrExpr, String> {
+        for form in Self::EXPR_FORMS {
+            if let Some(value) = form(self, scope_path, h)? {
                 return Ok(value);
             }
-        }
-        if let Some(value) = self.lower_parameter_elements(scope_path, h)? {
-            return Ok(value);
-        }
-        if let Some(value) = self.fixed_activation_read(scope_path, h)? {
-            return Ok(value);
-        }
-        if let Some(value) = self.fixed_pattern_value(scope_path, h)? {
-            return Ok(value);
-        }
-        if !matches!(self.kind(h), NodeKind::Expr(ExprKind::Cast { .. }))
-            && (self.array_of(h).is_some() || self.unpacked_aggregate_info(h).is_some())
-            && self.packed_member_read_info(h).is_none()
-        {
-            if let Some(value) = self.lower_bitstream_source(scope_path, h)? {
-                return Ok(value);
-            }
-        }
-        if let Some(value) = self.packed_formal_read(scope_path, h)? {
-            return Ok(value);
-        }
-        if let Some(value) = self.lower_fixed_array_reduction(scope_path, h)? {
-            return Ok(value);
-        }
-        if let Some(value) = self.lower_container_query(scope_path, h)? {
-            return Ok(value);
-        }
-        if let Some(value) = self.lower_object_query(scope_path, h)? {
-            return Ok(value);
-        }
-        if let Some(value) = self.virtual_interface_member_expr(scope_path, h)? {
-            return Ok(value);
-        }
-        if let Some(value) = self.class_field_expr(scope_path, h)? {
-            return Ok(value);
-        }
-        if let Some(value) = self.lower_enum_method(scope_path, h)? {
-            return Ok(value);
-        }
-        if let NodeKind::MethodCall { name, .. } = self.kind(h) {
-            if self.virtual_interface_method_info(h)?.is_some() {
-                return self.lower_func_call_expr(scope_path, h, name, None);
-            }
-        }
-        if matches!(self.kind(h), NodeKind::MethodCall { .. }) && self.is_class_method_call(h) {
-            let (name, callee) = match self.kind(h) {
-                NodeKind::MethodCall { name, callee, .. } => (name.clone(), *callee),
-                _ => return Err("malformed class method call".to_owned()),
-            };
-            let receiver = self.class_method_receiver(scope_path, h)?;
-            let mut value = self.lower_func_call_expr(scope_path, h, &name, callee)?;
-            if let Some(call) = Self::record_staged_call_mut(&mut value) {
-                call.receiver = receiver;
-                call.virtual_dispatch = self.class_method_virtual_dispatch(h);
-            }
-            return Ok(value);
         }
         match self.kind(h) {
             NodeKind::Expr(ExprKind::TaggedUnion { member, value }) => {
@@ -529,51 +422,10 @@ impl<'a> Codegen<'a> {
                 if_true,
                 if_false,
             }) => self.lower_predicate_conditional(scope_path, predicate, *if_true, *if_false),
-            NodeKind::Expr(ExprKind::Constant { .. }) => {
-                if let Some(comparison) = self.recover_folded_real_parameter_comparison(h) {
-                    return Ok(comparison);
-                }
-                let c = self.const_of_node(h)?;
-                Ok(IrExpr::new(
-                    IrExprKind::Const(c.clone()),
-                    c.width,
-                    c.signed,
-                    c.fill,
-                ))
-            }
-            NodeKind::EnumConst { value } => match value {
-                Some(Val::Bits(v)) => {
-                    let c = val_to_const(v)?;
-                    Ok(IrExpr::new(
-                        IrExprKind::Const(c.clone()),
-                        c.width,
-                        c.signed,
-                        None,
-                    ))
-                }
-                Some(Val::Real(v)) => Ok(real_literal_expr(*v)),
-                Some(Val::Str(_)) => Err("string enum constant in expression".to_string()),
-                None => Err("enum constant without value in expression".to_string()),
-            },
+            NodeKind::Expr(ExprKind::Constant { .. }) => self.lower_constant(h),
+            NodeKind::EnumConst { value } => lower_enum_constant(value.as_ref()),
             NodeKind::Expr(ExprKind::ScopeRef { target }) => {
-                if let Some(info) = self.sampled_signal_of(*target) {
-                    self.signal_read_expr(info)
-                } else if let Some(info) = self.clocking_var_read_source_info(*target)? {
-                    self.signal_read_expr(info)
-                } else if self.db.is_clocking_block(*target) {
-                    Err(format!(
-                        "clocking block scope `{}` is not a value in `{scope_path}`",
-                        self.node(*target).name
-                    ))
-                } else {
-                    // An instance name used as a value outside the
-                    // virtual-interface assignment and argument paths (for
-                    // example a mailbox `put` of an interface instance).
-                    Err(format!(
-                        "instance `{}` is used as a value in `{scope_path}`; assign it to a virtual interface variable first",
-                        self.node(*target).name
-                    ))
-                }
+                self.lower_scope_ref(scope_path, *target)
             }
             NodeKind::Expr(ExprKind::Ref { target }) => self.lower_ref_expr(scope_path, h, *target),
             NodeKind::Expr(ExprKind::MemberSelect { .. }) => Err(format!(
@@ -585,454 +437,21 @@ impl<'a> Codegen<'a> {
                 | ExprKind::IndexedPartSelect { .. }
                 | ExprKind::ArraySelect { .. },
             ) if self.is_modport_select_root(h) => {
-                let (base, steps) = self.modport_select_step(scope_path, h)?.ok_or_else(|| {
-                    format!("unsupported modport port selection in `{scope_path}`")
-                })?;
-                let value = self.lower_expr(scope_path, base)?;
-                Ok(steps.into_iter().fold(value, packed_step_read))
+                self.lower_modport_select(scope_path, h)
             }
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
-                if let Some(value) =
-                    self.packed_parameter_member_dynamic_select_read(scope_path, *base, &[*index])?
-                {
-                    return Ok(value);
-                }
-                if let Some(value) = self.packed_element_read_ir(scope_path, h)? {
-                    return Ok(value);
-                }
-                if let Some(value) = self.packed_value_read_ir(scope_path, h)? {
-                    return Ok(value);
-                }
-                self.ensure_clocking_readable(*base)?;
-                if let Some(ai) = self.array_of(*base).cloned() {
-                    if ai.real {
-                        return Err(format!(
-                            "select on a real array element in `{scope_path}` is not supported"
-                        ));
-                    }
-                    if ai.dims.len() != 1 {
-                        return Err(format!(
-                            "array slice access (`{}[...]` on a {}-dimensional array) \
-                             is not supported in `{scope_path}`",
-                            self.node(*base).name,
-                            ai.dims.len()
-                        ));
-                    }
-                    let ie = self.lower_expr(scope_path, *index)?;
-                    return Ok(IrExpr::new(
-                        IrExprKind::ArrayRead {
-                            arr: self.reference_array(ai.ir),
-                            indices: vec![ie],
-                            elem_sel: IrElemSel::Whole,
-                        },
-                        ai.elem_width,
-                        ai.signed,
-                        None,
-                    ));
-                }
-                if let Some((info, member, lsb, width)) =
-                    self.packed_member_select_info(*base, &[*index])?
-                {
-                    let selected = IrExpr::new(
-                        IrExprKind::PartSel {
-                            base: Box::new(self.signal_read_expr(&info)?),
-                            left: i64::from(lsb) + i64::from(width) - 1,
-                            right: i64::from(lsb),
-                        },
-                        width,
-                        false,
-                        None,
-                    );
-                    return Ok(if member.two_state {
-                        IrExpr::to_two_state(selected)
-                    } else {
-                        selected
-                    });
-                }
-                if let Some(value) = self.packed_parameter_member_select_read(*base, &[*index])? {
-                    return Ok(value);
-                }
-                if let Some((info, lsb, width)) = self.packed_select_info(*base, &[*index])? {
-                    if width > 1 {
-                        let right = i64::from(lsb);
-                        return Ok(IrExpr::new(
-                            IrExprKind::PartSel {
-                                base: Box::new(self.signal_read_expr(&info)?),
-                                left: right + i64::from(width) - 1,
-                                right,
-                            },
-                            width,
-                            false,
-                            None,
-                        ));
-                    }
-                }
-                let base_value = self.lower_expr(scope_path, *base)?;
-                if base_value.is_real() {
-                    return Err(format!(
-                        "select on real-valued signal in `{scope_path}` is not supported"
-                    ));
-                }
-                let ie = self.lower_member_select_index(scope_path, *base, *index)?;
-                Ok(IrExpr::new(
-                    IrExprKind::BitSel {
-                        base: Box::new(base_value),
-                        idx: Box::new(ie),
-                    },
-                    1,
-                    false,
-                    None,
-                ))
+                self.lower_bit_select(scope_path, h, *base, *index)
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
-                if let Some(value) =
-                    self.packed_parameter_member_dynamic_select_read(scope_path, *base, indices)?
-                {
-                    return Ok(value);
-                }
-                if let Some(value) = self.packed_element_read_ir(scope_path, h)? {
-                    return Ok(value);
-                }
-                if let Some(value) = self.packed_value_read_ir(scope_path, h)? {
-                    return Ok(value);
-                }
-                self.ensure_clocking_readable(*base)?;
-                if let Some((_target, _kind, member_info)) = self.unpacked_member_info(h) {
-                    let member = member_info.member;
-                    let signal = member_info.signal.ok_or_else(|| {
-                        if member_info.object.is_some() {
-                            format!(
-                                "string aggregate member `{}` must be used in a string context",
-                                member.name
-                            )
-                        } else {
-                            format!("aggregate member `{}` has no scalar storage", member.name)
-                        }
-                    })?;
-                    let value = if signal.real {
-                        self.signal_read_expr(&signal)?
-                    } else {
-                        IrExpr::resize_to(
-                            self.signal_read_expr(&signal)?,
-                            member.ty.width.ok_or_else(|| {
-                                format!("unpacked member `{}` has unresolved width", member.name)
-                            })?,
-                            member.ty.signed,
-                        )
-                    };
-                    let value = self.guard_tagged_member_read(h, &signal, value)?;
-                    return Ok(if member.two_state && !signal.real {
-                        IrExpr::to_two_state(value)
-                    } else {
-                        value
-                    });
-                }
-                if let Some((info, member, lsb, width)) =
-                    self.packed_member_select_info(*base, indices)?
-                {
-                    let selected = IrExpr::new(
-                        IrExprKind::PartSel {
-                            base: Box::new(self.signal_read_expr(&info)?),
-                            left: i64::from(lsb) + i64::from(width) - 1,
-                            right: i64::from(lsb),
-                        },
-                        width,
-                        false,
-                        None,
-                    );
-                    return Ok(if member.two_state {
-                        IrExpr::to_two_state(selected)
-                    } else {
-                        selected
-                    });
-                }
-                if let Some(value) = self.packed_parameter_member_select_read(*base, indices)? {
-                    return Ok(value);
-                }
-                if let Some((info, lsb, width)) = self.packed_select_info(*base, indices)? {
-                    let right = i64::from(lsb);
-                    return Ok(IrExpr::new(
-                        IrExprKind::PartSel {
-                            base: Box::new(self.signal_read_expr(&info)?),
-                            left: right + i64::from(width) - 1,
-                            right,
-                        },
-                        width,
-                        false,
-                        None,
-                    ));
-                }
-                if let Some(function) = self.container_result_base(*base) {
-                    return Err(format!(
-                        "container result of `{function}` in `{scope_path}` must be assigned whole to a container variable"
-                    ));
-                }
-                if let Some(property) = self.foreign_class_container(*base) {
-                    return Err(format!(
-                        "class container property `{property}` in `{scope_path}` selected through a handle is supported only in procedural statements (SIM-011)"
-                    ));
-                }
-                let ai = self
-                    .record_column_select(h)
-                    .map(|(column, _)| column)
-                    .or_else(|| self.array_of(*base))
-                    .cloned()
-                    .ok_or_else(|| {
-                        self.nested_associative_select_error(*base, scope_path)
-                            .unwrap_or_else(|| {
-                                self.locate_error(
-                                    h,
-                                    format!(
-                                        "cannot resolve array base of select `{}` in `{scope_path}`",
-                                        self.node(*base).name
-                                    ),
-                                )
-                            })
-                    })?;
-                let ndims = ai.dims.len();
-                if indices.len() == ndims {
-                    let ies = indices
-                        .iter()
-                        .map(|i| self.lower_expr(scope_path, *i))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let element = IrExpr::new(
-                        IrExprKind::ArrayRead {
-                            arr: self.reference_array(ai.ir),
-                            indices: ies,
-                            elem_sel: IrElemSel::Whole,
-                        },
-                        ai.elem_width,
-                        ai.signed,
-                        None,
-                    );
-                    if let Some(guard) = self.record_select_guard(h)? {
-                        // A member array of a column-layout tagged union
-                        // reads only while its member is active.
-                        return Ok(self.record_guarded_element_read(
-                            &guard,
-                            element,
-                            self.source_location(h),
-                        ));
-                    }
-                    return Ok(element);
-                }
-                if indices.len() == ndims + 1 {
-                    if ai.real {
-                        return Err(format!(
-                            "select on a real array element in `{scope_path}` is not supported"
-                        ));
-                    }
-                    let last = *indices.last().expect("non-empty indices");
-                    let ies = indices[..ndims]
-                        .iter()
-                        .map(|i| self.lower_expr(scope_path, *i))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let (elem_sel, width) = match self.kind(last) {
-                        NodeKind::Expr(ExprKind::PartSelect { left, right, .. }) => {
-                            let l =
-                                self.packed_relative_bound(*base, self.eval_bound_i128(*left)?)?;
-                            let r =
-                                self.packed_relative_bound(*base, self.eval_bound_i128(*right)?)?;
-                            let (l, r, width) =
-                                checked_select_bounds(l, r, "array-element part select")?;
-                            (IrElemSel::Part(l, r), width)
-                        }
-                        NodeKind::Expr(ExprKind::IndexedPartSelect {
-                            base_expr,
-                            width_expr,
-                            neg,
-                            ..
-                        }) => {
-                            let width = self.indexed_part_select_width(*width_expr, scope_path)?;
-                            (
-                                IrElemSel::Indexed {
-                                    base: Box::new(
-                                        self.lower_packed_index(scope_path, *base, *base_expr)?,
-                                    ),
-                                    width,
-                                    negative: *neg ^ self.packed_range_ascending(*base),
-                                },
-                                width,
-                            )
-                        }
-                        _ => {
-                            let ie = self.lower_packed_index(scope_path, *base, last)?;
-                            (IrElemSel::Bit(Box::new(ie)), 1)
-                        }
-                    };
-                    return Ok(IrExpr::new(
-                        IrExprKind::ArrayRead {
-                            arr: self.reference_array(ai.ir),
-                            indices: ies,
-                            elem_sel,
-                        },
-                        width,
-                        false,
-                        None,
-                    ));
-                }
-                Err(format!(
-                    "array `{}` in `{scope_path}`: {}-level select on a \
-                     {}-dimensional array is not supported",
-                    self.node(*base).name,
-                    indices.len(),
-                    ndims
-                ))
+                self.lower_array_select(scope_path, h, *base, indices)
             }
             NodeKind::Expr(ExprKind::PartSelect { base, left, right }) => {
-                if let Some(value) = self.packed_element_read_ir(scope_path, h)? {
-                    return Ok(value);
-                }
-                if let Some(value) = self.packed_value_read_ir(scope_path, h)? {
-                    return Ok(value);
-                }
-                self.ensure_clocking_readable(*base)?;
-                let base_value = self.lower_expr(scope_path, *base)?;
-                if base_value.is_real() {
-                    return Err(format!(
-                        "select on real-valued signal in `{scope_path}` is not supported"
-                    ));
-                }
-                if let Some((info, member, lsb, width)) = self.packed_member_range_info(
-                    *base,
-                    self.eval_bound_i128(*left)?,
-                    self.eval_bound_i128(*right)?,
-                )? {
-                    let selected = IrExpr::new(
-                        IrExprKind::PartSel {
-                            base: Box::new(self.signal_read_expr(&info)?),
-                            left: i64::from(lsb) + i64::from(width) - 1,
-                            right: i64::from(lsb),
-                        },
-                        width,
-                        false,
-                        None,
-                    );
-                    return Ok(if member.two_state {
-                        IrExpr::to_two_state(selected)
-                    } else {
-                        selected
-                    });
-                }
-                let mut l = self.eval_bound_i128(*left)?;
-                let mut r = self.eval_bound_i128(*right)?;
-                if let Some((_, member)) = self.packed_member_read_info(*base) {
-                    l = i128::from(self.aggregate_member_relative_bound(
-                        &member.name,
-                        &member.packed_ranges,
-                        l,
-                    )?);
-                    r = i128::from(self.aggregate_member_relative_bound(
-                        &member.name,
-                        &member.packed_ranges,
-                        r,
-                    )?);
-                } else {
-                    l = self.packed_relative_bound(*base, l)?;
-                    r = self.packed_relative_bound(*base, r)?;
-                }
-                let (l, r, width) = checked_select_bounds(l, r, "part select")?;
-                Ok(IrExpr::new(
-                    IrExprKind::PartSel {
-                        base: Box::new(base_value),
-                        left: l,
-                        right: r,
-                    },
-                    width,
-                    false,
-                    None,
-                ))
+                self.lower_part_select(scope_path, h, *base, *left, *right)
             }
-            NodeKind::Expr(ExprKind::IndexedPartSelect {
-                base,
-                base_expr,
-                width_expr,
-                neg,
-            }) => {
-                if let Some(value) = self.packed_element_read_ir(scope_path, h)? {
-                    return Ok(value);
-                }
-                if let Some(value) = self.packed_value_read_ir(scope_path, h)? {
-                    return Ok(value);
-                }
-                self.ensure_clocking_readable(*base)?;
-                let base_value = self.lower_expr(scope_path, *base)?;
-                if base_value.is_real() {
-                    return Err(format!(
-                        "select on real-valued signal in `{scope_path}` is not supported"
-                    ));
-                }
-                let be = self.lower_packed_index(scope_path, *base, *base_expr)?;
-                let we = self.lower_expr(scope_path, *width_expr)?;
-                let width = self.indexed_part_select_width(*width_expr, scope_path)?;
-                Ok(IrExpr::new(
-                    IrExprKind::IdxPartSel {
-                        base: Box::new(base_value),
-                        base_idx: Box::new(be),
-                        width_expr: Box::new(we),
-                        neg: *neg ^ self.packed_range_ascending(*base),
-                    },
-                    width,
-                    false,
-                    None,
-                ))
+            NodeKind::Expr(ExprKind::IndexedPartSelect { .. }) => {
+                self.lower_indexed_part_select(scope_path, h)
             }
-            NodeKind::Expr(ExprKind::Streaming {
-                direction,
-                slice_size,
-                streams,
-            }) => {
-                if streams.is_empty() {
-                    return Err(format!("empty streaming concatenation in `{scope_path}`"));
-                }
-                let mut parts = Vec::with_capacity(streams.len());
-                for stream in streams {
-                    let value =
-                        self.lower_stream_operand(scope_path, stream.value, stream.with_expr)?;
-                    if value.is_real() {
-                        return Err(format!(
-                            "streaming concatenation of real value in `{scope_path}` is not supported"
-                        ));
-                    }
-                    parts.push(value);
-                }
-                let runtime_sized = parts.iter().any(|part| part.width == LLG_MAX_WIDTH);
-                let width = if runtime_sized {
-                    Some(LLG_MAX_WIDTH)
-                } else {
-                    parts.iter().try_fold(0u32, |width, part| {
-                        width
-                            .checked_add(part.width)
-                            .filter(|width| *width <= LLG_MAX_WIDTH)
-                    })
-                }
-                .ok_or_else(|| {
-                    format!("streaming concatenation in `{scope_path}` has an oversized operand")
-                })?;
-                let value = if let [value] = parts.as_slice() {
-                    value.clone()
-                } else {
-                    IrExpr::new(IrExprKind::Concat { parts }, width, false, None)
-                };
-                let slice = if *slice_size == 0 {
-                    1
-                } else {
-                    (*slice_size).min(u64::from(width)) as u32
-                };
-                Ok(IrExpr::new(
-                    IrExprKind::Stream {
-                        value: Box::new(value),
-                        slice,
-                        direction: match direction {
-                            DbStreamingDirection::LeftToRight => IrStreamDirection::LeftToRight,
-                            DbStreamingDirection::RightToLeft => IrStreamDirection::RightToLeft,
-                        },
-                    },
-                    width,
-                    false,
-                    None,
-                ))
-            }
+            NodeKind::Expr(ExprKind::Streaming { .. }) => self.lower_streaming(scope_path, h),
             NodeKind::Expr(ExprKind::Operation {
                 op,
                 reordered,
@@ -1051,153 +470,7 @@ impl<'a> Codegen<'a> {
                 assignment,
                 operands,
             }) => self.lower_operation(scope_path, *op, *reordered, *assignment, operands),
-            NodeKind::Expr(ExprKind::Cast {
-                operand,
-                ty,
-                size_cast,
-                size_cast_expr,
-                cast_kind_known,
-                two_state,
-                propagated,
-            }) => {
-                if !cast_kind_known {
-                    return Err(format!(
-                        "cast kind cannot be determined without admitted source or semantic type metadata in `{scope_path}`"
-                    ));
-                }
-                if matches!(ty.kind.as_str(), "real" | "shortreal") {
-                    let v = self.lower_expr(scope_path, *operand)?;
-                    return Ok(IrExpr::new(
-                        IrExprKind::CastToReal {
-                            a: Box::new(v),
-                            shortreal: ty.kind == "shortreal",
-                        },
-                        REAL_EXPR_WIDTH,
-                        true,
-                        None,
-                    ));
-                }
-                if let Some(value) =
-                    self.lower_dynamic_bitstream_cast(scope_path, h, *operand, ty, *two_state)?
-                {
-                    return Ok(value);
-                }
-                let bitstream_source = self.lower_bitstream_source(scope_path, *operand)?;
-                let source_value = match &bitstream_source {
-                    Some(value) => value.clone(),
-                    None => self.lower_expr(scope_path, *operand)?,
-                };
-                let target_width = size_cast_expr
-                    .as_deref()
-                    .and_then(|expression| self.source_size_cast_width(expression))
-                    .or_else(|| self.fixed_value_width(h))
-                    .or(ty.width);
-                let (w, s) = match (target_width, ty.signed) {
-                    (Some(w), s) => (w, if *size_cast { source_value.signed } else { s }),
-                    (None, _) => {
-                        return Err(format!(
-                            "cast with unsized target type `{}` in `{scope_path}`",
-                            ty.kind
-                        ))
-                    }
-                };
-                let v = source_value;
-                if w > LLG_MAX_WIDTH {
-                    return Err(format!(
-                        "cast target in `{scope_path}` is {w} bits wide; the v1 \
-                         runtime maximum supported width is {LLG_MAX_WIDTH}"
-                    ));
-                }
-                // Context propagation extends using the target signedness
-                // (§11.8.2); assignment and explicit casts use the source (§11.8.3).
-                let v = if *propagated {
-                    let source_width = v.width;
-                    IrExpr::resize_to(v, source_width, s)
-                } else {
-                    v
-                };
-                // Slang wraps a streaming source in a conversion to its
-                // assignment target. A wider fixed target receives the stream
-                // left-aligned and zero-filled on the right (SV 11.4.14); an
-                // explicit bit-stream cast of a stream has equal widths.
-                let streaming_operand = matches!(
-                    self.kind(*operand),
-                    NodeKind::Expr(ExprKind::Streaming { .. })
-                );
-                // A runtime `with`/container stream learns its width only when
-                // evaluated, so the runtime aligns it (and rejects an oversize
-                // stream) against the fixed target.
-                if bitstream_source.is_none()
-                    && streaming_operand
-                    && !v.is_real()
-                    && v.width == LLG_MAX_WIDTH
-                    && w < LLG_MAX_WIDTH
-                {
-                    let aligned =
-                        IrExpr::new(
-                        IrExprKind::StreamToFixed {
-                            a: Box::new(v),
-                            exact: false,
-                        },
-                        w,
-                        s,
-                        None,
-                    );
-                    let aligned = if *two_state || is_two_state_kind(&ty.kind) {
-                        IrExpr::to_two_state(aligned)
-                    } else {
-                        aligned
-                    };
-                    return self.convert_fixed_payload(h, aligned);
-                }
-                if bitstream_source.is_none() && streaming_operand && !v.is_real() && v.width < w {
-                    let stream_width = v.width;
-                    let aligned = IrExpr::new(
-                        IrExprKind::Concat {
-                            parts: vec![v, const_zero_expr(w - stream_width)],
-                        },
-                        w,
-                        false,
-                        None,
-                    );
-                    let aligned = if *two_state || is_two_state_kind(&ty.kind) {
-                        IrExpr::to_two_state(aligned)
-                    } else {
-                        aligned
-                    };
-                    return self.convert_fixed_payload(h, IrExpr::resize_to(aligned, w, s));
-                }
-                if let Some(source) = bitstream_source {
-                    if source.width != w {
-                        return Err(format!(
-                            "bit-stream cast source is {} bits but target is {} bits in `{scope_path}`",
-                            source.width, w
-                        ));
-                    }
-                    let value = IrExpr::new(
-                        IrExprKind::BitStreamCast {
-                            a: Box::new(source),
-                            source_width: w,
-                            target_two_state: *two_state || is_two_state_kind(&ty.kind),
-                        },
-                        w,
-                        s,
-                        None,
-                    );
-                    return self.convert_fixed_payload(h, value);
-                }
-                // Value-preserving conversion (LRM 1800-2009 §6.24.1: the
-                // cast yields the value a variable of the cast type holds
-                // after the assignment — extension follows the SOURCE's
-                // signedness, so int'(8'hFF) is 255, not -1).
-                let value = ir_to_explicit_cast_storage(
-                    v,
-                    w,
-                    s,
-                    *two_state || is_two_state_kind(&ty.kind),
-                )?;
-                self.convert_fixed_payload(h, value)
-            }
+            NodeKind::Expr(ExprKind::Cast { .. }) => self.lower_cast(scope_path, h),
             NodeKind::SysCall { name } => self.lower_sys_func_expr(scope_path, name, h),
             NodeKind::FuncCall {
                 name,
@@ -1233,21 +506,7 @@ impl<'a> Codegen<'a> {
                 name,
                 receiver: Some(receiver),
                 ..
-            } if name == "triggered" => {
-                self.reject_triggered_of_call(scope_path, *receiver)?;
-                let target = self.event_target_of(*receiver).ok_or_else(|| {
-                    format!(
-                        "sequence `.triggered` status is not supported for an unresolved receiver in `{scope_path}`"
-                    )
-                })?;
-                let event = self.event_ref_of(&target, scope_path)?;
-                Ok(IrExpr::new(
-                    IrExprKind::EventTriggered(event),
-                    1,
-                    false,
-                    None,
-                ))
-            }
+            } if name == "triggered" => self.lower_triggered(scope_path, *receiver),
             NodeKind::MethodCall { name, .. } if name == "matched" => Err(format!(
                 "sequence `.matched` status is not supported in `{scope_path}`"
             )),
@@ -1255,93 +514,7 @@ impl<'a> Codegen<'a> {
                 "sequence `.triggered` status is not supported in `{scope_path}`"
             )),
             NodeKind::Expr(ExprKind::HierPath { .. }) => {
-                if let Some((_target, _kind, member_info)) = self.unpacked_member_info(h) {
-                    let member = member_info.member;
-                    let signal = member_info.signal.ok_or_else(|| {
-                        if member_info.object.is_some() {
-                            format!(
-                                "string aggregate member `{}` must be used in a string context",
-                                member.name
-                            )
-                        } else {
-                            format!("aggregate member `{}` has no scalar storage", member.name)
-                        }
-                    })?;
-                    let member_value = if signal.real {
-                        self.signal_read_expr(&signal)?
-                    } else {
-                        IrExpr::resize_to(
-                            self.signal_read_expr(&signal)?,
-                            member.ty.width.ok_or_else(|| {
-                                format!("unpacked member `{}` has unresolved width", member.name)
-                            })?,
-                            member.ty.signed,
-                        )
-                    };
-                    let member_value = self.guard_tagged_member_read(h, &signal, member_value)?;
-                    return Ok(if member.two_state && !member_value.is_real() {
-                        IrExpr::to_two_state(member_value)
-                    } else {
-                        member_value
-                    });
-                }
-                if let Some((info, member)) = self.packed_member_read_info(h) {
-                    let base = self.signal_read_expr(&info)?;
-                    let member_value = IrExpr::new(
-                        IrExprKind::PartSel {
-                            base: Box::new(base),
-                            left: i64::from(member.lsb + member.width - 1),
-                            right: i64::from(member.lsb),
-                        },
-                        member.width,
-                        false,
-                        None,
-                    );
-                    let member_value = self.guard_tagged_member_read(h, &info, member_value)?;
-                    let selected = IrExpr::resize_to(member_value, member.width, member.signed);
-                    return Ok(if member.two_state {
-                        IrExpr::to_two_state(selected)
-                    } else {
-                        selected
-                    });
-                }
-                if let Some(value) = self.packed_parameter_member_read(h)? {
-                    return Ok(value);
-                }
-                // Interface and ordinary hierarchical members both resolve
-                // to their concrete owned storage identity.
-                if let Some(info) = self.hier_path_signal(h) {
-                    return self.signal_read_expr(info);
-                }
-                if let Some(value) = self.column_record_storage(h) {
-                    return self.record_image(scope_path, &value);
-                }
-                // A whole member kept as leaves, compared with a column.
-                if let Some(selection) = self.resolve_unpacked_aggregate(h) {
-                    let mut parts = Vec::new();
-                    for leaf in selection
-                        .storage
-                        .leaves
-                        .iter()
-                        .filter(|leaf| leaf.path.starts_with(&selection.prefix))
-                    {
-                        parts.push(self.aggregate_leaf_read(leaf)?);
-                    }
-                    let width = parts.iter().map(|part| part.width).sum();
-                    if !parts.iter().any(IrExpr::is_real) {
-                        return Ok(IrExpr::new(
-                            IrExprKind::Concat { parts },
-                            width,
-                            false,
-                            None,
-                        ));
-                    }
-                }
-                Err(format!(
-                    "hierarchical reference `{}` is not supported (in `{scope_path}`): {:?}",
-                    self.node(h).name,
-                    self.kind(h)
-                ))
+                self.lower_hierarchical_path(scope_path, h)
             }
             // `$` inside a queue slice bound of a memory task: the queue's
             // current last index (IEEE 1800-2009 7.10.1).
@@ -1353,6 +526,927 @@ impl<'a> Codegen<'a> {
                 format!("unsupported expression in `{scope_path}` (node kind {other:?})")
             })),
         }
+    }
+
+    /// Reads that stand for `h` without evaluating it: a queued or hoisted
+    /// value, a checker formal, a solver value.
+    fn substituted_read(&mut self, scope_path: &str, h: NodeId) -> Result<Option<IrExpr>, String> {
+        if !self.queued_values.is_empty() {
+            if let Some(value) = self.queued_value_read(h) {
+                return Ok(Some(value));
+            }
+        }
+        if let Some(HoistedValue::Packed(name, width, signed)) = self.hoisted_value(h) {
+            return Ok(Some(IrExpr::new(
+                IrExprKind::LocalRead(name.clone()),
+                *width,
+                *signed,
+                None,
+            )));
+        }
+        if self.checker_sampling {
+            if let Some(value) = self.checker_formal_read(scope_path, h)? {
+                return Ok(Some(value));
+            }
+        }
+        // A random variable inside a constraint stands for its solver value.
+        if let Some(placeholder) = self.random_placeholder(h) {
+            return Ok(Some(placeholder));
+        }
+        self.lower_random_value(scope_path, h)
+    }
+
+    fn lower_with_call_operands(
+        &mut self,
+        scope_path: &str,
+        h: NodeId,
+    ) -> Result<Option<IrExpr>, String> {
+        let Some(operands) = self.enter_call_operands(scope_path, h)? else {
+            return Ok(None);
+        };
+        let value = self.lower_expr(scope_path, h);
+        let before = self.leave_call_operands(operands);
+        let value = value?;
+        if before.is_empty() {
+            return Ok(Some(value));
+        }
+        Ok(Some(after_statements(before, value)))
+    }
+
+    /// A skipped or repeated operand evaluates its computed handles itself.
+    fn lower_with_receiver_root(
+        &mut self,
+        scope_path: &str,
+        h: NodeId,
+    ) -> Result<Option<IrExpr>, String> {
+        let Some(before) = self.enter_receiver_root(h) else {
+            return Ok(None);
+        };
+        let value = self.lower_expr(scope_path, h);
+        self.leave_receiver_root(h, &before);
+        let value = value?;
+        Ok(Some(after_statements(before, value)))
+    }
+
+    /// An expression outside a staged statement (a condition, loop bound or
+    /// initializer) reads element container members from copies made before
+    /// each evaluation.
+    fn lower_with_staged_members(
+        &mut self,
+        scope_path: &str,
+        h: NodeId,
+    ) -> Result<Option<IrExpr>, String> {
+        if !self.element_staging_possible {
+            return Ok(None);
+        }
+        let Some((mut before, after)) = self.stage_expression_members(scope_path, h)? else {
+            return Ok(None);
+        };
+        let value = self.lower_expr(scope_path, h);
+        self.end_element_member_staging();
+        let mut value = value?;
+        // The value is read before the changed element is stored.
+        if !after.is_empty() {
+            let (width, signed) = (value.width, value.signed);
+            let name = format!("_llg_sv{}", h.0);
+            before.push(IrStmt::DeclLocal {
+                name: name.clone(),
+                width,
+                signed,
+                init: Some(Box::new(value)),
+                two_state: false,
+            });
+            before.extend(after);
+            value = IrExpr::new(IrExprKind::LocalRead(name), width, signed, None);
+        }
+        Ok(Some(after_statements(before, value)))
+    }
+
+    fn lower_native_member_read(
+        &mut self,
+        scope_path: &str,
+        h: NodeId,
+    ) -> Result<Option<IrExpr>, String> {
+        let Some(select) = self.native_member_select(scope_path, h)? else {
+            return Ok(None);
+        };
+        Ok(match self.native_member_select_read(scope_path, &select)? {
+            crate::sim::ir::IrNativeLeafExpr::Packed(value)
+            | crate::sim::ir::IrNativeLeafExpr::Real(value) => Some(value),
+            _ => None,
+        })
+    }
+
+    fn lower_packed_element_member(
+        &mut self,
+        scope_path: &str,
+        h: NodeId,
+    ) -> Result<Option<IrExpr>, String> {
+        if self.packed_element_member_select(h).is_none() {
+            return Ok(None);
+        }
+        self.packed_value_read_ir(scope_path, h)
+    }
+
+    fn lower_aggregate_bitstream(
+        &mut self,
+        scope_path: &str,
+        h: NodeId,
+    ) -> Result<Option<IrExpr>, String> {
+        if !matches!(self.kind(h), NodeKind::Expr(ExprKind::Cast { .. }))
+            && (self.array_of(h).is_some() || self.unpacked_aggregate_info(h).is_some())
+            && self.packed_member_read_info(h).is_none()
+        {
+            return self.lower_bitstream_source(scope_path, h);
+        }
+        Ok(None)
+    }
+
+    /// A call of a virtual-interface or class method.
+    fn lower_method_value(
+        &mut self,
+        scope_path: &str,
+        h: NodeId,
+    ) -> Result<Option<IrExpr>, String> {
+        let NodeKind::MethodCall { name, callee, .. } = self.kind(h) else {
+            return Ok(None);
+        };
+        if self.virtual_interface_method_info(h)?.is_some() {
+            return self
+                .lower_func_call_expr(scope_path, h, name, None)
+                .map(Some);
+        }
+        if !self.is_class_method_call(h) {
+            return Ok(None);
+        }
+        let receiver = self.class_method_receiver(scope_path, h)?;
+        let mut value = self.lower_func_call_expr(scope_path, h, name, *callee)?;
+        if let Some(call) = Self::record_staged_call_mut(&mut value) {
+            call.receiver = receiver;
+            call.virtual_dispatch = self.class_method_virtual_dispatch(h);
+        }
+        Ok(Some(value))
+    }
+
+    fn lower_constant(&mut self, h: NodeId) -> Result<IrExpr, String> {
+        if let Some(comparison) = self.recover_folded_real_parameter_comparison(h) {
+            return Ok(comparison);
+        }
+        let c = self.const_of_node(h)?;
+        Ok(IrExpr::new(
+            IrExprKind::Const(c.clone()),
+            c.width,
+            c.signed,
+            c.fill,
+        ))
+    }
+
+    fn lower_scope_ref(&mut self, scope_path: &str, target: NodeId) -> Result<IrExpr, String> {
+        if let Some(info) = self.sampled_signal_of(target) {
+            self.signal_read_expr(info)
+        } else if let Some(info) = self.clocking_var_read_source_info(target)? {
+            self.signal_read_expr(info)
+        } else if self.db.is_clocking_block(target) {
+            Err(format!(
+                "clocking block scope `{}` is not a value in `{scope_path}`",
+                self.node(target).name
+            ))
+        } else {
+            // An instance name used as a value outside the
+            // virtual-interface assignment and argument paths (for
+            // example a mailbox `put` of an interface instance).
+            Err(format!(
+                "instance `{}` is used as a value in `{scope_path}`; assign it to a virtual interface variable first",
+                self.node(target).name
+            ))
+        }
+    }
+
+    fn lower_modport_select(&mut self, scope_path: &str, h: NodeId) -> Result<IrExpr, String> {
+        let (base, steps) = self
+            .modport_select_step(scope_path, h)?
+            .ok_or_else(|| format!("unsupported modport port selection in `{scope_path}`"))?;
+        let value = self.lower_expr(scope_path, base)?;
+        Ok(steps.into_iter().fold(value, packed_step_read))
+    }
+
+    fn lower_bit_select(
+        &mut self,
+        scope_path: &str,
+        h: NodeId,
+        base: NodeId,
+        index: NodeId,
+    ) -> Result<IrExpr, String> {
+        if let Some(value) =
+            self.packed_parameter_member_dynamic_select_read(scope_path, base, &[index])?
+        {
+            return Ok(value);
+        }
+        if let Some(value) = self.packed_element_read_ir(scope_path, h)? {
+            return Ok(value);
+        }
+        if let Some(value) = self.packed_value_read_ir(scope_path, h)? {
+            return Ok(value);
+        }
+        self.ensure_clocking_readable(base)?;
+        if let Some(ai) = self.array_of(base).cloned() {
+            if ai.real {
+                return Err(format!(
+                    "select on a real array element in `{scope_path}` is not supported"
+                ));
+            }
+            if ai.dims.len() != 1 {
+                return Err(format!(
+                    "array slice access (`{}[...]` on a {}-dimensional array) \
+                     is not supported in `{scope_path}`",
+                    self.node(base).name,
+                    ai.dims.len()
+                ));
+            }
+            let ie = self.lower_expr(scope_path, index)?;
+            return Ok(IrExpr::new(
+                IrExprKind::ArrayRead {
+                    arr: self.reference_array(ai.ir),
+                    indices: vec![ie],
+                    elem_sel: IrElemSel::Whole,
+                },
+                ai.elem_width,
+                ai.signed,
+                None,
+            ));
+        }
+        if let Some((info, member, lsb, width)) = self.packed_member_select_info(base, &[index])? {
+            let selected = IrExpr::new(
+                IrExprKind::PartSel {
+                    base: Box::new(self.signal_read_expr(&info)?),
+                    left: i64::from(lsb) + i64::from(width) - 1,
+                    right: i64::from(lsb),
+                },
+                width,
+                false,
+                None,
+            );
+            return Ok(if member.two_state {
+                IrExpr::to_two_state(selected)
+            } else {
+                selected
+            });
+        }
+        if let Some(value) = self.packed_parameter_member_select_read(base, &[index])? {
+            return Ok(value);
+        }
+        if let Some((info, lsb, width)) = self.packed_select_info(base, &[index])? {
+            if width > 1 {
+                let right = i64::from(lsb);
+                return Ok(IrExpr::new(
+                    IrExprKind::PartSel {
+                        base: Box::new(self.signal_read_expr(&info)?),
+                        left: right + i64::from(width) - 1,
+                        right,
+                    },
+                    width,
+                    false,
+                    None,
+                ));
+            }
+        }
+        let base_value = self.lower_expr(scope_path, base)?;
+        if base_value.is_real() {
+            return Err(format!(
+                "select on real-valued signal in `{scope_path}` is not supported"
+            ));
+        }
+        let ie = self.lower_member_select_index(scope_path, base, index)?;
+        Ok(IrExpr::new(
+            IrExprKind::BitSel {
+                base: Box::new(base_value),
+                idx: Box::new(ie),
+            },
+            1,
+            false,
+            None,
+        ))
+    }
+
+    fn lower_array_select(
+        &mut self,
+        scope_path: &str,
+        h: NodeId,
+        base: NodeId,
+        indices: &[NodeId],
+    ) -> Result<IrExpr, String> {
+        if let Some(value) =
+            self.packed_parameter_member_dynamic_select_read(scope_path, base, indices)?
+        {
+            return Ok(value);
+        }
+        if let Some(value) = self.packed_element_read_ir(scope_path, h)? {
+            return Ok(value);
+        }
+        if let Some(value) = self.packed_value_read_ir(scope_path, h)? {
+            return Ok(value);
+        }
+        self.ensure_clocking_readable(base)?;
+        if let Some((_target, _kind, member_info)) = self.unpacked_member_info(h) {
+            let member = member_info.member;
+            let signal = member_info.signal.ok_or_else(|| {
+                if member_info.object.is_some() {
+                    format!(
+                        "string aggregate member `{}` must be used in a string context",
+                        member.name
+                    )
+                } else {
+                    format!("aggregate member `{}` has no scalar storage", member.name)
+                }
+            })?;
+            let value = if signal.real {
+                self.signal_read_expr(&signal)?
+            } else {
+                IrExpr::resize_to(
+                    self.signal_read_expr(&signal)?,
+                    member.ty.width.ok_or_else(|| {
+                        format!("unpacked member `{}` has unresolved width", member.name)
+                    })?,
+                    member.ty.signed,
+                )
+            };
+            let value = self.guard_tagged_member_read(h, &signal, value)?;
+            return Ok(if member.two_state && !signal.real {
+                IrExpr::to_two_state(value)
+            } else {
+                value
+            });
+        }
+        if let Some((info, member, lsb, width)) = self.packed_member_select_info(base, indices)? {
+            let selected = IrExpr::new(
+                IrExprKind::PartSel {
+                    base: Box::new(self.signal_read_expr(&info)?),
+                    left: i64::from(lsb) + i64::from(width) - 1,
+                    right: i64::from(lsb),
+                },
+                width,
+                false,
+                None,
+            );
+            return Ok(if member.two_state {
+                IrExpr::to_two_state(selected)
+            } else {
+                selected
+            });
+        }
+        if let Some(value) = self.packed_parameter_member_select_read(base, indices)? {
+            return Ok(value);
+        }
+        if let Some((info, lsb, width)) = self.packed_select_info(base, indices)? {
+            let right = i64::from(lsb);
+            return Ok(IrExpr::new(
+                IrExprKind::PartSel {
+                    base: Box::new(self.signal_read_expr(&info)?),
+                    left: right + i64::from(width) - 1,
+                    right,
+                },
+                width,
+                false,
+                None,
+            ));
+        }
+        if let Some(function) = self.container_result_base(base) {
+            return Err(format!(
+                "container result of `{function}` in `{scope_path}` must be assigned whole to a container variable"
+            ));
+        }
+        if let Some(property) = self.foreign_class_container(base) {
+            return Err(format!(
+                "class container property `{property}` in `{scope_path}` selected through a handle is supported only in procedural statements (SIM-011)"
+            ));
+        }
+        let ai = self
+            .record_column_select(h)
+            .map(|(column, _)| column)
+            .or_else(|| self.array_of(base))
+            .cloned()
+            .ok_or_else(|| {
+                self.nested_associative_select_error(base, scope_path)
+                    .unwrap_or_else(|| {
+                        self.locate_error(
+                            h,
+                            format!(
+                                "cannot resolve array base of select `{}` in `{scope_path}`",
+                                self.node(base).name
+                            ),
+                        )
+                    })
+            })?;
+        let ndims = ai.dims.len();
+        if indices.len() == ndims {
+            let ies = indices
+                .iter()
+                .map(|i| self.lower_expr(scope_path, *i))
+                .collect::<Result<Vec<_>, _>>()?;
+            let element = IrExpr::new(
+                IrExprKind::ArrayRead {
+                    arr: self.reference_array(ai.ir),
+                    indices: ies,
+                    elem_sel: IrElemSel::Whole,
+                },
+                ai.elem_width,
+                ai.signed,
+                None,
+            );
+            if let Some(guard) = self.record_select_guard(h)? {
+                // A member array of a column-layout tagged union
+                // reads only while its member is active.
+                return Ok(self.record_guarded_element_read(
+                    &guard,
+                    element,
+                    self.source_location(h),
+                ));
+            }
+            return Ok(element);
+        }
+        if indices.len() == ndims + 1 {
+            if ai.real {
+                return Err(format!(
+                    "select on a real array element in `{scope_path}` is not supported"
+                ));
+            }
+            let last = *indices.last().expect("non-empty indices");
+            let ies = indices[..ndims]
+                .iter()
+                .map(|i| self.lower_expr(scope_path, *i))
+                .collect::<Result<Vec<_>, _>>()?;
+            let (elem_sel, width) = match self.kind(last) {
+                NodeKind::Expr(ExprKind::PartSelect { left, right, .. }) => {
+                    let l = self.packed_relative_bound(base, self.eval_bound_i128(*left)?)?;
+                    let r = self.packed_relative_bound(base, self.eval_bound_i128(*right)?)?;
+                    let (l, r, width) = checked_select_bounds(l, r, "array-element part select")?;
+                    (IrElemSel::Part(l, r), width)
+                }
+                NodeKind::Expr(ExprKind::IndexedPartSelect {
+                    base_expr,
+                    width_expr,
+                    neg,
+                    ..
+                }) => {
+                    let width = self.indexed_part_select_width(*width_expr, scope_path)?;
+                    (
+                        IrElemSel::Indexed {
+                            base: Box::new(self.lower_packed_index(scope_path, base, *base_expr)?),
+                            width,
+                            negative: *neg ^ self.packed_range_ascending(base),
+                        },
+                        width,
+                    )
+                }
+                _ => {
+                    let ie = self.lower_packed_index(scope_path, base, last)?;
+                    (IrElemSel::Bit(Box::new(ie)), 1)
+                }
+            };
+            return Ok(IrExpr::new(
+                IrExprKind::ArrayRead {
+                    arr: self.reference_array(ai.ir),
+                    indices: ies,
+                    elem_sel,
+                },
+                width,
+                false,
+                None,
+            ));
+        }
+        Err(format!(
+            "array `{}` in `{scope_path}`: {}-level select on a \
+             {}-dimensional array is not supported",
+            self.node(base).name,
+            indices.len(),
+            ndims
+        ))
+    }
+
+    fn lower_part_select(
+        &mut self,
+        scope_path: &str,
+        h: NodeId,
+        base: NodeId,
+        left: NodeId,
+        right: NodeId,
+    ) -> Result<IrExpr, String> {
+        if let Some(value) = self.packed_element_read_ir(scope_path, h)? {
+            return Ok(value);
+        }
+        if let Some(value) = self.packed_value_read_ir(scope_path, h)? {
+            return Ok(value);
+        }
+        self.ensure_clocking_readable(base)?;
+        let base_value = self.lower_expr(scope_path, base)?;
+        if base_value.is_real() {
+            return Err(format!(
+                "select on real-valued signal in `{scope_path}` is not supported"
+            ));
+        }
+        if let Some((info, member, lsb, width)) = self.packed_member_range_info(
+            base,
+            self.eval_bound_i128(left)?,
+            self.eval_bound_i128(right)?,
+        )? {
+            let selected = IrExpr::new(
+                IrExprKind::PartSel {
+                    base: Box::new(self.signal_read_expr(&info)?),
+                    left: i64::from(lsb) + i64::from(width) - 1,
+                    right: i64::from(lsb),
+                },
+                width,
+                false,
+                None,
+            );
+            return Ok(if member.two_state {
+                IrExpr::to_two_state(selected)
+            } else {
+                selected
+            });
+        }
+        let mut l = self.eval_bound_i128(left)?;
+        let mut r = self.eval_bound_i128(right)?;
+        if let Some((_, member)) = self.packed_member_read_info(base) {
+            l = i128::from(self.aggregate_member_relative_bound(
+                &member.name,
+                &member.packed_ranges,
+                l,
+            )?);
+            r = i128::from(self.aggregate_member_relative_bound(
+                &member.name,
+                &member.packed_ranges,
+                r,
+            )?);
+        } else {
+            l = self.packed_relative_bound(base, l)?;
+            r = self.packed_relative_bound(base, r)?;
+        }
+        let (l, r, width) = checked_select_bounds(l, r, "part select")?;
+        Ok(IrExpr::new(
+            IrExprKind::PartSel {
+                base: Box::new(base_value),
+                left: l,
+                right: r,
+            },
+            width,
+            false,
+            None,
+        ))
+    }
+
+    fn lower_indexed_part_select(&mut self, scope_path: &str, h: NodeId) -> Result<IrExpr, String> {
+        let NodeKind::Expr(ExprKind::IndexedPartSelect {
+            base,
+            base_expr,
+            width_expr,
+            neg,
+        }) = self.kind(h)
+        else {
+            return Err(format!("malformed indexed part-select in `{scope_path}`"));
+        };
+        if let Some(value) = self.packed_element_read_ir(scope_path, h)? {
+            return Ok(value);
+        }
+        if let Some(value) = self.packed_value_read_ir(scope_path, h)? {
+            return Ok(value);
+        }
+        self.ensure_clocking_readable(*base)?;
+        let base_value = self.lower_expr(scope_path, *base)?;
+        if base_value.is_real() {
+            return Err(format!(
+                "select on real-valued signal in `{scope_path}` is not supported"
+            ));
+        }
+        let be = self.lower_packed_index(scope_path, *base, *base_expr)?;
+        let we = self.lower_expr(scope_path, *width_expr)?;
+        let width = self.indexed_part_select_width(*width_expr, scope_path)?;
+        Ok(IrExpr::new(
+            IrExprKind::IdxPartSel {
+                base: Box::new(base_value),
+                base_idx: Box::new(be),
+                width_expr: Box::new(we),
+                neg: *neg ^ self.packed_range_ascending(*base),
+            },
+            width,
+            false,
+            None,
+        ))
+    }
+
+    fn lower_streaming(&mut self, scope_path: &str, h: NodeId) -> Result<IrExpr, String> {
+        let NodeKind::Expr(ExprKind::Streaming {
+            direction,
+            slice_size,
+            streams,
+        }) = self.kind(h)
+        else {
+            return Err(format!(
+                "malformed streaming concatenation in `{scope_path}`"
+            ));
+        };
+        if streams.is_empty() {
+            return Err(format!("empty streaming concatenation in `{scope_path}`"));
+        }
+        let mut parts = Vec::with_capacity(streams.len());
+        for stream in streams {
+            let value = self.lower_stream_operand(scope_path, stream.value, stream.with_expr)?;
+            if value.is_real() {
+                return Err(format!(
+                    "streaming concatenation of real value in `{scope_path}` is not supported"
+                ));
+            }
+            parts.push(value);
+        }
+        let runtime_sized = parts.iter().any(|part| part.width == LLG_MAX_WIDTH);
+        let width = if runtime_sized {
+            Some(LLG_MAX_WIDTH)
+        } else {
+            parts.iter().try_fold(0u32, |width, part| {
+                width
+                    .checked_add(part.width)
+                    .filter(|width| *width <= LLG_MAX_WIDTH)
+            })
+        }
+        .ok_or_else(|| {
+            format!("streaming concatenation in `{scope_path}` has an oversized operand")
+        })?;
+        let value = if let [value] = parts.as_slice() {
+            value.clone()
+        } else {
+            IrExpr::new(IrExprKind::Concat { parts }, width, false, None)
+        };
+        let slice = if *slice_size == 0 {
+            1
+        } else {
+            (*slice_size).min(u64::from(width)) as u32
+        };
+        Ok(IrExpr::new(
+            IrExprKind::Stream {
+                value: Box::new(value),
+                slice,
+                direction: match direction {
+                    DbStreamingDirection::LeftToRight => IrStreamDirection::LeftToRight,
+                    DbStreamingDirection::RightToLeft => IrStreamDirection::RightToLeft,
+                },
+            },
+            width,
+            false,
+            None,
+        ))
+    }
+
+    fn lower_cast(&mut self, scope_path: &str, h: NodeId) -> Result<IrExpr, String> {
+        let NodeKind::Expr(ExprKind::Cast {
+            operand,
+            ty,
+            size_cast,
+            size_cast_expr,
+            cast_kind_known,
+            two_state,
+            propagated,
+        }) = self.kind(h)
+        else {
+            return Err(format!("malformed cast in `{scope_path}`"));
+        };
+        if !cast_kind_known {
+            return Err(format!(
+                "cast kind cannot be determined without admitted source or semantic type metadata in `{scope_path}`"
+            ));
+        }
+        if matches!(ty.kind.as_str(), "real" | "shortreal") {
+            let v = self.lower_expr(scope_path, *operand)?;
+            return Ok(IrExpr::new(
+                IrExprKind::CastToReal {
+                    a: Box::new(v),
+                    shortreal: ty.kind == "shortreal",
+                },
+                REAL_EXPR_WIDTH,
+                true,
+                None,
+            ));
+        }
+        if let Some(value) =
+            self.lower_dynamic_bitstream_cast(scope_path, h, *operand, ty, *two_state)?
+        {
+            return Ok(value);
+        }
+        let bitstream_source = self.lower_bitstream_source(scope_path, *operand)?;
+        let source_value = match &bitstream_source {
+            Some(value) => value.clone(),
+            None => self.lower_expr(scope_path, *operand)?,
+        };
+        let target_width = size_cast_expr
+            .as_deref()
+            .and_then(|expression| self.source_size_cast_width(expression))
+            .or_else(|| self.fixed_value_width(h))
+            .or(ty.width);
+        let (w, s) = match (target_width, ty.signed) {
+            (Some(w), s) => (w, if *size_cast { source_value.signed } else { s }),
+            (None, _) => {
+                return Err(format!(
+                    "cast with unsized target type `{}` in `{scope_path}`",
+                    ty.kind
+                ))
+            }
+        };
+        let v = source_value;
+        if w > LLG_MAX_WIDTH {
+            return Err(format!(
+                "cast target in `{scope_path}` is {w} bits wide; the v1 \
+                 runtime maximum supported width is {LLG_MAX_WIDTH}"
+            ));
+        }
+        // Context propagation extends using the target signedness
+        // (§11.8.2); assignment and explicit casts use the source (§11.8.3).
+        let v = if *propagated {
+            let source_width = v.width;
+            IrExpr::resize_to(v, source_width, s)
+        } else {
+            v
+        };
+        // Slang wraps a streaming source in a conversion to its
+        // assignment target. A wider fixed target receives the stream
+        // left-aligned and zero-filled on the right (SV 11.4.14); an
+        // explicit bit-stream cast of a stream has equal widths.
+        let streaming_operand = matches!(
+            self.kind(*operand),
+            NodeKind::Expr(ExprKind::Streaming { .. })
+        );
+        // A runtime `with`/container stream learns its width only when
+        // evaluated, so the runtime aligns it (and rejects an oversize
+        // stream) against the fixed target.
+        if bitstream_source.is_none()
+            && streaming_operand
+            && !v.is_real()
+            && v.width == LLG_MAX_WIDTH
+            && w < LLG_MAX_WIDTH
+        {
+            let aligned = IrExpr::new(
+                IrExprKind::StreamToFixed {
+                    a: Box::new(v),
+                    exact: false,
+                },
+                w,
+                s,
+                None,
+            );
+            let aligned = if *two_state || is_two_state_kind(&ty.kind) {
+                IrExpr::to_two_state(aligned)
+            } else {
+                aligned
+            };
+            return self.convert_fixed_payload(h, aligned);
+        }
+        if bitstream_source.is_none() && streaming_operand && !v.is_real() && v.width < w {
+            let stream_width = v.width;
+            let aligned = IrExpr::new(
+                IrExprKind::Concat {
+                    parts: vec![v, const_zero_expr(w - stream_width)],
+                },
+                w,
+                false,
+                None,
+            );
+            let aligned = if *two_state || is_two_state_kind(&ty.kind) {
+                IrExpr::to_two_state(aligned)
+            } else {
+                aligned
+            };
+            return self.convert_fixed_payload(h, IrExpr::resize_to(aligned, w, s));
+        }
+        if let Some(source) = bitstream_source {
+            if source.width != w {
+                return Err(format!(
+                    "bit-stream cast source is {} bits but target is {} bits in `{scope_path}`",
+                    source.width, w
+                ));
+            }
+            let value = IrExpr::new(
+                IrExprKind::BitStreamCast {
+                    a: Box::new(source),
+                    source_width: w,
+                    target_two_state: *two_state || is_two_state_kind(&ty.kind),
+                },
+                w,
+                s,
+                None,
+            );
+            return self.convert_fixed_payload(h, value);
+        }
+        // Value-preserving conversion (LRM 1800-2009 §6.24.1: the
+        // cast yields the value a variable of the cast type holds
+        // after the assignment — extension follows the SOURCE's
+        // signedness, so int'(8'hFF) is 255, not -1).
+        let value =
+            ir_to_explicit_cast_storage(v, w, s, *two_state || is_two_state_kind(&ty.kind))?;
+        self.convert_fixed_payload(h, value)
+    }
+
+    fn lower_triggered(&mut self, scope_path: &str, receiver: NodeId) -> Result<IrExpr, String> {
+        self.reject_triggered_of_call(scope_path, receiver)?;
+        let target = self.event_target_of(receiver).ok_or_else(|| {
+            format!(
+                "sequence `.triggered` status is not supported for an unresolved receiver in `{scope_path}`"
+            )
+        })?;
+        let event = self.event_ref_of(&target, scope_path)?;
+        Ok(IrExpr::new(
+            IrExprKind::EventTriggered(event),
+            1,
+            false,
+            None,
+        ))
+    }
+
+    fn lower_hierarchical_path(&mut self, scope_path: &str, h: NodeId) -> Result<IrExpr, String> {
+        if let Some((_target, _kind, member_info)) = self.unpacked_member_info(h) {
+            let member = member_info.member;
+            let signal = member_info.signal.ok_or_else(|| {
+                if member_info.object.is_some() {
+                    format!(
+                        "string aggregate member `{}` must be used in a string context",
+                        member.name
+                    )
+                } else {
+                    format!("aggregate member `{}` has no scalar storage", member.name)
+                }
+            })?;
+            let member_value = if signal.real {
+                self.signal_read_expr(&signal)?
+            } else {
+                IrExpr::resize_to(
+                    self.signal_read_expr(&signal)?,
+                    member.ty.width.ok_or_else(|| {
+                        format!("unpacked member `{}` has unresolved width", member.name)
+                    })?,
+                    member.ty.signed,
+                )
+            };
+            let member_value = self.guard_tagged_member_read(h, &signal, member_value)?;
+            return Ok(if member.two_state && !member_value.is_real() {
+                IrExpr::to_two_state(member_value)
+            } else {
+                member_value
+            });
+        }
+        if let Some((info, member)) = self.packed_member_read_info(h) {
+            let base = self.signal_read_expr(&info)?;
+            let member_value = IrExpr::new(
+                IrExprKind::PartSel {
+                    base: Box::new(base),
+                    left: i64::from(member.lsb + member.width - 1),
+                    right: i64::from(member.lsb),
+                },
+                member.width,
+                false,
+                None,
+            );
+            let member_value = self.guard_tagged_member_read(h, &info, member_value)?;
+            let selected = IrExpr::resize_to(member_value, member.width, member.signed);
+            return Ok(if member.two_state {
+                IrExpr::to_two_state(selected)
+            } else {
+                selected
+            });
+        }
+        if let Some(value) = self.packed_parameter_member_read(h)? {
+            return Ok(value);
+        }
+        // Interface and ordinary hierarchical members both resolve
+        // to their concrete owned storage identity.
+        if let Some(info) = self.hier_path_signal(h) {
+            return self.signal_read_expr(info);
+        }
+        if let Some(value) = self.column_record_storage(h) {
+            return self.record_image(scope_path, &value);
+        }
+        // A whole member kept as leaves, compared with a column.
+        if let Some(selection) = self.resolve_unpacked_aggregate(h) {
+            let mut parts = Vec::new();
+            for leaf in selection
+                .storage
+                .leaves
+                .iter()
+                .filter(|leaf| leaf.path.starts_with(&selection.prefix))
+            {
+                parts.push(self.aggregate_leaf_read(leaf)?);
+            }
+            let width = parts.iter().map(|part| part.width).sum();
+            if !parts.iter().any(IrExpr::is_real) {
+                return Ok(IrExpr::new(
+                    IrExprKind::Concat { parts },
+                    width,
+                    false,
+                    None,
+                ));
+            }
+        }
+        Err(format!(
+            "hierarchical reference `{}` is not supported (in `{scope_path}`): {:?}",
+            self.node(h).name,
+            self.kind(h)
+        ))
     }
 
     fn recover_folded_real_parameter_comparison(&self, node: NodeId) -> Option<IrExpr> {

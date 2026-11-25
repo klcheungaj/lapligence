@@ -21,6 +21,7 @@ impl Frame<'_, '_> {
     }
 
     pub(super) fn string(&mut self, expression: &IrStringExpr) -> Result<NativeValue, String> {
+        check_stack()?;
         use IrStringExpr::*;
         Ok(match expression {
             Conditional { .. } => {

@@ -103,6 +103,7 @@ impl Frame<'_, '_> {
     }
 
     pub(super) fn statement(&mut self, statement: &IrStmt) -> Result<(), String> {
+        check_stack()?;
         let touches = self.pending_touches.len();
         self.statement_depth += 1;
         let rendered = self.statement_body(statement);
@@ -135,6 +136,125 @@ impl Frame<'_, '_> {
                     .statement(statement)
                     .map_err(|error| crate::sim::located::locate_at_origin(origin, error))
             }
+            IrStmt::Block(body) => self.block(body)?,
+            IrStmt::If {
+                cond,
+                then_,
+                els,
+                check,
+            } => {
+                if !check.is_none() {
+                    self.qualified_if(cond, then_, els.as_deref(), check)?;
+                    self.cancellation_check_since(cancellation_mark)?;
+                    return Ok(());
+                }
+                let condition = self.condition(cond)?;
+                self.line(format!("if ({condition})"));
+                self.block(then_)?;
+                if let Some(body) = els {
+                    self.line("else");
+                    self.block(body)?;
+                }
+            }
+            IrStmt::While { cond, body } => {
+                self.line("for (;;) {");
+                let condition = self.condition(cond)?;
+                self.poison_loop_exit(&format!("!{condition}"));
+                self.line(format!("if (!{condition}) break;"));
+                self.budget();
+                self.block(body)?;
+                self.line("}");
+            }
+            IrStmt::Forever { body } => {
+                self.line("for (;;) {");
+                self.budget();
+                self.block(body)?;
+                self.line("}");
+            }
+            IrStmt::For {
+                init,
+                cond,
+                incr,
+                body,
+            } => {
+                self.begin_block(init);
+                self.statements(init)?;
+                self.line("for (;;) {");
+                let condition = self.condition(cond)?;
+                self.poison_loop_exit(&format!("!{condition}"));
+                self.line(format!("if (!{condition}) break;"));
+                self.budget();
+                self.block(body)?;
+                self.block(incr)?;
+                self.line("}");
+                self.end_block();
+            }
+            IrStmt::Repeat { count, body } => self.repeat_statement(count, body)?,
+            IrStmt::Case {
+                sel,
+                kind,
+                items,
+                check,
+            } => {
+                if !check.is_none() {
+                    self.qualified_case(sel, *kind, items, check)?;
+                    self.cancellation_check_since(cancellation_mark)?;
+                    return Ok(());
+                }
+                self.case_statement(sel, *kind, items)?;
+            }
+            IrStmt::WaitCond { cond, sens, body } => {
+                self.line("for (;;) {");
+                let condition = self.condition(cond)?;
+                self.poison_loop_exit(&condition);
+                self.line(format!("if ({condition}) break;"));
+                self.wait_any(sens, None, SuspensionOperation::ConditionWait)?;
+                self.line("}");
+                self.block(body)?;
+            }
+            IrStmt::WaitOrder {
+                events,
+                success,
+                failure,
+            } => self.wait_order(events, success, failure)?,
+            IrStmt::WaitEventTriggered { event, body } => {
+                let event = self.event_address(event)?;
+                let await_mark = self.cancellation_mark();
+                self.await_arm(
+                    SuspensionOperation::EventTriggeredWait,
+                    format!("llg_arm_event_triggered(self, {event})"),
+                )?;
+                self.cancellation_check_covering(await_mark)?;
+                self.block(body)?;
+            }
+            IrStmt::ActivationScope { target, exit, body } => {
+                self.activation_scope(*target, exit, body)?
+            }
+            _ => self.operation_statement(statement)?,
+        }
+        if crate::sim::execution::statements_have_effect(
+            self.ctx.model,
+            std::slice::from_ref(statement),
+            crate::sim::execution::ExecutionEffect::Terminate,
+        ) {
+            if self.plain_exits() {
+                self.line("if (LLG_CO_UNLIKELY(llg_rt_exiting())) goto _llg_return;");
+            } else {
+                self.line("LLG_CO_EXIT_CHECK(ch);");
+            }
+        }
+        if straight_line_statement(statement) {
+            self.cancellation_check_covering(cancellation_mark)
+        } else {
+            self.cancellation_check_since(cancellation_mark)
+        }
+    }
+
+    /// [`Self::statement_body`] for the statements that nest no others. The
+    /// levels of nested statements recurse without a frame of this function,
+    /// which holds the values of every form (`crate::stack`).
+    fn operation_statement(&mut self, statement: &IrStmt) -> Result<(), String> {
+        match statement {
             IrStmt::Nop => self.line(";"),
             IrStmt::FixedArrayDeclare(index) => {
                 let pointer = if self.ctx.model.array(*index).real {
@@ -353,7 +473,6 @@ impl Frame<'_, '_> {
                 suffix,
                 minimum_field_width,
             } => self.time_format(units, precision, suffix, minimum_field_width)?,
-            IrStmt::Block(body) => self.block(body)?,
             IrStmt::EventCapture { name, source } => {
                 // Snapshot object identity, not the address of an alias that
                 // may be rebound while the inline task is suspended.
@@ -462,131 +581,6 @@ impl Frame<'_, '_> {
                     self.release_target(target);
                 }
             }
-            IrStmt::If {
-                cond,
-                then_,
-                els,
-                check,
-            } => {
-                if !check.is_none() {
-                    self.qualified_if(cond, then_, els.as_deref(), check)?;
-                    self.cancellation_check_since(cancellation_mark)?;
-                    return Ok(());
-                }
-                let condition = self.condition(cond)?;
-                self.line(format!("if ({condition})"));
-                self.block(then_)?;
-                if let Some(body) = els {
-                    self.line("else");
-                    self.block(body)?;
-                }
-            }
-            IrStmt::While { cond, body } => {
-                self.line("for (;;) {");
-                let condition = self.condition(cond)?;
-                self.poison_loop_exit(&format!("!{condition}"));
-                self.line(format!("if (!{condition}) break;"));
-                self.budget();
-                self.block(body)?;
-                self.line("}");
-            }
-            IrStmt::Forever { body } => {
-                self.line("for (;;) {");
-                self.budget();
-                self.block(body)?;
-                self.line("}");
-            }
-            IrStmt::For {
-                init,
-                cond,
-                incr,
-                body,
-            } => {
-                self.begin_block(init);
-                self.statements(init)?;
-                self.line("for (;;) {");
-                let condition = self.condition(cond)?;
-                self.poison_loop_exit(&format!("!{condition}"));
-                self.line(format!("if (!{condition}) break;"));
-                self.budget();
-                self.block(body)?;
-                self.block(incr)?;
-                self.line("}");
-                self.end_block();
-            }
-            IrStmt::Repeat { count, body } => {
-                let count = self.expression(count)?;
-                if count.width == 0 {
-                    return Err(pending("real-valued repeat counts"));
-                }
-                let code = format!("sv4_repeat_count({})", count.code);
-                let width = count.width;
-                let count = self.replace(count, code, width, false);
-                self.line(format!("while ({}) {{", count.truth()));
-                self.budget();
-                self.block(body)?;
-                let one = self.value(
-                    format!("sv4_from_u64(1, {}, 0)", count.width),
-                    count.width,
-                    false,
-                );
-                self.assign(
-                    &format!("&{}", count.code),
-                    &format!("sv4_sub({}, {})", count.code, one.code),
-                );
-                self.discard(one);
-                self.line("}");
-                self.discard(count);
-            }
-            IrStmt::Case {
-                sel,
-                kind,
-                items,
-                check,
-            } => {
-                if !check.is_none() {
-                    self.qualified_case(sel, *kind, items, check)?;
-                    self.cancellation_check_since(cancellation_mark)?;
-                    return Ok(());
-                }
-                let selector = self.expression(sel)?;
-                let matched = self.scalar("int", "0".to_owned());
-                for item in items.iter().filter(|item| !item.exprs.is_empty()) {
-                    self.line(format!("if (!{matched}) {{"));
-                    let hit = self.scalar("int", "0".to_owned());
-                    for expression in &item.exprs {
-                        self.line(format!("if (!{hit}) {{"));
-                        let value = self.expression(expression)?;
-                        if *kind == IrCaseKind::Inside {
-                            self.line(format!("{hit} = {};", value.truth()));
-                            self.discard(value);
-                        } else if selector.width == 0 || value.width == 0 {
-                            self.line(format!(
-                                "{hit} = ({} == {});",
-                                selector.real(),
-                                value.real()
-                            ));
-                            self.discard(value);
-                        } else {
-                            let code =
-                                format!("{}({}, {})", kind.cmp_fn(), selector.code, value.code);
-                            let result = self.replace(value, code, 1, false);
-                            self.line(format!("{hit} = {};", result.truth()));
-                            self.discard(result);
-                        }
-                        self.line("}");
-                    }
-                    self.line(format!("if ({hit}) {{ {matched} = 1;"));
-                    self.block(&item.body)?;
-                    self.line("}");
-                    self.line("}");
-                }
-                if let Some(default) = items.iter().find(|item| item.exprs.is_empty()) {
-                    self.line(format!("if (!{matched})"));
-                    self.block(&default.body)?;
-                }
-                self.discard(selector);
-            }
             IrStmt::Delay { ticks } => {
                 let ticks = self.delay(ticks)?;
                 self.await_arm(
@@ -599,15 +593,6 @@ impl Frame<'_, '_> {
                     self.line("llg_wait_refresh_on_resume(self);");
                 }
                 self.wait_any(sens, None, SuspensionOperation::EventWait)?
-            }
-            IrStmt::WaitCond { cond, sens, body } => {
-                self.line("for (;;) {");
-                let condition = self.condition(cond)?;
-                self.poison_loop_exit(&condition);
-                self.line(format!("if ({condition}) break;"));
-                self.wait_any(sens, None, SuspensionOperation::ConditionWait)?;
-                self.line("}");
-                self.block(body)?;
             }
             IrStmt::WaitEvents {
                 specs,
@@ -738,43 +723,6 @@ impl Frame<'_, '_> {
                     specs.len()
                 ));
             }
-            IrStmt::WaitOrder {
-                events,
-                success,
-                failure,
-            } => {
-                if events.is_empty() {
-                    return Err("wait_order requires at least one event".to_owned());
-                }
-                let mut addresses = Vec::new();
-                for event in events {
-                    addresses.push(self.event_address(event)?);
-                }
-                let list = if addresses.is_empty() {
-                    "NULL".to_owned()
-                } else {
-                    self.arm_array(
-                        "const llg_event_t*",
-                        "ordered_events",
-                        addresses.len(),
-                        &addresses.join(", "),
-                    )
-                };
-                let success_flag = self.scalar("int", "0".to_owned());
-                let await_mark = self.cancellation_mark();
-                self.await_arm(
-                    SuspensionOperation::WaitOrder,
-                    format!(
-                        "llg_arm_order(self, {list}, {}, &{success_flag})",
-                        events.len()
-                    ),
-                )?;
-                self.cancellation_check_covering(await_mark)?;
-                self.line(format!("if ({success_flag} > 0)"));
-                self.block(success)?;
-                self.line(format!("else if ({success_flag} < 0)"));
-                self.block(failure)?;
-            }
             IrStmt::EventTrigger { ev } => {
                 let event = self.event_address(ev)?;
                 self.line(format!("llg_event_trigger({event});"));
@@ -805,16 +753,6 @@ impl Frame<'_, '_> {
                         "if (({target})->object != {previous}) llg_handle_changed({marker}, (void* const*)&({target})->object, {previous});"
                     ));
                 }
-            }
-            IrStmt::WaitEventTriggered { event, body } => {
-                let event = self.event_address(event)?;
-                let await_mark = self.cancellation_mark();
-                self.await_arm(
-                    SuspensionOperation::EventTriggeredWait,
-                    format!("llg_arm_event_triggered(self, {event})"),
-                )?;
-                self.cancellation_check_covering(await_mark)?;
-                self.block(body)?;
             }
             IrStmt::Fork {
                 join_kind,
@@ -849,9 +787,6 @@ impl Frame<'_, '_> {
                 target,
             } => {
                 self.captured_fork(*join_kind, branches, *target)?;
-            }
-            IrStmt::ActivationScope { target, exit, body } => {
-                self.activation_scope(*target, exit, body)?
             }
             IrStmt::DisableTarget { target } => {
                 self.line(format!(
@@ -1246,23 +1181,133 @@ impl Frame<'_, '_> {
                 }
             }
             IrStmt::ProgramExit => self.line("llg_program_exit(self);"),
-        }
-        if crate::sim::execution::statements_have_effect(
-            self.ctx.model,
-            std::slice::from_ref(statement),
-            crate::sim::execution::ExecutionEffect::Terminate,
-        ) {
-            if self.plain_exits() {
-                self.line("if (LLG_CO_UNLIKELY(llg_rt_exiting())) goto _llg_return;");
-            } else {
-                self.line("LLG_CO_EXIT_CHECK(ch);");
+            IrStmt::Located { .. }
+            | IrStmt::Block(_)
+            | IrStmt::If { .. }
+            | IrStmt::While { .. }
+            | IrStmt::Forever { .. }
+            | IrStmt::For { .. }
+            | IrStmt::Repeat { .. }
+            | IrStmt::Case { .. }
+            | IrStmt::WaitCond { .. }
+            | IrStmt::WaitOrder { .. }
+            | IrStmt::WaitEventTriggered { .. }
+            | IrStmt::ActivationScope { .. } => {
+                return Err("a nesting statement has no operation of its own".to_owned())
             }
         }
-        if straight_line_statement(statement) {
-            self.cancellation_check_covering(cancellation_mark)
-        } else {
-            self.cancellation_check_since(cancellation_mark)
+        Ok(())
+    }
+
+    fn repeat_statement(&mut self, count: &IrExpr, body: &[IrStmt]) -> Result<(), String> {
+        let count = self.expression(count)?;
+        if count.width == 0 {
+            return Err(pending("real-valued repeat counts"));
         }
+        let code = format!("sv4_repeat_count({})", count.code);
+        let width = count.width;
+        let count = self.replace(count, code, width, false);
+        self.line(format!("while ({}) {{", count.truth()));
+        self.budget();
+        self.block(body)?;
+        let one = self.value(
+            format!("sv4_from_u64(1, {}, 0)", count.width),
+            count.width,
+            false,
+        );
+        self.assign(
+            &format!("&{}", count.code),
+            &format!("sv4_sub({}, {})", count.code, one.code),
+        );
+        self.discard(one);
+        self.line("}");
+        self.discard(count);
+        Ok(())
+    }
+
+    fn case_statement(
+        &mut self,
+        sel: &IrExpr,
+        kind: IrCaseKind,
+        items: &[IrCaseItem],
+    ) -> Result<(), String> {
+        let selector = self.expression(sel)?;
+        let matched = self.scalar("int", "0".to_owned());
+        for item in items.iter().filter(|item| !item.exprs.is_empty()) {
+            self.line(format!("if (!{matched}) {{"));
+            let hit = self.scalar("int", "0".to_owned());
+            for expression in &item.exprs {
+                self.line(format!("if (!{hit}) {{"));
+                let value = self.expression(expression)?;
+                if kind == IrCaseKind::Inside {
+                    self.line(format!("{hit} = {};", value.truth()));
+                    self.discard(value);
+                } else if selector.width == 0 || value.width == 0 {
+                    self.line(format!(
+                        "{hit} = ({} == {});",
+                        selector.real(),
+                        value.real()
+                    ));
+                    self.discard(value);
+                } else {
+                    let code = format!("{}({}, {})", kind.cmp_fn(), selector.code, value.code);
+                    let result = self.replace(value, code, 1, false);
+                    self.line(format!("{hit} = {};", result.truth()));
+                    self.discard(result);
+                }
+                self.line("}");
+            }
+            self.line(format!("if ({hit}) {{ {matched} = 1;"));
+            self.block(&item.body)?;
+            self.line("}");
+            self.line("}");
+        }
+        if let Some(default) = items.iter().find(|item| item.exprs.is_empty()) {
+            self.line(format!("if (!{matched})"));
+            self.block(&default.body)?;
+        }
+        self.discard(selector);
+        Ok(())
+    }
+
+    fn wait_order(
+        &mut self,
+        events: &[IrEventRef],
+        success: &[IrStmt],
+        failure: &[IrStmt],
+    ) -> Result<(), String> {
+        if events.is_empty() {
+            return Err("wait_order requires at least one event".to_owned());
+        }
+        let mut addresses = Vec::new();
+        for event in events {
+            addresses.push(self.event_address(event)?);
+        }
+        let list = if addresses.is_empty() {
+            "NULL".to_owned()
+        } else {
+            self.arm_array(
+                "const llg_event_t*",
+                "ordered_events",
+                addresses.len(),
+                &addresses.join(", "),
+            )
+        };
+        let success_flag = self.scalar("int", "0".to_owned());
+        let await_mark = self.cancellation_mark();
+        self.await_arm(
+            SuspensionOperation::WaitOrder,
+            format!(
+                "llg_arm_order(self, {list}, {}, &{success_flag})",
+                events.len()
+            ),
+        )?;
+        self.cancellation_check_covering(await_mark)?;
+        self.line(format!("if ({success_flag} > 0)"));
+        self.block(success)?;
+        self.line(format!("else if ({success_flag} < 0)"));
+        self.block(failure)?;
+        Ok(())
     }
 }
 

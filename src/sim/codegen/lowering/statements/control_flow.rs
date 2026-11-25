@@ -943,8 +943,32 @@ impl EmitCtx<'_, '_> {
                 init: default_real_local_initializer(info.width),
             });
         }
+        let init_stmts = self.lower_for_initializers(&init)?;
+        let cond_ir = self.cg.lower_boolean_expr(&self.path, cond)?;
+        let (body_stmts, brk) = self.lower_loop_body(body)?;
+        let incr_stmts = self.lower_for_steps(&incr)?;
+        // `continue` must run the increment before the condition test: its
+        // label sits at the END of the body, and the emitter renders the
+        // body BEFORE the incr statements inside the C `for`.
+        let mut loop_stmts = vec![IrStmt::For {
+            init: init_stmts,
+            cond: cond_ir,
+            incr: incr_stmts,
+            body: body_stmts,
+        }];
+        // The break label trails the whole construct.
+        loop_stmts.extend(brk);
+        if declarations.is_empty() {
+            Ok(loop_stmts)
+        } else {
+            declarations.extend(loop_stmts);
+            Ok(vec![IrStmt::Block(declarations)])
+        }
+    }
+
+    fn lower_for_initializers(&mut self, init: &[NodeId]) -> Result<Vec<IrStmt>, String> {
         let mut init_stmts = Vec::with_capacity(init.len());
-        for s in &init {
+        for s in init {
             match self.cg.kind(*s) {
                 NodeKind::Stmt(StmtKind::Assign { .. }) => {
                     init_stmts.push(self.lower_assignment(*s, true)?);
@@ -969,10 +993,12 @@ impl EmitCtx<'_, '_> {
                 }
             }
         }
-        let cond_ir = self.cg.lower_boolean_expr(&self.path, cond)?;
-        let (body_stmts, brk) = self.lower_loop_body(body)?;
+        Ok(init_stmts)
+    }
+
+    fn lower_for_steps(&mut self, incr: &[NodeId]) -> Result<Vec<IrStmt>, String> {
         let mut incr_stmts = Vec::with_capacity(incr.len());
-        for s in &incr {
+        for s in incr {
             match self.cg.kind(*s) {
                 NodeKind::Stmt(StmtKind::Assign { .. }) => {
                     incr_stmts.push(self.lower_assignment(*s, true)?);
@@ -1030,23 +1056,7 @@ impl EmitCtx<'_, '_> {
                 }
             }
         }
-        // `continue` must run the increment before the condition test: its
-        // label sits at the END of the body, and the emitter renders the
-        // body BEFORE the incr statements inside the C `for`.
-        let mut loop_stmts = vec![IrStmt::For {
-            init: init_stmts,
-            cond: cond_ir,
-            incr: incr_stmts,
-            body: body_stmts,
-        }];
-        // The break label trails the whole construct.
-        loop_stmts.extend(brk);
-        if declarations.is_empty() {
-            Ok(loop_stmts)
-        } else {
-            declarations.extend(loop_stmts);
-            Ok(vec![IrStmt::Block(declarations)])
-        }
+        Ok(incr_stmts)
     }
 
     /// `foreach` with several slots over resizable container `container`

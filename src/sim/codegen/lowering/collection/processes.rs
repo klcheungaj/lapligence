@@ -2024,6 +2024,15 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// Refuse to follow `node` on a stack that holds no more of them
+    /// (`crate::stack`). Syntax alone never gets there.
+    pub(in super::super) fn check_stack(&self, node: NodeId) -> Result<(), String> {
+        if crate::stack::exhausted() {
+            return Err(self.locate_error(node, crate::stack::EXHAUSTED));
+        }
+        Ok(())
+    }
+
     /// Record lowering warning `message` (CODEGEN-010) located at `node`
     /// as [`locate_error`](Self::locate_error) locates an error.
     pub(in super::super) fn warn_at(&mut self, node: NodeId, message: impl Into<String>) {

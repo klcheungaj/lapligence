@@ -9,6 +9,9 @@ impl Validator<'_> {
         formals: &[IrFormal],
         path: IrPath<'_>,
     ) -> ValidationResult {
+        if crate::stack::exhausted() {
+            return self.fail(path, crate::stack::EXHAUSTED);
+        }
         self.max_width
             .set(self.max_width.get().max(u128::from(expr.width)));
         if expr.fill.is_some_and(|fill| fill > 3) {
@@ -20,6 +23,57 @@ impl Validator<'_> {
                 "real expression carries a packed fill marker",
             );
         }
+        match &expr.kind {
+            IrExprKind::Bin { a, b, .. } | IrExprKind::RealBin { a, b, .. } => {
+                self.validate_expr(a, formals, format_args!("{path}.a"))?;
+                self.validate_expr(b, formals, format_args!("{path}.b"))?;
+            }
+            IrExprKind::Un { a, .. }
+            | IrExprKind::RealUn { a, .. }
+            | IrExprKind::CastToReal { a, .. }
+            | IrExprKind::CastToPacked { a }
+            | IrExprKind::Resize { a }
+            | IrExprKind::Convert { a }
+            | IrExprKind::ToTwoState { a } => {
+                self.validate_expr(a, formals, format_args!("{path}.a"))?;
+            }
+            IrExprKind::Mux { sel, a, b } => {
+                self.validate_expr(sel, formals, format_args!("{path}.sel"))?;
+                self.validate_expr(a, formals, format_args!("{path}.a"))?;
+                self.validate_expr(b, formals, format_args!("{path}.b"))?;
+            }
+            IrExprKind::BitSel { base, idx } => {
+                self.validate_expr(base, formals, format_args!("{path}.base"))?;
+                self.validate_expr(idx, formals, format_args!("{path}.idx"))?;
+            }
+            IrExprKind::PartSel { base, left, right } => {
+                self.validate_expr(base, formals, format_args!("{path}.base"))?;
+                self.validate_select_width(*left, *right, path)?;
+            }
+            IrExprKind::IdxPartSel {
+                base,
+                base_idx,
+                width_expr,
+                ..
+            } => {
+                self.validate_expr(base, formals, format_args!("{path}.base"))?;
+                self.validate_expr(base_idx, formals, format_args!("{path}.base_idx"))?;
+                self.validate_expr(width_expr, formals, format_args!("{path}.width_expr"))?;
+            }
+            _ => self.validate_operation(expr, formals, path)?,
+        }
+        Ok(())
+    }
+
+    /// [`Self::validate_expr`] for the forms that are no plain operator. The
+    /// operators of a chain recurse without a frame of this function, which
+    /// holds the values of every form (`crate::stack`).
+    fn validate_operation(
+        &self,
+        expr: &IrExpr,
+        formals: &[IrFormal],
+        path: IrPath<'_>,
+    ) -> ValidationResult {
         match &expr.kind {
             IrExprKind::Container(operation) => {
                 operation.validate(&self.model, self.string_return.get())?;
@@ -312,33 +366,7 @@ impl Validator<'_> {
                     return self.fail(path, "formal type disagrees with expression type");
                 }
             }
-            IrExprKind::CallFn(call) => {
-                self.validate_call_expr(call, formals, path)?;
-                let callee = &self.model.funcs[call.f];
-                match callee.ret {
-                    Some(ret) => {
-                        if call.void_x {
-                            return self.fail(path, "value-returning call is marked as void");
-                        }
-                        if matches!(ret, IrType::Real { .. }) != expr.is_real()
-                            || ret.width() != expr.width
-                            || ret.signed() != expr.signed
-                        {
-                            return self
-                                .fail(path, "callee return type disagrees with expression type");
-                        }
-                    }
-                    None => {
-                        if !call.void_x {
-                            return self.fail(path, "void call used as a value is not marked as X");
-                        }
-                        if expr.width != 1 || expr.signed || expr.fill.is_some() {
-                            return self
-                                .fail(path, "void-call fallback must be a 1-bit unsigned X");
-                        }
-                    }
-                }
-            }
+            IrExprKind::CallFn(call) => self.validate_call_value(expr, call, formals, path)?,
             IrExprKind::MatchCall(action) => {
                 if expr.width != 1 || expr.signed || expr.fill.is_some() {
                     return self.fail(path, "match-item call must be a 1-bit unsigned value");
@@ -586,19 +614,6 @@ impl Validator<'_> {
                     return self.fail(path, "bit-stream source width disagrees with metadata");
                 }
             }
-            IrExprKind::Bin { a, b, .. } | IrExprKind::RealBin { a, b, .. } => {
-                self.validate_expr(a, formals, format_args!("{path}.a"))?;
-                self.validate_expr(b, formals, format_args!("{path}.b"))?;
-            }
-            IrExprKind::Un { a, .. }
-            | IrExprKind::RealUn { a, .. }
-            | IrExprKind::CastToReal { a, .. }
-            | IrExprKind::CastToPacked { a }
-            | IrExprKind::Resize { a }
-            | IrExprKind::Convert { a }
-            | IrExprKind::ToTwoState { a } => {
-                self.validate_expr(a, formals, format_args!("{path}.a"))?;
-            }
             IrExprKind::StreamToFixed { a, .. } => {
                 if expr.width == 0 || a.is_real() || expr.fill.is_some() {
                     return self.fail(path, "fixed stream target requires a packed nonzero width");
@@ -740,11 +755,6 @@ impl Validator<'_> {
                     }
                 }
             }
-            IrExprKind::Mux { sel, a, b } => {
-                self.validate_expr(sel, formals, format_args!("{path}.sel"))?;
-                self.validate_expr(a, formals, format_args!("{path}.a"))?;
-                self.validate_expr(b, formals, format_args!("{path}.b"))?;
-            }
             IrExprKind::ArrayMux {
                 sel,
                 a,
@@ -803,32 +813,7 @@ impl Validator<'_> {
                 self.validate_leaf_merge(leaves, expr.width, format_args!("{path}.leaves"))?;
             }
             IrExprKind::Concat { parts } | IrExprKind::Replicate { parts, .. } => {
-                if parts.is_empty() {
-                    return self.fail(path, "concatenation requires at least one operand");
-                }
-                let sum: u128 = parts.iter().map(|part| u128::from(part.width)).sum();
-                let runtime_sized = parts.iter().any(|part| part.width == LLG_MAX_WIDTH);
-                if runtime_sized {
-                    if !matches!(expr.kind, IrExprKind::Concat { .. })
-                        || expr.width != LLG_MAX_WIDTH
-                    {
-                        return self.fail(
-                            path,
-                            "runtime-sized concatenation must retain model capacity width",
-                        );
-                    }
-                } else {
-                    let expected = match &expr.kind {
-                        IrExprKind::Replicate { count, .. } => sum * u128::from(*count),
-                        _ => sum,
-                    };
-                    if expected != u128::from(expr.width) {
-                        return self.fail(path, format!("concatenation/replication width {} disagrees with derived width {expected}", expr.width));
-                    }
-                }
-                for (idx, part) in parts.iter().enumerate() {
-                    self.validate_expr(part, formals, format_args!("{path}.parts[{idx}]"))?;
-                }
+                self.validate_concatenation(expr, parts, formals, path)?
             }
             IrExprKind::Stream { value, slice, .. } => {
                 if *slice == 0 {
@@ -925,124 +910,7 @@ impl Validator<'_> {
                 result?;
             }
             IrExprKind::Inside { value, items } => {
-                if items.is_empty() {
-                    return self.fail(path, "inside expression requires at least one set item");
-                }
-                if expr.width != 1 || expr.signed {
-                    return self.fail(path, "inside expression requires a 1-bit unsigned result");
-                }
-                self.validate_expr(value, formals, format_args!("{path}.value"))?;
-                for (idx, item) in items.iter().enumerate() {
-                    match item {
-                        IrInsideItem::Value(item) => {
-                            self.validate_expr(item, formals, format_args!("{path}.items[{idx}]"))?;
-                        }
-                        IrInsideItem::Range { low, high } => {
-                            self.validate_expr(
-                                low,
-                                formals,
-                                format_args!("{path}.items[{idx}].low"),
-                            )?;
-                            self.validate_expr(
-                                high,
-                                formals,
-                                format_args!("{path}.items[{idx}].high"),
-                            )?;
-                        }
-                        IrInsideItem::OpenRange { low, high } => {
-                            if low.is_none() && high.is_none() {
-                                return self.fail(
-                                    format_args!("{path}.items[{idx}]"),
-                                    "inside open range requires an endpoint",
-                                );
-                            }
-                            if let Some(low) = low {
-                                self.validate_expr(
-                                    low,
-                                    formals,
-                                    format_args!("{path}.items[{idx}].low"),
-                                )?;
-                            }
-                            if let Some(high) = high {
-                                self.validate_expr(
-                                    high,
-                                    formals,
-                                    format_args!("{path}.items[{idx}].high"),
-                                )?;
-                            }
-                        }
-                        IrInsideItem::Container { container } => {
-                            let Some(container_model) = self.model.container(*container) else {
-                                return self.fail(
-                                    format_args!("{path}.items[{idx}]"),
-                                    "inside container index is out of bounds",
-                                );
-                            };
-                            if !container_model.element.is_packed() {
-                                return self.fail(
-                                    format_args!("{path}.items[{idx}]"),
-                                    "inside container element must be packed",
-                                );
-                            }
-                        }
-                        IrInsideItem::Cells(cells) => {
-                            self.validate_fixed_array_cells(
-                                cells,
-                                formals,
-                                format_args!("{path}.items[{idx}]"),
-                                true,
-                            )?;
-                        }
-                        IrInsideItem::FixedArray { value, elements } => {
-                            self.validate_expr(
-                                value,
-                                formals,
-                                format_args!("{path}.items[{idx}].value"),
-                            )?;
-                            if value.width == 0 || elements.is_empty() {
-                                return self.fail(
-                                    format_args!("{path}.items[{idx}]"),
-                                    "inside fixed-array item requires packed scalar elements",
-                                );
-                            }
-                            for (element_idx, element) in elements.iter().enumerate() {
-                                let projection_width = element
-                                    .left
-                                    .checked_sub(element.right)
-                                    .and_then(|width| width.checked_add(1));
-                                if element.width == 0
-                                    || element.right < 0
-                                    || element.left < element.right
-                                    || element.left >= i64::from(value.width)
-                                    || projection_width != Some(i64::from(element.width))
-                                {
-                                    return self.fail(
-                                        format_args!("{path}.items[{idx}].elements[{element_idx}]"),
-                                        "inside fixed-array projection is outside its payload",
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            IrExprKind::BitSel { base, idx } => {
-                self.validate_expr(base, formals, format_args!("{path}.base"))?;
-                self.validate_expr(idx, formals, format_args!("{path}.idx"))?;
-            }
-            IrExprKind::PartSel { base, left, right } => {
-                self.validate_expr(base, formals, format_args!("{path}.base"))?;
-                self.validate_select_width(*left, *right, path)?;
-            }
-            IrExprKind::IdxPartSel {
-                base,
-                base_idx,
-                width_expr,
-                ..
-            } => {
-                self.validate_expr(base, formals, format_args!("{path}.base"))?;
-                self.validate_expr(base_idx, formals, format_args!("{path}.base_idx"))?;
-                self.validate_expr(width_expr, formals, format_args!("{path}.width_expr"))?;
+                self.validate_inside(expr, value, items, formals, path)?
             }
             IrExprKind::ArrayRead {
                 arr,
@@ -1089,731 +957,895 @@ impl Validator<'_> {
                     return self.fail(path, "verbatim payload type disagrees with expression type");
                 }
             }
-            IrExprKind::SysFunc(sys) => match &**sys {
-                IrSysFunc::TestPlusArgs { pattern } => {
-                    self.validate_plusarg_text(pattern, formals, format_args!("{path}.pattern"))?;
-                    if (expr.width, expr.signed) != (32, true) {
-                        return self.fail(path, "invalid $test$plusargs expression");
-                    }
+            IrExprKind::SysFunc(sys) => self.validate_system_function(expr, sys, formals, path)?,
+            // Operators: `validate_expr`.
+            IrExprKind::Bin { .. }
+            | IrExprKind::RealBin { .. }
+            | IrExprKind::Un { .. }
+            | IrExprKind::RealUn { .. }
+            | IrExprKind::CastToReal { .. }
+            | IrExprKind::CastToPacked { .. }
+            | IrExprKind::Resize { .. }
+            | IrExprKind::Convert { .. }
+            | IrExprKind::ToTwoState { .. }
+            | IrExprKind::Mux { .. }
+            | IrExprKind::BitSel { .. }
+            | IrExprKind::PartSel { .. }
+            | IrExprKind::IdxPartSel { .. } => {}
+        }
+        Ok(())
+    }
+
+    fn validate_system_function(
+        &self,
+        expr: &IrExpr,
+        sys: &IrSysFunc,
+        formals: &[IrFormal],
+        path: IrPath<'_>,
+    ) -> ValidationResult {
+        match sys {
+            IrSysFunc::TestPlusArgs { pattern } => {
+                self.validate_plusarg_text(pattern, formals, format_args!("{path}.pattern"))?;
+                if (expr.width, expr.signed) != (32, true) {
+                    return self.fail(path, "invalid $test$plusargs expression");
                 }
-                IrSysFunc::ValuePlusArgs { format, target } => {
-                    self.validate_plusarg_text(format, formals, format_args!("{path}.format"))?;
-                    if (expr.width, expr.signed) != (32, true) {
-                        return self.fail(path, "invalid $value$plusargs expression");
-                    }
-                    match target {
-                        IrPlusArgTarget::Packed {
-                            lhs,
-                            width,
-                            signed,
-                            two_state,
-                        } => {
-                            self.validate_lhs(lhs, formals, format_args!("{path}.target"))?;
-                            if *width == 0
-                                || self.lhs_packed_width(lhs) != Some(*width)
-                                || lhs_signed(&self.model, lhs) != Some(*signed)
-                                || lhs_two_state(&self.model, lhs) != Some(*two_state)
-                            {
-                                return self.fail(
-                                    format_args!("{path}.target"),
-                                    "plusarg packed target type disagrees with its lvalue",
-                                );
-                            }
-                        }
-                        IrPlusArgTarget::Real { lhs, .. } => {
-                            self.validate_lhs(lhs, formals, format_args!("{path}.target"))?;
-                            if !lhs_is_real(&self.model, lhs) {
-                                return self.fail(
-                                    format_args!("{path}.target"),
-                                    "plusarg real target is not real storage",
-                                );
-                            }
-                        }
-                        IrPlusArgTarget::String { address } => {
-                            if address.is_empty() {
-                                return self.fail(
-                                    format_args!("{path}.target"),
-                                    "plusarg string target address must not be empty",
-                                );
-                            }
-                        }
-                        IrPlusArgTarget::Element {
-                            read,
-                            width,
-                            signed,
-                            two_state,
-                        } => {
-                            self.validate_file_input(
-                                &IrFileInput::ScanString {
-                                    source: IrPlusArgText::Literal(String::new()),
-                                    format: IrPlusArgText::Literal(String::new()),
-                                    scope: crate::sim::ir::IrScanScope {
-                                        name: String::new(),
-                                        time_unit_fs: 0,
-                                    },
-                                    targets: vec![IrFileInputTarget::Element {
-                                        read: read.clone(),
-                                        width: *width,
-                                        signed: *signed,
-                                        two_state: *two_state,
-                                    }],
-                                },
-                                formals,
-                                format_args!("{path}.target"),
-                            )?;
-                        }
-                    }
+            }
+            IrSysFunc::ValuePlusArgs { format, target } => {
+                self.validate_plusarg_text(format, formals, format_args!("{path}.format"))?;
+                if (expr.width, expr.signed) != (32, true) {
+                    return self.fail(path, "invalid $value$plusargs expression");
                 }
-                IrSysFunc::CoverageCounts {
-                    query,
-                    covered,
-                    total,
-                } => {
-                    if !matches!(
-                        query.as_ref(),
-                        crate::sim::ir::IrCoverageQuery::Instance { .. }
-                            | crate::sim::ir::IrCoverageQuery::Type { .. }
-                    ) || (expr.width, expr.signed) != (0, true)
-                    {
-                        return self.fail(path, "invalid two-argument coverage query");
-                    }
-                    if query
-                        .coverage_type()
-                        .is_some_and(|index| index >= self.model.coverage_types.len())
-                    {
-                        return self.fail(path, "coverage query names an unknown covergroup type");
-                    }
-                    if let Some(record) = query.chandle() {
-                        let mut result = Ok(());
-                        record.expressions(&mut |child| {
-                            result = result
-                                .clone()
-                                .and_then(|_| self.validate_expr(child, formals, path));
-                        });
-                        result?;
-                    }
-                    for (name, target) in [("covered", covered), ("total", total)] {
-                        let IrPlusArgTarget::Packed {
-                            lhs,
-                            width,
-                            signed,
-                            two_state,
-                        } = target
-                        else {
-                            return self.fail(
-                                format_args!("{path}.{name}"),
-                                "coverage bin count target must be packed storage",
-                            );
-                        };
-                        self.validate_lhs(lhs, formals, format_args!("{path}.{name}"))?;
-                        if (*width, *signed) != (32, true)
+                match target {
+                    IrPlusArgTarget::Packed {
+                        lhs,
+                        width,
+                        signed,
+                        two_state,
+                    } => {
+                        self.validate_lhs(lhs, formals, format_args!("{path}.target"))?;
+                        if *width == 0
                             || self.lhs_packed_width(lhs) != Some(*width)
                             || lhs_signed(&self.model, lhs) != Some(*signed)
                             || lhs_two_state(&self.model, lhs) != Some(*two_state)
                         {
                             return self.fail(
-                                format_args!("{path}.{name}"),
-                                "coverage bin count target must be an int lvalue",
+                                format_args!("{path}.target"),
+                                "plusarg packed target type disagrees with its lvalue",
                             );
                         }
                     }
-                }
-                IrSysFunc::CoverageApi(call) => {
-                    use crate::sim::ir::{IrCoverageApiFunction, IrCoverageScope};
-                    let scoped = matches!(
-                        call.function,
-                        IrCoverageApiFunction::Control
-                            | IrCoverageApiFunction::GetMax
-                            | IrCoverageApiFunction::Get
-                    );
-                    if call.args.len() != call.function.integral_arguments()
-                        || call.scope.is_some() != scoped
-                        || call.name.is_some() == scoped
-                        || expr.width != 32
-                        || !expr.signed
-                    {
-                        return self.fail(path, "malformed coverage access function");
-                    }
-                    if let Some(IrCoverageScope::Instance(instance)) = &call.scope {
-                        if self
-                            .model
-                            .assertion_coverage
-                            .as_ref()
-                            .is_none_or(|table| *instance as usize >= table.instances.len())
-                        {
-                            return self.fail(path, "coverage scope names an unknown instance");
+                    IrPlusArgTarget::Real { lhs, .. } => {
+                        self.validate_lhs(lhs, formals, format_args!("{path}.target"))?;
+                        if !lhs_is_real(&self.model, lhs) {
+                            return self.fail(
+                                format_args!("{path}.target"),
+                                "plusarg real target is not real storage",
+                            );
                         }
                     }
-                    for (index, arg) in call.args.iter().enumerate() {
-                        self.validate_expr(arg, formals, format_args!("{path}.args[{index}]"))?;
-                        if arg.is_real() {
-                            return self.fail(path, "coverage access arguments must be integral");
+                    IrPlusArgTarget::String { address } => {
+                        if address.is_empty() {
+                            return self.fail(
+                                format_args!("{path}.target"),
+                                "plusarg string target address must not be empty",
+                            );
                         }
                     }
-                    for text in call.strings() {
-                        text.validate(&self.model, self.string_return.get())?;
-                        let mut result = Ok(());
-                        text.expressions(&mut |child| {
-                            result = result
-                                .clone()
-                                .and_then(|_| self.validate_expr(child, formals, path));
-                        });
-                        result?;
+                    IrPlusArgTarget::Element {
+                        read,
+                        width,
+                        signed,
+                        two_state,
+                    } => {
+                        self.validate_file_input(
+                            &IrFileInput::ScanString {
+                                source: IrPlusArgText::Literal(String::new()),
+                                format: IrPlusArgText::Literal(String::new()),
+                                scope: crate::sim::ir::IrScanScope {
+                                    name: String::new(),
+                                    time_unit_fs: 0,
+                                },
+                                targets: vec![IrFileInputTarget::Element {
+                                    read: read.clone(),
+                                    width: *width,
+                                    signed: *signed,
+                                    two_state: *two_state,
+                                }],
+                            },
+                            formals,
+                            format_args!("{path}.target"),
+                        )?;
                     }
                 }
-                IrSysFunc::System(command) => {
-                    if let Some(command) = command {
-                        command.validate(&self.model, self.string_return.get())?;
-                        let mut result = Ok(());
-                        command.expressions(&mut |child| {
-                            result = result
-                                .clone()
-                                .and_then(|_| self.validate_expr(child, formals, path));
-                        });
-                        result?;
-                    }
-                    if expr.width != 32 || !expr.signed {
-                        return self.fail(path, "$system requires a signed int result");
-                    }
+            }
+            IrSysFunc::CoverageCounts {
+                query,
+                covered,
+                total,
+            } => {
+                if !matches!(
+                    query.as_ref(),
+                    crate::sim::ir::IrCoverageQuery::Instance { .. }
+                        | crate::sim::ir::IrCoverageQuery::Type { .. }
+                ) || (expr.width, expr.signed) != (0, true)
+                {
+                    return self.fail(path, "invalid two-argument coverage query");
                 }
-                IrSysFunc::VpiCall { site, name, args } => {
-                    let Some(call) = self.model.vpi_compile_calls.get(*site) else {
-                        return self.fail(path, "VPI callsite index is out of bounds");
+                if query
+                    .coverage_type()
+                    .is_some_and(|index| index >= self.model.coverage_types.len())
+                {
+                    return self.fail(path, "coverage query names an unknown covergroup type");
+                }
+                if let Some(record) = query.chandle() {
+                    let mut result = Ok(());
+                    record.expressions(&mut |child| {
+                        result = result
+                            .clone()
+                            .and_then(|_| self.validate_expr(child, formals, path));
+                    });
+                    result?;
+                }
+                for (name, target) in [("covered", covered), ("total", total)] {
+                    let IrPlusArgTarget::Packed {
+                        lhs,
+                        width,
+                        signed,
+                        two_state,
+                    } = target
+                    else {
+                        return self.fail(
+                            format_args!("{path}.{name}"),
+                            "coverage bin count target must be packed storage",
+                        );
                     };
-                    if call.name != *name || call.args.len() != args.len() {
-                        return self
-                            .fail(path, "VPI callsite descriptor does not match instruction");
-                    }
-                    for (shape, argument) in call.args.iter().zip(args) {
-                        if (shape.width, shape.signed, shape.real)
-                            != (argument.width, argument.signed, argument.is_real())
-                        {
-                            return self.fail(path, "VPI callsite argument shape mismatch");
-                        }
-                    }
-                    if !name.starts_with('$') || name.len() < 2 {
-                        return self.fail(path, "VPI system-function name must start with `$`");
-                    }
-                    if expr.fill.is_some() {
+                    self.validate_lhs(lhs, formals, format_args!("{path}.{name}"))?;
+                    if (*width, *signed) != (32, true)
+                        || self.lhs_packed_width(lhs) != Some(*width)
+                        || lhs_signed(&self.model, lhs) != Some(*signed)
+                        || lhs_two_state(&self.model, lhs) != Some(*two_state)
+                    {
                         return self.fail(
-                            path,
-                            "VPI system-function result cannot carry a fill marker",
+                            format_args!("{path}.{name}"),
+                            "coverage bin count target must be an int lvalue",
                         );
-                    }
-                    if expr.width != 0 {
-                        self.validate_width(expr.width, format_args!("{path}.width"))?;
-                    }
-                    if args.len() > LLG_MAX_VPI_ARGS {
-                        return self.fail(path, "VPI system-function exceeds the argument limit");
-                    }
-                    for (index, arg) in args.iter().enumerate() {
-                        self.validate_expr(arg, formals, format_args!("{path}.args[{index}]"))?;
                     }
                 }
-                IrSysFunc::LegacyRandom { kind, seed, args } => {
-                    if args.len() != kind.arity() || (expr.width, expr.signed) != (32, true) {
-                        return self.fail(
-                            path,
-                            "legacy random function requires its declared arity and signed int result",
-                        );
+            }
+            IrSysFunc::CoverageApi(call) => {
+                use crate::sim::ir::{IrCoverageApiFunction, IrCoverageScope};
+                let scoped = matches!(
+                    call.function,
+                    IrCoverageApiFunction::Control
+                        | IrCoverageApiFunction::GetMax
+                        | IrCoverageApiFunction::Get
+                );
+                if call.args.len() != call.function.integral_arguments()
+                    || call.scope.is_some() != scoped
+                    || call.name.is_some() == scoped
+                    || expr.width != 32
+                    || !expr.signed
+                {
+                    return self.fail(path, "malformed coverage access function");
+                }
+                if let Some(IrCoverageScope::Instance(instance)) = &call.scope {
+                    if self
+                        .model
+                        .assertion_coverage
+                        .as_ref()
+                        .is_none_or(|table| *instance as usize >= table.instances.len())
+                    {
+                        return self.fail(path, "coverage scope names an unknown instance");
                     }
-                    match (kind, seed) {
-                        (IrRandomFunc::Random, None) => {}
-                        (_, Some(seed)) => {
-                            self.validate_lhs(seed, formals, format_args!("{path}.seed"))?;
-                            if self.lhs_packed_width(seed).is_none() {
-                                return self.fail(
-                                    format_args!("{path}.seed"),
-                                    "legacy random seed must be packed storage",
-                                );
-                            }
-                        }
-                        (_, None) => {
+                }
+                for (index, arg) in call.args.iter().enumerate() {
+                    self.validate_expr(arg, formals, format_args!("{path}.args[{index}]"))?;
+                    if arg.is_real() {
+                        return self.fail(path, "coverage access arguments must be integral");
+                    }
+                }
+                for text in call.strings() {
+                    text.validate(&self.model, self.string_return.get())?;
+                    let mut result = Ok(());
+                    text.expressions(&mut |child| {
+                        result = result
+                            .clone()
+                            .and_then(|_| self.validate_expr(child, formals, path));
+                    });
+                    result?;
+                }
+            }
+            IrSysFunc::System(command) => {
+                if let Some(command) = command {
+                    command.validate(&self.model, self.string_return.get())?;
+                    let mut result = Ok(());
+                    command.expressions(&mut |child| {
+                        result = result
+                            .clone()
+                            .and_then(|_| self.validate_expr(child, formals, path));
+                    });
+                    result?;
+                }
+                if expr.width != 32 || !expr.signed {
+                    return self.fail(path, "$system requires a signed int result");
+                }
+            }
+            IrSysFunc::VpiCall { site, name, args } => {
+                let Some(call) = self.model.vpi_compile_calls.get(*site) else {
+                    return self.fail(path, "VPI callsite index is out of bounds");
+                };
+                if call.name != *name || call.args.len() != args.len() {
+                    return self.fail(path, "VPI callsite descriptor does not match instruction");
+                }
+                for (shape, argument) in call.args.iter().zip(args) {
+                    if (shape.width, shape.signed, shape.real)
+                        != (argument.width, argument.signed, argument.is_real())
+                    {
+                        return self.fail(path, "VPI callsite argument shape mismatch");
+                    }
+                }
+                if !name.starts_with('$') || name.len() < 2 {
+                    return self.fail(path, "VPI system-function name must start with `$`");
+                }
+                if expr.fill.is_some() {
+                    return self.fail(
+                        path,
+                        "VPI system-function result cannot carry a fill marker",
+                    );
+                }
+                if expr.width != 0 {
+                    self.validate_width(expr.width, format_args!("{path}.width"))?;
+                }
+                if args.len() > LLG_MAX_VPI_ARGS {
+                    return self.fail(path, "VPI system-function exceeds the argument limit");
+                }
+                for (index, arg) in args.iter().enumerate() {
+                    self.validate_expr(arg, formals, format_args!("{path}.args[{index}]"))?;
+                }
+            }
+            IrSysFunc::LegacyRandom { kind, seed, args } => {
+                if args.len() != kind.arity() || (expr.width, expr.signed) != (32, true) {
+                    return self.fail(
+                        path,
+                        "legacy random function requires its declared arity and signed int result",
+                    );
+                }
+                match (kind, seed) {
+                    (IrRandomFunc::Random, None) => {}
+                    (_, Some(seed)) => {
+                        self.validate_lhs(seed, formals, format_args!("{path}.seed"))?;
+                        if self.lhs_packed_width(seed).is_none() {
                             return self.fail(
                                 format_args!("{path}.seed"),
-                                "distribution function requires a seed",
-                            )
-                        }
-                    }
-                    for (index, arg) in args.iter().enumerate() {
-                        if arg.is_real() {
-                            return self.fail(
-                                format_args!("{path}.args[{index}]"),
-                                "legacy random parameters must be packed",
+                                "legacy random seed must be packed storage",
                             );
                         }
-                        self.validate_expr(arg, formals, format_args!("{path}.args[{index}]"))?;
                     }
-                }
-                IrSysFunc::Urandom { seed } => {
-                    if let Some(seed) = seed {
-                        self.validate_expr(seed, formals, format_args!("{path}.seed"))?;
-                        if seed.is_real() || (seed.width, seed.signed) != (32, false) {
-                            return self
-                                .fail(path, "$urandom seed must be a 32-bit unsigned value");
-                        }
-                    }
-                    if (expr.width, expr.signed) != (32, false) {
-                        return self.fail(path, "$urandom requires a 32-bit unsigned result");
-                    }
-                }
-                IrSysFunc::UrandomRange { max, min } => {
-                    self.validate_expr(max, formals, format_args!("{path}.max"))?;
-                    if (max.width, max.signed) != (32, false) {
+                    (_, None) => {
                         return self.fail(
-                            path,
-                            "$urandom_range maximum must be a 32-bit unsigned value",
+                            format_args!("{path}.seed"),
+                            "distribution function requires a seed",
+                        )
+                    }
+                }
+                for (index, arg) in args.iter().enumerate() {
+                    if arg.is_real() {
+                        return self.fail(
+                            format_args!("{path}.args[{index}]"),
+                            "legacy random parameters must be packed",
                         );
                     }
-                    if let Some(min) = min {
-                        self.validate_expr(min, formals, format_args!("{path}.min"))?;
-                        if (min.width, min.signed) != (32, false) {
+                    self.validate_expr(arg, formals, format_args!("{path}.args[{index}]"))?;
+                }
+            }
+            IrSysFunc::Urandom { seed } => {
+                if let Some(seed) = seed {
+                    self.validate_expr(seed, formals, format_args!("{path}.seed"))?;
+                    if seed.is_real() || (seed.width, seed.signed) != (32, false) {
+                        return self.fail(path, "$urandom seed must be a 32-bit unsigned value");
+                    }
+                }
+                if (expr.width, expr.signed) != (32, false) {
+                    return self.fail(path, "$urandom requires a 32-bit unsigned result");
+                }
+            }
+            IrSysFunc::UrandomRange { max, min } => {
+                self.validate_expr(max, formals, format_args!("{path}.max"))?;
+                if (max.width, max.signed) != (32, false) {
+                    return self.fail(
+                        path,
+                        "$urandom_range maximum must be a 32-bit unsigned value",
+                    );
+                }
+                if let Some(min) = min {
+                    self.validate_expr(min, formals, format_args!("{path}.min"))?;
+                    if (min.width, min.signed) != (32, false) {
+                        return self.fail(
+                            path,
+                            "$urandom_range minimum must be a 32-bit unsigned value",
+                        );
+                    }
+                }
+                if (expr.width, expr.signed) != (32, false) {
+                    return self.fail(path, "$urandom_range requires a 32-bit unsigned result");
+                }
+            }
+            IrSysFunc::RandJoinPick { lengths, ratio } => {
+                if lengths.len() < 2 {
+                    return self.fail(path, "rand join requires at least two sequences");
+                }
+                for (index, length) in lengths.iter().enumerate() {
+                    let length_path = format_args!("{path}.lengths[{index}]");
+                    self.validate_expr(length, formals, length_path)?;
+                    if length.is_real() || length.width == 0 || length.signed {
+                        return self.fail(length_path, "rand join lengths must be unsigned packed");
+                    }
+                }
+                self.validate_expr(ratio, formals, format_args!("{path}.ratio"))?;
+                if !ratio.is_real() || (expr.width, expr.signed) != (32, true) {
+                    return self.fail(
+                        path,
+                        "rand join requires a real ratio and a signed 32-bit result",
+                    );
+                }
+            }
+            IrSysFunc::Randcase {
+                weights, sum_width, ..
+            } => {
+                if weights.is_empty() {
+                    return self.fail(path, "randcase requires at least one weight");
+                }
+                let mut widest = 0u32;
+                for (index, weight) in weights.iter().enumerate() {
+                    let weight_path = format_args!("{path}.weights[{index}]");
+                    self.validate_expr(weight, formals, weight_path)?;
+                    if weight.is_real() || weight.width == 0 {
+                        return self.fail(weight_path, "randcase weights must be packed");
+                    }
+                    widest = widest.max(weight.width);
+                }
+                let spare = usize::BITS - (weights.len() - 1).leading_zeros();
+                if *sum_width != widest.saturating_add(spare)
+                    || *sum_width >= crate::sim::emit_c::LLG_WIDTH_LIMIT
+                    || (expr.width, expr.signed) != (32, true)
+                {
+                    return self.fail(
+                        path,
+                        "randcase requires an exact-sum width and a signed 32-bit result",
+                    );
+                }
+            }
+            IrSysFunc::RandStep {
+                problem,
+                stream,
+                site,
+            } => {
+                if *problem >= self.model.rand_problems.len() || site.contains('\0') {
+                    return self.fail(path, "randomize step names no problem");
+                }
+                if (expr.width, expr.signed) != (32, true) {
+                    return self.fail(path, "randomize step requires a signed 32-bit result");
+                }
+                if let Some(stream) = stream {
+                    let mut result = Ok(());
+                    stream.expressions(&mut |child| {
+                        if result.is_ok() {
+                            result =
+                                self.validate_expr(child, formals, format_args!("{path}.stream"));
+                        }
+                    });
+                    result?;
+                }
+            }
+            IrSysFunc::RandCallReady { problem, call } => {
+                let valid = self
+                    .model
+                    .rand_problems
+                    .get(*problem)
+                    .is_some_and(|p| (*call as usize) < p.calls.len());
+                if !valid || (expr.width, expr.signed) != (1, false) {
+                    return self.fail(path, "invalid randomize call-ready query");
+                }
+            }
+            IrSysFunc::RandValue { problem, var } => {
+                let Some(variable) = self
+                    .model
+                    .rand_problems
+                    .get(*problem)
+                    .and_then(|p| p.vars.get(*var as usize))
+                else {
+                    return self.fail(path, "randomize value names no variable");
+                };
+                if (expr.width, expr.signed) != (variable.width, variable.signed) {
+                    return self.fail(path, "randomize value changes the variable type");
+                }
+            }
+            IrSysFunc::RandCyclic { problem, var } => {
+                let Some(variable) = self
+                    .model
+                    .rand_problems
+                    .get(*problem)
+                    .and_then(|p| p.vars.get(*var as usize))
+                else {
+                    return self.fail(path, "randc state names no variable");
+                };
+                let width = crate::sim::ir::rand_cyclic_state_width(variable.width);
+                if !variable.cyclic || (expr.width, expr.signed) != (width, false) {
+                    return self.fail(path, "randc state of a variable that is not randc");
+                }
+            }
+            IrSysFunc::RandInst {
+                problem,
+                query,
+                inst,
+                index,
+            } => {
+                use crate::sim::ir::IrRandQuery;
+                let Some(p) = self
+                    .model
+                    .rand_problems
+                    .get(*problem)
+                    .filter(|p| !p.units.is_empty())
+                else {
+                    return self.fail(path, "instance query of a problem without units");
+                };
+                let needs_inst = !matches!(
+                    query,
+                    IrRandQuery::NextInst | IrRandQuery::Count | IrRandQuery::CallCount
+                );
+                let needs_index = matches!(query, IrRandQuery::Elem(_));
+                let ty = match query {
+                    IrRandQuery::NextInst
+                    | IrRandQuery::Count
+                    | IrRandQuery::Visit
+                    | IrRandQuery::Unit
+                    | IrRandQuery::ArraySize(_)
+                    | IrRandQuery::CallCount
+                    | IrRandQuery::CallSite
+                    | IrRandQuery::CallInst => Some((32, true)),
+                    IrRandQuery::CallArg(_) => Some((expr.width, expr.signed)),
+                    IrRandQuery::Pre
+                    | IrRandQuery::CallReady
+                    | IrRandQuery::Random
+                    | IrRandQuery::Active(_)
+                    | IrRandQuery::ArrayActive(_) => Some((1, false)),
+                    IrRandQuery::Value(var) => {
+                        p.vars.get(*var as usize).map(|v| (v.width, v.signed))
+                    }
+                    IrRandQuery::Cyclic(var) => p
+                        .vars
+                        .get(*var as usize)
+                        .filter(|v| v.cyclic)
+                        .map(|v| (crate::sim::ir::rand_cyclic_state_width(v.width), false)),
+                    IrRandQuery::Elem(array) => p
+                        .arrays
+                        .get(*array as usize)
+                        .map(|a| (a.elem_width, a.elem_signed)),
+                };
+                let in_range = match query {
+                    IrRandQuery::Active(var) => (*var as usize) < p.vars.len(),
+                    IrRandQuery::ArraySize(array) | IrRandQuery::ArrayActive(array) => {
+                        (*array as usize) < p.arrays.len()
+                    }
+                    _ => true,
+                };
+                if ty != Some((expr.width, expr.signed))
+                    || !in_range
+                    || inst.is_some() != needs_inst
+                    || index.is_some() != needs_index
+                {
+                    return self.fail(path, "invalid randomize instance query");
+                }
+                for operand in inst.iter().chain(index.iter()) {
+                    self.validate_expr(operand, formals, format_args!("{path}.instance"))?;
+                    if operand.is_real() {
+                        return self.fail(path, "randomize instance operands must be packed");
+                    }
+                }
+            }
+            IrSysFunc::Math { kind, args } => {
+                if args.len() != kind.arity() || !expr.is_real() {
+                    return self.fail(
+                        path,
+                        "math function requires its declared arity and a real result",
+                    );
+                }
+                for (index, arg) in args.iter().enumerate() {
+                    self.validate_expr(arg, formals, format_args!("{path}.args[{index}]"))?;
+                }
+            }
+            IrSysFunc::Realtime {
+                precision_fs,
+                unit_fs,
+            } => {
+                if *precision_fs == 0 || *unit_fs == 0 || !expr.is_real() {
+                    return self.fail(
+                        path,
+                        "realtime requires nonzero scaling units and a real result",
+                    );
+                }
+            }
+            IrSysFunc::Rtoi(arg) => {
+                self.validate_expr(arg, formals, format_args!("{path}.arg"))?;
+                if expr.width != 32 || !expr.signed {
+                    return self.fail(path, "$rtoi requires a signed int result");
+                }
+            }
+            IrSysFunc::Itor(arg) => {
+                self.validate_expr(arg, formals, format_args!("{path}.arg"))?;
+                if arg.is_real() || !expr.is_real() {
+                    return self.fail(path, "$itor requires a packed argument and real result");
+                }
+            }
+            IrSysFunc::RealToBits(arg) => {
+                self.validate_expr(arg, formals, format_args!("{path}.arg"))?;
+                if expr.width != 64 || expr.signed {
+                    return self.fail(path, "$realtobits requires a 64-bit unsigned result");
+                }
+            }
+            IrSysFunc::BitsToReal(arg) => {
+                self.validate_expr(arg, formals, format_args!("{path}.arg"))?;
+                if arg.is_real() || arg.width != 64 || !expr.is_real() {
+                    return self.fail(
+                        path,
+                        "$bitstoreal requires a 64-bit packed argument and real result",
+                    );
+                }
+            }
+            IrSysFunc::ShortRealToBits(arg) => {
+                self.validate_expr(arg, formals, format_args!("{path}.arg"))?;
+                if expr.width != 32 || expr.signed {
+                    return self.fail(path, "$shortrealtobits requires a 32-bit unsigned result");
+                }
+            }
+            IrSysFunc::BitsToShortReal(arg) => {
+                self.validate_expr(arg, formals, format_args!("{path}.arg"))?;
+                if arg.is_real() || arg.width != 32 || !expr.is_real() {
+                    return self.fail(
+                        path,
+                        "$bitstoshortreal requires a 32-bit packed argument and real result",
+                    );
+                }
+            }
+            IrSysFunc::BitQuery { kind, arg } => {
+                self.validate_expr(arg, formals, format_args!("{path}.arg"))?;
+                if arg.is_real() || (expr.width, expr.signed) != kind.result_type() {
+                    return self.fail(
+                        path,
+                        "bit query requires a packed argument and its declared result type",
+                    );
+                }
+            }
+            IrSysFunc::Sampled(call) => {
+                self.validate_expr(&call.argument, formals, format_args!("{path}.argument"))?;
+                // Only `$sampled` reads a real directly; history domains keep
+                // a real argument as its exact 64-bit IEEE image.
+                if call.argument.is_real() && call.kind != IrSampledFunc::Sampled {
+                    return self.fail(path, "sampled-value argument must be packed");
+                }
+                match call.kind {
+                    crate::sim::ir::IrSampledFunc::Sampled => {
+                        if call.domain.is_some() || call.ticks != 0 {
+                            return self.fail(path, "$sampled cannot carry a history domain");
+                        }
+                        if (expr.width, expr.signed) != (call.argument.width, call.argument.signed)
+                        {
+                            return self
+                                .fail(path, "$sampled result shape disagrees with argument");
+                        }
+                    }
+                    crate::sim::ir::IrSampledFunc::Past => {
+                        let Some(domain) = call.domain else {
+                            return self.fail(path, "$past requires a sampled domain");
+                        };
+                        if domain >= self.model.sampled_domains.len() || call.ticks == 0 {
+                            return self.fail(path, "$past history metadata is invalid");
+                        }
+                        if call.ticks > self.model.sampled_domains[domain].history_ticks {
+                            return self.fail(path, "$past reads deeper than its domain retains");
+                        }
+                        if (expr.width, expr.signed) != (call.argument.width, call.argument.signed)
+                        {
+                            return self.fail(path, "$past result shape disagrees with argument");
+                        }
+                    }
+                    IrSampledFunc::Queued => {
+                        if call.domain.is_some()
+                            || !matches!(call.argument.kind(), IrExprKind::Const(_))
+                            || (expr.width, expr.signed)
+                                != (call.argument.width, call.argument.signed)
+                            || expr.width == 0
+                        {
+                            return self
+                                .fail(path, "queued assertion value read has an invalid shape");
+                        }
+                    }
+                    IrSampledFunc::Captured
+                    | IrSampledFunc::Future
+                    | IrSampledFunc::Rising
+                    | IrSampledFunc::Falling
+                    | IrSampledFunc::Steady
+                    | IrSampledFunc::Changing => {
+                        let Some(slots) = self.future_slots.get() else {
                             return self.fail(
                                 path,
-                                "$urandom_range minimum must be a 32-bit unsigned value",
+                                "future sampled values belong to an assertion with global clocking future functions",
+                            );
+                        };
+                        if call.domain.is_some()
+                            || (call.kind == IrSampledFunc::Future && call.ticks != 0)
+                            || (call.kind != IrSampledFunc::Future
+                                && call.ticks >= u64::from(slots))
+                        {
+                            return self.fail(path, "future sampled value capture slot is invalid");
+                        }
+                        let value =
+                            matches!(call.kind, IrSampledFunc::Captured | IrSampledFunc::Future);
+                        let shape_ok = if value {
+                            (expr.width, expr.signed) == (call.argument.width, call.argument.signed)
+                        } else {
+                            expr.width == 1 && !expr.signed
+                        };
+                        if !shape_ok {
+                            return self.fail(
+                                path,
+                                "future sampled value result shape disagrees with its function",
                             );
                         }
                     }
-                    if (expr.width, expr.signed) != (32, false) {
-                        return self.fail(path, "$urandom_range requires a 32-bit unsigned result");
-                    }
-                }
-                IrSysFunc::RandJoinPick { lengths, ratio } => {
-                    if lengths.len() < 2 {
-                        return self.fail(path, "rand join requires at least two sequences");
-                    }
-                    for (index, length) in lengths.iter().enumerate() {
-                        let length_path = format_args!("{path}.lengths[{index}]");
-                        self.validate_expr(length, formals, length_path)?;
-                        if length.is_real() || length.width == 0 || length.signed {
+                    IrSampledFunc::Rose
+                    | IrSampledFunc::Fell
+                    | IrSampledFunc::Stable
+                    | IrSampledFunc::Changed => {
+                        if !call.domain.is_some_and(|domain| {
+                            self.model
+                                .sampled_domains
+                                .get(domain)
+                                .is_some_and(|domain| domain.history_ticks != 0)
+                        }) || call.ticks != 0
+                        {
+                            return self.fail(path, "sampled status requires a valid domain");
+                        }
+                        if expr.width != 1 || expr.signed {
                             return self
-                                .fail(length_path, "rand join lengths must be unsigned packed");
+                                .fail(path, "sampled status result must be one-bit unsigned");
                         }
                     }
-                    self.validate_expr(ratio, formals, format_args!("{path}.ratio"))?;
-                    if !ratio.is_real() || (expr.width, expr.signed) != (32, true) {
+                }
+            }
+            IrSysFunc::Clog2(arg) | IrSysFunc::Bits(arg) => {
+                self.validate_expr(arg, formals, format_args!("{path}.arg"))?;
+            }
+            IrSysFunc::Time {
+                precision_fs,
+                unit_fs,
+                kind,
+            } => {
+                if *precision_fs == 0 || *unit_fs == 0 {
+                    return self.fail(path, "time scaling units must be non-zero");
+                }
+                if expr.width != kind.width() {
+                    return self.fail(path, "time expression width disagrees with its kind");
+                }
+            }
+            IrSysFunc::QFull { q_id, status } => {
+                self.validate_expr(q_id, formals, format_args!("{path}.q_id"))?;
+                if q_id.is_real() || expr.width != 32 || !expr.signed {
+                    return self.fail(path, "$q_full requires a packed q_id and signed int result");
+                }
+                self.validate_stochastic_output(status, formals, format_args!("{path}.status"))?;
+            }
+            IrSysFunc::FileOpen {
+                path: file_path,
+                mode,
+            } => {
+                file_path.validate(&self.model, self.string_return.get())?;
+                if let Some(mode) = mode {
+                    mode.validate(&self.model, self.string_return.get())?;
+                }
+                if expr.width != 32 || !expr.signed {
+                    return self.fail(path, "$fopen requires a signed 32-bit result");
+                }
+            }
+            IrSysFunc::FileTell(descriptor) => {
+                self.validate_expr(descriptor, formals, format_args!("{path}.descriptor"))?;
+                if descriptor.is_real() || expr.width != 64 || !expr.signed {
+                    return self.fail(path, "$ftell requires a signed 64-bit result");
+                }
+            }
+            IrSysFunc::FileSeek {
+                descriptor,
+                offset,
+                operation,
+            } => {
+                for (name, value) in [
+                    ("descriptor", descriptor),
+                    ("offset", offset),
+                    ("operation", operation),
+                ] {
+                    self.validate_expr(value, formals, format_args!("{path}.{name}"))?;
+                    if value.is_real() {
+                        return self.fail(path, "$fseek requires packed arguments");
+                    }
+                }
+                if expr.width != 32 || !expr.signed {
+                    return self.fail(path, "$fseek requires a signed 32-bit result");
+                }
+            }
+            IrSysFunc::FileEof(descriptor) => {
+                self.validate_expr(descriptor, formals, format_args!("{path}.descriptor"))?;
+                if descriptor.is_real() || expr.width != 32 || !expr.signed {
+                    return self.fail(path, "$feof requires a signed 32-bit result");
+                }
+            }
+            IrSysFunc::FileInput(input) => {
+                if expr.width != 32 || !expr.signed {
+                    return self.fail(path, "file input functions require a signed 32-bit result");
+                }
+                self.validate_file_input(input, formals, path)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_inside(
+        &self,
+        expr: &IrExpr,
+        value: &IrExpr,
+        items: &[IrInsideItem],
+        formals: &[IrFormal],
+        path: IrPath<'_>,
+    ) -> ValidationResult {
+        if items.is_empty() {
+            return self.fail(path, "inside expression requires at least one set item");
+        }
+        if expr.width != 1 || expr.signed {
+            return self.fail(path, "inside expression requires a 1-bit unsigned result");
+        }
+        self.validate_expr(value, formals, format_args!("{path}.value"))?;
+        for (idx, item) in items.iter().enumerate() {
+            match item {
+                IrInsideItem::Value(item) => {
+                    self.validate_expr(item, formals, format_args!("{path}.items[{idx}]"))?;
+                }
+                IrInsideItem::Range { low, high } => {
+                    self.validate_expr(low, formals, format_args!("{path}.items[{idx}].low"))?;
+                    self.validate_expr(high, formals, format_args!("{path}.items[{idx}].high"))?;
+                }
+                IrInsideItem::OpenRange { low, high } => {
+                    if low.is_none() && high.is_none() {
                         return self.fail(
-                            path,
-                            "rand join requires a real ratio and a signed 32-bit result",
+                            format_args!("{path}.items[{idx}]"),
+                            "inside open range requires an endpoint",
                         );
                     }
+                    if let Some(low) = low {
+                        self.validate_expr(low, formals, format_args!("{path}.items[{idx}].low"))?;
+                    }
+                    if let Some(high) = high {
+                        self.validate_expr(
+                            high,
+                            formals,
+                            format_args!("{path}.items[{idx}].high"),
+                        )?;
+                    }
                 }
-                IrSysFunc::Randcase {
-                    weights, sum_width, ..
-                } => {
-                    if weights.is_empty() {
-                        return self.fail(path, "randcase requires at least one weight");
-                    }
-                    let mut widest = 0u32;
-                    for (index, weight) in weights.iter().enumerate() {
-                        let weight_path = format_args!("{path}.weights[{index}]");
-                        self.validate_expr(weight, formals, weight_path)?;
-                        if weight.is_real() || weight.width == 0 {
-                            return self.fail(weight_path, "randcase weights must be packed");
-                        }
-                        widest = widest.max(weight.width);
-                    }
-                    let spare = usize::BITS - (weights.len() - 1).leading_zeros();
-                    if *sum_width != widest.saturating_add(spare)
-                        || *sum_width >= crate::sim::emit_c::LLG_WIDTH_LIMIT
-                        || (expr.width, expr.signed) != (32, true)
-                    {
+                IrInsideItem::Container { container } => {
+                    let Some(container_model) = self.model.container(*container) else {
                         return self.fail(
-                            path,
-                            "randcase requires an exact-sum width and a signed 32-bit result",
+                            format_args!("{path}.items[{idx}]"),
+                            "inside container index is out of bounds",
                         );
-                    }
-                }
-                IrSysFunc::RandStep {
-                    problem,
-                    stream,
-                    site,
-                } => {
-                    if *problem >= self.model.rand_problems.len() || site.contains('\0') {
-                        return self.fail(path, "randomize step names no problem");
-                    }
-                    if (expr.width, expr.signed) != (32, true) {
-                        return self.fail(path, "randomize step requires a signed 32-bit result");
-                    }
-                    if let Some(stream) = stream {
-                        let mut result = Ok(());
-                        stream.expressions(&mut |child| {
-                            if result.is_ok() {
-                                result = self.validate_expr(
-                                    child,
-                                    formals,
-                                    format_args!("{path}.stream"),
-                                );
-                            }
-                        });
-                        result?;
-                    }
-                }
-                IrSysFunc::RandCallReady { problem, call } => {
-                    let valid = self
-                        .model
-                        .rand_problems
-                        .get(*problem)
-                        .is_some_and(|p| (*call as usize) < p.calls.len());
-                    if !valid || (expr.width, expr.signed) != (1, false) {
-                        return self.fail(path, "invalid randomize call-ready query");
-                    }
-                }
-                IrSysFunc::RandValue { problem, var } => {
-                    let Some(variable) = self
-                        .model
-                        .rand_problems
-                        .get(*problem)
-                        .and_then(|p| p.vars.get(*var as usize))
-                    else {
-                        return self.fail(path, "randomize value names no variable");
                     };
-                    if (expr.width, expr.signed) != (variable.width, variable.signed) {
-                        return self.fail(path, "randomize value changes the variable type");
-                    }
-                }
-                IrSysFunc::RandCyclic { problem, var } => {
-                    let Some(variable) = self
-                        .model
-                        .rand_problems
-                        .get(*problem)
-                        .and_then(|p| p.vars.get(*var as usize))
-                    else {
-                        return self.fail(path, "randc state names no variable");
-                    };
-                    let width = crate::sim::ir::rand_cyclic_state_width(variable.width);
-                    if !variable.cyclic || (expr.width, expr.signed) != (width, false) {
-                        return self.fail(path, "randc state of a variable that is not randc");
-                    }
-                }
-                IrSysFunc::RandInst {
-                    problem,
-                    query,
-                    inst,
-                    index,
-                } => {
-                    use crate::sim::ir::IrRandQuery;
-                    let Some(p) = self
-                        .model
-                        .rand_problems
-                        .get(*problem)
-                        .filter(|p| !p.units.is_empty())
-                    else {
-                        return self.fail(path, "instance query of a problem without units");
-                    };
-                    let needs_inst = !matches!(
-                        query,
-                        IrRandQuery::NextInst | IrRandQuery::Count | IrRandQuery::CallCount
-                    );
-                    let needs_index = matches!(query, IrRandQuery::Elem(_));
-                    let ty = match query {
-                        IrRandQuery::NextInst
-                        | IrRandQuery::Count
-                        | IrRandQuery::Visit
-                        | IrRandQuery::Unit
-                        | IrRandQuery::ArraySize(_)
-                        | IrRandQuery::CallCount
-                        | IrRandQuery::CallSite
-                        | IrRandQuery::CallInst => Some((32, true)),
-                        IrRandQuery::CallArg(_) => Some((expr.width, expr.signed)),
-                        IrRandQuery::Pre
-                        | IrRandQuery::CallReady
-                        | IrRandQuery::Random
-                        | IrRandQuery::Active(_)
-                        | IrRandQuery::ArrayActive(_) => Some((1, false)),
-                        IrRandQuery::Value(var) => {
-                            p.vars.get(*var as usize).map(|v| (v.width, v.signed))
-                        }
-                        IrRandQuery::Cyclic(var) => p
-                            .vars
-                            .get(*var as usize)
-                            .filter(|v| v.cyclic)
-                            .map(|v| (crate::sim::ir::rand_cyclic_state_width(v.width), false)),
-                        IrRandQuery::Elem(array) => p
-                            .arrays
-                            .get(*array as usize)
-                            .map(|a| (a.elem_width, a.elem_signed)),
-                    };
-                    let in_range = match query {
-                        IrRandQuery::Active(var) => (*var as usize) < p.vars.len(),
-                        IrRandQuery::ArraySize(array) | IrRandQuery::ArrayActive(array) => {
-                            (*array as usize) < p.arrays.len()
-                        }
-                        _ => true,
-                    };
-                    if ty != Some((expr.width, expr.signed))
-                        || !in_range
-                        || inst.is_some() != needs_inst
-                        || index.is_some() != needs_index
-                    {
-                        return self.fail(path, "invalid randomize instance query");
-                    }
-                    for operand in inst.iter().chain(index.iter()) {
-                        self.validate_expr(operand, formals, format_args!("{path}.instance"))?;
-                        if operand.is_real() {
-                            return self.fail(path, "randomize instance operands must be packed");
-                        }
-                    }
-                }
-                IrSysFunc::Math { kind, args } => {
-                    if args.len() != kind.arity() || !expr.is_real() {
+                    if !container_model.element.is_packed() {
                         return self.fail(
-                            path,
-                            "math function requires its declared arity and a real result",
-                        );
-                    }
-                    for (index, arg) in args.iter().enumerate() {
-                        self.validate_expr(arg, formals, format_args!("{path}.args[{index}]"))?;
-                    }
-                }
-                IrSysFunc::Realtime {
-                    precision_fs,
-                    unit_fs,
-                } => {
-                    if *precision_fs == 0 || *unit_fs == 0 || !expr.is_real() {
-                        return self.fail(
-                            path,
-                            "realtime requires nonzero scaling units and a real result",
+                            format_args!("{path}.items[{idx}]"),
+                            "inside container element must be packed",
                         );
                     }
                 }
-                IrSysFunc::Rtoi(arg) => {
-                    self.validate_expr(arg, formals, format_args!("{path}.arg"))?;
-                    if expr.width != 32 || !expr.signed {
-                        return self.fail(path, "$rtoi requires a signed int result");
-                    }
-                }
-                IrSysFunc::Itor(arg) => {
-                    self.validate_expr(arg, formals, format_args!("{path}.arg"))?;
-                    if arg.is_real() || !expr.is_real() {
-                        return self.fail(path, "$itor requires a packed argument and real result");
-                    }
-                }
-                IrSysFunc::RealToBits(arg) => {
-                    self.validate_expr(arg, formals, format_args!("{path}.arg"))?;
-                    if expr.width != 64 || expr.signed {
-                        return self.fail(path, "$realtobits requires a 64-bit unsigned result");
-                    }
-                }
-                IrSysFunc::BitsToReal(arg) => {
-                    self.validate_expr(arg, formals, format_args!("{path}.arg"))?;
-                    if arg.is_real() || arg.width != 64 || !expr.is_real() {
-                        return self.fail(
-                            path,
-                            "$bitstoreal requires a 64-bit packed argument and real result",
-                        );
-                    }
-                }
-                IrSysFunc::ShortRealToBits(arg) => {
-                    self.validate_expr(arg, formals, format_args!("{path}.arg"))?;
-                    if expr.width != 32 || expr.signed {
-                        return self
-                            .fail(path, "$shortrealtobits requires a 32-bit unsigned result");
-                    }
-                }
-                IrSysFunc::BitsToShortReal(arg) => {
-                    self.validate_expr(arg, formals, format_args!("{path}.arg"))?;
-                    if arg.is_real() || arg.width != 32 || !expr.is_real() {
-                        return self.fail(
-                            path,
-                            "$bitstoshortreal requires a 32-bit packed argument and real result",
-                        );
-                    }
-                }
-                IrSysFunc::BitQuery { kind, arg } => {
-                    self.validate_expr(arg, formals, format_args!("{path}.arg"))?;
-                    if arg.is_real() || (expr.width, expr.signed) != kind.result_type() {
-                        return self.fail(
-                            path,
-                            "bit query requires a packed argument and its declared result type",
-                        );
-                    }
-                }
-                IrSysFunc::Sampled(call) => {
-                    self.validate_expr(&call.argument, formals, format_args!("{path}.argument"))?;
-                    // Only `$sampled` reads a real directly; history domains keep
-                    // a real argument as its exact 64-bit IEEE image.
-                    if call.argument.is_real() && call.kind != IrSampledFunc::Sampled {
-                        return self.fail(path, "sampled-value argument must be packed");
-                    }
-                    match call.kind {
-                        crate::sim::ir::IrSampledFunc::Sampled => {
-                            if call.domain.is_some() || call.ticks != 0 {
-                                return self.fail(path, "$sampled cannot carry a history domain");
-                            }
-                            if (expr.width, expr.signed)
-                                != (call.argument.width, call.argument.signed)
-                            {
-                                return self
-                                    .fail(path, "$sampled result shape disagrees with argument");
-                            }
-                        }
-                        crate::sim::ir::IrSampledFunc::Past => {
-                            let Some(domain) = call.domain else {
-                                return self.fail(path, "$past requires a sampled domain");
-                            };
-                            if domain >= self.model.sampled_domains.len() || call.ticks == 0 {
-                                return self.fail(path, "$past history metadata is invalid");
-                            }
-                            if call.ticks > self.model.sampled_domains[domain].history_ticks {
-                                return self
-                                    .fail(path, "$past reads deeper than its domain retains");
-                            }
-                            if (expr.width, expr.signed)
-                                != (call.argument.width, call.argument.signed)
-                            {
-                                return self
-                                    .fail(path, "$past result shape disagrees with argument");
-                            }
-                        }
-                        IrSampledFunc::Queued => {
-                            if call.domain.is_some()
-                                || !matches!(call.argument.kind(), IrExprKind::Const(_))
-                                || (expr.width, expr.signed)
-                                    != (call.argument.width, call.argument.signed)
-                                || expr.width == 0
-                            {
-                                return self.fail(
-                                    path,
-                                    "queued assertion value read has an invalid shape",
-                                );
-                            }
-                        }
-                        IrSampledFunc::Captured
-                        | IrSampledFunc::Future
-                        | IrSampledFunc::Rising
-                        | IrSampledFunc::Falling
-                        | IrSampledFunc::Steady
-                        | IrSampledFunc::Changing => {
-                            let Some(slots) = self.future_slots.get() else {
-                                return self.fail(
-                                    path,
-                                    "future sampled values belong to an assertion with global clocking future functions",
-                                );
-                            };
-                            if call.domain.is_some()
-                                || (call.kind == IrSampledFunc::Future && call.ticks != 0)
-                                || (call.kind != IrSampledFunc::Future
-                                    && call.ticks >= u64::from(slots))
-                            {
-                                return self
-                                    .fail(path, "future sampled value capture slot is invalid");
-                            }
-                            let value = matches!(
-                                call.kind,
-                                IrSampledFunc::Captured | IrSampledFunc::Future
-                            );
-                            let shape_ok = if value {
-                                (expr.width, expr.signed)
-                                    == (call.argument.width, call.argument.signed)
-                            } else {
-                                expr.width == 1 && !expr.signed
-                            };
-                            if !shape_ok {
-                                return self.fail(
-                                    path,
-                                    "future sampled value result shape disagrees with its function",
-                                );
-                            }
-                        }
-                        IrSampledFunc::Rose
-                        | IrSampledFunc::Fell
-                        | IrSampledFunc::Stable
-                        | IrSampledFunc::Changed => {
-                            if !call.domain.is_some_and(|domain| {
-                                self.model
-                                    .sampled_domains
-                                    .get(domain)
-                                    .is_some_and(|domain| domain.history_ticks != 0)
-                            }) || call.ticks != 0
-                            {
-                                return self.fail(path, "sampled status requires a valid domain");
-                            }
-                            if expr.width != 1 || expr.signed {
-                                return self
-                                    .fail(path, "sampled status result must be one-bit unsigned");
-                            }
-                        }
-                    }
-                }
-                IrSysFunc::Clog2(arg) | IrSysFunc::Bits(arg) => {
-                    self.validate_expr(arg, formals, format_args!("{path}.arg"))?;
-                }
-                IrSysFunc::Time {
-                    precision_fs,
-                    unit_fs,
-                    kind,
-                } => {
-                    if *precision_fs == 0 || *unit_fs == 0 {
-                        return self.fail(path, "time scaling units must be non-zero");
-                    }
-                    if expr.width != kind.width() {
-                        return self.fail(path, "time expression width disagrees with its kind");
-                    }
-                }
-                IrSysFunc::QFull { q_id, status } => {
-                    self.validate_expr(q_id, formals, format_args!("{path}.q_id"))?;
-                    if q_id.is_real() || expr.width != 32 || !expr.signed {
-                        return self
-                            .fail(path, "$q_full requires a packed q_id and signed int result");
-                    }
-                    self.validate_stochastic_output(
-                        status,
+                IrInsideItem::Cells(cells) => {
+                    self.validate_fixed_array_cells(
+                        cells,
                         formals,
-                        format_args!("{path}.status"),
+                        format_args!("{path}.items[{idx}]"),
+                        true,
                     )?;
                 }
-                IrSysFunc::FileOpen {
-                    path: file_path,
-                    mode,
-                } => {
-                    file_path.validate(&self.model, self.string_return.get())?;
-                    if let Some(mode) = mode {
-                        mode.validate(&self.model, self.string_return.get())?;
+                IrInsideItem::FixedArray { value, elements } => {
+                    self.validate_expr(value, formals, format_args!("{path}.items[{idx}].value"))?;
+                    if value.width == 0 || elements.is_empty() {
+                        return self.fail(
+                            format_args!("{path}.items[{idx}]"),
+                            "inside fixed-array item requires packed scalar elements",
+                        );
                     }
-                    if expr.width != 32 || !expr.signed {
-                        return self.fail(path, "$fopen requires a signed 32-bit result");
-                    }
-                }
-                IrSysFunc::FileTell(descriptor) => {
-                    self.validate_expr(descriptor, formals, format_args!("{path}.descriptor"))?;
-                    if descriptor.is_real() || expr.width != 64 || !expr.signed {
-                        return self.fail(path, "$ftell requires a signed 64-bit result");
-                    }
-                }
-                IrSysFunc::FileSeek {
-                    descriptor,
-                    offset,
-                    operation,
-                } => {
-                    for (name, value) in [
-                        ("descriptor", descriptor),
-                        ("offset", offset),
-                        ("operation", operation),
-                    ] {
-                        self.validate_expr(value, formals, format_args!("{path}.{name}"))?;
-                        if value.is_real() {
-                            return self.fail(path, "$fseek requires packed arguments");
+                    for (element_idx, element) in elements.iter().enumerate() {
+                        let projection_width = element
+                            .left
+                            .checked_sub(element.right)
+                            .and_then(|width| width.checked_add(1));
+                        if element.width == 0
+                            || element.right < 0
+                            || element.left < element.right
+                            || element.left >= i64::from(value.width)
+                            || projection_width != Some(i64::from(element.width))
+                        {
+                            return self.fail(
+                                format_args!("{path}.items[{idx}].elements[{element_idx}]"),
+                                "inside fixed-array projection is outside its payload",
+                            );
                         }
                     }
-                    if expr.width != 32 || !expr.signed {
-                        return self.fail(path, "$fseek requires a signed 32-bit result");
-                    }
                 }
-                IrSysFunc::FileEof(descriptor) => {
-                    self.validate_expr(descriptor, formals, format_args!("{path}.descriptor"))?;
-                    if descriptor.is_real() || expr.width != 32 || !expr.signed {
-                        return self.fail(path, "$feof requires a signed 32-bit result");
-                    }
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_concatenation(
+        &self,
+        expr: &IrExpr,
+        parts: &[IrExpr],
+        formals: &[IrFormal],
+        path: IrPath<'_>,
+    ) -> ValidationResult {
+        if parts.is_empty() {
+            return self.fail(path, "concatenation requires at least one operand");
+        }
+        let sum: u128 = parts.iter().map(|part| u128::from(part.width)).sum();
+        let runtime_sized = parts.iter().any(|part| part.width == LLG_MAX_WIDTH);
+        if runtime_sized {
+            if !matches!(expr.kind, IrExprKind::Concat { .. }) || expr.width != LLG_MAX_WIDTH {
+                return self.fail(
+                    path,
+                    "runtime-sized concatenation must retain model capacity width",
+                );
+            }
+        } else {
+            let expected = match &expr.kind {
+                IrExprKind::Replicate { count, .. } => sum * u128::from(*count),
+                _ => sum,
+            };
+            if expected != u128::from(expr.width) {
+                return self.fail(path, format!("concatenation/replication width {} disagrees with derived width {expected}", expr.width));
+            }
+        }
+        for (idx, part) in parts.iter().enumerate() {
+            self.validate_expr(part, formals, format_args!("{path}.parts[{idx}]"))?;
+        }
+        Ok(())
+    }
+
+    fn validate_call_value(
+        &self,
+        expr: &IrExpr,
+        call: &IrCallExpr,
+        formals: &[IrFormal],
+        path: IrPath<'_>,
+    ) -> ValidationResult {
+        self.validate_call_expr(call, formals, path)?;
+        let callee = &self.model.funcs[call.f];
+        match callee.ret {
+            Some(ret) => {
+                if call.void_x {
+                    return self.fail(path, "value-returning call is marked as void");
                 }
-                IrSysFunc::FileInput(input) => {
-                    if expr.width != 32 || !expr.signed {
-                        return self
-                            .fail(path, "file input functions require a signed 32-bit result");
-                    }
-                    self.validate_file_input(input, formals, path)?;
+                if matches!(ret, IrType::Real { .. }) != expr.is_real()
+                    || ret.width() != expr.width
+                    || ret.signed() != expr.signed
+                {
+                    return self.fail(path, "callee return type disagrees with expression type");
                 }
-            },
+            }
+            None => {
+                if !call.void_x {
+                    return self.fail(path, "void call used as a value is not marked as X");
+                }
+                if expr.width != 1 || expr.signed || expr.fill.is_some() {
+                    return self.fail(path, "void-call fallback must be a 1-bit unsigned X");
+                }
+            }
         }
         Ok(())
     }

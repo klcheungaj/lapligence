@@ -333,6 +333,15 @@ fn ambiguous_predicate(predicate: &IrExpr) -> bool {
     predicate.width != 0 && !known_predicate(predicate)
 }
 
+/// Refuse to emit a nested operation on a stack that holds no more of them
+/// (`crate::stack`). Syntax alone never gets there.
+fn check_stack() -> Result<(), String> {
+    if crate::stack::exhausted() {
+        return Err(crate::stack::EXHAUSTED.to_owned());
+    }
+    Ok(())
+}
+
 fn pending(feature: &str) -> String {
     format!("P05 ownership emission is not yet implemented for {feature}; no C model was emitted")
 }

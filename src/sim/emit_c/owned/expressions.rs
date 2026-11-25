@@ -3,6 +3,7 @@ use super::*;
 
 impl Frame<'_, '_> {
     pub(super) fn expression(&mut self, expr: &IrExpr) -> Result<Value, String> {
+        check_stack()?;
         super::super::check_capacity(u128::from(expr.width)).map_err(|error| error.to_string())?;
         // Reentrant writes can retire the active wait. Only expression-bodied
         // automatic functions proven below are inlined into this frame.

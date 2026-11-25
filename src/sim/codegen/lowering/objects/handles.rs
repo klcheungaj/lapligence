@@ -377,6 +377,7 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<IrChandleExpr, String> {
+        self.check_stack(node)?;
         self.lower_chandle_unlocated(path, node)
             .map_err(|error| self.locate_error(node, error))
     }

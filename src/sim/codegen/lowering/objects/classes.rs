@@ -1647,6 +1647,7 @@ impl Codegen<'_> {
         class: NodeId,
         receiver: IrChandleExpr,
     ) -> Result<Vec<IrStmt>, String> {
+        self.check_stack(class)?;
         let Some(metadata) = self.db.class_metadata(class) else {
             return Ok(Vec::new());
         };

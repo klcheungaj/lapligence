@@ -11,6 +11,7 @@ impl<'a> Codegen<'a> {
     /// gives them an explicit frame and stackless call ABI. Recursive timing
     /// calls use arena frames and remain resumable without source unrolling.
     pub(in super::super) fn emit_func_prototypes(&mut self, inst: NodeId) -> Result<(), String> {
+        self.check_stack(inst)?;
         let class_methods;
         let children = if self.class_nodes.contains_key(&inst) {
             class_methods = self.class_method_nodes(inst);
@@ -23,568 +24,9 @@ impl<'a> Codegen<'a> {
                 is_task, automatic, ..
             } = self.kind(*c)
             {
-                if !self.func_names.contains_key(c) {
-                    continue;
+                if self.func_names.contains_key(c) {
+                    self.emit_func_prototype(inst, *c, *is_task, *automatic)?;
                 }
-                let automatic = *automatic;
-                self.prepare_fixed_function(*c, automatic)?;
-                self.prepare_record_function(*c, automatic)?;
-                self.prepare_native_function(inst, *c, automatic)?;
-                self.prepare_container_function(inst, *c, automatic)?;
-                self.prepare_real_array_function(*c, automatic)?;
-                let dpi = self.db.dpi_import(*c).cloned();
-                let (is_task_f, function_ret, formals) = if dpi.is_some() {
-                    let is_task = match self.kind(*c) {
-                        NodeKind::FuncTask { is_task, .. } => *is_task,
-                        _ => return Err("non-FuncTask in function prototype collection".to_owned()),
-                    };
-                    // DPI imports use only the owned semantic type record;
-                    // ordinary source-text width recovery is intentionally
-                    // bypassed for both the return and formal list.
-                    (is_task, None, self.func_formals(*c))
-                } else {
-                    self.func_info(*c, inst)?
-                };
-                let ret = if dpi.is_some() {
-                    self.dpi_return_info(*c)?
-                } else {
-                    function_ret
-                };
-                let mut formals_ir: Vec<IrFormal> = formals
-                    .iter()
-                    .map(|(io, is_out)| -> Result<IrFormal, String> {
-                        match self.kind(*io) {
-                            NodeKind::FuncArg {
-                                direction,
-                                const_ref,
-                                ref_static,
-                                ty,
-                                ..
-                            } => {
-                                let mode = match direction {
-                                    DbDirection::Input => crate::sim::ir::IrFormalMode::Input,
-                                    DbDirection::Output => crate::sim::ir::IrFormalMode::Output,
-                                    DbDirection::Inout => crate::sim::ir::IrFormalMode::Inout,
-                                    DbDirection::Ref => crate::sim::ir::IrFormalMode::Ref,
-                                    _ => {
-                                        return Err(format!(
-                                            "unsupported formal direction for `{}`",
-                                            self.node(*io).name
-                                        ));
-                                    }
-                                };
-                                Ok(IrFormal {
-                                    is_out: *is_out,
-                                    mode,
-                                    fixed_array: self.fixed_formal_array(*io),
-                                    native_value: self.native_formal_storage(inst, *io),
-                                    native_companions: Vec::new(),
-                                    real_array: self.real_formal_array(*io),
-                                    container: self.container_formal_storage(inst, *io),
-                                    fixed_shape: if self.fixed_formal_array(*io).is_some()
-                                        || self.is_native_declaration(*io)
-                                        || self.is_subroutine_container(*io)
-                                        || self.real_formal_array(*io).is_some()
-                                    {
-                                        None
-                                    } else {
-                                        self.fixed_formal_shape(*io)?
-                                    },
-                                    fixed_default: if self.fixed_formal_array(*io).is_some()
-                                        || self.is_native_declaration(*io)
-                                        || self.is_subroutine_container(*io)
-                                        || self.real_formal_array(*io).is_some()
-                                    {
-                                        None
-                                    } else {
-                                        self.fixed_default_literal(*io)
-                                    },
-                                    const_ref: *const_ref,
-                                    ref_static: *ref_static,
-                                    width: if self.fixed_formal_array(*io).is_some()
-                                        || self.is_native_declaration(*io)
-                                        || self.is_subroutine_container(*io)
-                                        || self.real_formal_array(*io).is_some()
-                                        || is_handle_kind(&ty.kind)
-                                        || is_real_kind(&ty.kind)
-                                    {
-                                        0
-                                    } else if self.db.dpi_open_type(*io).is_some() {
-                                        // An open-array template formal; each
-                                        // call specialization carries the
-                                        // actual's payload width.
-                                        1
-                                    } else if dpi.is_some()
-                                        && !matches!(ty.kind.as_str(), "array" | "struct" | "union")
-                                    {
-                                        ty.width.unwrap_or(0)
-                                    } else {
-                                        self.formal_value_width(*io).or(ty.width).unwrap_or(0)
-                                    },
-                                    signed: ty.signed,
-                                    two_state: self.db.is_two_state_type(*io)
-                                        || is_two_state_kind(&ty.kind),
-                                    real: is_real_kind(&ty.kind),
-                                    shortreal: ty.kind == "shortreal",
-                                    chandle: is_handle_kind(&ty.kind),
-                                    event: ty.kind == "event",
-                                    event_marker: false,
-                                    record_marker: false,
-                                    string: ty.kind == "string",
-                                    shared_local: None,
-                                    shared_observed: false,
-                                })
-                            }
-                            _ => unreachable!("formal kind"),
-                        }
-                    })
-                    .collect::<Result<Vec<_>, String>>()?;
-                // A column-layout record formal passes one descriptor per
-                // column: the first takes the formal's own slot, the rest
-                // follow the declared formals, before any trailing result.
-                let mut record_columns = Vec::new();
-                let mut foreign_columns = Vec::with_capacity(formals.len());
-                for (position, ((io, _), formal)) in formals.iter().zip(&formals_ir).enumerate() {
-                    let arrays = self.record_formal_columns(*io);
-                    let first = formals_ir.len() + record_columns.len();
-                    foreign_columns.push(if arrays.is_empty() {
-                        Vec::new()
-                    } else {
-                        std::iter::once(position)
-                            .chain(first..first + arrays.len() - 1)
-                            .collect()
-                    });
-                    for array in arrays.into_iter().skip(1) {
-                        let mut column = formal.clone();
-                        column.fixed_array = Some(array);
-                        record_columns.push(column);
-                    }
-                    // Real, string and chandle members travel in one native
-                    // value after the columns (SIM-003 transport).
-                    if let Some(value) = self.record_formal_native(*io) {
-                        let mut column = formal.clone();
-                        column.fixed_array = None;
-                        column.native_value = Some(value);
-                        record_columns.push(column);
-                    }
-                }
-                let export_name = self.db.dpi_export(*c).map(str::to_owned);
-                formals_ir.extend(record_columns);
-                let mut dpi_types = None;
-                let dpi_export = match &export_name {
-                    Some(c_name) => {
-                        Some(self.validate_dpi_export(*c, inst, c_name, &formals, &formals_ir)?)
-                    }
-                    None => None,
-                };
-                if let Some(dpi) = &dpi {
-                    dpi_types =
-                        Some(self.validate_dpi_import(*c, inst, dpi, &formals, &formals_ir)?);
-                    if self
-                        .func_names
-                        .values()
-                        .any(|internal_name| internal_name == &dpi.c_name)
-                    {
-                        return Err(format!(
-                            "DPI-C symbol `{}` collides with a generated simulator function name",
-                            dpi.c_name
-                        ));
-                    }
-                }
-                if let Some(array) = self.fixed_formal_array(*c) {
-                    let mut formal =
-                        IrFormal::new(true, 1, false).map_err(|error| error.to_string())?;
-                    formal.width = 0;
-                    formal.fixed_array = Some(array);
-                    formals_ir.push(formal);
-                    // A column-layout record result is one trailing output
-                    // per column.
-                    for array in self.record_formal_columns(*c).into_iter().skip(1) {
-                        let mut formal =
-                            IrFormal::new(true, 1, false).map_err(|error| error.to_string())?;
-                        formal.width = 0;
-                        formal.fixed_array = Some(array);
-                        formals_ir.push(formal);
-                    }
-                    if let Some(value) = self.record_formal_native(*c) {
-                        let mut formal =
-                            IrFormal::new(true, 1, false).map_err(|error| error.to_string())?;
-                        formal.width = 0;
-                        formal.native_value = Some(value);
-                        formals_ir.push(formal);
-                    }
-                }
-                if let Some(array) = self
-                    .real_array_return(*c)
-                    .then(|| self.real_formal_array(*c))
-                    .flatten()
-                {
-                    // A real-array result is a trailing output formal.
-                    let mut formal =
-                        IrFormal::new(true, 1, false).map_err(|error| error.to_string())?;
-                    formal.width = 0;
-                    formal.real_array = Some(array);
-                    formals_ir.push(formal);
-                }
-                if let Some(container) = self
-                    .container_return(*c)
-                    .then(|| self.container_formal_storage(inst, *c))
-                    .flatten()
-                {
-                    // A container result is a trailing output formal.
-                    let mut formal =
-                        IrFormal::new(true, 1, false).map_err(|error| error.to_string())?;
-                    formal.width = 0;
-                    formal.container = Some(container);
-                    formals_ir.push(formal);
-                }
-                if let Some(value) = self
-                    .native_return(*c)
-                    .then(|| self.native_formal_storage(inst, *c))
-                    .flatten()
-                {
-                    // A native result is a trailing output formal, like a
-                    // descriptor-array result.
-                    let mut formal =
-                        IrFormal::new(true, 1, false).map_err(|error| error.to_string())?;
-                    formal.width = 0;
-                    formal.native_value = Some(value);
-                    formals_ir.push(formal);
-                }
-                // Queue, dynamic and associative record members travel as
-                // companion containers of their native value (SIM-007).
-                for formal in &mut formals_ir {
-                    if let Some(value) = formal.native_value {
-                        formal.native_companions =
-                            self.model.native_values[value].companions.clone();
-                    }
-                }
-                let has_wait = *is_task && dpi.is_none() && self.task_has_wait(*c, inst);
-                if !automatic && dpi.is_none() {
-                    for (idx, ((io, _), formal)) in formals.iter().zip(&formals_ir).enumerate() {
-                        if formal.is_ref()
-                            || formal.fixed_array.is_some()
-                            || formal.real_array.is_some()
-                            || formal.native_value.is_some()
-                            || formal.container.is_some()
-                        {
-                            continue;
-                        }
-                        if formal.chandle || formal.event {
-                            let object = self.model.objects.len();
-                            if formal.event {
-                                continue;
-                            }
-                            self.model.objects.push(crate::sim::ir::IrObject {
-                                c_name: format!("O_f{}_{}_a{idx}", inst.index(), c.index()),
-                                ty: crate::sim::ir::IrObjectType::Chandle,
-                                initial: None,
-                            });
-                            self.static_chandle_formals.insert((inst, *io), object);
-                            continue;
-                        }
-                        if formal.string {
-                            let object = self.model.objects.len();
-                            self.model.objects.push(crate::sim::ir::IrObject {
-                                c_name: format!("O_f{}_{}_a{idx}", inst.index(), c.index()),
-                                ty: crate::sim::ir::IrObjectType::String,
-                                initial: None,
-                            });
-                            self.static_string_formals.insert((inst, *io), object);
-                            continue;
-                        }
-                        let signal = self.model.signals.len();
-                        let info = SignalInfo {
-                            global: format!("S_f{}_{}_a{idx}", inst.index(), c.index()),
-                            width: formal.width,
-                            signed: formal.signed,
-                            two_state: formal.two_state,
-                            real: formal.real,
-                            shortreal: formal.shortreal,
-                            net_driver: None,
-                            ir: signal,
-                        };
-                        self.model.signals.push(IrSignal {
-                            fixed_default: None,
-                            c_name: info.global.clone(),
-                            hdl_name: None,
-                            ty: if info.real {
-                                IrType::Real {
-                                    shortreal: info.shortreal,
-                                }
-                            } else {
-                                IrType::Packed {
-                                    width: info.width,
-                                    signed: info.signed,
-                                    two_state: info.two_state,
-                                }
-                            },
-                            net_driver: None,
-                            net_alias: Vec::new(),
-                            alias: None,
-                            omit: false,
-                        });
-                        self.model.signals[info.ir].fixed_default = self.fixed_default_literal(*io);
-                        self.signals.push(info.clone());
-                        self.static_formals.insert((inst, *io), info);
-                    }
-                }
-                let reported = if dpi.is_none() {
-                    self.deferred_report_targets(*c)
-                } else {
-                    HashSet::new()
-                };
-                if has_wait || !reported.is_empty() {
-                    let body = self
-                        .func_body(*c)
-                        .ok_or_else(|| format!("task `{}` without a body", self.node(*c).name))?;
-                    let mut locals = HashMap::new();
-                    let mut chandle_locals = HashMap::new();
-                    let mut process_locals = HashMap::new();
-                    let mut local_seq = 0;
-                    self.collect_func_locals(
-                        body,
-                        &mut locals,
-                        &mut chandle_locals,
-                        &mut process_locals,
-                        &mut local_seq,
-                        "",
-                    )?;
-                    for local in sorted_node_ids(&chandle_locals) {
-                        if !has_wait && !reported.contains(&local) {
-                            continue;
-                        }
-                        match self.db.variable_lifetime(local) {
-                            VariableLifetime::Automatic => continue,
-                            VariableLifetime::Static => {}
-                            VariableLifetime::Unavailable => {
-                                return Err(format!(
-                                    "resolved lifetime is unavailable for task local `{}`",
-                                    self.node(local).name
-                                ));
-                            }
-                        }
-                        let object = self.model.objects.len();
-                        self.model.objects.push(crate::sim::ir::IrObject {
-                            c_name: format!("O_f{}_{}_l{}", inst.index(), c.index(), local.index()),
-                            ty: crate::sim::ir::IrObjectType::Chandle,
-                            initial: None,
-                        });
-                        self.static_task_chandle_locals
-                            .insert((inst, local), object);
-                    }
-                    for local in sorted_node_ids(&locals) {
-                        if !has_wait && !reported.contains(&local) {
-                            continue;
-                        }
-                        let (_, width, signed, two_state, shortreal) = locals[&local];
-                        match self.db.variable_lifetime(local) {
-                            VariableLifetime::Automatic => continue,
-                            VariableLifetime::Static => {}
-                            VariableLifetime::Unavailable => {
-                                return Err(format!(
-                                    "resolved lifetime is unavailable for task local `{}`",
-                                    self.node(local).name
-                                ));
-                            }
-                        }
-                        if matches!(self.kind(local), NodeKind::Var { ty } if ty.kind == "string") {
-                            // The body reads and writes this object; its
-                            // declaration value runs in the static schedule
-                            // with the other static subroutine initializers.
-                            let initial = None;
-                            let object = self.model.objects.len();
-                            self.model.objects.push(crate::sim::ir::IrObject {
-                                c_name: format!(
-                                    "O_f{}_{}_l{}",
-                                    inst.index(),
-                                    c.index(),
-                                    local.index()
-                                ),
-                                ty: crate::sim::ir::IrObjectType::String,
-                                initial,
-                            });
-                            self.static_string_task_locals.insert((inst, local), object);
-                            continue;
-                        }
-                        // A report reads packed static locals through their
-                        // persistent cells; only a wait needs them here.
-                        if !has_wait {
-                            continue;
-                        }
-                        let signal = self.model.signals.len();
-                        let info = SignalInfo {
-                            global: format!("S_f{}_{}_l{}", inst.index(), c.index(), local.index()),
-                            width,
-                            signed,
-                            two_state,
-                            real: width == 0,
-                            shortreal,
-                            net_driver: None,
-                            ir: signal,
-                        };
-                        self.model.signals.push(IrSignal {
-                            fixed_default: self.fixed_default_literal(local),
-                            c_name: info.global.clone(),
-                            hdl_name: None,
-                            ty: if width == 0 {
-                                IrType::Real { shortreal }
-                            } else {
-                                IrType::Packed {
-                                    width,
-                                    signed,
-                                    two_state,
-                                }
-                            },
-                            net_driver: None,
-                            net_alias: Vec::new(),
-                            alias: None,
-                            omit: false,
-                        });
-                        self.signals.push(info.clone());
-                        if let Some(initializer) = self
-                            .db
-                            .var_initializer(local)
-                            .or_else(|| self.db.array_meta(local).and_then(|array| array.init))
-                        {
-                            self.inst = inst;
-                            let lowered = self.lower_declaration_initializer(
-                                &self.instance_path_of(inst),
-                                local,
-                                initializer,
-                                IrInitTarget::Signal(info.ir),
-                                info.width,
-                                info.signed,
-                                info.two_state,
-                                info.real,
-                            );
-                            match lowered {
-                                Ok(initializer) => self.declaration_inits.push(initializer),
-                                Err(lowering_error) => {
-                                    let value = self
-                                        .var_decl_init(
-                                            &self.instance_path_of(inst),
-                                            &self.node(local).name,
-                                            initializer,
-                                        )
-                                        .map_err(|_| lowering_error)?;
-                                    self.var_inits.push((info.clone(), value));
-                                }
-                            }
-                        }
-                        self.static_task_locals.insert((inst, local), info);
-                    }
-                }
-                // A static export's address formals live in persistent
-                // storage that its export thunk fills and reads like a call.
-                let dpi_export = dpi_export.map(|export| {
-                    let storage = formals
-                        .iter()
-                        .map(|(io, _)| {
-                            if automatic {
-                                return None;
-                            }
-                            self.static_formals
-                                .get(&(inst, *io))
-                                .map(|info| info.global.clone())
-                                .or_else(|| {
-                                    self.static_string_formals
-                                        .get(&(inst, *io))
-                                        .or_else(|| self.static_chandle_formals.get(&(inst, *io)))
-                                        .map(|object| self.model.objects[*object].c_name.clone())
-                                })
-                        })
-                        .collect();
-                    export
-                        .with_storage(storage)
-                        .with_record_columns(foreign_columns.clone())
-                });
-                let c_name =
-                    self.func_names.get(c).cloned().ok_or_else(|| {
-                        format!("function `{}` has no C name", self.node(*c).name)
-                    })?;
-                // Event formals of every direction are typed parameters
-                // (`IrCallArg::EventVal`/`EventAddr`), class methods included.
-                let dpi_scope = dpi.as_ref().map(|_| self.dpi_scope(inst, *c));
-                let dpi_import = dpi.as_ref().zip(dpi_types).map(|(dpi, (formals, ret))| {
-                    crate::sim::ir::IrDpiImport::new(
-                        dpi.c_name.clone(),
-                        dpi.context,
-                        dpi.pure,
-                        formals,
-                        ret,
-                    )
-                    .with_scope(dpi_scope)
-                    .with_record_columns(foreign_columns.clone())
-                });
-                // An open-array import is a template: each call selects a
-                // specialization for its actuals (`dpi_open_callee`). So is a
-                // task waiting on a native record `ref` formal: each call
-                // binds its record actual (`waits_on_record_ref`).
-                let inline_expanded = match dpi_import.as_ref() {
-                    Some(dpi) => dpi.is_open_template(),
-                    None => self.waits_on_record_ref(*c, inst),
-                };
-                // Register the model entry (call-site lowering and the C
-                // renderers resolve through it).
-                let ir = self.model.funcs.len();
-                self.model.funcs.push(crate::sim::ir::IrFunc {
-                    origin: self.origin(*c),
-                    // A column-layout result is trailing outputs: no value
-                    // returns, so there is no default for one.
-                    return_default: self.fixed_default_literal(*c).filter(|_| ret.is_some()),
-                    return_signal: None,
-                    c_name,
-                    diagnostic_name: self.func_labels.get(c).cloned(),
-                    inline_expanded,
-                    automatic,
-                    is_task: is_task_f,
-                    ret_chandle: self.is_chandle_return(*c),
-                    ret_string: self.is_string_return(*c),
-                    dpi: dpi_import,
-                    dpi_export,
-                    ret: ret.map(|(w, s, two_state, shortreal)| {
-                        if w == 0 {
-                            IrType::Real { shortreal }
-                        } else {
-                            IrType::Packed {
-                                width: w,
-                                signed: s,
-                                two_state,
-                            }
-                        }
-                    }),
-                    receiver_class: self.class_nodes.get(&inst).copied().filter(|_| {
-                        dpi.is_none()
-                            && !matches!(
-                                self.kind(*c),
-                                NodeKind::FuncTask {
-                                    is_static: true,
-                                    ..
-                                }
-                            )
-                    }),
-                    virtual_slot: self.method_virtual_slots.get(c).copied(),
-                    formals: formals_ir,
-                    bound_native_refs: Vec::new(),
-                    callback_private_formal_copies: Vec::new(),
-                    callback_return_independent: false,
-                    locals: Vec::new(),
-                    pre_fns: Vec::new(),
-                    body: Vec::new(),
-                    vpi_automatics: Vec::new(),
-                });
-                self.func_meta.insert(
-                    *c,
-                    FuncMeta {
-                        ir,
-                        is_task: is_task_f,
-                        ret,
-                        ret_chandle: self.is_chandle_return(*c),
-                        ret_string: self.is_string_return(*c),
-                        formals,
-                    },
-                );
             }
         }
         for c in &self.node(inst).children {
@@ -595,6 +37,566 @@ impl<'a> Codegen<'a> {
                 self.emit_func_prototypes(*c)?;
             }
         }
+        Ok(())
+    }
+
+    /// Declare one subroutine of `inst`. Nested scopes recurse without a frame
+    /// of this function (`crate::stack`).
+    fn emit_func_prototype(
+        &mut self,
+        inst: NodeId,
+        c: NodeId,
+        is_task: bool,
+        automatic: bool,
+    ) -> Result<(), String> {
+        self.prepare_fixed_function(c, automatic)?;
+        self.prepare_record_function(c, automatic)?;
+        self.prepare_native_function(inst, c, automatic)?;
+        self.prepare_container_function(inst, c, automatic)?;
+        self.prepare_real_array_function(c, automatic)?;
+        let dpi = self.db.dpi_import(c).cloned();
+        let (is_task_f, function_ret, formals) = if dpi.is_some() {
+            let is_task = match self.kind(c) {
+                NodeKind::FuncTask { is_task, .. } => *is_task,
+                _ => return Err("non-FuncTask in function prototype collection".to_owned()),
+            };
+            // DPI imports use only the owned semantic type record;
+            // ordinary source-text width recovery is intentionally
+            // bypassed for both the return and formal list.
+            (is_task, None, self.func_formals(c))
+        } else {
+            self.func_info(c, inst)?
+        };
+        let ret = if dpi.is_some() {
+            self.dpi_return_info(c)?
+        } else {
+            function_ret
+        };
+        let mut formals_ir: Vec<IrFormal> = formals
+            .iter()
+            .map(|(io, is_out)| -> Result<IrFormal, String> {
+                match self.kind(*io) {
+                    NodeKind::FuncArg {
+                        direction,
+                        const_ref,
+                        ref_static,
+                        ty,
+                        ..
+                    } => {
+                        let mode = match direction {
+                            DbDirection::Input => crate::sim::ir::IrFormalMode::Input,
+                            DbDirection::Output => crate::sim::ir::IrFormalMode::Output,
+                            DbDirection::Inout => crate::sim::ir::IrFormalMode::Inout,
+                            DbDirection::Ref => crate::sim::ir::IrFormalMode::Ref,
+                            _ => {
+                                return Err(format!(
+                                    "unsupported formal direction for `{}`",
+                                    self.node(*io).name
+                                ));
+                            }
+                        };
+                        Ok(IrFormal {
+                            is_out: *is_out,
+                            mode,
+                            fixed_array: self.fixed_formal_array(*io),
+                            native_value: self.native_formal_storage(inst, *io),
+                            native_companions: Vec::new(),
+                            real_array: self.real_formal_array(*io),
+                            container: self.container_formal_storage(inst, *io),
+                            fixed_shape: if self.fixed_formal_array(*io).is_some()
+                                || self.is_native_declaration(*io)
+                                || self.is_subroutine_container(*io)
+                                || self.real_formal_array(*io).is_some()
+                            {
+                                None
+                            } else {
+                                self.fixed_formal_shape(*io)?
+                            },
+                            fixed_default: if self.fixed_formal_array(*io).is_some()
+                                || self.is_native_declaration(*io)
+                                || self.is_subroutine_container(*io)
+                                || self.real_formal_array(*io).is_some()
+                            {
+                                None
+                            } else {
+                                self.fixed_default_literal(*io)
+                            },
+                            const_ref: *const_ref,
+                            ref_static: *ref_static,
+                            width: if self.fixed_formal_array(*io).is_some()
+                                || self.is_native_declaration(*io)
+                                || self.is_subroutine_container(*io)
+                                || self.real_formal_array(*io).is_some()
+                                || is_handle_kind(&ty.kind)
+                                || is_real_kind(&ty.kind)
+                            {
+                                0
+                            } else if self.db.dpi_open_type(*io).is_some() {
+                                // An open-array template formal; each
+                                // call specialization carries the
+                                // actual's payload width.
+                                1
+                            } else if dpi.is_some()
+                                && !matches!(ty.kind.as_str(), "array" | "struct" | "union")
+                            {
+                                ty.width.unwrap_or(0)
+                            } else {
+                                self.formal_value_width(*io).or(ty.width).unwrap_or(0)
+                            },
+                            signed: ty.signed,
+                            two_state: self.db.is_two_state_type(*io)
+                                || is_two_state_kind(&ty.kind),
+                            real: is_real_kind(&ty.kind),
+                            shortreal: ty.kind == "shortreal",
+                            chandle: is_handle_kind(&ty.kind),
+                            event: ty.kind == "event",
+                            event_marker: false,
+                            record_marker: false,
+                            string: ty.kind == "string",
+                            shared_local: None,
+                            shared_observed: false,
+                        })
+                    }
+                    _ => unreachable!("formal kind"),
+                }
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        // A column-layout record formal passes one descriptor per
+        // column: the first takes the formal's own slot, the rest
+        // follow the declared formals, before any trailing result.
+        let mut record_columns = Vec::new();
+        let mut foreign_columns = Vec::with_capacity(formals.len());
+        for (position, ((io, _), formal)) in formals.iter().zip(&formals_ir).enumerate() {
+            let arrays = self.record_formal_columns(*io);
+            let first = formals_ir.len() + record_columns.len();
+            foreign_columns.push(if arrays.is_empty() {
+                Vec::new()
+            } else {
+                std::iter::once(position)
+                    .chain(first..first + arrays.len() - 1)
+                    .collect()
+            });
+            for array in arrays.into_iter().skip(1) {
+                let mut column = formal.clone();
+                column.fixed_array = Some(array);
+                record_columns.push(column);
+            }
+            // Real, string and chandle members travel in one native
+            // value after the columns (SIM-003 transport).
+            if let Some(value) = self.record_formal_native(*io) {
+                let mut column = formal.clone();
+                column.fixed_array = None;
+                column.native_value = Some(value);
+                record_columns.push(column);
+            }
+        }
+        let export_name = self.db.dpi_export(c).map(str::to_owned);
+        formals_ir.extend(record_columns);
+        let mut dpi_types = None;
+        let dpi_export = match &export_name {
+            Some(c_name) => {
+                Some(self.validate_dpi_export(c, inst, c_name, &formals, &formals_ir)?)
+            }
+            None => None,
+        };
+        if let Some(dpi) = &dpi {
+            dpi_types = Some(self.validate_dpi_import(c, inst, dpi, &formals, &formals_ir)?);
+            if self
+                .func_names
+                .values()
+                .any(|internal_name| internal_name == &dpi.c_name)
+            {
+                return Err(format!(
+                    "DPI-C symbol `{}` collides with a generated simulator function name",
+                    dpi.c_name
+                ));
+            }
+        }
+        if let Some(array) = self.fixed_formal_array(c) {
+            let mut formal = IrFormal::new(true, 1, false).map_err(|error| error.to_string())?;
+            formal.width = 0;
+            formal.fixed_array = Some(array);
+            formals_ir.push(formal);
+            // A column-layout record result is one trailing output
+            // per column.
+            for array in self.record_formal_columns(c).into_iter().skip(1) {
+                let mut formal =
+                    IrFormal::new(true, 1, false).map_err(|error| error.to_string())?;
+                formal.width = 0;
+                formal.fixed_array = Some(array);
+                formals_ir.push(formal);
+            }
+            if let Some(value) = self.record_formal_native(c) {
+                let mut formal =
+                    IrFormal::new(true, 1, false).map_err(|error| error.to_string())?;
+                formal.width = 0;
+                formal.native_value = Some(value);
+                formals_ir.push(formal);
+            }
+        }
+        if let Some(array) = self
+            .real_array_return(c)
+            .then(|| self.real_formal_array(c))
+            .flatten()
+        {
+            // A real-array result is a trailing output formal.
+            let mut formal = IrFormal::new(true, 1, false).map_err(|error| error.to_string())?;
+            formal.width = 0;
+            formal.real_array = Some(array);
+            formals_ir.push(formal);
+        }
+        if let Some(container) = self
+            .container_return(c)
+            .then(|| self.container_formal_storage(inst, c))
+            .flatten()
+        {
+            // A container result is a trailing output formal.
+            let mut formal = IrFormal::new(true, 1, false).map_err(|error| error.to_string())?;
+            formal.width = 0;
+            formal.container = Some(container);
+            formals_ir.push(formal);
+        }
+        if let Some(value) = self
+            .native_return(c)
+            .then(|| self.native_formal_storage(inst, c))
+            .flatten()
+        {
+            // A native result is a trailing output formal, like a
+            // descriptor-array result.
+            let mut formal = IrFormal::new(true, 1, false).map_err(|error| error.to_string())?;
+            formal.width = 0;
+            formal.native_value = Some(value);
+            formals_ir.push(formal);
+        }
+        // Queue, dynamic and associative record members travel as
+        // companion containers of their native value (SIM-007).
+        for formal in &mut formals_ir {
+            if let Some(value) = formal.native_value {
+                formal.native_companions = self.model.native_values[value].companions.clone();
+            }
+        }
+        let has_wait = is_task && dpi.is_none() && self.task_has_wait(c, inst);
+        if !automatic && dpi.is_none() {
+            for (idx, ((io, _), formal)) in formals.iter().zip(&formals_ir).enumerate() {
+                if formal.is_ref()
+                    || formal.fixed_array.is_some()
+                    || formal.real_array.is_some()
+                    || formal.native_value.is_some()
+                    || formal.container.is_some()
+                {
+                    continue;
+                }
+                if formal.chandle || formal.event {
+                    let object = self.model.objects.len();
+                    if formal.event {
+                        continue;
+                    }
+                    self.model.objects.push(crate::sim::ir::IrObject {
+                        c_name: format!("O_f{}_{}_a{idx}", inst.index(), c.index()),
+                        ty: crate::sim::ir::IrObjectType::Chandle,
+                        initial: None,
+                    });
+                    self.static_chandle_formals.insert((inst, *io), object);
+                    continue;
+                }
+                if formal.string {
+                    let object = self.model.objects.len();
+                    self.model.objects.push(crate::sim::ir::IrObject {
+                        c_name: format!("O_f{}_{}_a{idx}", inst.index(), c.index()),
+                        ty: crate::sim::ir::IrObjectType::String,
+                        initial: None,
+                    });
+                    self.static_string_formals.insert((inst, *io), object);
+                    continue;
+                }
+                let signal = self.model.signals.len();
+                let info = SignalInfo {
+                    global: format!("S_f{}_{}_a{idx}", inst.index(), c.index()),
+                    width: formal.width,
+                    signed: formal.signed,
+                    two_state: formal.two_state,
+                    real: formal.real,
+                    shortreal: formal.shortreal,
+                    net_driver: None,
+                    ir: signal,
+                };
+                self.model.signals.push(IrSignal {
+                    fixed_default: None,
+                    c_name: info.global.clone(),
+                    hdl_name: None,
+                    ty: if info.real {
+                        IrType::Real {
+                            shortreal: info.shortreal,
+                        }
+                    } else {
+                        IrType::Packed {
+                            width: info.width,
+                            signed: info.signed,
+                            two_state: info.two_state,
+                        }
+                    },
+                    net_driver: None,
+                    net_alias: Vec::new(),
+                    alias: None,
+                    omit: false,
+                });
+                self.model.signals[info.ir].fixed_default = self.fixed_default_literal(*io);
+                self.signals.push(info.clone());
+                self.static_formals.insert((inst, *io), info);
+            }
+        }
+        let reported = if dpi.is_none() {
+            self.deferred_report_targets(c)
+        } else {
+            HashSet::new()
+        };
+        if has_wait || !reported.is_empty() {
+            let body = self
+                .func_body(c)
+                .ok_or_else(|| format!("task `{}` without a body", self.node(c).name))?;
+            let mut locals = HashMap::new();
+            let mut chandle_locals = HashMap::new();
+            let mut process_locals = HashMap::new();
+            let mut local_seq = 0;
+            self.collect_func_locals(
+                body,
+                &mut locals,
+                &mut chandle_locals,
+                &mut process_locals,
+                &mut local_seq,
+                "",
+            )?;
+            for local in sorted_node_ids(&chandle_locals) {
+                if !has_wait && !reported.contains(&local) {
+                    continue;
+                }
+                match self.db.variable_lifetime(local) {
+                    VariableLifetime::Automatic => continue,
+                    VariableLifetime::Static => {}
+                    VariableLifetime::Unavailable => {
+                        return Err(format!(
+                            "resolved lifetime is unavailable for task local `{}`",
+                            self.node(local).name
+                        ));
+                    }
+                }
+                let object = self.model.objects.len();
+                self.model.objects.push(crate::sim::ir::IrObject {
+                    c_name: format!("O_f{}_{}_l{}", inst.index(), c.index(), local.index()),
+                    ty: crate::sim::ir::IrObjectType::Chandle,
+                    initial: None,
+                });
+                self.static_task_chandle_locals
+                    .insert((inst, local), object);
+            }
+            for local in sorted_node_ids(&locals) {
+                if !has_wait && !reported.contains(&local) {
+                    continue;
+                }
+                let (_, width, signed, two_state, shortreal) = locals[&local];
+                match self.db.variable_lifetime(local) {
+                    VariableLifetime::Automatic => continue,
+                    VariableLifetime::Static => {}
+                    VariableLifetime::Unavailable => {
+                        return Err(format!(
+                            "resolved lifetime is unavailable for task local `{}`",
+                            self.node(local).name
+                        ));
+                    }
+                }
+                if matches!(self.kind(local), NodeKind::Var { ty } if ty.kind == "string") {
+                    // The body reads and writes this object; its
+                    // declaration value runs in the static schedule
+                    // with the other static subroutine initializers.
+                    let initial = None;
+                    let object = self.model.objects.len();
+                    self.model.objects.push(crate::sim::ir::IrObject {
+                        c_name: format!("O_f{}_{}_l{}", inst.index(), c.index(), local.index()),
+                        ty: crate::sim::ir::IrObjectType::String,
+                        initial,
+                    });
+                    self.static_string_task_locals.insert((inst, local), object);
+                    continue;
+                }
+                // A report reads packed static locals through their
+                // persistent cells; only a wait needs them here.
+                if !has_wait {
+                    continue;
+                }
+                let signal = self.model.signals.len();
+                let info = SignalInfo {
+                    global: format!("S_f{}_{}_l{}", inst.index(), c.index(), local.index()),
+                    width,
+                    signed,
+                    two_state,
+                    real: width == 0,
+                    shortreal,
+                    net_driver: None,
+                    ir: signal,
+                };
+                self.model.signals.push(IrSignal {
+                    fixed_default: self.fixed_default_literal(local),
+                    c_name: info.global.clone(),
+                    hdl_name: None,
+                    ty: if width == 0 {
+                        IrType::Real { shortreal }
+                    } else {
+                        IrType::Packed {
+                            width,
+                            signed,
+                            two_state,
+                        }
+                    },
+                    net_driver: None,
+                    net_alias: Vec::new(),
+                    alias: None,
+                    omit: false,
+                });
+                self.signals.push(info.clone());
+                if let Some(initializer) = self
+                    .db
+                    .var_initializer(local)
+                    .or_else(|| self.db.array_meta(local).and_then(|array| array.init))
+                {
+                    self.inst = inst;
+                    let lowered = self.lower_declaration_initializer(
+                        &self.instance_path_of(inst),
+                        local,
+                        initializer,
+                        IrInitTarget::Signal(info.ir),
+                        info.width,
+                        info.signed,
+                        info.two_state,
+                        info.real,
+                    );
+                    match lowered {
+                        Ok(initializer) => self.declaration_inits.push(initializer),
+                        Err(lowering_error) => {
+                            let value = self
+                                .var_decl_init(
+                                    &self.instance_path_of(inst),
+                                    &self.node(local).name,
+                                    initializer,
+                                )
+                                .map_err(|_| lowering_error)?;
+                            self.var_inits.push((info.clone(), value));
+                        }
+                    }
+                }
+                self.static_task_locals.insert((inst, local), info);
+            }
+        }
+        // A static export's address formals live in persistent
+        // storage that its export thunk fills and reads like a call.
+        let dpi_export = dpi_export.map(|export| {
+            let storage = formals
+                .iter()
+                .map(|(io, _)| {
+                    if automatic {
+                        return None;
+                    }
+                    self.static_formals
+                        .get(&(inst, *io))
+                        .map(|info| info.global.clone())
+                        .or_else(|| {
+                            self.static_string_formals
+                                .get(&(inst, *io))
+                                .or_else(|| self.static_chandle_formals.get(&(inst, *io)))
+                                .map(|object| self.model.objects[*object].c_name.clone())
+                        })
+                })
+                .collect();
+            export
+                .with_storage(storage)
+                .with_record_columns(foreign_columns.clone())
+        });
+        let c_name = self
+            .func_names
+            .get(&c)
+            .cloned()
+            .ok_or_else(|| format!("function `{}` has no C name", self.node(c).name))?;
+        // Event formals of every direction are typed parameters
+        // (`IrCallArg::EventVal`/`EventAddr`), class methods included.
+        let dpi_scope = dpi.as_ref().map(|_| self.dpi_scope(inst, c));
+        let dpi_import = dpi.as_ref().zip(dpi_types).map(|(dpi, (formals, ret))| {
+            crate::sim::ir::IrDpiImport::new(
+                dpi.c_name.clone(),
+                dpi.context,
+                dpi.pure,
+                formals,
+                ret,
+            )
+            .with_scope(dpi_scope)
+            .with_record_columns(foreign_columns.clone())
+        });
+        // An open-array import is a template: each call selects a
+        // specialization for its actuals (`dpi_open_callee`). So is a
+        // task waiting on a native record `ref` formal: each call
+        // binds its record actual (`waits_on_record_ref`).
+        let inline_expanded = match dpi_import.as_ref() {
+            Some(dpi) => dpi.is_open_template(),
+            None => self.waits_on_record_ref(c, inst),
+        };
+        // Register the model entry (call-site lowering and the C
+        // renderers resolve through it).
+        let ir = self.model.funcs.len();
+        self.model.funcs.push(crate::sim::ir::IrFunc {
+            origin: self.origin(c),
+            // A column-layout result is trailing outputs: no value
+            // returns, so there is no default for one.
+            return_default: self.fixed_default_literal(c).filter(|_| ret.is_some()),
+            return_signal: None,
+            c_name,
+            diagnostic_name: self.func_labels.get(&c).cloned(),
+            inline_expanded,
+            automatic,
+            is_task: is_task_f,
+            ret_chandle: self.is_chandle_return(c),
+            ret_string: self.is_string_return(c),
+            dpi: dpi_import,
+            dpi_export,
+            ret: ret.map(|(w, s, two_state, shortreal)| {
+                if w == 0 {
+                    IrType::Real { shortreal }
+                } else {
+                    IrType::Packed {
+                        width: w,
+                        signed: s,
+                        two_state,
+                    }
+                }
+            }),
+            receiver_class: self.class_nodes.get(&inst).copied().filter(|_| {
+                dpi.is_none()
+                    && !matches!(
+                        self.kind(c),
+                        NodeKind::FuncTask {
+                            is_static: true,
+                            ..
+                        }
+                    )
+            }),
+            virtual_slot: self.method_virtual_slots.get(&c).copied(),
+            formals: formals_ir,
+            bound_native_refs: Vec::new(),
+            callback_private_formal_copies: Vec::new(),
+            callback_return_independent: false,
+            locals: Vec::new(),
+            pre_fns: Vec::new(),
+            body: Vec::new(),
+            vpi_automatics: Vec::new(),
+        });
+        self.func_meta.insert(
+            c,
+            FuncMeta {
+                ir,
+                is_task: is_task_f,
+                ret,
+                ret_chandle: self.is_chandle_return(c),
+                ret_string: self.is_string_return(c),
+                formals,
+            },
+        );
         Ok(())
     }
 

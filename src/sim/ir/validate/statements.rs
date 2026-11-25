@@ -84,6 +84,98 @@ impl Validator<'_> {
         formals: &[IrFormal],
         path: IrPath<'_>,
     ) -> ValidationResult {
+        if crate::stack::exhausted() {
+            return self.fail(path, crate::stack::EXHAUSTED);
+        }
+        self.validate_stmt_timing(stmt, formals, path)?;
+        match stmt {
+            IrStmt::Located { statement, .. } => self.validate_stmt(statement, formals, path)?,
+            IrStmt::Block(body) | IrStmt::Forever { body } => {
+                self.validate_stmts(body, formals, format_args!("{path}.body"))?;
+            }
+            IrStmt::ActivationScope { body, exit, .. } => {
+                if exit.is_empty() || exit.starts_with("_llg_exec_") {
+                    return self.fail(path, "activation scope has an invalid exit label");
+                }
+                self.validate_stmts(body, formals, format_args!("{path}.body"))?;
+            }
+            IrStmt::If {
+                cond, then_, els, ..
+            } => {
+                self.validate_expr(cond, formals, format_args!("{path}.cond"))?;
+                self.validate_stmts(then_, formals, format_args!("{path}.then"))?;
+                if let Some(els) = els {
+                    self.validate_stmts(els, formals, format_args!("{path}.else"))?;
+                }
+            }
+            IrStmt::While { cond, body }
+            | IrStmt::Repeat { count: cond, body }
+            | IrStmt::WaitCond { cond, body, .. } => {
+                self.validate_expr(cond, formals, format_args!("{path}.cond"))?;
+                self.validate_stmts(body, formals, format_args!("{path}.body"))?;
+            }
+            IrStmt::WaitEventTriggered { event, body } => {
+                self.validate_event_ref(event, formals, format_args!("{path}.event"))?;
+                self.validate_stmts(body, formals, format_args!("{path}.body"))?;
+            }
+            IrStmt::WaitOrder {
+                events,
+                success,
+                failure,
+            } => {
+                if events.is_empty() {
+                    return self.fail(path, "wait_order requires at least one event");
+                }
+                for (index, event) in events.iter().enumerate() {
+                    self.validate_event_ref(
+                        event,
+                        formals,
+                        format_args!("{path}.events[{index}]"),
+                    )?;
+                }
+                self.validate_stmts(success, formals, format_args!("{path}.success"))?;
+                self.validate_stmts(failure, formals, format_args!("{path}.failure"))?;
+            }
+            IrStmt::For {
+                init,
+                cond,
+                incr,
+                body,
+            } => {
+                self.validate_stmts(init, formals, format_args!("{path}.init"))?;
+                self.validate_expr(cond, formals, format_args!("{path}.cond"))?;
+                self.validate_stmts(incr, formals, format_args!("{path}.incr"))?;
+                self.validate_stmts(body, formals, format_args!("{path}.body"))?;
+            }
+            IrStmt::Case { sel, items, .. } => {
+                self.validate_expr(sel, formals, format_args!("{path}.sel"))?;
+                for (item_idx, item) in items.iter().enumerate() {
+                    for (expr_idx, expr) in item.exprs.iter().enumerate() {
+                        self.validate_expr(
+                            expr,
+                            formals,
+                            format_args!("{path}.items[{item_idx}].exprs[{expr_idx}]"),
+                        )?;
+                    }
+                    self.validate_stmts(
+                        &item.body,
+                        formals,
+                        format_args!("{path}.items[{item_idx}].body"),
+                    )?;
+                }
+            }
+            _ => self.validate_operation_stmt(stmt, formals, path)?,
+        }
+        Ok(())
+    }
+
+    /// The dependencies a wait names and the delays a statement carries.
+    fn validate_stmt_timing(
+        &self,
+        stmt: &IrStmt,
+        formals: &[IrFormal],
+        path: IrPath<'_>,
+    ) -> ValidationResult {
         // A native-access dependency is resolved each time its wait arms.
         if let IrStmt::WaitAny { sens, .. } | IrStmt::WaitCond { sens, .. } = stmt {
             for (index, dependency) in sens.iter().enumerate() {
@@ -147,8 +239,19 @@ impl Validator<'_> {
                 self.validate_expr(value, formals, format_args!("{path}.delay"))?;
             }
         }
+        Ok(())
+    }
+
+    /// [`Self::validate_stmt`] for the statements that nest no others. The
+    /// levels of nested statements recurse without a frame of this function,
+    /// which holds the values of every form (`crate::stack`).
+    fn validate_operation_stmt(
+        &self,
+        stmt: &IrStmt,
+        formals: &[IrFormal],
+        path: IrPath<'_>,
+    ) -> ValidationResult {
         match stmt {
-            IrStmt::Located { statement, .. } => self.validate_stmt(statement, formals, path)?,
             IrStmt::ModulePathStamp { set } => {
                 if *set >= self.model.module_paths.len() {
                     return self.fail(path, "module path stamp names no module path set");
@@ -772,15 +875,6 @@ impl Validator<'_> {
                     }
                 }
             },
-            IrStmt::Block(body) | IrStmt::Forever { body } => {
-                self.validate_stmts(body, formals, format_args!("{path}.body"))?;
-            }
-            IrStmt::ActivationScope { body, exit, .. } => {
-                if exit.is_empty() || exit.starts_with("_llg_exec_") {
-                    return self.fail(path, "activation scope has an invalid exit label");
-                }
-                self.validate_stmts(body, formals, format_args!("{path}.body"))?;
-            }
             IrStmt::DeclLocal {
                 width,
                 init,
@@ -1060,67 +1154,6 @@ impl Validator<'_> {
             IrStmt::EventDeclare { name } => {
                 if name.is_empty() {
                     return self.fail(path, "declared event handle name must not be empty");
-                }
-            }
-            IrStmt::If {
-                cond, then_, els, ..
-            } => {
-                self.validate_expr(cond, formals, format_args!("{path}.cond"))?;
-                self.validate_stmts(then_, formals, format_args!("{path}.then"))?;
-                if let Some(els) = els {
-                    self.validate_stmts(els, formals, format_args!("{path}.else"))?;
-                }
-            }
-            IrStmt::While { cond, body }
-            | IrStmt::Repeat { count: cond, body }
-            | IrStmt::WaitCond { cond, body, .. } => {
-                self.validate_expr(cond, formals, format_args!("{path}.cond"))?;
-                self.validate_stmts(body, formals, format_args!("{path}.body"))?;
-            }
-            IrStmt::WaitEventTriggered { event, body } => {
-                self.validate_event_ref(event, formals, format_args!("{path}.event"))?;
-                self.validate_stmts(body, formals, format_args!("{path}.body"))?;
-            }
-            IrStmt::WaitOrder {
-                events,
-                success,
-                failure,
-            } => {
-                if events.is_empty() {
-                    return self.fail(path, "wait_order requires at least one event");
-                }
-                for (index, event) in events.iter().enumerate() {
-                    self.validate_event_ref(event, formals, format_args!("{path}.events[{index}]"))?;
-                }
-                self.validate_stmts(success, formals, format_args!("{path}.success"))?;
-                self.validate_stmts(failure, formals, format_args!("{path}.failure"))?;
-            }
-            IrStmt::For {
-                init,
-                cond,
-                incr,
-                body,
-            } => {
-                self.validate_stmts(init, formals, format_args!("{path}.init"))?;
-                self.validate_expr(cond, formals, format_args!("{path}.cond"))?;
-                self.validate_stmts(incr, formals, format_args!("{path}.incr"))?;
-                self.validate_stmts(body, formals, format_args!("{path}.body"))?;
-            }
-            IrStmt::Case { sel, items, .. } => {
-                self.validate_expr(sel, formals, format_args!("{path}.sel"))?;
-                for (item_idx, item) in items.iter().enumerate() {
-                    for (expr_idx, expr) in item.exprs.iter().enumerate() {
-                        self.validate_expr(
-                            expr,
-                            formals,
-                            format_args!("{path}.items[{item_idx}].exprs[{expr_idx}]"),
-                        )?;
-                    }
-                    self.validate_stmts(
-                        &item.body,
-                        formals,
-                        format_args!("{path}.items[{item_idx}].body"),
-                    )?;
                 }
             }
             IrStmt::WaitEvents { specs, .. } => {
@@ -1911,9 +1944,22 @@ impl Validator<'_> {
             | IrStmt::StopControl { .. }
             | IrStmt::Label(_)
             | IrStmt::Goto(_)
-            // Checked with the other delays before this match.
+            // Checked by `validate_stmt_timing`.
             | IrStmt::SetNetDelay { .. }
             | IrStmt::Nop => {}
+            // Nested statements: `validate_stmt`.
+            IrStmt::Located { .. }
+            | IrStmt::Block(_)
+            | IrStmt::Forever { .. }
+            | IrStmt::ActivationScope { .. }
+            | IrStmt::If { .. }
+            | IrStmt::While { .. }
+            | IrStmt::Repeat { .. }
+            | IrStmt::WaitCond { .. }
+            | IrStmt::WaitEventTriggered { .. }
+            | IrStmt::WaitOrder { .. }
+            | IrStmt::For { .. }
+            | IrStmt::Case { .. } => {}
         }
         Ok(())
     }

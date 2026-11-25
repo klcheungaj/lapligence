@@ -879,6 +879,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
 
     /// Generate the inline production `item` names, in place.
     fn expand_item(&mut self, item: NodeId) -> Result<Vec<IrStmt>, String> {
+        self.cg.check_stack(item)?;
         let grammar = self.grammar();
         let production = grammar.production_of(item);
         let decl = &grammar.decls[&production];

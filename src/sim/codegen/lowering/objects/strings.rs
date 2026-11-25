@@ -29,6 +29,7 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<IrStringExpr, String> {
+        self.check_stack(node)?;
         self.lower_string_unlocated(path, node)
             .map_err(|error| self.locate_error(node, error))
     }
