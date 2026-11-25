@@ -8,12 +8,6 @@ impl EmitCtx<'_, '_> {
     /// 6.21); a static one is one object per declaration and instance.
     fn lower_subroutine_event(&mut self, declaration: NodeId) -> Result<Vec<IrStmt>, String> {
         let name = self.cg.node(declaration).name.clone();
-        if self.cg.db.event_array_meta(declaration).is_some() {
-            return Err(format!(
-                "subroutine event `{name}` in `{}` with unpacked dimensions is not supported",
-                self.path
-            ));
-        }
         match self.cg.db.variable_lifetime(declaration) {
             VariableLifetime::Automatic => {
                 let handle = format!("_llg_event_{}", declaration.index());
@@ -50,7 +44,10 @@ impl EmitCtx<'_, '_> {
         &mut self,
         declaration: NodeId,
     ) -> Result<Vec<IrStmt>, String> {
-        if self.func.is_some() && matches!(self.cg.kind(declaration), NodeKind::NamedEvent) {
+        if self.func.is_some()
+            && matches!(self.cg.kind(declaration), NodeKind::NamedEvent)
+            && self.cg.db.event_array_meta(declaration).is_none()
+        {
             return self.lower_subroutine_event(declaration);
         }
         if self.func.is_some() && self.cg.record_declaration(declaration) {
@@ -138,6 +135,7 @@ impl EmitCtx<'_, '_> {
                 self.cg
                     .db
                     .array_meta(declaration)
+                    .or_else(|| self.cg.db.event_array_meta(declaration))
                     .and_then(|meta| meta.init)
             });
             if let Some(initializer) = initializer {

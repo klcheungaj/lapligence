@@ -229,11 +229,8 @@ impl Validator<'_> {
                     "metadata key is not a named-event declaration",
                 );
             }
-            if metadata.init.is_some() {
-                return self.fail(
-                    format!("event_arrays[{}].init", event.0),
-                    "named-event arrays cannot have declaration initializers",
-                );
+            if let Some(init) = metadata.init {
+                self.node(init, format_args!("event_arrays[{}].init", event.0))?;
             }
         }
 

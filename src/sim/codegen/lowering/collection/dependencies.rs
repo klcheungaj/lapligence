@@ -83,6 +83,29 @@ impl CallWalk {
     }
 }
 
+/// The storage declared inside subroutines, as the dependencies of reads and
+/// writes name it.
+#[derive(Default)]
+pub(super) struct DeclaredStorage {
+    storage: HashSet<IrDependency>,
+    arrays: HashSet<usize>,
+    containers: HashSet<usize>,
+}
+
+impl DeclaredStorage {
+    pub(super) fn holds(&self, dependency: &IrDependency) -> bool {
+        match dependency {
+            IrDependency::PackedRange { storage, .. } => self.holds(storage),
+            IrDependency::ArrayContents(array) | IrDependency::ArrayElement { array, .. } => {
+                self.arrays.contains(array)
+            }
+            IrDependency::ContainerContents(container)
+            | IrDependency::ContainerShape(container) => self.containers.contains(container),
+            other => self.storage.contains(other),
+        }
+    }
+}
+
 /// The root or the subroutine body [`Codegen::walk_process_writes`] is in.
 #[derive(Default)]
 struct WriteBody {
@@ -331,36 +354,19 @@ impl<'a> Codegen<'a> {
     /// control or an effectful force source. Like always_comb's implicit
     /// sensitivity (SV 9.2.2.2.1), it holds every storage read, including
     /// reads inside called functions, except storage declared within those
-    /// functions (formals, locals, static result) and storage they write.
-    /// Without these exclusions a helper's own stores would re-trigger its
-    /// evaluation, and two such waits sharing a static helper or a counter
-    /// would wake each other forever.
+    /// functions (formals, locals, static result), which no read walk
+    /// reports, and storage they write. Without these exclusions a helper's
+    /// own stores would re-trigger its evaluation, and two such waits sharing
+    /// a static helper or a counter would wake each other forever.
     pub(in super::super) fn collect_evaluator_sensitivity(
         &self,
         scope_path: &str,
         expression: NodeId,
     ) -> Result<Vec<IrDependency>, String> {
         let writes = self.collect_process_writes(expression)?;
-        let mut owned = HashSet::new();
-        let mut owned_arrays = HashSet::new();
-        let mut visited = IdSet::new();
-        self.collect_callee_storage(expression, &mut visited, &mut owned, &mut owned_arrays)?;
-        let owned_storage = |dependency: &IrDependency| {
-            let storage = match dependency {
-                IrDependency::PackedRange { storage, .. } => storage.as_ref(),
-                other => other,
-            };
-            match storage {
-                IrDependency::ArrayContents(array) | IrDependency::ArrayElement { array, .. } => {
-                    owned_arrays.contains(array)
-                }
-                other => owned.contains(other),
-            }
-        };
         Ok(self
             .collect_read_signals(scope_path, expression)?
             .into_iter()
-            .filter(|read| !owned_storage(read))
             .flat_map(|read| {
                 if writes.is_empty() {
                     vec![read]
@@ -371,51 +377,56 @@ impl<'a> Codegen<'a> {
             .collect())
     }
 
-    /// Storage declared inside every function `root` calls, transitively.
-    fn collect_callee_storage(
-        &self,
-        root: NodeId,
-        visited: &mut IdSet<NodeId>,
-        owned: &mut HashSet<IrDependency>,
-        owned_arrays: &mut HashSet<usize>,
-    ) -> Result<(), String> {
-        if let NodeKind::FuncCall {
-            name,
-            is_task,
-            callee,
-            ..
-        } = self.kind(root)
-        {
-            let (function, _) = self.resolve_callee_env(self.inst, name, *is_task, *callee)?;
-            if visited.insert(function) {
-                let mut declarations = vec![function];
-                while let Some(node) = declarations.pop() {
-                    declarations.extend(self.node(node).children.iter().copied());
-                    if !matches!(
-                        self.kind(node),
-                        NodeKind::FuncArg { .. } | NodeKind::Var { .. } | NodeKind::Array { .. }
-                    ) {
-                        continue;
+    /// Add the storage declared inside subroutine `function` (its formals,
+    /// result and locals) to `declared`.
+    pub(super) fn add_declared_storage(&self, function: NodeId, declared: &mut DeclaredStorage) {
+        let mut declarations = vec![function];
+        while let Some(node) = declarations.pop() {
+            declarations.extend(self.node(node).children.iter().copied());
+            if !matches!(
+                self.kind(node),
+                NodeKind::FuncArg { .. }
+                    | NodeKind::FuncTask { .. }
+                    | NodeKind::Var { .. }
+                    | NodeKind::Array { .. }
+            ) {
+                continue;
+            }
+            if let Some(info) = self
+                .signal_of(node)
+                .or_else(|| self.static_proc_local_signal(node))
+            {
+                declared.storage.insert(self.signal_dependency(info));
+            }
+            if let Some(array) = self.array_of(node) {
+                declared.arrays.insert(self.reference_array(array.ir));
+            }
+            if let Some(container) = self.container_of(node) {
+                declared.containers.insert(container.ir);
+            }
+            if let Some(object) = self.object_of("", node) {
+                declared.storage.insert(IrDependency::Object(object));
+            }
+            for dependency in self
+                .unpacked_storage_dependencies(node)
+                .into_iter()
+                .flatten()
+            {
+                match dependency {
+                    IrDependency::ArrayContents(array)
+                    | IrDependency::ArrayElement { array, .. } => {
+                        declared.arrays.insert(array);
                     }
-                    if let Some(info) = self
-                        .signal_of(node)
-                        .or_else(|| self.static_proc_local_signal(node))
-                    {
-                        owned.insert(self.signal_dependency(info));
+                    IrDependency::ContainerContents(container)
+                    | IrDependency::ContainerShape(container) => {
+                        declared.containers.insert(container);
                     }
-                    if let Some(array) = self.array_of(node) {
-                        owned_arrays.insert(self.reference_array(array.ir));
+                    storage => {
+                        declared.storage.insert(storage);
                     }
-                }
-                if let Some(body) = self.func_body(function) {
-                    self.collect_callee_storage(body, visited, owned, owned_arrays)?;
                 }
             }
         }
-        for child in &self.node(root).children {
-            self.collect_callee_storage(*child, visited, owned, owned_arrays)?;
-        }
-        Ok(())
     }
 
     fn dependency_width(&self, dependency: &IrDependency) -> Option<u32> {
@@ -955,7 +966,9 @@ impl<'a> Codegen<'a> {
     /// Storage a process owns under the always_comb/always_latch/always_ff
     /// single-writer rule. Overrides (force, release and procedural
     /// continuous assignments) are not ordinary assignments and stay legal
-    /// on storage another process owns; their operands still count.
+    /// on storage another process owns; their operands still count. Storage
+    /// declared inside a called subroutine is not a variable the process
+    /// owns: a static local is written by each caller (decision S09-D16).
     pub(super) fn collect_ownership_writes(
         &self,
         root: NodeId,
@@ -993,6 +1006,16 @@ impl<'a> Codegen<'a> {
             };
             let Some(node) = node else {
                 let Some(caller) = outer.pop() else {
+                    if mode != ProcessWriteMode::Sensitivity {
+                        writes.retain(|write| !self.activation_dependency(write));
+                    }
+                    if mode == ProcessWriteMode::Ownership && !writes.is_empty() {
+                        let mut declared = DeclaredStorage::default();
+                        for (callee, _) in &calls.walked {
+                            self.add_declared_storage(*callee, &mut declared);
+                        }
+                        writes.retain(|write| !declared.holds(write));
+                    }
                     return Ok(writes);
                 };
                 let left = std::mem::replace(&mut body, caller);
@@ -2021,13 +2044,25 @@ impl<'a> Codegen<'a> {
                             include_function_bodies,
                             &callee_bindings,
                         )?;
-                        // The callee's lexical activation arrays (descriptor
-                        // formals, locals and results) exist only during one
-                        // call and publish no change marker; their contents
-                        // derive from actuals that are tracked themselves.
-                        let mut callee = out.split_off(first);
-                        callee.retain(|dependency| !self.activation_dependency(dependency));
-                        out.extend(callee);
+                        // Storage declared within a called function adds
+                        // nothing (9.2.2.2.1): an activation exists only
+                        // during one call, and a static formal, local or
+                        // result that a call stores would wake every other
+                        // caller. The actuals are tracked themselves.
+                        if out.len() > first {
+                            let mut declared = DeclaredStorage::default();
+                            self.add_declared_storage(ft, &mut declared);
+                            let callee = out.split_off(first);
+                            for dependency in callee {
+                                if self.activation_dependency(&dependency)
+                                    || declared.holds(&dependency)
+                                {
+                                    seen.remove(&dependency);
+                                } else {
+                                    out.push(dependency);
+                                }
+                            }
+                        }
                     }
                     calls.leave(ft, callee_bindings, left_out);
                 }
@@ -2415,18 +2450,32 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// Whether `dependency` names the one storage record that stands for
+    /// every activation of an automatic declaration (or for what a `ref`
+    /// formal aliases). Each activation has its own copy (6.21), so a write
+    /// competes with no other process, and no wait outside the activation
+    /// can name it.
     pub(super) fn activation_dependency(&self, dependency: &IrDependency) -> bool {
-        let array = match dependency {
-            IrDependency::ArrayContents(array) | IrDependency::ArrayElement { array, .. } => *array,
-            IrDependency::PackedRange { storage, .. } => {
-                return self.activation_dependency(storage);
-            }
-            _ => return false,
-        };
-        self.model
-            .arrays
-            .get(array)
-            .is_some_and(|array| array.activation)
+        match dependency {
+            IrDependency::ArrayContents(array) | IrDependency::ArrayElement { array, .. } => self
+                .model
+                .arrays
+                .get(*array)
+                .is_some_and(|array| array.activation),
+            IrDependency::ContainerContents(container)
+            | IrDependency::ContainerShape(container) => self
+                .model
+                .containers
+                .get(*container)
+                .is_some_and(|container| container.activation),
+            IrDependency::NativeValue(value) => self
+                .model
+                .native_values
+                .get(*value)
+                .is_some_and(|value| value.activation),
+            IrDependency::PackedRange { storage, .. } => self.activation_dependency(storage),
+            _ => false,
+        }
     }
 
     fn add_dependency(

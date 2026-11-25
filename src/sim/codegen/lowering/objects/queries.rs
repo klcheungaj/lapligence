@@ -362,14 +362,17 @@ impl Codegen<'_> {
                     // Event handles compare by synchronization-object
                     // identity; null compares equal to a null handle
                     // (SV 6.17, 11.4.5).
-                    let value = object_query(
-                        IrObjectQuery::ChandleEq(
-                            self.lower_event_identity(path, a)?,
-                            self.lower_event_identity(path, b)?,
+                    let value = match self.event_array_equality(path, a, b)? {
+                        Some(value) => value,
+                        None => object_query(
+                            IrObjectQuery::ChandleEq(
+                                self.lower_event_identity(path, a)?,
+                                self.lower_event_identity(path, b)?,
+                            ),
+                            1,
+                            false,
                         ),
-                        1,
-                        false,
-                    );
+                    };
                     return Ok(Some(
                         if matches!(op, Operation::NotEqual | Operation::CaseNotEqual) {
                             IrExpr::new(

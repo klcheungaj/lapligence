@@ -48,7 +48,7 @@ impl<'a> Codegen<'a> {
     /// positional (one item per index) or keyed: index keys name declared
     /// indices of that dimension, and a `default:` or type-key value that
     /// is not itself a pattern fills every cell below the index it covers.
-    fn flatten_multidimensional_pattern(
+    pub(in super::super) fn flatten_multidimensional_pattern(
         &mut self,
         path: &str,
         dimensions: &[(i32, i32)],

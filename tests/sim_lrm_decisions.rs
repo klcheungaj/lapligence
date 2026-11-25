@@ -596,6 +596,30 @@ fn s14_d9_triggered_of_null_event() {
 }
 
 #[test]
+fn sd10_d1_static_local_has_no_owner() {
+    run_decision(
+        "SD10-D1_static_local_has_no_owner",
+        include_str!("fixtures/sim/lrm_decisions/SD10-D1_static_local_has_no_owner.out"),
+    );
+}
+
+#[test]
+fn sd10_d2_subroutine_storage_wakes_nobody() {
+    run_decision(
+        "SD10-D2_subroutine_storage_wakes_nobody",
+        include_str!("fixtures/sim/lrm_decisions/SD10-D2_subroutine_storage_wakes_nobody.out"),
+    );
+}
+
+#[test]
+fn sd10_d3_ambiguous_event_conditional() {
+    run_decision(
+        "SD10-D3_ambiguous_event_conditional",
+        include_str!("fixtures/sim/lrm_decisions/SD10-D3_ambiguous_event_conditional.out"),
+    );
+}
+
+#[test]
 fn s28_d10_state_methods_on_null() {
     run_decision(
         "S28-D10_state_methods_on_null",

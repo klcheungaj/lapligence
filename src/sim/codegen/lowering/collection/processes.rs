@@ -1255,7 +1255,7 @@ impl<'a> Codegen<'a> {
             writers.push(ProcessWriter {
                 node: id,
                 label: format!("{}.continuous", self.source_path(&self.scope_path_of(inst))),
-                writes: self.collect_process_writes(id)?,
+                writes: self.collect_ownership_writes(id)?,
             });
         }
 

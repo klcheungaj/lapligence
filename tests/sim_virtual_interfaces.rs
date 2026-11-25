@@ -251,15 +251,30 @@ fn event_controlled_update_through_a_null_handle_stops_at_the_event() {
 }
 
 #[test]
-fn event_forms_without_a_virtual_interface_path_are_located() {
-    sim_cli::reject_case(
+fn event_arrays_and_assignments_go_to_the_bound_instance() {
+    sim_cli::run_case_backend_parity(
         "virtual_interfaces",
-        "neg_event_array_trigger",
-        "neg_event_array_trigger.sv:7:11: [CODEGEN-002] cannot resolve named event expression",
+        "event_members",
+        include_str!("fixtures/sim/virtual_interfaces/event_members.out"),
+        &[],
+        &[],
     );
+}
+
+#[test]
+fn event_array_element_through_a_null_handle_stops_at_once() {
+    ends_at_null_handle(
+        "null_event_array",
+        "",
+        "virtual interface access failed: virtual interface event at tb:10:8",
+    );
+}
+
+#[test]
+fn event_array_element_as_a_reference_actual_is_located() {
     sim_cli::reject_case(
         "virtual_interfaces",
-        "neg_event_assignment",
-        "neg_event_assignment.sv:8:11: [CODEGEN-006] event property `ie` in `tb` has no class layout",
+        "neg_event_array_actual",
+        "neg_event_array_actual.sv:11:18: [CODEGEN-002] an element of an event array of a class object or a virtual interface",
     );
 }

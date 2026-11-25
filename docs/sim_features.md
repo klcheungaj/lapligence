@@ -1229,7 +1229,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   null and comparison execute. Nonblocking triggers name their event at issue
   and do not suspend the issuer; `.triggered` holds for the time step and is
   false for null (S14-D9); waiting on a null event ends the run (S14-D8);
-  scalar declaration initializers (an event or `null`) execute in every scope;
+  declaration initializers (an event, `null`, an event array) execute in every
+  scope, whole fixed event arrays assign and compare, and a conditional
+  operator selects an event (SD10-D3);
   events test false only when null; `wait_order` lets its
   first event use the triggered state, and a failure without an `else` is a
   run-time error that ends the run at once, without final procedures
@@ -2694,8 +2696,8 @@ These are bounded implementations, not full verification-infrastructure support.
   the final procedures (S99-D8)
   ([sim_012](../tests/fixtures/sim/feature_completion/sim_012/readme.md)).
   An array of interface instances assigns and passes as an array of handles.
-  Named events of the bound instance trigger, wait and read `.triggered`
-  through a handle
+  Named events of the bound instance and elements of its event arrays trigger,
+  wait, read `.triggered` and are assigned through a handle
   ([virtual_interfaces](../tests/fixtures/sim/virtual_interfaces/readme.md),
   [known issue](known_issues.md#event-forms-through-virtual-interfaces)).
   Synchronous drives through handles, views, class properties and array

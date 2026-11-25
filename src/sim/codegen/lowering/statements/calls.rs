@@ -908,9 +908,7 @@ impl EmitCtx<'_, '_> {
                     // (as the caller's handle address does for variables)
                     // and its final handle is copied back into the property
                     // of the object the actual names at return (SV 13.5).
-                    let slot = self
-                        .cg
-                        .class_event_slot(&self.path, access, target.declaration)?;
+                    let slot = self.cg.event_access_slot(&self.path, access, &target)?;
                     let temporary = format!("_evout_{}_{idx}", h.0);
                     before.push(IrStmt::EventCapture {
                         name: temporary.clone(),

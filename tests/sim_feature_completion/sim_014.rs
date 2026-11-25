@@ -227,6 +227,28 @@ fn event_variables_take_their_declaration_initializers() {
 }
 
 #[test]
+fn event_arrays_initialize_assign_and_compare() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "event_arrays",
+        include_str!("../fixtures/sim/feature_completion/sim_014/event_arrays.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn conditional_operators_select_events() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "event_conditionals",
+        include_str!("../fixtures/sim/feature_completion/sim_014/event_conditionals.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
 fn triggered_state_identity_and_wait_order() {
     sim_cli::run_case_backend_parity(
         SUITE,

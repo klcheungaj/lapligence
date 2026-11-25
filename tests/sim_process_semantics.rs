@@ -51,6 +51,24 @@ fn legal_function_side_effect_is_not_rejected() {
 }
 
 #[test]
+fn storage_of_called_subroutines_has_no_owner() {
+    sim_cli::run_case_backend_parity(
+        "process_semantics",
+        "callee_locals",
+        include_str!("fixtures/sim/process_semantics/callee_locals.out"),
+        &[],
+        &[],
+    );
+    sim_cli::run_case_backend_parity(
+        "process_semantics",
+        "callee_locals_shared",
+        include_str!("fixtures/sim/process_semantics/callee_locals_shared.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
 fn multiple_writers_reject_without_lint() {
     sim_cli::reject_case("process_semantics", "multiple_writer", "multiple writers");
 }

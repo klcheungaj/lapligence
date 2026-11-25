@@ -2515,29 +2515,28 @@ reads per bound instance.
 
 ## Event forms through virtual interfaces
 
-**Status:** open. Both forms reject with a located diagnostic.
+**Status:** open. Each form rejects with a located diagnostic.
 
 ### Symptom
 
-An element of an event array of the interface (`-> v.ea[1]`, "cannot resolve
-named event expression") and an assignment to an event of the interface
-(`v.ie = e`, "event property `ie` has no class layout"). An event of an
-interface type without an instance, which no handle can bind, rejects like the
-former.
+An element of an event array of the interface as an output, inout or `ref`
+actual (`t(v.ea[1])`), a resizable event container of the interface, and an
+event of an interface type without an instance, which no handle can bind. An
+element of an event container property as such an actual (`t(h.ea[1])`) rejects
+too.
 
 ### Cause
 
-A descriptor has one event slot per named event and clocking block; the slots
-are read only and have no index.
+An element is selected where an operation is issued, per bound instance; such an
+actual needs the address of a handle.
 
 ### Intended direction
 
-Give event arrays indexed slots and event assignments the slot's address.
+Give event arrays indexed slots in the descriptor.
 
 ### Reproduce
 
-`tests/fixtures/sim/virtual_interfaces/neg_event_array_trigger.sv` and
-`neg_event_assignment.sv`.
+`tests/fixtures/sim/virtual_interfaces/neg_event_array_actual.sv`.
 
 ## Modport expression ports through virtual interfaces
 
