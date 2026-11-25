@@ -1,5 +1,6 @@
 //! Regression models exercise the production emitter, not handwritten C shapes.
 use super::*;
+use crate::sim::ir::{IrJumpState, IrJumpStateOp};
 
 fn display_value() -> IrStmt {
     IrStmt::Display {
@@ -417,4 +418,64 @@ fn disabled_wide_local_scope_unwinds_before_exit() {
         source.contains("wide_exit"),
         "cancellation must leave through the scope unwind label"
     );
+}
+
+/// A jump state selects the forward jump of a body without a model value.
+#[test]
+fn jump_states_steer_forward_jumps_and_are_declared_first() {
+    let state = |operation| {
+        IrStmt::JumpState(Box::new(IrJumpState {
+            name: "place".to_owned(),
+            operation,
+        }))
+    };
+    let goto_if = |first, last, label: &str| {
+        state(IrJumpStateOp::GotoIf {
+            first,
+            last,
+            label: label.to_owned(),
+        })
+    };
+    let assign = |value| IrStmt::Assign {
+        lhs: IrLhs::Whole(0),
+        rhs: number(value, 65),
+        nba: false,
+    };
+    let body = vec![
+        state(IrJumpStateOp::Declare),
+        assign(1),
+        IrStmt::Block(vec![
+            goto_if(1, u32::MAX, "wrong"),
+            state(IrJumpStateOp::Set(7)),
+            goto_if(6, 6, "wrong"),
+            goto_if(5, 8, "right"),
+            assign(2),
+        ]),
+        IrStmt::Label("wrong".to_owned()),
+        IrStmt::Block(vec![assign(3)]),
+        IrStmt::Label("right".to_owned()),
+        display_value(),
+    ];
+    let mut model = numeric_model();
+    model.processes[0].body = vec![IrStmt::Block(body.clone())];
+    let source = run_model(model, "jump-state", "1\n");
+    assert!(source.contains("uint32_t _llg_scalar_"), "{source}");
+
+    let mut undeclared = numeric_model();
+    undeclared.processes[0].body = vec![IrStmt::Block(body[1..].to_vec())];
+    let execution = ExecutionModel::lower(undeclared).expect("the labels resolve");
+    assert!(super::super::super::model::render(&execution).is_err());
+
+    // The target of the conditional jump must exist.
+    let mut missing = numeric_model();
+    missing.processes[0].body = vec![IrStmt::Block(body[..4].to_vec())];
+    assert!(ExecutionModel::lower(missing).is_err());
+
+    let mut empty_range = numeric_model();
+    empty_range.processes[0].body = vec![IrStmt::Block(vec![
+        state(IrJumpStateOp::Declare),
+        goto_if(2, 1, "end"),
+        IrStmt::Label("end".to_owned()),
+    ])];
+    assert!(ExecutionModel::lower(empty_range).is_err());
 }

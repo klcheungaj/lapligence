@@ -8,21 +8,122 @@
 //! and emptied when it differs. A tagged union merges its tag and each
 //! member as a whole.
 
+use super::super::super::expressions::ExpandedConditional;
 use super::*;
+
+/// The conditional assignment of a native record.
+struct NativeConditional<'t> {
+    target: &'t NativeEndpoint,
+    descriptor: &'t TypeDescriptor,
+    nba: bool,
+}
+
+impl ExpandedConditional for NativeConditional<'_> {
+    type Operand = NativeEndpoint;
+
+    fn nested(
+        &mut self,
+        cg: &mut Codegen<'_>,
+        path: &str,
+        arm: NodeId,
+    ) -> Result<Option<NodeId>, String> {
+        let source = cg.p30_unwrap_cast(arm);
+        if !cg.native_record_conditional(source) {
+            return Ok(None);
+        }
+        // Elements an alternative stages are bound around all of it.
+        if cg.stage_expression_members(path, arm)?.is_some() {
+            cg.end_element_member_staging();
+            return Ok(None);
+        }
+        Ok(Some(source))
+    }
+
+    fn assign(
+        &mut self,
+        cg: &mut Codegen<'_>,
+        path: &str,
+        dst: Option<&NativeEndpoint>,
+        arm: NodeId,
+    ) -> Result<IrStmt, String> {
+        let (target, nba) = dst.map_or((self.target, self.nba), |dst| (dst, false));
+        cg.native_arm_into(path, target, self.descriptor, arm, nba)
+    }
+
+    /// Record variables are read in place; any other arm (call, pattern,
+    /// nested conditional) is first assigned to a lexical temporary of the
+    /// record type.
+    fn evaluate(
+        &mut self,
+        cg: &mut Codegen<'_>,
+        path: &str,
+        arm: NodeId,
+        out: &mut Vec<IrStmt>,
+    ) -> Result<NativeEndpoint, String> {
+        if let Some((endpoint, _)) = cg.native_endpoint(cg.p30_unwrap_cast(arm))? {
+            return Ok(endpoint);
+        }
+        let endpoint = self.declare_kept(cg, arm, out)?;
+        let layout = cg
+            .native_layout(arm)?
+            .ok_or("native conditional arm has no record layout")?;
+        out.push(cg.native_arm_into(path, &endpoint, &layout.descriptor, arm, false)?);
+        Ok(endpoint)
+    }
+
+    fn reads_in_place(&mut self, cg: &mut Codegen<'_>, arm: NodeId) -> Result<bool, String> {
+        Ok(cg.native_endpoint(cg.p30_unwrap_cast(arm))?.is_some())
+    }
+
+    fn declare_kept(
+        &mut self,
+        cg: &mut Codegen<'_>,
+        node: NodeId,
+        out: &mut Vec<IrStmt>,
+    ) -> Result<NativeEndpoint, String> {
+        let value = cg.native_temporary(node)?;
+        out.push(IrStmt::NativeValueDeclare(value));
+        Ok(NativeEndpoint::Value {
+            value,
+            prefix: Vec::new(),
+        })
+    }
+
+    fn merge(
+        &mut self,
+        cg: &mut Codegen<'_>,
+        path: &str,
+        dst: Option<&NativeEndpoint>,
+        left: &NativeEndpoint,
+        right: &NativeEndpoint,
+    ) -> Result<Vec<IrStmt>, String> {
+        let (target, nba) = dst.map_or((self.target, self.nba), |dst| (dst, false));
+        cg.native_conditional_merge(path, target, self.descriptor, left, right, nba)
+    }
+
+    fn private_target(&self, cg: &Codegen<'_>) -> Option<NativeEndpoint> {
+        let NativeEndpoint::Value { value, .. } = self.target else {
+            return None;
+        };
+        (!self.nba && cg.native_temporaries.contains(value)).then(|| self.target.clone())
+    }
+
+    fn copy(
+        &mut self,
+        cg: &mut Codegen<'_>,
+        path: &str,
+        dst: Option<&NativeEndpoint>,
+        src: &NativeEndpoint,
+    ) -> Result<IrStmt, String> {
+        let (target, nba) = dst.map_or((self.target, self.nba), |dst| (dst, false));
+        cg.native_transfer(path, target, src, nba)
+    }
+}
 
 impl Codegen<'_> {
     /// Whether `node` is a conditional operator producing a native record.
     pub(in crate::sim::codegen) fn native_record_conditional(&self, node: NodeId) -> bool {
-        matches!(
-            self.kind(node),
-            NodeKind::Expr(
-                ExprKind::Conditional { .. }
-                    | ExprKind::Operation {
-                        op: Operation::Conditional,
-                        ..
-                    }
-            )
-        ) && self.native_value_type(node).is_some()
+        self.is_conditional(node) && self.native_value_type(node).is_some()
     }
 
     /// Assign the conditional `source` to `target`.
@@ -34,88 +135,12 @@ impl Codegen<'_> {
         source: NodeId,
         nba: bool,
     ) -> Result<IrStmt, String> {
-        let (selector, if_true, if_false) = match self.kind(source) {
-            NodeKind::Expr(ExprKind::Conditional {
-                predicate,
-                if_true,
-                if_false,
-            }) => {
-                let (if_true, if_false) = (*if_true, *if_false);
-                let predicate = predicate.clone();
-                (
-                    self.lower_conditional_predicate(path, &predicate)?,
-                    if_true,
-                    if_false,
-                )
-            }
-            NodeKind::Expr(ExprKind::Operation { operands, .. }) if operands.len() == 3 => {
-                let (condition, if_true, if_false) = (operands[0], operands[1], operands[2]);
-                (self.lower_boolean_expr(path, condition)?, if_true, if_false)
-            }
-            _ => {
-                return Err(format!(
-                    "native record conditional in `{path}` is malformed"
-                ))
-            }
+        let mut sink = NativeConditional {
+            target,
+            descriptor,
+            nba,
         };
-        let sequence = self.native_copy_sequence;
-        self.native_copy_sequence += 1;
-        let name = format!("_llg_native_sel_{sequence}");
-        let (width, signed) = (selector.width, selector.signed);
-        let declare = IrStmt::DeclLocal {
-            name: name.clone(),
-            width,
-            signed,
-            two_state: false,
-            init: Some(Box::new(selector)),
-        };
-        let read = IrExpr::new(IrExprKind::LocalRead(name), width, signed, None);
-        let known_false = cmp_expr_ir(IrBinOp::CaseEq, read.clone(), const_bits_expr(width, false));
-        let take_true = self.native_arm_into(path, target, descriptor, if_true, nba)?;
-        let take_false = self.native_arm_into(path, target, descriptor, if_false, nba)?;
-        let merge =
-            self.native_conditional_merge(path, target, descriptor, if_true, if_false, nba)?;
-        // `if` takes its else branch for an unknown condition, so the inner
-        // test separates a known false from an ambiguous predicate.
-        Ok(IrStmt::Block(vec![
-            declare,
-            IrStmt::If {
-                cond: read,
-                then_: vec![take_true],
-                els: Some(vec![IrStmt::If {
-                    cond: known_false,
-                    then_: vec![take_false],
-                    els: Some(vec![merge]),
-                    check: IrUniquePriorityCheck::None,
-                }]),
-                check: IrUniquePriorityCheck::None,
-            },
-        ]))
-    }
-
-    /// One evaluated arm as a leaf endpoint. Record variables are read in
-    /// place; any other arm (call, pattern, nested conditional) is first
-    /// assigned to a lexical temporary of the record type.
-    fn native_conditional_arm(
-        &mut self,
-        path: &str,
-        arm: NodeId,
-        statements: &mut Vec<IrStmt>,
-    ) -> Result<NativeEndpoint, String> {
-        if let Some((endpoint, _)) = self.native_endpoint(self.p30_unwrap_cast(arm))? {
-            return Ok(endpoint);
-        }
-        let temporary = self.native_temporary(arm)?;
-        let endpoint = NativeEndpoint::Value {
-            value: temporary,
-            prefix: Vec::new(),
-        };
-        let layout = self
-            .native_layout(arm)?
-            .ok_or("native conditional arm has no record layout")?;
-        statements.push(IrStmt::NativeValueDeclare(temporary));
-        statements.push(self.native_arm_into(path, &endpoint, &layout.descriptor, arm, false)?);
-        Ok(endpoint)
+        self.expand_conditional(path, &mut sink, source)
     }
 
     /// Assign one arm. An arm that runs only when taken stages the nested
@@ -141,21 +166,20 @@ impl Codegen<'_> {
         Ok(IrStmt::Block(statements))
     }
 
+    /// Merge two evaluated arms into `target`, which may be one of them.
     fn native_conditional_merge(
         &mut self,
         path: &str,
         target: &NativeEndpoint,
         descriptor: &TypeDescriptor,
-        if_true: NodeId,
-        if_false: NodeId,
+        left: &NativeEndpoint,
+        right: &NativeEndpoint,
         nba: bool,
-    ) -> Result<IrStmt, String> {
+    ) -> Result<Vec<IrStmt>, String> {
         let mut statements = Vec::new();
-        let left = self.native_conditional_arm(path, if_true, &mut statements)?;
-        let right = self.native_conditional_arm(path, if_false, &mut statements)?;
         let mut targets = self.endpoint_leaves(target)?;
-        let mut lefts = self.endpoint_leaves(&left)?;
-        let mut rights = self.endpoint_leaves(&right)?;
+        let mut lefts = self.endpoint_leaves(left)?;
+        let mut rights = self.endpoint_leaves(right)?;
         if targets.is_empty()
             || targets.len() != lefts.len()
             || targets.len() != rights.len()
@@ -272,7 +296,7 @@ impl Codegen<'_> {
                 nba,
             )?);
         }
-        Ok(IrStmt::Block(statements))
+        Ok(statements)
     }
 
     /// The elements of one arm's fixed member array as a container: a slot

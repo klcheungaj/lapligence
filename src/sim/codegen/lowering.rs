@@ -2035,6 +2035,8 @@ struct Codegen<'a> {
     native_tagged_bypass: HashSet<NodeId>,
     /// Native value → declaration whose layout describes it.
     native_value_layouts: HashMap<usize, NodeId>,
+    /// Native values no source construct names.
+    native_temporaries: HashSet<usize>,
     /// Native values whose members some call binds to `ref` formals through
     /// retained references ([`crate::sim::ir::IrNativeValue::ref_rooted`]).
     ref_rooted_values: HashSet<usize>,
@@ -2744,6 +2746,7 @@ impl<'a> Codegen<'a> {
             container_types_like: HashMap::new(),
             native_tagged_bypass: HashSet::new(),
             native_value_layouts: HashMap::new(),
+            native_temporaries: HashSet::new(),
             ref_rooted_values: HashSet::new(),
             whole_ref_actuals: Vec::new(),
             native_roots: HashMap::new(),

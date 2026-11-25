@@ -281,8 +281,12 @@ record NBAs lower to one such statement (or a packed `Assign`/`DelayedAssign`)
 per leaf. `IrStringExpr::Conditional` and `IrChandleExpr::Conditional` carry an
 integral predicate and two lazily evaluated arms; an ambiguous predicate keeps
 equal values and otherwise yields `""` or null. Native record conditionals
-lower to ordinary `If` statements over captured leaves, never to
-`IrFixedValue`. `IrContainerStmt::NbaLocate` and `NbaLocateEnd` bracket one
+lower to a `Case` on the predicate's truth and leaf-wise merges of captured
+leaves, or past `CONDITIONAL_EXPANSION_LEVELS` to one sequence with jumps
+(`codegen/lowering/expressions/conditional_expansion.rs`), never to
+`IrFixedValue`. The jumps are steered by an `IrStmt::JumpState`, a plain C
+integer that holds no value of the design; an integer the design can observe
+stays a `DeclLocal`. `IrContainerStmt::NbaLocate` and `NbaLocateEnd` bracket one
 ordinary NBA to name an item inside a native value (a member of a fixed-array
 record element, a static subroutine record leaf): the element position is
 fixed at issue and the runtime finds the item again at commit

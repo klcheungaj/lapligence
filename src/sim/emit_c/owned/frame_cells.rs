@@ -350,6 +350,7 @@ impl CellEligibility {
             IrStmt::Nop
             | IrStmt::Label(_)
             | IrStmt::Goto(_)
+            | IrStmt::JumpState(_)
             | IrStmt::Finish
             | IrStmt::FinishControl { .. }
             | IrStmt::StopControl { .. }

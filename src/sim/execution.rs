@@ -22,9 +22,9 @@ use effects::{is_context_import, EffectSet};
 
 use crate::sim::ir::{
     IrArrayQueryTarget, IrCallArg, IrChandleExpr, IrContainerExpr, IrContainerStmt, IrDependency,
-    IrDisplayArg, IrExpr, IrExprKind, IrInsideItem, IrLhs, IrMailboxExpr, IrMailboxValue,
-    IrMemoryImage, IrMemoryStorage, IrModel, IrObjectQuery, IrObjectStmt, IrShape, IrStmt,
-    IrStochasticStmt, IrStreamSelector, IrStreamTarget, IrStringExpr, IrStringInsideItem,
+    IrDisplayArg, IrExpr, IrExprKind, IrInsideItem, IrJumpStateOp, IrLhs, IrMailboxExpr,
+    IrMailboxValue, IrMemoryImage, IrMemoryStorage, IrModel, IrObjectQuery, IrObjectStmt, IrShape,
+    IrStmt, IrStochasticStmt, IrStreamSelector, IrStreamTarget, IrStringExpr, IrStringInsideItem,
     IrSysFunc, IrValidationError, VirtualDispatch,
 };
 use crate::sim::semantic::{ExtensionRef, Origin};
@@ -498,6 +498,11 @@ fn collect_control_labels<'a>(
                 }
             }
             IrStmt::Goto(label) => gotos.push(label),
+            IrStmt::JumpState(state) => {
+                if let IrJumpStateOp::GotoIf { label, .. } = &state.operation {
+                    gotos.push(label);
+                }
+            }
             IrStmt::Block(body)
             | IrStmt::While { body, .. }
             | IrStmt::Repeat { body, .. }

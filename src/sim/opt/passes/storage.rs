@@ -1068,6 +1068,7 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         | IrStmt::Return { value: None }
         | IrStmt::Label(_)
         | IrStmt::Goto(_)
+        | IrStmt::JumpState(_)
         // Its delay expressions are read with every statement's.
         | IrStmt::SetNetDelay { .. }
         // Its sources are read through `IrModel::module_paths` (below).

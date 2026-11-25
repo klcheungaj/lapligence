@@ -1184,6 +1184,16 @@ impl Validator<'_> {
                 }
                 self.validate_event_ref(source, formals, format_args!("{path}.source"))?;
             }
+            IrStmt::JumpState(state) => {
+                if state.name.is_empty() {
+                    return self.fail(path, "jump state name must not be empty");
+                }
+                if let IrJumpStateOp::GotoIf { first, last, .. } = state.operation {
+                    if first > last {
+                        return self.fail(path, "jump state range must not be empty");
+                    }
+                }
+            }
             IrStmt::EventDeclare { name } => {
                 if name.is_empty() {
                     return self.fail(path, "declared event handle name must not be empty");

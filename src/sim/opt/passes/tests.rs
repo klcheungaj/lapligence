@@ -1089,11 +1089,21 @@ fn prune_keeps_labels_that_are_still_goto_targets() {
             ]),
             IrStmt::Label("_bk2".to_string()),
             IrStmt::Goto("_bk2".to_string()),
+            IrStmt::JumpState(Box::new(crate::sim::ir::IrJumpState {
+                name: "place".to_string(),
+                operation: crate::sim::ir::IrJumpStateOp::GotoIf {
+                    first: 1,
+                    last: 2,
+                    label: "_bk3".to_string(),
+                },
+            })),
+            IrStmt::Label("_bk3".to_string()),
         ],
         sigs(1),
     );
     run(&mut m, &prune_only());
     let labels: Vec<&str> = collect_all_labels(proc_body(&m));
+    assert!(labels.contains(&"_bk3"), "conditional jump target kept");
     assert!(labels.contains(&"_ct1"), "live target kept");
     assert!(labels.contains(&"_bk2"), "goto-referenced label kept");
     assert!(

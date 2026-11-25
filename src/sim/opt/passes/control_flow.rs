@@ -1,6 +1,7 @@
 //! Control flow.
 
 use super::*;
+use crate::sim::ir::IrJumpStateOp;
 
 // ── Pass: prune_branches ──────────────────────────────────────────────────────
 
@@ -156,6 +157,11 @@ fn collect_goto_names(stmts: &[IrStmt], out: &mut HashSet<String>) {
         match s.unlocated() {
             IrStmt::Goto(l) => {
                 out.insert(l.clone());
+            }
+            IrStmt::JumpState(state) => {
+                if let IrJumpStateOp::GotoIf { label, .. } = &state.operation {
+                    out.insert(label.clone());
+                }
             }
             IrStmt::Block(b)
             | IrStmt::Forever { body: b }
