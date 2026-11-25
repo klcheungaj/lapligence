@@ -45,9 +45,9 @@ use types::TypedefNames;
 pub use types::{
     AggregateKind, AggregateLayout, AggregateMember, ArrayKind, ArrayMeta,
     AssignmentPatternKeyType, AssociativeIndex, ClassMetadata, DpiImportInfo, DpiOpenType,
-    ElaboratedTypeRanges, EnumMember, EnumTypeMetadata, ForwardTypedef, MemberVisibility,
-    PackedMember, PackedRange, TypeDescriptor, TypeId, TypeShape, TypedefRef, ValueCopySemantics,
-    ValueDefaultSemantics, ValueDestroySemantics, ValueEqualitySemantics,
+    ElaboratedTypeRanges, ElementValue, EnumMember, EnumTypeMetadata, ForwardTypedef,
+    MemberVisibility, PackedMember, PackedRange, TypeDescriptor, TypeId, TypeShape, TypedefRef,
+    ValueCopySemantics, ValueDefaultSemantics, ValueDestroySemantics, ValueEqualitySemantics,
 };
 mod constraints;
 use constraints::{constraint_block_from_slang, constraint_from_slang, ordered_targets};
@@ -290,6 +290,7 @@ pub struct Db {
     declared_time_scale_element: Option<TimeScaleElement>,
     overridden_parameters: HashSet<NodeId>,
     string_literal_parameters: HashSet<NodeId>,
+    parameter_elements: HashMap<NodeId, ElementValue>,
     /// Native semantic categories retained for coverage checks when the
     /// frontend-neutral [`NodeKind`] intentionally has no direct variant.
     semantic_kinds: Vec<CapturedSemanticKind>,
@@ -558,6 +559,7 @@ impl Db {
             declared_time_scale_element: None,
             overridden_parameters: HashSet::new(),
             string_literal_parameters: HashSet::new(),
+            parameter_elements: HashMap::new(),
             semantic_kinds: Vec::new(),
             semantic_details: DenseShared::default(),
             conditional_patterns: HashMap::new(),
@@ -672,6 +674,7 @@ impl Db {
             declared_time_scale_element: None,
             overridden_parameters: HashSet::new(),
             string_literal_parameters: HashSet::new(),
+            parameter_elements: HashMap::new(),
             semantic_kinds: Vec::new(),
             semantic_details: DenseShared::default(),
             conditional_patterns: HashMap::new(),
@@ -1795,6 +1798,12 @@ impl Db {
     /// string literal or a concatenation of string literals.
     pub fn parameter_is_string_literal(&self, id: NodeId) -> bool {
         self.string_literal_parameters.contains(&id)
+    }
+
+    /// The elaborated value of a parameter of a fixed unpacked array,
+    /// unpacked structure or unpacked union type.
+    pub fn parameter_elements(&self, id: NodeId) -> Option<&ElementValue> {
+        self.parameter_elements.get(&id)
     }
 }
 

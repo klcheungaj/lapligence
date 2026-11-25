@@ -153,6 +153,7 @@ fn format_constant(value: &ConstantValue) -> String {
         ConstantValue::Real(value) => value.to_string(),
         ConstantValue::ShortReal(value) => value.to_string(),
         ConstantValue::String(value) => String::from_utf8_lossy(value).into_owned(),
+        ConstantValue::Elements(_) | ConstantValue::Union { .. } => "<elements>".to_owned(),
         ConstantValue::Other(value) => value.clone(),
     }
 }

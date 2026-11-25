@@ -11,14 +11,20 @@ mod tests;
 /// contexts still use [`fixed_width`] and therefore retain the packed-value
 /// limit.
 pub(super) fn fixed_width_bits(descriptor: &TypeDescriptor) -> Option<u64> {
+    image_width_bits(descriptor, None)
+}
+
+/// [`fixed_width_bits`] with the width that a real leaf takes, if any.
+fn image_width_bits(descriptor: &TypeDescriptor, real_width: Option<u64>) -> Option<u64> {
     match &descriptor.shape {
         TypeShape::PackedAtom { .. } => descriptor.info.width.map(u64::from),
         TypeShape::Opaque { kind } if kind == "Void" => Some(0),
+        TypeShape::Real { .. } => real_width,
         TypeShape::Aggregate(layout) => {
             let mut widths = layout
                 .members
                 .iter()
-                .map(|member| fixed_width_bits(&member.descriptor));
+                .map(|member| image_width_bits(&member.descriptor, real_width));
             if matches!(
                 layout.kind,
                 AggregateKind::PackedUnion | AggregateKind::UnpackedUnion
@@ -39,20 +45,29 @@ pub(super) fn fixed_width_bits(descriptor: &TypeDescriptor) -> Option<u64> {
         TypeShape::FixedArray {
             dimensions,
             element,
-        } => dimensions
-            .iter()
-            .try_fold(fixed_width_bits(element)?, |width, (left, right)| {
+        } => dimensions.iter().try_fold(
+            image_width_bits(element, real_width)?,
+            |width, (left, right)| {
                 let count = i64::from(*left)
                     .abs_diff(i64::from(*right))
                     .checked_add(1)?;
                 width.checked_mul(count)
-            }),
+            },
+        ),
         _ => None,
     }
 }
 
 pub(super) fn fixed_width(descriptor: &TypeDescriptor) -> Option<u32> {
-    let width = fixed_width_bits(descriptor)?;
+    image_width(descriptor, None)
+}
+
+/// [`fixed_width`] with the width that a real leaf takes, if any.
+pub(in super::super) fn image_width(
+    descriptor: &TypeDescriptor,
+    real_width: Option<u64>,
+) -> Option<u32> {
+    let width = image_width_bits(descriptor, real_width)?;
     (width != 0 && width <= u64::from(LLG_MAX_WIDTH))
         .then(|| u32::try_from(width).ok())
         .flatten()
@@ -91,9 +106,40 @@ pub(super) fn two_state(descriptor: &TypeDescriptor) -> bool {
     descriptor.two_state
 }
 
+/// The type of the elements of a fixed array's outermost dimension.
+pub(in super::super) fn element_descriptor(descriptor: &TypeDescriptor) -> Option<TypeDescriptor> {
+    let TypeShape::FixedArray {
+        dimensions,
+        element,
+    } = &descriptor.shape
+    else {
+        return None;
+    };
+    Some(if dimensions.len() == 1 {
+        element.as_ref().clone()
+    } else {
+        TypeDescriptor {
+            shape: TypeShape::FixedArray {
+                dimensions: dimensions[1..].to_vec(),
+                element: element.clone(),
+            },
+            ..descriptor.clone()
+        }
+    })
+}
+
 pub(in super::super) fn fixed_path_descriptor(
     root: &TypeDescriptor,
     path: &[AggregatePathPart],
+) -> Option<(TypeDescriptor, u32)> {
+    image_path_descriptor(root, path, None)
+}
+
+/// [`fixed_path_descriptor`] with the width that a real leaf takes, if any.
+pub(in super::super) fn image_path_descriptor(
+    root: &TypeDescriptor,
+    path: &[AggregatePathPart],
+    real_width: Option<u64>,
 ) -> Option<(TypeDescriptor, u32)> {
     let mut descriptor = root.clone();
     let mut offset = 0u32;
@@ -108,7 +154,8 @@ pub(in super::super) fn fixed_path_descriptor(
                 let displacement = if layout.kind == AggregateKind::UnpackedUnion
                     && matches!(&member.descriptor.shape, TypeShape::Aggregate(layout) if layout.kind == AggregateKind::UnpackedStruct)
                 {
-                    fixed_width(&descriptor)? - fixed_width(&member.descriptor)?
+                    image_width(&descriptor, real_width)?
+                        - image_width(&member.descriptor, real_width)?
                 } else if matches!(
                     layout.kind,
                     AggregateKind::UnpackedUnion
@@ -120,36 +167,21 @@ pub(in super::super) fn fixed_path_descriptor(
                     layout.members[index + 1..]
                         .iter()
                         .try_fold(0u32, |sum, member| {
-                            sum.checked_add(fixed_width(&member.descriptor)?)
+                            sum.checked_add(image_width(&member.descriptor, real_width)?)
                         })?
                 };
                 offset = offset.checked_add(displacement)?;
                 descriptor = member.descriptor.clone();
             }
-            (
-                AggregatePathPart::Index(index),
-                TypeShape::FixedArray {
-                    dimensions,
-                    element,
-                },
-            ) => {
+            (AggregatePathPart::Index(index), TypeShape::FixedArray { dimensions, .. }) => {
                 let (left, right) = *dimensions.first()?;
                 if *index < left.min(right) || *index > left.max(right) {
                     return None;
                 }
-                let next = if dimensions.len() == 1 {
-                    *element.clone()
-                } else {
-                    TypeDescriptor {
-                        shape: TypeShape::FixedArray {
-                            dimensions: dimensions[1..].to_vec(),
-                            element: element.clone(),
-                        },
-                        ..descriptor.clone()
-                    }
-                };
+                let next = element_descriptor(&descriptor)?;
                 let ordinal = u32::try_from(i64::from(*index).abs_diff(i64::from(right))).ok()?;
-                offset = offset.checked_add(ordinal.checked_mul(fixed_width(&next)?)?)?;
+                offset =
+                    offset.checked_add(ordinal.checked_mul(image_width(&next, real_width)?)?)?;
                 descriptor = next;
             }
             _ => return None,

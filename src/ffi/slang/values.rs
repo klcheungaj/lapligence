@@ -201,6 +201,117 @@ pub(super) fn decode_type(
     })
 }
 
+fn charge_constant_bits(
+    bits: u64,
+    limits: &Limits,
+    total_value_bits: &mut u64,
+) -> Result<(), SlangError> {
+    *total_value_bits = total_value_bits
+        .checked_add(bits)
+        .ok_or_else(|| invalid_native("constant bit total overflowed"))?;
+    if *total_value_bits > limits.max_value_bits {
+        return Err(invalid_native(
+            "constant bits exceed the configured max_value_bits",
+        ));
+    }
+    Ok(())
+}
+
+fn integer_constant(
+    is_signed: u64,
+    bit_width: u64,
+    value_words: &[u64],
+    unknown_words: &[u64],
+) -> Result<ConstantValue, SlangError> {
+    if !bit_width.is_multiple_of(64) {
+        let tail_mask = !0_u64 << (bit_width % 64);
+        if [value_words, unknown_words]
+            .iter()
+            .any(|words| words.last().is_some_and(|word| word & tail_mask != 0))
+        {
+            return Err(invalid_native("integer constant has nonzero tail bits"));
+        }
+    }
+    Ok(ConstantValue::Integer {
+        is_signed: match is_signed {
+            0 => false,
+            1 => true,
+            _ => return Err(invalid_native("constant signedness is not boolean")),
+        },
+        bit_width,
+        value_words: value_words.to_vec(),
+        unknown_words: unknown_words.to_vec(),
+    })
+}
+
+fn words_kind(value: &ConstantValue) -> u32 {
+    match value {
+        ConstantValue::Elements(_) => 5,
+        ConstantValue::Union { .. } => 6,
+        _ => 255,
+    }
+}
+
+/// Take one item of an `LLG_SLANG_VALUE_ELEMENTS` value off `words`.
+fn decode_element_item(words: &mut &[u64]) -> Result<ConstantValue, SlangError> {
+    fn take<'w>(words: &mut &'w [u64], count: u64) -> Result<&'w [u64], SlangError> {
+        let (taken, rest) = usize::try_from(count)
+            .ok()
+            .and_then(|count| words.split_at_checked(count))
+            .ok_or_else(|| invalid_native("constant element words are truncated"))?;
+        *words = rest;
+        Ok(taken)
+    }
+    fn word(words: &mut &[u64]) -> Result<u64, SlangError> {
+        Ok(take(words, 1)?[0])
+    }
+    Ok(match word(words)? {
+        1 => {
+            let is_signed = word(words)?;
+            let bit_width = word(words)?;
+            let word_count = bit_width.div_ceil(64);
+            let value_words = take(words, word_count)?;
+            let unknown_words = take(words, word_count)?;
+            integer_constant(is_signed, bit_width, value_words, unknown_words)?
+        }
+        2 => ConstantValue::Real(f64::from_bits(word(words)?)),
+        3 => ConstantValue::ShortReal(f32::from_bits(
+            u32::try_from(word(words)?)
+                .map_err(|_| invalid_native("shortreal element exceeds 32 bits"))?,
+        )),
+        4 => {
+            let length = word(words)?;
+            let packed = take(words, length.div_ceil(8))?;
+            ConstantValue::String(
+                packed
+                    .iter()
+                    .flat_map(|word| word.to_le_bytes())
+                    .take(usize::try_from(length).unwrap_or(usize::MAX))
+                    .collect(),
+            )
+        }
+        5 => {
+            let count = word(words)?;
+            // Every item takes at least one word.
+            let capacity = usize::try_from(count)
+                .ok()
+                .filter(|count| *count <= words.len())
+                .ok_or_else(|| invalid_native("constant element count exceeds its words"))?;
+            let mut elements = Vec::with_capacity(capacity);
+            for _ in 0..capacity {
+                elements.push(decode_element_item(words)?);
+            }
+            ConstantValue::Elements(elements)
+        }
+        6 => ConstantValue::Union {
+            member: usize::try_from(word(words)?)
+                .map_err(|_| invalid_native("union member index exceeds usize"))?,
+            value: Box::new(decode_element_item(words)?),
+        },
+        _ => return Err(invalid_native("constant element has an unknown kind")),
+    })
+}
+
 /// Decode one constant, copying its words out of the value-word table and
 /// charging its width to the snapshot-wide `total_value_bits`.
 pub(super) fn decode_constant(
@@ -212,17 +323,7 @@ pub(super) fn decode_constant(
     let value = match item.kind {
         0 => ConstantValue::None,
         1 => {
-            if item.bit_width > limits.max_value_bits {
-                return Err(invalid_native("constant width exceeds max_value_bits"));
-            }
-            *total_value_bits = total_value_bits
-                .checked_add(item.bit_width)
-                .ok_or_else(|| invalid_native("constant bit total overflowed"))?;
-            if *total_value_bits > limits.max_value_bits {
-                return Err(invalid_native(
-                    "constant bits exceed the configured max_value_bits",
-                ));
-            }
+            charge_constant_bits(item.bit_width, limits, total_value_bits)?;
             let expected_words = item.bit_width.div_ceil(64);
             if item.word_count != expected_words {
                 return Err(invalid_native(
@@ -241,29 +342,12 @@ pub(super) fn decode_constant(
                 words.len(),
                 "constant unknown words",
             )?;
-            let value_words = words[value_range].to_vec();
-            let unknown_words = words[unknown_range].to_vec();
-            if !item.bit_width.is_multiple_of(64) && !value_words.is_empty() {
-                let used = item.bit_width % 64;
-                let tail_mask = !0_u64 << used;
-                if value_words.last().is_some_and(|word| word & tail_mask != 0)
-                    || unknown_words
-                        .last()
-                        .is_some_and(|word| word & tail_mask != 0)
-                {
-                    return Err(invalid_native("integer constant has nonzero tail bits"));
-                }
-            }
-            ConstantValue::Integer {
-                is_signed: match item.is_signed {
-                    0 => false,
-                    1 => true,
-                    _ => return Err(invalid_native("constant signedness is not boolean")),
-                },
-                bit_width: item.bit_width,
-                value_words,
-                unknown_words,
-            }
+            integer_constant(
+                u64::from(item.is_signed),
+                item.bit_width,
+                &words[value_range],
+                &words[unknown_range],
+            )?
         }
         2 => {
             if item.bit_width != 64 {
@@ -284,6 +368,21 @@ pub(super) fn decode_constant(
             // that delivered them.
             unsafe { copy_bytes(item.text, "string constant")? },
         ),
+        5 | 6 => {
+            let range = checked_window(
+                item.value_word_start,
+                item.word_count,
+                words.len(),
+                "constant element words",
+            )?;
+            charge_constant_bits(item.word_count.saturating_mul(64), limits, total_value_bits)?;
+            let mut words = &words[range];
+            let value = decode_element_item(&mut words)?;
+            if !words.is_empty() || words_kind(&value) != item.kind {
+                return Err(invalid_native("constant elements are not one item"));
+            }
+            value
+        }
         255 => ConstantValue::Other(
             // SAFETY: as above.
             unsafe { copy_string(item.text, "constant display text")? },
@@ -330,4 +429,87 @@ pub(super) fn decode_parameter(
         type_id,
         constant_id,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn decode(words: &[u64]) -> Result<ConstantValue, SlangError> {
+        let item = RawConstant {
+            kind: words[0] as u32,
+            is_signed: 0,
+            bit_width: 0,
+            value_word_start: 0,
+            unknown_word_start: INVALID_ID,
+            word_count: words.len() as u64,
+            real_bits: 0,
+            text: RawString {
+                data: std::ptr::null(),
+                len: 0,
+            },
+        };
+        decode_constant(&item, words, &Limits::default(), &mut 0).map(|constant| constant.value)
+    }
+
+    #[test]
+    fn element_constants_decode_every_kind_of_item() {
+        let value = decode(&[
+            5,
+            4, // four members
+            1,
+            1,
+            8,
+            0x5a,
+            0x02, // 8-bit signed, one unknown bit
+            2,
+            0x3ff8_0000_0000_0000, // 1.5
+            4,
+            9,
+            0x6867_6665_6463_6261,
+            0x69, // "abcdefghi"
+            6,
+            1,
+            5,
+            1,
+            3,
+            0x3f00_0000, // union member 1: one shortreal 0.5
+        ])
+        .expect("one item");
+        assert_eq!(
+            value,
+            ConstantValue::Elements(vec![
+                ConstantValue::Integer {
+                    is_signed: true,
+                    bit_width: 8,
+                    value_words: vec![0x5a],
+                    unknown_words: vec![0x02],
+                },
+                ConstantValue::Real(1.5),
+                ConstantValue::String(b"abcdefghi".to_vec()),
+                ConstantValue::Union {
+                    member: 1,
+                    value: Box::new(ConstantValue::Elements(vec![ConstantValue::ShortReal(0.5)])),
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn malformed_element_constants_are_rejected() {
+        for words in [
+            &[5u64, 1][..],             // a missing element
+            &[5, u64::MAX, 2, 0],       // more elements than words
+            &[5, 1, 2, 0, 0],           // words after the item
+            &[5, 1, 1, 0, 4, 0xff, 0],  // bits beyond the width
+            &[5, 1, 1, 2, 4, 0, 0],     // a signedness that is no flag
+            &[5, 1, 1, 0, u64::MAX, 0], // a width beyond the words
+            &[5, 1, 3, u64::MAX],       // a wide shortreal
+            &[5, 1, 4, 9, 0],           // truncated text
+            &[5, 1, 7, 0],              // an unknown kind
+            &[6, 0],                    // a union without a value
+        ] {
+            assert!(decode(words).is_err(), "{words:?}");
+        }
+    }
 }

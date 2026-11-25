@@ -19,7 +19,9 @@ pub(in crate::core::db) fn value_data_from_slang(value: &SlangConstantValue) -> 
         SlangConstantValue::Real(value) => ValueData::Real(*value),
         SlangConstantValue::ShortReal(value) => ValueData::Real(f64::from(*value)),
         SlangConstantValue::String(value) => ValueData::Bytes(value.clone()),
-        SlangConstantValue::Other(_) => ValueData::None,
+        SlangConstantValue::Elements(_)
+        | SlangConstantValue::Union { .. }
+        | SlangConstantValue::Other(_) => ValueData::None,
     }
 }
 
@@ -58,7 +60,26 @@ pub(super) fn val_from_slang(value: &SlangConstantValue) -> Option<Val> {
                 .filter(|byte| *byte != 0)
                 .collect::<Vec<u8>>(),
         )),
-        SlangConstantValue::None | SlangConstantValue::Other(_) => None,
+        SlangConstantValue::None
+        | SlangConstantValue::Elements(_)
+        | SlangConstantValue::Union { .. }
+        | SlangConstantValue::Other(_) => None,
+    }
+}
+
+/// The value of a parameter of a fixed unpacked type.
+pub(super) fn element_value_from_slang(value: &SlangConstantValue) -> Option<ElementValue> {
+    match value {
+        SlangConstantValue::Elements(elements) => elements
+            .iter()
+            .map(element_value_from_slang)
+            .collect::<Option<_>>()
+            .map(ElementValue::Elements),
+        SlangConstantValue::Union { member, value } => Some(ElementValue::Union {
+            member: *member,
+            value: Box::new(element_value_from_slang(value)?),
+        }),
+        _ => val_from_slang(value).map(ElementValue::Singular),
     }
 }
 

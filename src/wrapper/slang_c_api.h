@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 83u
+#define LLG_SLANG_ABI_VERSION 84u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -405,6 +405,16 @@ enum {
   LLG_SLANG_VALUE_REAL = 2,
   LLG_SLANG_VALUE_SHORT_REAL = 3,
   LLG_SLANG_VALUE_STRING = 4,
+  /* The value of a parameter of a fixed unpacked array, unpacked structure or
+   * unpacked union type (ABI v84; simulation captures only). Its words, at value_word_start, hold one item: a kind word and
+   *   INTEGER: is_signed, bit_width, the value words, the unknown words;
+   *   REAL, SHORT_REAL: the bits, as in real_bits;
+   *   STRING: the byte count, the bytes packed little endian;
+   *   ELEMENTS: the count, that many items, an array's from its left bound
+   *     and a structure's in declaration order;
+   *   UNION: the index of the member the value was assigned to, its item. */
+  LLG_SLANG_VALUE_ELEMENTS = 5,
+  LLG_SLANG_VALUE_UNION = 6, /* words like ELEMENTS */
   LLG_SLANG_VALUE_OTHER = 255
 };
 

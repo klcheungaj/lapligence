@@ -280,6 +280,9 @@ impl Codegen<'_> {
         if self.is_native_conditional(node, |shape| *shape == TypeShape::String) {
             return true;
         }
+        if self.is_parameter_string(node) {
+            return true;
+        }
         // `r.s[k]`: a run-time element of a string member array.
         if self
             .query_descriptor(node)
