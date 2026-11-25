@@ -11,6 +11,7 @@ Components: [readme](readme.md), [handlers](handlers/readme.md). Server rules:
 - `handlers/scheduling.rs`: rescans, jobs, debounce, reloads, watchers.
 - `handlers/identifiers.rs`: the table that answers a document's token and
   definition requests.
+- `handlers/positions.rs`: positions between an analysed and an edited text.
 - `handlers/staging.rs`: bounded snapshots, authorized includes, private mirrors,
   single-flight tables.
 - `handlers/diagnostics.rs`: publication order and shared-file unions.
@@ -35,8 +36,10 @@ Components: [readme](readme.md), [handlers](handlers/readme.md). Server rules:
 - Always publish diagnostics, after the state lock is released, through the
   ticketed `publish_ordered` path (`diagnostics.rs` docs).
 - Valid analysis replaces `last_good`; compile/admission failures keep navigation.
-- A position from `last_good` leaves the server only through the current-text
-  checks of `identifiers.rs` ([handlers](handlers/readme.md)).
+- A request position reaches `last_good` only through `Placement::analysed`, and
+  its positions leave the server only through `Places`, or not at all
+  ([handlers](handlers/readme.md)). Open texts change only through
+  `BackendState::set_document` and `remove_document`.
 - Watched-file registrations are serialized by their own gate and read the
   watcher set only after taking their turn. No notification handler waits for
   a reply of the client: tower-lsp stops reading when its handlers are taken.
@@ -67,8 +70,9 @@ Components: [readme](readme.md), [handlers](handlers/readme.md). Server rules:
 - An isolated parse uses captured revisions, admitted text and the committed
   analysis' include and package context (never a file access), so it runs beside
   a project analysis, one at a time (`isolated_parse_lock`); recheck staleness
-  before cache lookup, flight admission and the blocking compile. Saturated
-  single-flight tables refuse new work; the committed table answers.
+  before cache lookup, flight admission and the blocking compile. An edit cancels
+  the parse of the older text (`cancel_superseded`). Saturated single-flight tables
+  refuse new work; the committed table answers.
 - Record each token request's inputs under the capture lock; a commit that
   changes its stream sends `workspace/semanticTokens/refresh` from a spawned
   task (`ServedTokens` docs), never from a request handler.

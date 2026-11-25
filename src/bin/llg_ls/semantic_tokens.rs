@@ -2,7 +2,8 @@
 
 use llg::core::tokens::*;
 use tower_lsp::lsp_types::{
-    SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens, SemanticTokensLegend,
+    Position, SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens,
+    SemanticTokensLegend,
 };
 
 const TT_NAMESPACE: u32 = 0;
@@ -96,6 +97,16 @@ pub fn legend() -> SemanticTokensLegend {
 }
 
 pub fn encode(nodes: &[TokenInfo]) -> SemanticTokens {
+    encode_placed(nodes, |node| {
+        Some(Position::new(node.line - 1, node.col.saturating_sub(1)))
+    })
+}
+
+/// [`encode`] the nodes that have a place, there.
+pub fn encode_placed(
+    nodes: &[TokenInfo],
+    place: impl Fn(&TokenInfo) -> Option<Position>,
+) -> SemanticTokens {
     let mut items = Vec::with_capacity(nodes.len());
     for node in nodes {
         if node.line == 0 {
@@ -150,13 +161,9 @@ pub fn encode(nodes: &[TokenInfo]) -> SemanticTokens {
         let Some(length) = length.filter(|length| *length != 0) else {
             continue;
         };
-        items.push((
-            node.line - 1,
-            node.col.saturating_sub(1),
-            length,
-            token_type,
-            modifiers,
-        ));
+        if let Some(place) = place(node) {
+            items.push((place.line, place.character, length, token_type, modifiers));
+        }
     }
     items.sort_by_key(|item| (item.0, item.1));
     items.dedup_by_key(|item| (item.0, item.1));

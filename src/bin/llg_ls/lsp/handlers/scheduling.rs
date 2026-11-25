@@ -923,6 +923,7 @@ impl Backend {
                     analysis: Some(analysis),
                     files: compile_result_files(&job.files),
                     include_deps,
+                    snapshots: InputSnapshots::default(),
                 });
             }
         };
@@ -996,6 +997,7 @@ impl Backend {
                                 analysis: Some(analysis),
                                 files: compile_result_files(&job.files),
                                 include_deps: job.previous_include_deps,
+                                snapshots: InputSnapshots::default(),
                             });
                         }
                     };
@@ -1036,6 +1038,7 @@ impl Backend {
                         analysis: Some(analysis),
                         files: compile_result_files(&job.files),
                         include_deps: job.previous_include_deps,
+                        snapshots: InputSnapshots::default(),
                     });
                 }
             };
@@ -1198,6 +1201,7 @@ impl Backend {
                         analysis: Some(analysis),
                         files: compile_result_files(&job.files),
                         include_deps,
+                        snapshots: InputSnapshots::default(),
                     });
                 }
             };
@@ -1336,6 +1340,7 @@ impl Backend {
             analysis,
             files,
             include_deps,
+            snapshots: input_snapshots,
         })
     }
 

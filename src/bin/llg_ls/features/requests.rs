@@ -1,6 +1,7 @@
 //! Pure projections from committed analyses to LSP response payloads.
 
 use super::*;
+use crate::position_map::is_word;
 use llg::core::report::Severity as ReportSeverity;
 use tower_lsp::lsp_types::DiagnosticRelatedInformation;
 
@@ -182,6 +183,21 @@ pub fn semantic_tokens_for(a: &Analysis, file: &str) -> SemanticTokens {
     }
 }
 
+/// The tokens of [`semantic_tokens_for`] at their `current` places in an edited
+/// text, without those that have none.
+pub(crate) fn placed_semantic_tokens_for(
+    a: &Analysis,
+    file: &str,
+    current: impl Fn(Range) -> Option<Range>,
+) -> SemanticTokens {
+    let Some(tokens) = file_tokens(a, file) else {
+        return empty_semantic_tokens();
+    };
+    semantic_tokens::encode_placed(&tokens.nodes, |token| {
+        Some(current(token_range(token))?.start)
+    })
+}
+
 pub(super) fn empty_semantic_tokens() -> SemanticTokens {
     SemanticTokens {
         result_id: None,
@@ -200,6 +216,17 @@ pub(super) fn semantic_file_matches(left: &str, right: &str) -> bool {
         (Ok(left), Ok(right)) => left == right,
         _ => false,
     }
+}
+
+/// Names of one edited document that completion offers besides those of the
+/// analysis. The ones declared after them are not offered before a save.
+const MAX_DECLARED_NAMES: usize = 4096;
+
+/// A name that an edited document declares.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DeclaredName {
+    pub(crate) name: String,
+    pub(crate) kind: SymKind,
 }
 
 /// The identifiers of one open document from its isolated parse: the tokens
@@ -225,6 +252,34 @@ impl DocumentIdentifiers {
 
     pub fn definitions_at(&self, line: u32, col: u32) -> Vec<NamedLocation> {
         definitions_in(&self.nodes, &self.bindings, line, col)
+    }
+
+    /// The names that the document declares, in the order of the text.
+    pub(crate) fn declared_names(&self) -> Vec<DeclaredName> {
+        let mut seen = HashSet::new();
+        let mut names = Vec::new();
+        for token in &self.nodes {
+            let class = tokens::token_class(token.kind);
+            if !class.declaration || class.macro_body || class.undeclared {
+                continue;
+            }
+            let Some((kind, _)) = classify_token(token.kind, true) else {
+                continue;
+            };
+            let Some(name) = token.name.as_deref().map(clean_name) else {
+                continue;
+            };
+            if !name.is_empty() && seen.insert(name) {
+                names.push(DeclaredName {
+                    name: name.to_owned(),
+                    kind,
+                });
+                if names.len() == MAX_DECLARED_NAMES {
+                    break;
+                }
+            }
+        }
+        names
     }
 
     /// The tokens and their bindings.
@@ -417,7 +472,75 @@ fn normalize_inline_elab_value(detail: String) -> String {
     }
 }
 
-/// Return a hover for the symbol at the 0-based `(line, col)` position, if any.
+/// The hover of a name in the text an analysis compiled.
+#[derive(Debug, Clone)]
+pub(crate) struct HoverText {
+    /// The name.
+    range: Range,
+    blocks: Vec<HoverBlock>,
+}
+
+#[derive(Debug, Clone)]
+enum HoverBlock {
+    /// SystemVerilog, and where it stands when the hover says so.
+    Code {
+        detail: String,
+        defined_at: Option<DeclTarget>,
+    },
+    Message(String),
+}
+
+impl HoverText {
+    fn code(range: Range, detail: String, defined_at: Option<DeclTarget>) -> Self {
+        Self {
+            range,
+            blocks: vec![HoverBlock::Code { detail, defined_at }],
+        }
+    }
+
+    /// The analysed range of the name.
+    pub(crate) fn range(&self) -> Range {
+        self.range
+    }
+
+    /// The hover over `range` of the current text, in which `current_line`
+    /// finds the 0-based line of a definition.
+    pub(crate) fn render(
+        &self,
+        range: Range,
+        mut current_line: impl FnMut(&DeclTarget) -> Option<u32>,
+    ) -> Hover {
+        let blocks: Vec<String> = self
+            .blocks
+            .iter()
+            .map(|block| match block {
+                HoverBlock::Message(message) => message.clone(),
+                HoverBlock::Code { detail, defined_at } => {
+                    let place = defined_at
+                        .as_ref()
+                        .and_then(|target| Some((target, current_line(target)?)));
+                    let place = place.map_or_else(String::new, |(target, line)| {
+                        // Open buffers compile under shadow paths; display the real
+                        // project path so the site is recognizable to the user.
+                        let display = real_path(Path::new(&target.file), &process_shadow_base())
+                            .unwrap_or_else(|| PathBuf::from(&target.file));
+                        format!("\n\ndefined at {}:{}", display.display(), line + 1)
+                    });
+                    format!("```systemverilog\n{detail}{place}\n```")
+                }
+            })
+            .collect();
+        Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: blocks.join("\n\n"),
+            }),
+            range: Some(range),
+        }
+    }
+}
+
+/// The hover of the symbol at the 0-based `(line, col)` position, if any.
 ///
 /// A macro name is described from the analysis' macro table. Every other name
 /// follows its definition ([`definitions_at`]): the hover describes the one
@@ -428,7 +551,7 @@ fn normalize_inline_elab_value(detail: String) -> String {
 /// line (omitted when unresolved/ambiguous). Function/task declarations
 /// additionally show the instance scope and the `automatic`/`static` storage
 /// class from the model's per-instance clone.
-pub fn hover_at(a: &Analysis, file: &str, line: u32, col: u32) -> Option<Hover> {
+pub(crate) fn hover_text_at(a: &Analysis, file: &str, line: u32, col: u32) -> Option<HoverText> {
     if let Some(hover) = macro_hover_at(a, file, line, col) {
         return Some(hover);
     }
@@ -442,8 +565,21 @@ pub fn hover_at(a: &Analysis, file: &str, line: u32, col: u32) -> Option<Hover> 
     hover_for_target(a, target, range)
 }
 
+/// The place of an instance, which its hover names.
+fn instance_site(entry: &SymEntry) -> Option<DeclTarget> {
+    (entry.kind == SymKind::Instance).then(|| DeclTarget {
+        name: entry.name.clone(),
+        kind: kind_label(entry.kind).to_owned(),
+        file: entry.file.clone(),
+        line0: entry.line,
+        col0: entry.col,
+        via_label: false,
+        via_connection: false,
+    })
+}
+
 /// Hover of the declaration the cursor is on.
-fn hover_declaration(a: &Analysis, token: &TokenInfo, range: Range) -> Option<Hover> {
+fn hover_declaration(a: &Analysis, token: &TokenInfo, range: Range) -> Option<HoverText> {
     let entry = a
         .index
         .decl_at(&token.file, range.start.line, range.start.character);
@@ -473,21 +609,12 @@ fn hover_declaration(a: &Analysis, token: &TokenInfo, range: Range) -> Option<Ho
             );
         }
     }
-    Some(code_hover(&detail, range))
-}
-
-fn code_hover(detail: &str, range: Range) -> Hover {
-    Hover {
-        contents: HoverContents::Markup(MarkupContent {
-            kind: MarkupKind::Markdown,
-            value: format!("```systemverilog\n{detail}\n```"),
-        }),
-        range: Some(range),
-    }
+    let site = entry.and_then(instance_site);
+    Some(HoverText::code(range, detail, site))
 }
 
 /// The range of a token's name.
-fn token_range(token: &TokenInfo) -> Range {
+pub(crate) fn token_range(token: &TokenInfo) -> Range {
     let start = Position::new(token.line.saturating_sub(1), token.col.saturating_sub(1));
     Range::new(
         start,
@@ -510,34 +637,31 @@ fn token_range(token: &TokenInfo) -> Range {
 /// defined renders an explicit message naming the configuration source
 /// instead of any value; the operand of a conditional directive or `` `undef ``
 /// that is not defined, and a macro of the language, have no hover.
-pub(super) fn macro_hover_at(a: &Analysis, file: &str, line: u32, col: u32) -> Option<Hover> {
+fn macro_hover_at(a: &Analysis, file: &str, line: u32, col: u32) -> Option<HoverText> {
     let site = a.macros.site_at(file, line, col)?;
+    let mut blocks: Vec<HoverBlock> = a
+        .macros
+        .definitions(site)
+        .map(|definition| HoverBlock::Code {
+            detail: macro_definition_detail(definition),
+            defined_at: definition.target(),
+        })
+        .collect();
+    if blocks.is_empty() {
+        if site.kind != macros::MacroSiteKind::Use || site.predefined {
+            return None;
+        }
+        let message = undefined_macro_hover(&site.name, a.macros.config_note());
+        blocks.push(HoverBlock::Message(message));
+    }
     let range = Range::new(
         Position::new(line, site.col_start0),
         Position::new(line, site.col_end0),
     );
-    let blocks: Vec<String> = a
-        .macros
-        .definitions(site)
-        .map(macro_definition_hover)
-        .collect();
-    let value = if !blocks.is_empty() {
-        blocks.join("\n\n")
-    } else if site.kind == macros::MacroSiteKind::Use && !site.predefined {
-        undefined_macro_hover(&site.name, a.macros.config_note())
-    } else {
-        return None;
-    };
-    Some(Hover {
-        contents: HoverContents::Markup(MarkupContent {
-            kind: MarkupKind::Markdown,
-            value,
-        }),
-        range: Some(range),
-    })
+    Some(HoverText { range, blocks })
 }
 
-fn macro_definition_hover(definition: &macros::MacroDefinition) -> String {
+fn macro_definition_detail(definition: &macros::MacroDefinition) -> String {
     let mut detail = format!("macro {}", definition.name);
     if let Some(args) = &definition.args {
         detail.push_str(&format!("({})", args.join(", ")));
@@ -545,18 +669,7 @@ fn macro_definition_hover(definition: &macros::MacroDefinition) -> String {
     if !definition.body.is_empty() {
         detail.push_str(&format!(" = {}", definition.body));
     }
-    if let Some(source) = &definition.source {
-        // Open buffers compile under shadow paths; display the real project
-        // path so the site is recognizable to the user.
-        let display = real_path(Path::new(&source.file), &process_shadow_base())
-            .unwrap_or_else(|| PathBuf::from(&source.file));
-        detail.push_str(&format!(
-            "\n\ndefined at {}:{}",
-            display.display(),
-            source.line
-        ));
-    }
-    format!("```systemverilog\n{detail}\n```")
+    detail
 }
 
 fn undefined_macro_hover(name: &str, config_note: Option<&str>) -> String {
@@ -581,17 +694,14 @@ fn undefined_macro_hover(name: &str, config_note: Option<&str>) -> String {
 /// elaborated-value line from the committed model (omitted when
 /// unresolved/ambiguous). `None` when no detail can be produced. `range` is
 /// the clicked name.
-fn hover_for_target(a: &Analysis, target: &DeclTarget, range: Range) -> Option<Hover> {
-    let detail = a
-        .index
-        .decl_at(&target.file, target.line0, target.col0)
-        .and_then(|entry| entry.detail.clone())
-        .or_else(|| {
-            a.decl_details
-                .get(&(target.file.clone(), target.line0 + 1, target.col0 + 1))
-                .filter(|text| !text.is_empty())
-                .cloned()
-        })?;
+fn hover_for_target(a: &Analysis, target: &DeclTarget, range: Range) -> Option<HoverText> {
+    let entry = a.index.decl_at(&target.file, target.line0, target.col0);
+    let detail = entry.and_then(|entry| entry.detail.clone()).or_else(|| {
+        a.decl_details
+            .get(&(target.file.clone(), target.line0 + 1, target.col0 + 1))
+            .filter(|text| !text.is_empty())
+            .cloned()
+    })?;
     // Parameter targets (elaboration-bound refs, override labels included)
     // gain the elaborated-value line from the committed model.
     let detail = if target.kind == "parameter" {
@@ -605,7 +715,8 @@ fn hover_for_target(a: &Analysis, target: &DeclTarget, range: Range) -> Option<H
     } else {
         detail
     };
-    Some(code_hover(&detail, range))
+    let site = entry.and_then(instance_site);
+    Some(HoverText::code(range, detail, site))
 }
 
 pub(super) fn format_port(p: &PortModel) -> String {
@@ -777,9 +888,7 @@ fn definitions_in(
         return Vec::new();
     };
     match bindings.definition(token) {
-        Some(tokens::Definition::Targets(targets)) => {
-            targets.iter().map(ref_target_location).collect()
-        }
+        Some(tokens::Definition::Targets(targets)) => targets.iter().map(target_location).collect(),
         Some(tokens::Definition::Itself) => vec![NamedLocation {
             name: token.name.clone(),
             location: Location {
@@ -799,33 +908,47 @@ fn file_uri(file: &str) -> Url {
 /// LSP location for a bound declaration target (already 0-based), spanning
 /// the target name with the same identifier-width convention as
 /// [`entry_location`]; an included file is its start.
-fn ref_target_location(t: &DeclTarget) -> NamedLocation {
+pub(crate) fn target_location(t: &DeclTarget) -> NamedLocation {
     let start = Position::new(t.line0, t.col0);
     let name = (t.kind != tokens::TARGET_FILE).then(|| t.name.clone());
-    let len = name.as_deref().map_or(0, lsp_name_len);
+    let range = name_range(start, name.as_deref().unwrap_or_default());
     NamedLocation {
         name,
         location: Location {
             uri: file_uri(&t.file),
-            range: Range::new(start, Position::new(t.line0, t.col0 + len)),
+            range,
         },
     }
 }
 
-/// Whether the text with these lines has the identifier `name` at `start`.
-pub(crate) fn spells_identifier(lines: &[&str], start: Position, name: &str) -> bool {
-    let word = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
-    let Some(line) = usize::try_from(start.line)
-        .ok()
-        .and_then(|index| lines.get(index))
-    else {
-        return false;
+/// The range of the identifier `name` at `start`.
+pub(crate) fn name_range(start: Position, name: &str) -> Range {
+    let end = Position::new(start.line, start.character + lsp_name_len(name));
+    Range::new(start, end)
+}
+
+/// Whether `line` has the identifier `name` at the UTF-16 column `start`: plain,
+/// escaped (5.6.1) or as the use of a macro.
+pub(crate) fn spells_identifier(line: &str, start: u32, name: &str) -> bool {
+    let name = name.strip_prefix(['\\', '`']).unwrap_or(name);
+    let (before, text) = line.split_at(utf16_byte_offset(line, start));
+    let (text, inside) = match text.strip_prefix('`') {
+        Some(text) => (text, false),
+        None => {
+            let prefixed = before.ends_with(|last| is_word(last) || last == '\\')
+                || before.ends_with('`') && !before.ends_with("``");
+            (text, prefixed)
+        }
     };
-    let (before, text) = line.split_at(utf16_byte_offset(line, start.character));
-    // A name of plain characters may be written escaped (5.6.1).
-    let text = text.strip_prefix('\\').unwrap_or(text);
-    text.strip_prefix(name)
-        .is_some_and(|after| !after.starts_with(word) && !before.ends_with(word))
+    match text.strip_prefix('\\') {
+        // White space ends it.
+        Some(text) => text
+            .strip_prefix(name)
+            .is_some_and(|after| after.chars().next().is_none_or(char::is_whitespace)),
+        None => text
+            .strip_prefix(name)
+            .is_some_and(|after| !inside && !after.starts_with(is_word)),
+    }
 }
 
 // ── References ────────────────────────────────────────────────────────────────
@@ -1517,12 +1640,12 @@ pub(super) fn child_symbol(
 /// names (kind Module), package names (kind Module), instance names (kind
 /// Keyword), function/task names from the model (kind Function), every indexed
 /// declaration (functions, tasks, classes, typedefs, enum constants, ports,
-/// signals, parameters — kind mapped from the symbol kind), and a curated list
+/// signals, parameters — kind mapped from the symbol kind), the `unsaved` names
+/// that the document declares and the analysis has not seen, and a curated list
 /// of SystemVerilog keywords.
 pub fn completion_at(
     a: &Analysis,
-    _file: &str,
-    _line: u32,
+    unsaved: &[DeclaredName],
     col: u32,
     line_text: &str,
 ) -> Vec<CompletionItem> {
@@ -1633,11 +1756,13 @@ pub fn completion_at(
     }
     // Index-backed declarations (deduplicated against the model candidates).
     let mut seen: HashSet<String> = items.iter().map(|i| i.label.clone()).collect();
-    for d in &a.index.decls {
-        if seen.insert(d.name.clone()) {
+    let declared = a.index.decls.iter().map(|entry| (&entry.name, entry.kind));
+    let unsaved = unsaved.iter().map(|unsaved| (&unsaved.name, unsaved.kind));
+    for (name, kind) in declared.chain(unsaved) {
+        if seen.insert(name.clone()) {
             items.push(CompletionItem {
-                label: d.name.clone(),
-                kind: Some(completion_kind_for(d.kind)),
+                label: name.clone(),
+                kind: Some(completion_kind_for(kind)),
                 ..Default::default()
             });
         }
@@ -1770,7 +1895,7 @@ pub(super) fn lsp_name_len(name: &str) -> u32 {
 /// Convert a 0-based LSP UTF-16 column into a UTF-8 byte offset at a char
 /// boundary.  A position in the middle of a supplementary character is
 /// rounded to that character's start, which is the only safe slice boundary.
-pub(super) fn utf16_byte_offset(line: &str, col: u32) -> usize {
+pub(crate) fn utf16_byte_offset(line: &str, col: u32) -> usize {
     let target = col as usize;
     let mut units = 0usize;
     for (offset, ch) in line.char_indices() {

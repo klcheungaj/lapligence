@@ -13,7 +13,7 @@ use tower_lsp::{Client, LanguageServer};
 
 use crate::config::{self, ConfigError, LlgConfig};
 use crate::dump;
-use crate::features::{self, Analysis, SymbolIndex};
+use crate::features::{self, Analysis};
 use crate::module_explorer;
 use crate::request_cache::{
     next_analysis_epoch, CacheStats, MemoCache, RequestKey, RequestKind, NAVIGATION_CACHE_CAPACITY,
@@ -29,13 +29,14 @@ use llg::profile::Stage;
 mod diagnostics;
 mod identifiers;
 mod inputs;
+mod positions;
 mod scheduling;
 mod staging;
 mod state;
 
 use diagnostics::*;
-use identifiers::DocumentTable;
 use inputs::FileWrite;
+use positions::{Places, Query, Served};
 #[cfg(test)]
 use scheduling::*;
 use staging::*;
@@ -390,7 +391,6 @@ impl LanguageServer for Backend {
                 }
             }
             rebuild_dep_dependents(&mut state);
-            Self::rebuild_merged(&mut state);
             removed_shadows
         };
         if !removed_shadows.is_empty() {
@@ -756,8 +756,10 @@ impl LanguageServer for Backend {
                 return;
             }
         };
+        self.cancel_superseded_parses(&uri);
         // An edit is analysed when the user saves; until then the isolated
-        // parse of the document answers for it (`identifiers.rs`).
+        // parse of the document answers for it (`identifiers.rs`), and the
+        // analysis at the places that the edit left (`positions.rs`).
         notification.complete(
             match (changed, &reload) {
                 (true, Some(_)) => "reloaded",
@@ -842,7 +844,7 @@ impl LanguageServer for Backend {
         }
         let (initialized, shadow) = {
             let mut state = self.lock_state();
-            state.documents.remove(&uri);
+            state.remove_document(&uri);
             state.reloads.remove(&uri);
             // Forget the last aggregated union so a still-tracked shared file
             // is republished from the post-close recompile.
@@ -853,6 +855,7 @@ impl LanguageServer for Backend {
                 .map(|root| root.shadow.clone());
             (state.initialized, shadow)
         };
+        self.cancel_superseded_parses(&uri);
         if let (Some(shadow), Some(real)) = (shadow, real.clone()) {
             // Beside this message: the lock is held while an analysis runs.
             tokio::task::spawn_blocking(move || {
@@ -919,88 +922,78 @@ impl LanguageServer for Backend {
         let mut request = crate::logging::LifecycleSpan::request("textDocument/hover", || {
             Self::log_uri_identity(&params.text_document_position_params.text_document.uri)
         });
-        let (analysis, epoch, paths, position, shared_owner) = {
-            let state = self.lock_state();
-            let Some((root, real, paths)) = Self::root_context(
-                &state,
-                &params.text_document_position_params.text_document.uri,
-            ) else {
-                return Ok(None);
-            };
-            request.set_root(|| root.descriptor.id.clone());
-            let Some(analysis) = root.last_good.clone() else {
-                request.complete("no-analysis", 0);
-                return Ok(None);
-            };
-            // Shared files: label configuration-dependent hover sections with
-            // the owner root so users know which config produced them.
-            let shared_owner =
-                (shared_tracker_count(&state, &real) > 1).then(|| root.descriptor.id.clone());
-            (
-                analysis,
-                root.analysis_epoch,
-                paths,
-                params.text_document_position_params.position,
-                shared_owner,
-            )
+        let params = params.text_document_position_params;
+        let (uri, position) = (params.text_document.uri, params.position);
+        let Some(query) = self.query(&uri, &mut request) else {
+            return Ok(None);
         };
-        if !self.answers_at(
-            &analysis,
-            &params.text_document_position_params.text_document.uri,
-            position,
-        ) {
+        let Some(served) = query.served.clone() else {
+            request.complete("no-analysis", 0);
+            return Ok(None);
+        };
+        // Shared files: label configuration-dependent hover sections with
+        // the owner root so users know which config produced them.
+        let shared_owner = query.shared_owner(&self.lock_state());
+        let Some(analysed) = query.analysed(position).await else {
             request.complete("stale", 0);
             return Ok(None);
-        }
+        };
         let key = RequestKey::new(
             RequestKind::Hover,
-            params
-                .text_document_position_params
-                .text_document
-                .uri
-                .as_str(),
-            position.line,
-            position.character,
-            epoch,
+            uri.as_str(),
+            analysed.line,
+            analysed.character,
+            served.epoch,
         );
         let started = std::time::Instant::now();
-        if let Some(cached) = self.hover_cache.get(&key) {
-            crate::llg_trace!(
-                "hover: served from request cache elapsed_us={} uri={} line={} col={}",
-                started.elapsed().as_micros(),
-                key.uri,
-                key.line,
-                key.character
-            );
-            let value = self.annotate_hover(cached, shared_owner.as_deref());
-            request.complete(
-                if value.is_some() {
-                    "cache-hit"
-                } else {
-                    "no-data"
-                },
-                1,
-            );
-            return Ok(value);
-        }
-        let value = tokio::task::spawn_blocking(move || {
-            paths.into_iter().find_map(|path| {
-                features::hover_at(&analysis, &path, position.line, position.character)
-            })
-        })
-        .await
-        .ok()
-        .flatten();
-        self.hover_cache.put(key.clone(), value.clone());
+        let cached = self.hover_cache.get(&key);
+        let hit = cached.is_some();
+        let Query {
+            path,
+            placement,
+            settled,
+            ..
+        } = query;
+        let mut places = Places::new(&self.state, &served);
+        let compute = move || {
+            let text = cached.unwrap_or_else(|| {
+                features::hover_text_at(&served.analysis, &path, analysed.line, analysed.character)
+            });
+            let value = text.as_ref().and_then(|text| {
+                let range = placement.current(text.range())?;
+                Some(text.render(range, |definition| places.line(definition)))
+            });
+            (text, value)
+        };
+        let (text, value) = if hit && settled {
+            compute()
+        } else {
+            blocking("hover", compute).await.unwrap_or_default()
+        };
         crate::llg_trace!(
-            "hover: computed elapsed_us={} uri={} line={} col={}",
+            "hover: {} elapsed_us={} uri={} line={} col={}",
+            if hit {
+                "served from request cache"
+            } else {
+                "computed"
+            },
             started.elapsed().as_micros(),
             key.uri,
             key.line,
             key.character
         );
+        if !hit {
+            self.hover_cache.put(key, text);
+        }
         let value = self.annotate_hover(value, shared_owner.as_deref());
-        request.complete(if value.is_some() { "ok" } else { "no-data" }, 1);
+        request.complete(
+            match (&value, hit) {
+                (None, _) => "no-data",
+                (Some(_), true) => "cache-hit",
+                (Some(_), false) => "ok",
+            },
+            1,
+        );
         Ok(value)
     }
 
@@ -1017,24 +1010,12 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
         let outcome = document.outcome;
-        let analysis = document.analysis.clone();
-        // A committed table answers for an edited document whose isolated
-        // parse was refused.
-        if let (DocumentTable::Committed, Some(analysis)) = (&document.table, &analysis) {
-            if !self.answers_at(analysis, &uri, position) {
-                request.complete("stale", 0);
-                return Ok(None);
-            }
-        }
-        let locations = tokio::task::spawn_blocking(move || document.definitions_at(position))
-            .await
-            .unwrap_or_default();
-        let mut locations = self.current_locations(
-            analysis.as_deref(),
-            locations
-                .iter()
-                .map(|value| (value.name.as_deref(), &value.location)),
-        );
+        let state = Arc::clone(&self.state);
+        let mut locations = blocking("definition", move || {
+            document.definitions_at(&state, position)
+        })
+        .await
+        .unwrap_or_default();
         request.complete(outcome, locations.len());
         Ok(match locations.len() {
             0 => None,
@@ -1047,84 +1028,76 @@ impl LanguageServer for Backend {
         let mut request = crate::logging::LifecycleSpan::request("textDocument/references", || {
             Self::log_uri_identity(&params.text_document_position.text_document.uri)
         });
-        let (analysis, epoch, paths, position) = {
-            let state = self.lock_state();
-            let Some((root, _, paths)) =
-                Self::root_context(&state, &params.text_document_position.text_document.uri)
-            else {
-                return Ok(None);
-            };
-            request.set_root(|| root.descriptor.id.clone());
-            let Some(analysis) = root.last_good.clone() else {
-                return Ok(Some(Vec::new()));
-            };
-            (
-                analysis,
-                root.analysis_epoch,
-                paths,
-                params.text_document_position.position,
-            )
-        };
         let include_declaration = params.context.include_declaration;
-        if !self.answers_at(
-            &analysis,
-            &params.text_document_position.text_document.uri,
-            position,
-        ) {
+        let params = params.text_document_position;
+        let (uri, position) = (params.text_document.uri, params.position);
+        let Some(query) = self.query(&uri, &mut request) else {
+            return Ok(None);
+        };
+        let Some(served) = query.served.clone() else {
+            return Ok(Some(Vec::new()));
+        };
+        let Some(analysed) = query.analysed(position).await else {
             request.complete("stale", 0);
             return Ok(Some(Vec::new()));
-        }
+        };
         let key = RequestKey::new(
             RequestKind::References {
                 include_declaration,
             },
-            params.text_document_position.text_document.uri.as_str(),
-            position.line,
-            position.character,
-            epoch,
+            uri.as_str(),
+            analysed.line,
+            analysed.character,
+            served.epoch,
         );
         let started = std::time::Instant::now();
-        if let Some(cached) = self.references_cache.get(&key) {
-            crate::llg_trace!(
-                "references: served from request cache elapsed_us={} uri={} line={} col={}",
-                started.elapsed().as_micros(),
-                key.uri,
-                key.line,
-                key.character
-            );
-            let value = self.current_references(&analysis, &paths, position, &cached);
-            request.complete("cache-hit", value.len());
-            return Ok(Some(value));
-        }
-        let compiled = Arc::clone(&analysis);
-        let files = paths.clone();
-        let values = tokio::task::spawn_blocking(move || {
-            files
-                .into_iter()
-                .map(|path| {
-                    features::references_at_with_options(
-                        &compiled,
-                        &path,
-                        position.line,
-                        position.character,
-                        include_declaration,
-                    )
-                })
-                .find(|values| !values.is_empty())
-                .unwrap_or_default()
-        })
-        .await
-        .unwrap_or_default();
-        self.references_cache.put(key.clone(), values.clone());
+        let cached = self.references_cache.get(&key);
+        let hit = cached.is_some();
+        let Query { path, settled, .. } = query;
+        let mut places = Places::new(&self.state, &served);
+        let compute = move || {
+            let references = cached.unwrap_or_else(|| {
+                features::references_at_with_options(
+                    &served.analysis,
+                    &path,
+                    analysed.line,
+                    analysed.character,
+                    include_declaration,
+                )
+            });
+            // They all spell the name of the identifier.
+            let name =
+                features::identifier_at(&served.analysis, &path, analysed.line, analysed.character)
+                    .and_then(|token| token.name.as_deref())
+                    .unwrap_or_default();
+            let value: Vec<Location> = references
+                .iter()
+                .filter_map(|reference| places.location(Some(name), reference))
+                .collect();
+            places.log("textDocument/references", value.len());
+            (references, value)
+        };
+        let (references, value) = if hit && settled {
+            compute()
+        } else {
+            blocking("references", compute).await.unwrap_or_default()
+        };
         crate::llg_trace!(
-            "references: computed elapsed_us={} uri={} line={} col={}",
+            "references: {} elapsed_us={} uri={} line={} col={}",
+            if hit {
+                "served from request cache"
+            } else {
+                "computed"
+            },
             started.elapsed().as_micros(),
             key.uri,
             key.line,
             key.character
         );
-        let value = self.current_references(&analysis, &paths, position, &values);
-        request.complete("ok", value.len());
+        if !hit {
+            self.references_cache.put(key, references);
+        }
+        request.complete(if hit { "cache-hit" } else { "ok" }, value.len());
         Ok(Some(value))
     }
 
@@ -1136,32 +1109,26 @@ impl LanguageServer for Backend {
             crate::logging::LifecycleSpan::request("textDocument/prepareRename", || {
                 Self::log_uri_identity(&params.text_document.uri)
             });
-        let (analysis, paths, position) = {
-            let state = self.lock_state();
-            let Some((root, _, paths)) = Self::root_context(&state, &params.text_document.uri)
-            else {
-                return Ok(None);
-            };
-            request.set_root(|| root.descriptor.id.clone());
-            let Some(analysis) = root.last_good.clone() else {
-                return Ok(None);
-            };
-            (analysis, paths, params.position)
+        let Some(query) = self.query(&params.text_document.uri, &mut request) else {
+            return Ok(None);
         };
-        if self
-            .uncommitted_text(&analysis, &params.text_document.uri)
-            .is_some()
-        {
+        let Some(served) = query.served else {
+            return Ok(None);
+        };
+        if !query.placement.is_same() {
             request.complete("stale", 0);
             return Err(content_modified());
         }
-        let value = tokio::task::spawn_blocking(move || {
-            paths.into_iter().find_map(|path| {
-                crate::rename::prepare_rename(&analysis, &path, position.line, position.character)
-            })
+        let (path, position) = (query.path, params.position);
+        let value = blocking("prepareRename", move || {
+            crate::rename::prepare_rename(
+                &served.analysis,
+                &path,
+                position.line,
+                position.character,
+            )
         })
         .await
-        .ok()
         .flatten();
         let value = value.map(
             |(range, placeholder)| PrepareRenameResponse::RangeWithPlaceholder {
@@ -1181,50 +1148,30 @@ impl LanguageServer for Backend {
             Self::log_uri_identity(&params.text_document_position.text_document.uri)
         });
         let uri = params.text_document_position.text_document.uri;
-        let (analysis, paths, position, new_name, max_file_bytes) = {
-            let state = self.lock_state();
-            let Some((root, _, paths)) = Self::root_context(&state, &uri) else {
-                return Ok(None);
-            };
-            request.set_root(|| root.descriptor.id.clone());
-            let Some(analysis) = root.last_good.clone() else {
-                return Ok(None);
-            };
-            (
-                analysis,
-                paths,
-                params.text_document_position.position,
-                params.new_name,
-                root.descriptor.effective_config().analysis.max_file_bytes,
-            )
+        let Some(query) = self.query(&uri, &mut request) else {
+            return Ok(None);
         };
-        if self.uncommitted_text(&analysis, &uri).is_some() {
+        let Some(served) = query.served else {
+            return Ok(None);
+        };
+        if !query.placement.is_same() {
             request.complete("stale", 0);
             return Err(content_modified());
         }
-        let compiled = Arc::clone(&analysis);
-        // First candidate wins: an invalid name is a request-level error
-        // independent of the shadow/real path choice; `Ok(None)` falls through
-        // to the next candidate path like the other navigation handlers.
-        let value = tokio::task::spawn_blocking(move || {
-            for path in paths {
-                match crate::rename::rename(
-                    &compiled,
-                    &path,
-                    position.line,
-                    position.character,
-                    &new_name,
-                ) {
-                    Ok(Some(edit)) => return Some(Ok(Some(edit))),
-                    Ok(None) => {}
-                    Err(message) => return Some(Err(message)),
-                }
-            }
-            None
+        let (path, max_file_bytes) = (query.path, query.max_file_bytes);
+        let position = params.text_document_position.position;
+        let new_name = params.new_name;
+        let compiled = Arc::clone(&served.analysis);
+        let value = blocking("rename", move || {
+            crate::rename::rename(
+                &compiled,
+                &path,
+                position.line,
+                position.character,
+                &new_name,
+            )
         })
-        .await
-        .ok()
-        .flatten();
+        .await;
         match value {
             Some(Ok(None)) | None => {
                 request.complete("no-data", 0);
@@ -1244,7 +1191,7 @@ impl LanguageServer for Backend {
                     .changes
                     .iter()
                     .flat_map(HashMap::keys)
-                    .all(|uri| self.compiled_current_text(&analysis, uri, max_file_bytes));
+                    .all(|uri| self.compiled_current_text(&served, uri, max_file_bytes));
                 if !current {
                     request.complete("stale", 0);
                     return Err(content_modified());
@@ -1263,24 +1210,18 @@ impl LanguageServer for Backend {
             crate::logging::LifecycleSpan::request("textDocument/documentSymbol", || {
                 Self::log_uri_identity(&params.text_document.uri)
             });
-        let (analysis, paths) = {
-            let state = self.lock_state();
-            let Some((root, _, paths)) = Self::root_context(&state, &params.text_document.uri)
-            else {
-                return Ok(None);
-            };
-            request.set_root(|| root.descriptor.id.clone());
-            let Some(analysis) = root.last_good.clone() else {
-                return Ok(None);
-            };
-            (analysis, paths)
+        let Some(query) = self.query(&params.text_document.uri, &mut request) else {
+            return Ok(None);
         };
-        let symbols = tokio::task::spawn_blocking(move || {
-            paths
-                .into_iter()
-                .map(|path| features::document_symbols(&analysis, &path))
-                .find(|symbols| !symbols.is_empty())
-                .unwrap_or_default()
+        let Some(served) = query.served else {
+            return Ok(None);
+        };
+        let Query {
+            path, placement, ..
+        } = query;
+        let symbols = blocking("documentSymbol", move || {
+            let symbols = features::document_symbols(&served.analysis, &path);
+            positions::current_symbols(&placement, symbols)
         })
         .await
         .unwrap_or_default();
@@ -1301,29 +1242,34 @@ impl LanguageServer for Backend {
         let mut request =
             crate::logging::LifecycleSpan::request("workspace/symbol", || "workspace".to_owned());
         request.set_root(|| "workspace".to_owned());
-        let analysis = {
+        let roots: Vec<(Served, Places)> = {
             let state = self.lock_state();
-            state.merged.clone()
+            state
+                .roots
+                .values()
+                .filter_map(RootState::served)
+                .map(|served| {
+                    let places = Places::new(&self.state, &served);
+                    (served, places)
+                })
+                .collect()
         };
-        let Some(analysis) = analysis else {
+        if roots.is_empty() {
             request.complete("no-data", 0);
             return Ok(Some(Vec::new()));
-        };
+        }
         let query = params.query;
         let query_len = query.len();
-        let mut values =
-            tokio::task::spawn_blocking(move || features::workspace_symbols(&analysis, &query))
-                .await
-                .unwrap_or_default();
+        let values = blocking("workspaceSymbol", move || {
+            positions::workspace_symbols(roots, &query)
+        })
+        .await
+        .unwrap_or_default();
         crate::llg_trace!(
             "workspace symbol query_len={} result_count={}",
             query_len,
             values.len()
         );
-        let state = self.lock_state();
-        for value in &mut values {
-            value.location = Self::map_location(&state, value.location.clone());
-        }
         request.complete("ok", values.len());
         Ok(Some(values))
     }
@@ -1346,42 +1292,57 @@ impl LanguageServer for Backend {
             Self::log_uri_identity(&params.text_document_position.text_document.uri)
         });
         let uri = &params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
         enum CompletionSource {
-            Open(String),
+            Open(SharedText),
             Disk(PathBuf, u64),
             TooLarge(InputSizeLimit),
         }
-        let (analysis, paths, position, source) = {
+        let Some(query) = self.query(uri, &mut request) else {
+            return Ok(None);
+        };
+        let Some(served) = query.served else {
+            return Ok(None);
+        };
+        let max_file_bytes = query.max_file_bytes;
+        let path = PathBuf::from(&query.path);
+        let (source, unsaved) = {
             let state = self.lock_state();
-            let Some((root, real, paths)) = Self::root_context(&state, uri) else {
+            if state.documents.is_rejected(uri) {
+                request.complete("too-large", 0);
                 return Ok(None);
-            };
-            request.set_root(|| root.descriptor.id.clone());
-            let Some(analysis) = root.last_good.clone() else {
-                return Ok(None);
-            };
-            let max_file_bytes = root.descriptor.effective_config().analysis.max_file_bytes;
+            }
             let source = match state.documents.get(uri) {
-                Some(text) => open_input_size_limit(&real, text, max_file_bytes).map_or_else(
-                    || CompletionSource::Open(text.to_string()),
+                Some(text) => open_input_size_limit(&path, text, max_file_bytes).map_or_else(
+                    || CompletionSource::Open(Arc::clone(text)),
                     CompletionSource::TooLarge,
                 ),
-                None => CompletionSource::Disk(real, max_file_bytes),
+                None => CompletionSource::Disk(path.clone(), max_file_bytes),
             };
-            (
-                analysis,
-                paths,
-                params.text_document_position.position,
-                source,
-            )
+            let unsaved = (!query.placement.is_same())
+                .then(|| {
+                    let root = state.roots.get(&query.root)?;
+                    root.open_document(&state.documents, uri, &path)
+                })
+                .flatten();
+            (source, unsaved)
         };
+        let unsaved = match unsaved {
+            Some(document) => {
+                // Not waited for: the names of the last one are offered.
+                self.isolated_parse(uri, document, max_file_bytes, request.id());
+                self.lock_state().unsaved_names.get(uri).cloned()
+            }
+            None => None,
+        }
+        .unwrap_or_default();
         let source_too_large = matches!(&source, CompletionSource::TooLarge(_));
-        let values = tokio::task::spawn_blocking(move || {
-            let text = match source {
-                CompletionSource::Open(text) => text,
+        let values = blocking("completion", move || {
+            let line = match source {
+                CompletionSource::Open(text) => line_of(&text, position.line),
                 CompletionSource::Disk(path, max_file_bytes) => {
                     match read_closed_input_snapshot(&path, max_file_bytes) {
-                        Ok(read) => read.text,
+                        Ok(read) => line_of(&read.text, position.line),
                         Err(error) => {
                             error.log_rejection();
                             crate::llg_debug!(
@@ -1403,24 +1364,7 @@ impl LanguageServer for Backend {
                     return Vec::new();
                 }
             };
-            let line = text
-                .lines()
-                .nth(position.line as usize)
-                .unwrap_or("")
-                .to_owned();
-            paths
-                .into_iter()
-                .map(|path| {
-                    features::completion_at(
-                        &analysis,
-                        &path,
-                        position.line,
-                        position.character,
-                        &line,
-                    )
-                })
-                .find(|values| !values.is_empty())
-                .unwrap_or_default()
+            features::completion_at(&served.analysis, &unsaved, position.character, &line)
         })
         .await
         .unwrap_or_default();
@@ -1438,6 +1382,29 @@ impl LanguageServer for Backend {
             let count = values.len();
             request.complete("ok", count);
             Ok(Some(CompletionResponse::Array(values)))
+        }
+    }
+}
+
+/// A line of `text`, empty when it has none there.
+fn line_of(text: &str, line: u32) -> String {
+    llg::core::tokens::SourcePositions::new(text)
+        .lines()
+        .nth(line as usize)
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// The result of `work` on the blocking pool; `None` when it panicked.
+async fn blocking<T: Send + 'static>(
+    request: &'static str,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
+    match tokio::task::spawn_blocking(work).await {
+        Ok(value) => Some(value),
+        Err(error) => {
+            crate::llg_debug!("event=request.task outcome=error request={request} error={error}");
+            None
         }
     }
 }
@@ -1466,34 +1433,35 @@ impl Backend {
                 None => Err("unknown document".to_owned()),
                 Some((root, _real, candidates)) => {
                     request.set_root(|| root.descriptor.id.clone());
-                    match root.last_good.clone() {
+                    match root.served() {
                         None => Err("no analysis available yet for this document".to_owned()),
-                        Some(analysis) => Ok((analysis, candidates, root.descriptor.root.clone())),
+                        Some(served) => Ok((served, candidates, root.descriptor.root.clone())),
                     }
                 }
             }
         };
-        let (analysis, candidates, display_root) = match resolved {
+        let (served, candidates, display_root) = match resolved {
             Ok(parts) => parts,
             Err(reason) => {
                 request.complete("no-data", 1);
                 return Ok(dump_tokens_error(reason));
             }
         };
-        let mut lines = tokio::task::spawn_blocking(move || {
-            let rows = dump::collect_rows_for(&analysis, &display_root, &candidates);
-            let mut lines = dump::format_rows(
-                &format!("root={}", display_root.display()),
-                &rows,
-                &analysis,
-            );
+        let mut places = Places::new(&self.state, &served);
+        let mut lines = blocking("dumpTokens", move || {
+            let analysis = &served.analysis;
+            let mut rows = dump::collect_rows_for(analysis, &display_root, &candidates);
+            rows.retain_mut(|row| row.relocate(|file, name, start| places.name(file, name, start)));
+            places.log("llg/dumpTokens", rows.len());
+            let mut lines =
+                dump::format_rows(&format!("root={}", display_root.display()), &rows, analysis);
             // The CLI-only report header stays out of the wire response: the
             // contract is the formatted rows plus the trailing summary line.
             let _ = lines.remove(0);
             lines
         })
         .await
-        .unwrap_or_else(|_| vec!["# error: dump task failed".to_owned()]);
+        .unwrap_or_else(|| vec!["# error: dump task failed".to_owned()]);
         insert_cache_stats_line(&mut lines, self.cache_stats());
         request.complete("ok", lines.len());
         Ok(DumpTokensResult { lines })
@@ -1537,11 +1505,13 @@ impl Backend {
                     None => true,
                 })
                 .filter_map(|(key, root)| {
-                    let analysis = root.last_good.clone()?;
+                    let served = root.served()?;
+                    let places = Places::new(&self.state, &served);
                     Some((
                         key.to_string_lossy().into_owned(),
                         root.shadow.clone(),
-                        analysis,
+                        served.analysis,
+                        places,
                     ))
                 })
                 .collect::<Vec<_>>()
@@ -1555,7 +1525,7 @@ impl Backend {
             budget.prepare_workspaces();
             let workspace_count = roots.len();
             let snapshots = roots.into_iter().enumerate().map(
-                |(workspace_index, (root_id, shadow, analysis))| {
+                |(workspace_index, (root_id, shadow, analysis, mut places))| {
                     budget.begin_workspace(workspace_count - workspace_index);
                     let mut snapshot = module_explorer::snapshot_analysis_with_budget(
                         &root_id,
@@ -1563,9 +1533,10 @@ impl Backend {
                         |path| shadow.real_path(path).or_else(|| Some(path.to_path_buf())),
                         &mut budget,
                     );
-                    module_explorer::remap_uris(&mut snapshot, |path| {
-                        shadow.real_path(path).or_else(|| Some(path.to_path_buf()))
+                    module_explorer::visit_places(&mut snapshot, |uri, range| {
+                        places.relocate(uri, range);
                     });
+                    places.log("llg/moduleExplorer", snapshot.modules.len());
                     snapshot
                 },
             );
@@ -1629,6 +1600,7 @@ impl Backend {
             let state = self.lock_state();
             match Self::root_context(&state, &params.uri) {
                 None => None,
+                Some(_) if state.documents.is_rejected(&params.uri) => None,
                 Some((root, real, _candidates)) => {
                     request.set_root(|| root.descriptor.id.clone());
                     let defines = root.descriptor.effective_config().compile.defines.clone();

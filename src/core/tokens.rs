@@ -954,6 +954,15 @@ impl<'a> SourcePositions<'a> {
         Self { text, line_starts }
     }
 
+    /// The lines without their line endings: one more than there are endings.
+    pub fn lines(&self) -> impl Iterator<Item = &'a str> + '_ {
+        let ends = self.line_starts[1..].iter().copied();
+        self.line_starts
+            .iter()
+            .zip(ends.chain([self.text.len()]))
+            .map(|(&start, end)| self.text[start..end].trim_end_matches(['\r', '\n']))
+    }
+
     /// The text of `range`, empty when it is not inside the source.
     pub fn text(&self, range: SourceRange) -> &'a str {
         let bound = |offset| usize::try_from(offset).unwrap_or(usize::MAX);

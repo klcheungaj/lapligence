@@ -7,7 +7,9 @@
 //!
 //! Correctness model — no TTLs, only input-derived keys:
 //!
-//! * Navigation results depend on `(query, analysis snapshot)`.  Every commit
+//! * Navigation results depend on `(query, analysis snapshot)`, and their
+//!   positions are those of the analysed text, also in the key, so they hold
+//!   while documents are edited; `lsp/handlers/positions.rs` maps them.  Every commit
 //!   that replaces a root's `last_good` snapshot stamps it with a fresh
 //!   process-global [`analysis_epoch`] (see `commit_job`), so any input change
 //!   that flows through an analysis commit (buffer edits, file saves via
@@ -21,7 +23,7 @@
 //!   any edit misses the cache.
 //!
 //! The cache is thread-safe (`Mutex`) and bounded (small LRU); values are
-//! cheap clones (`Location`, `Hover`, shared tables), so entries never pin a
+//! cheap clones (`Location`, `HoverText`, shared tables), so entries never pin a
 //! retired `Analysis`.
 
 use std::collections::HashMap;

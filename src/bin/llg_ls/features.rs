@@ -20,7 +20,6 @@
 //!   internally when comparing against the 1-based token data.
 //! * [`Analysis`] is fully owned and `Send`.
 
-use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};

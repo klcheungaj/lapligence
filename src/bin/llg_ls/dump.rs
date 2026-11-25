@@ -20,7 +20,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use tower_lsp::lsp_types::SemanticToken;
+use tower_lsp::lsp_types::{Position, SemanticToken};
 
 use crate::config::{self, LlgConfig};
 use crate::features::{self, Analysis, AnalysisOutcome};
@@ -218,6 +218,34 @@ struct BindOut {
     via_connection: bool,
     /// Display form of `abs_file`.
     disp_file: String,
+}
+
+impl OutRow {
+    /// Move the row and its binding to where `place` has their names now.
+    /// `false` when one of them is gone: the row would be wrong without it.
+    pub(crate) fn relocate(
+        &mut self,
+        mut place: impl FnMut(&str, &str, Position) -> Option<Position>,
+    ) -> bool {
+        let start = Position::new(self.line, self.col);
+        let Some(start) = place(&self.abs_file, &self.name, start) else {
+            return false;
+        };
+        self.end_col = start.character + (self.end_col - self.col);
+        (self.line, self.col) = (start.line, start.character);
+        if let Some(bind) = self
+            .bind
+            .as_mut()
+            .filter(|bind| bind.kind != tokens::TARGET_FILE)
+        {
+            let start = Position::new(bind.line, bind.col);
+            let Some(start) = place(&bind.abs_file, &bind.name, start) else {
+                return false;
+            };
+            (bind.line, bind.col) = (start.line, start.character);
+        }
+        true
+    }
 }
 
 /// One decoded (absolute-position) semantic token from a file's stream.

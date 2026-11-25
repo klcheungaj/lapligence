@@ -50,68 +50,6 @@ pub(super) const INSTANCE_NAME_TOKEN_TYPES: &[i32] = &[
 ];
 
 impl SymbolIndex {
-    /// Merge indexes produced by independent analysis passes.
-    ///
-    /// Input order is preserved, and duplicate occurrences at the same
-    /// position are kept from the first index.  The lookup maps are rebuilt
-    /// from the merged vectors so declaration indices remain deterministic.
-    /// `instance_def`, whose keys are declaration indices, is remapped as
-    /// entries are appended.
-    pub fn merge<I, T>(indices: I) -> SymbolIndex
-    where
-        I: IntoIterator<Item = T>,
-        T: Borrow<SymbolIndex>,
-    {
-        let mut merged = SymbolIndex::default();
-        for index in indices {
-            merged.merge_one(index.borrow());
-        }
-        merged.rebuild_lookup_maps();
-        merged
-    }
-
-    fn merge_one(&mut self, other: &SymbolIndex) {
-        let mut decl_positions: HashMap<(String, u32, u32), usize> = self
-            .decls
-            .iter()
-            .enumerate()
-            .map(|(idx, d)| ((d.file.clone(), d.line, d.col), idx))
-            .collect();
-        let mut decl_remap = Vec::with_capacity(other.decls.len());
-        for decl in &other.decls {
-            let key = (decl.file.clone(), decl.line, decl.col);
-            let new_idx = if let Some(&idx) = decl_positions.get(&key) {
-                idx
-            } else {
-                let idx = self.decls.len();
-                self.decls.push(decl.clone());
-                decl_positions.insert(key, idx);
-                idx
-            };
-            decl_remap.push(new_idx);
-        }
-
-        let mut ref_positions: HashSet<(String, u32, u32)> = self
-            .refs
-            .iter()
-            .map(|r| (r.file.clone(), r.line, r.col))
-            .collect();
-        for reference in &other.refs {
-            let key = (reference.file.clone(), reference.line, reference.col);
-            if ref_positions.insert(key) {
-                self.refs.push(reference.clone());
-            }
-        }
-
-        for (&old_idx, def_name) in &other.instance_def {
-            if let Some(&new_idx) = decl_remap.get(old_idx) {
-                self.instance_def
-                    .entry(new_idx)
-                    .or_insert_with(|| def_name.clone());
-            }
-        }
-    }
-
     pub(super) fn rebuild_lookup_maps(&mut self) {
         self.decls_by_file.clear();
 
@@ -433,7 +371,7 @@ impl SymbolIndex {
                     let line = line1.saturating_sub(1);
                     let col = col1.saturating_sub(1);
                     let def = clean_name(&i.def_name).to_owned();
-                    let detail = format!("{} {}\n\ndefined at {file}:{line1}", def, i.name);
+                    let detail = format!("{} {}", def, i.name);
                     let idx = decls.len();
                     decls.push(SymEntry {
                         name: name.clone(),
