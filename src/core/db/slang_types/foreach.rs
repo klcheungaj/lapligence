@@ -1,6 +1,7 @@
 //! Preserve foreach dimensions before the type graph becomes a storage shape.
 
 use super::*;
+use crate::IdSet;
 
 impl SlangTypeProjector<'_> {
     /// Project exactly the source iterator slots, including omitted slots.
@@ -14,7 +15,7 @@ impl SlangTypeProjector<'_> {
     ) -> Result<Vec<Option<(i32, i32)>>, String> {
         let mut dimensions = Vec::new();
         let mut current = Some(self.ty(type_id)?);
-        let mut seen = HashSet::new();
+        let mut seen = IdSet::new();
         for _ in 0..count {
             let ty = current.ok_or_else(|| {
                 "foreach iterator count exceeds the iterated type's dimensions".to_owned()

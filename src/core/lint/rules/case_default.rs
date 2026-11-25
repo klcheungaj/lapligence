@@ -20,6 +20,7 @@
 use crate::core::db::{CaseKind, Db, NodeId, NodeKind, StmtKind};
 use crate::core::lint::rules::analysis::is_comb_or_latch_process;
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
+use crate::IdMap;
 
 /// Warns about case statements without a default arm outside the
 /// `incomplete-case` domain.
@@ -37,6 +38,7 @@ impl LintRule for CaseDefaultMissingRule {
     fn check(&self, ctx: &LintCtx<'_>) -> Vec<LintDiag> {
         let db = ctx.db;
         let mut out = Vec::new();
+        let mut in_process = IdMap::new();
         for &id in ctx.nodes() {
             let NodeKind::Stmt(StmtKind::Case {
                 case_type, items, ..
@@ -47,7 +49,7 @@ impl LintRule for CaseDefaultMissingRule {
             if items.iter().any(|it| it.exprs.is_empty()) {
                 continue; // has a default arm
             }
-            if *case_type == CaseKind::Exact && in_comb_or_latch_process(db, id) {
+            if *case_type == CaseKind::Exact && in_comb_or_latch_process(db, id, &mut in_process) {
                 continue; // incomplete-case's domain: exact case in a comb process
             }
             let node = db.node(id);
@@ -78,17 +80,28 @@ impl LintRule for CaseDefaultMissingRule {
 /// True when `case` sits inside a process the incomplete-case rule owns
 /// (`always_comb` / `always_latch` / `@*`).  The walk climbs parent links to
 /// the nearest enclosing process; case statements outside any process
-/// (functions/tasks) are not in that domain.
-fn in_comb_or_latch_process(db: &Db, mut cur: NodeId) -> bool {
-    loop {
-        if let NodeKind::Process { .. } = db.node_kind(cur) {
-            return is_comb_or_latch_process(db, cur);
+/// (functions/tasks) are not in that domain. `known` keeps the answer for every
+/// node climbed through.
+fn in_comb_or_latch_process(db: &Db, case: NodeId, known: &mut IdMap<NodeId, bool>) -> bool {
+    let mut climbed = Vec::new();
+    let mut next = Some(case);
+    let answer = loop {
+        let Some(node) = next else {
+            break false;
+        };
+        if let Some(answer) = known.get(&node) {
+            break *answer;
         }
-        match db.node(cur).parent {
-            Some(p) => cur = p,
-            None => return false,
+        climbed.push(node);
+        if let NodeKind::Process { .. } = db.node_kind(node) {
+            break is_comb_or_latch_process(db, node);
         }
+        next = db.node(node).parent;
+    };
+    for node in climbed {
+        known.insert(node, answer);
     }
+    answer
 }
 
 #[cfg(test)]

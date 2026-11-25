@@ -13,11 +13,14 @@
 pub mod config;
 pub mod core;
 pub mod ffi;
+mod id_map;
 pub mod memory_limit;
 #[doc(hidden)]
 pub mod profile;
 pub mod sim;
 pub mod stack;
+pub(crate) use id_map::{Id, IdMap, IdSet};
+pub(crate) mod work;
 
 /// Seeded input generation shared with the integration-test groups
 /// (`tests/support/fuzz.rs` is its one definition).

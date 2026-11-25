@@ -193,8 +193,12 @@ endif()"#;
 /// in emitter output, so generated sources skip it; runtime sources keep it.
 /// Clang refuses more than 256 nested brackets unless told otherwise; a model
 /// nests as deep as its source ([`MODEL_BRACKET_DEPTH`]).
+/// GCC's `-fdevirtualize` (from `-O2`) has nothing to find in C, but looks for
+/// polymorphic types along every path of nested struct types: a coroutine frame
+/// embeds its callee's frame per call site, so the paths are those of the call
+/// graph, exponentially many where tasks call the next one twice.
 const MODEL_SOURCE_OPTIONS: &str = r#"if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-  set_source_files_properties({MODEL_SOURCES} PROPERTIES COMPILE_OPTIONS "-Wno-misleading-indentation;$<$<C_COMPILER_ID:Clang,AppleClang>:-fbracket-depth={BRACKET_DEPTH}>")
+  set_source_files_properties({MODEL_SOURCES} PROPERTIES COMPILE_OPTIONS "-Wno-misleading-indentation;$<$<C_COMPILER_ID:GNU>:-fno-devirtualize>;$<$<C_COMPILER_ID:Clang,AppleClang>:-fbracket-depth={BRACKET_DEPTH}>")
 endif()
 "#;
 
@@ -1927,28 +1931,24 @@ fn validate_model_abi_for(
 ) -> Result<(), BuildError> {
     for (name, source) in extra {
         let mut abi = None;
-        for line in source.lines() {
-            if let Some(value) = line.strip_prefix("#define LLG_MODEL_VALUE_ABI ") {
-                let value = value.trim();
-                let parsed = value.parse::<u32>().ok();
-                if parsed != Some(config.backend.abi()) || abi.is_some() {
-                    return Err(BuildError::InvalidModelAbi(value.to_owned()));
-                }
-                abi = parsed;
+        let defines = lines_after(source, "#define LLG_MODEL_").collect::<Vec<_>>();
+        for value in defines
+            .iter()
+            .filter_map(|line| line.strip_prefix("VALUE_ABI "))
+        {
+            let value = value.trim();
+            let parsed = value.parse::<u32>().ok();
+            if parsed != Some(config.backend.abi()) || abi.is_some() {
+                return Err(BuildError::InvalidModelAbi(value.to_owned()));
             }
+            abi = parsed;
         }
         for (guard, expected) in [
-            (
-                "#define LLG_MODEL_VALUE_BACKEND ",
-                config.backend.selector(),
-            ),
-            (
-                "#define LLG_MODEL_COMPACT_KERNELS ",
-                config.kernel.selector(),
-            ),
+            ("VALUE_BACKEND ", config.backend.selector()),
+            ("COMPACT_KERNELS ", config.kernel.selector()),
         ] {
-            let values = source
-                .lines()
+            let values = defines
+                .iter()
                 .filter_map(|line| line.strip_prefix(guard))
                 .collect::<Vec<_>>();
             if values.len() > 1
@@ -1965,7 +1965,7 @@ fn validate_model_abi_for(
                 && values.is_empty()
             {
                 return Err(BuildError::InvalidValueConfig(format!(
-                    "missing {guard} in {name}; regenerate model"
+                    "missing #define LLG_MODEL_{guard} in {name}; regenerate model"
                 )));
             }
         }
@@ -1980,11 +1980,24 @@ fn validate_model_abi_for(
     Ok(())
 }
 
+/// What follows `start` on the lines of `text` that begin with it. The search
+/// is for the first byte of `start`, which a model holds less often than lines.
+fn lines_after<'t>(text: &'t str, start: &'t str) -> impl Iterator<Item = &'t str> {
+    start
+        .chars()
+        .next()
+        .into_iter()
+        .flat_map(|first| text.match_indices(first))
+        .filter(|(at, _)| *at == 0 || text.as_bytes()[at - 1] == b'\n')
+        .filter_map(move |(at, _)| text[at..].strip_prefix(start)?.split('\n').next())
+        .map(|rest| rest.strip_suffix('\r').unwrap_or(rest))
+}
+
 fn wave_support(extra: &[(&str, &str)]) -> WaveSupport {
     let defines = |wanted: &str| {
         extra
             .iter()
-            .any(|(_, text)| text.lines().any(|line| line.trim_end() == wanted))
+            .any(|(_, text)| lines_after(text, wanted).any(|rest| rest.trim_end().is_empty()))
     };
     if !defines("#define LLG_WAVEFORM 1") {
         WaveSupport::None

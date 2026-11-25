@@ -592,7 +592,7 @@ impl<'a> Codegen<'a> {
                 }
                 let inherited = self.model.classes[base_index].fields.clone();
                 let own_len = self.model.classes[class_index].fields.len();
-                for (owner, index) in self.class_fields.values_mut() {
+                for (owner, index) in self.class_fields.values_mut_unordered() {
                     if *owner == class_index {
                         *index += inherited.len();
                     }

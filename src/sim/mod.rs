@@ -23,6 +23,9 @@ pub mod sdf;
 pub mod semantic;
 pub mod value_backend;
 
+#[cfg(test)]
+mod scaling_tests;
+
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 

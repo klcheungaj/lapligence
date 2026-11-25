@@ -1,6 +1,7 @@
 //! Signatures.
 
 use super::*;
+use crate::IdSet;
 
 impl<'a> Codegen<'a> {
     // ── Functions and tasks ───────────────────────────────────────────────
@@ -1061,7 +1062,7 @@ impl<'a> Codegen<'a> {
             }
         }
         let mut pending = vec![body];
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = IdSet::new();
         while let Some(node) = pending.pop() {
             if !seen.insert(node) {
                 continue;

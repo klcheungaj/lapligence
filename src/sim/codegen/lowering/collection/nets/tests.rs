@@ -309,16 +309,17 @@ endmodule
     let mut cg = Codegen::new(&semantic);
     prepare_nets(&mut cg);
     let scan = |cg: &Codegen<'_>, ir: usize| {
-        sorted_node_ids(&cg.sig_globals)
+        cg.sig_globals
+            .sorted_keys()
             .into_iter()
             .find(|node| cg.sig_globals[node].ir == ir)
     };
     assert!(!cg.sig_globals.is_empty());
-    for info in cg.sig_globals.values() {
+    for info in cg.sig_globals.unordered().map(|(_, info)| info) {
         assert_eq!(cg.sig_global_for_ir(info.ir), scan(&cg, info.ir));
     }
     // Re-pointing a node moves it between index buckets.
-    let mut nodes = sorted_node_ids(&cg.sig_globals);
+    let mut nodes = cg.sig_globals.sorted_keys();
     let first = nodes.remove(0);
     let moved_from = cg.sig_globals[&first].ir;
     let target = cg.sig_globals[&nodes[0]].clone();
@@ -326,7 +327,7 @@ endmodule
     assert_eq!(cg.sig_global_for_ir(target.ir), Some(first));
     assert_eq!(cg.sig_global_for_ir(moved_from), scan(&cg, moved_from));
     // In-place rewrites are picked up by a rebuild.
-    for info in cg.sig_globals.values_mut() {
+    for info in cg.sig_globals.values_mut_unordered() {
         info.ir += 1_000;
     }
     cg.rebuild_sig_global_index();

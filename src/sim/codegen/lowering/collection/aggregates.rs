@@ -102,8 +102,12 @@ impl<'a> Codegen<'a> {
         aggregate: UnpackedAggregateInfo,
     ) {
         if self.unpacked_aggregates.insert(node, aggregate).is_none() {
+            let path = self.scope_path_of(node);
+            self.aggregate_scope_separators = self
+                .aggregate_scope_separators
+                .max(path.matches('.').count());
             self.aggregates_by_scope
-                .entry(self.scope_path_of(node))
+                .entry(path)
                 .or_default()
                 .entry(&self.db.node(node).name)
                 .or_default()

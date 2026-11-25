@@ -6,7 +6,8 @@ use super::constants::{
 use super::context::RCtx;
 use super::expressions::{coerce_two_state, packed_default};
 use super::names::{
-    bound_identifiers, identifiers_anywhere, rewrite_identifiers, BoundedIdentifiers, FirstBytes,
+    bound_identifiers, identifiers_anywhere, rewrite_identifiers, rewrite_names,
+    BoundedIdentifiers, NameFilter,
 };
 use super::statements::{render_stmt_impl as render_stmt, wait_any_text_in_region};
 use super::EmitError;
@@ -248,6 +249,13 @@ struct CoroutineArtifact {
 }
 
 impl CoroutineArtifact {
+    /// The name of the body's C function.
+    fn body_name(&self) -> &str {
+        self.desc_name
+            .strip_suffix("_desc")
+            .unwrap_or(&self.desc_name)
+    }
+
     fn host_flags(&self) -> &'static str {
         match (self.blockable, self.procedural) {
             (true, true) => "LLG_DESC_BLOCKABLE | LLG_DESC_PROCEDURAL",
@@ -1098,6 +1106,7 @@ fn share_frame_types(
         .filter(|(original, group)| **original != names[**group])
         .map(|(original, group)| (original.clone(), names[*group].clone()))
         .collect::<HashMap<_, _>>();
+    let filter = renamed.keys().map(String::as_str).collect::<NameFilter>();
     for (artifact, group) in ordered.into_iter().zip(member_groups) {
         if artifact.root {
             frame_types[group].root = true;
@@ -1106,8 +1115,8 @@ fn share_frame_types(
         }
         artifact.frame_type = names[group].clone();
         if !renamed.is_empty() {
-            artifact.source = rewrite_identifiers(&artifact.source, |identifier| {
-                renamed.get(identifier).cloned()
+            artifact.source = rewrite_names(&artifact.source, filter, |identifier| {
+                renamed.get(identifier)
             });
         }
     }
@@ -1876,12 +1885,14 @@ fn referenced_descriptor_tables<'a>(rendered: &str, tables: &'a [(String, String
     }
     let names = |table: &'a (String, String)| {
         let (prefix, declaration) = table;
-        identifiers_anywhere(declaration).filter(|name| name.starts_with(prefix.as_str()))
+        identifiers_anywhere(declaration, prefix.len())
+            .filter(|name| name.starts_with(prefix.as_str()))
     };
     let declared = tables.iter().flat_map(names).collect::<HashSet<_>>();
-    let first = declared.iter().copied().collect::<FirstBytes>();
-    let used = identifiers_anywhere(rendered)
-        .filter(|name| first.may_hold(name) && declared.contains(name))
+    let filter = declared.iter().copied().collect::<NameFilter>();
+    let shortest = declared.iter().map(|name| name.len()).min().unwrap_or(1);
+    let used = identifiers_anywhere(rendered, shortest)
+        .filter(|name| filter.may_hold(name) && declared.contains(name))
         .collect::<HashSet<_>>();
     tables
         .iter()
@@ -1908,8 +1919,11 @@ fn unobserved_contents(model: &IrModel, rendered: &str, start: &str) -> String {
         return String::new();
     }
     let mut mentions = HashMap::<&str, usize>::new();
-    for name in identifiers_anywhere(rendered).chain(identifiers_anywhere(start)) {
-        if let Some(array) = name.strip_suffix("_llg_contents_dep") {
+    for name in [rendered, start]
+        .into_iter()
+        .flat_map(|text| identifiers_anywhere(text, CONTENTS_MARKER.len()))
+    {
+        if let Some(array) = name.strip_suffix(CONTENTS_MARKER) {
             *mentions.entry(array).or_default() += 1;
         }
     }
@@ -1927,6 +1941,11 @@ fn unobserved_contents(model: &IrModel, rendered: &str, start: &str) -> String {
         .collect::<String>();
     format!("static void llg_model_unobserved_contents(void) {{\n{clears}{sampled}}}\n\n")
 }
+
+/// The end of the name of an array's contents marker.
+const CONTENTS_MARKER: &str = "_llg_contents_dep";
+/// The end of the name of the change markers of a `real` array's elements.
+const ELEMENT_MARKERS: &str = "_llg_element_deps";
 
 /// Declaration, default, `llg_fixed_array_init` argument and destruction.
 const CONTENTS_MARKER_STORAGE_MENTIONS: usize = 4;
@@ -1948,8 +1967,12 @@ fn unobserved_real_columns(model: &IrModel, rendered: &mut String, start: &str) 
         return;
     }
     let mut mentions = HashMap::<String, usize>::new();
-    for name in identifiers_anywhere(rendered).chain(identifiers_anywhere(start)) {
-        if name.ends_with("_llg_contents_dep") || name.ends_with("_llg_element_deps") {
+    let shortest = CONTENTS_MARKER.len().min(ELEMENT_MARKERS.len());
+    for name in [&**rendered, start]
+        .into_iter()
+        .flat_map(|text| identifiers_anywhere(text, shortest))
+    {
+        if name.ends_with(CONTENTS_MARKER) || name.ends_with(ELEMENT_MARKERS) {
             *mentions.entry(name.to_owned()).or_default() += 1;
         }
     }
@@ -1959,7 +1982,7 @@ fn unobserved_real_columns(model: &IrModel, rendered: &mut String, start: &str) 
     let mut lines = Vec::new();
     for array in columns() {
         let name = &array.c_name;
-        if unread(format!("{name}_llg_element_deps")) {
+        if unread(format!("{name}{ELEMENT_MARKERS}")) {
             lines.push(format!(
                 "static sv4_t {name}_llg_element_deps[{}];\n",
                 array.total
@@ -1972,7 +1995,7 @@ fn unobserved_real_columns(model: &IrModel, rendered: &mut String, start: &str) 
             ));
             lines.push(format!("    sv4_destroy(&{name}_llg_element_deps[_i]);\n"));
         }
-        if unread(format!("{name}_llg_contents_dep")) {
+        if unread(format!("{name}{CONTENTS_MARKER}")) {
             lines.push(format!(
                 "    llg_dependency_bind_real(&{name}[_i], &{name}_llg_contents_dep);\n"
             ));

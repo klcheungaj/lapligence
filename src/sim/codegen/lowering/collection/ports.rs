@@ -861,7 +861,8 @@ impl<'a> Codegen<'a> {
                 .collect()
         };
         let owner_of = |ir: usize| {
-            sorted_node_ids(&self.array_globals)
+            self.array_globals
+                .sorted_keys()
                 .into_iter()
                 .find(|owner| self.array_globals[owner].ir == ir)
         };

@@ -11,9 +11,9 @@ impl Frame<'_, '_> {
         );
         self.marks.push(marker);
         self.mark_blocks.push(self.layout.current_block());
-        self.bindings.push(HashMap::new());
-        self.event_bindings.push(HashMap::new());
-        self.native_bindings.push(HashMap::new());
+        self.bindings.push();
+        self.event_bindings.push();
+        self.native_bindings.push();
         self.temp_roots.push(self.slots.clone());
         self.labels.push(
             body.iter()
@@ -182,6 +182,7 @@ impl Frame<'_, '_> {
 
     fn statement_body(&mut self, statement: &IrStmt) -> Result<(), String> {
         let cancellation_mark = self.cancellation_mark();
+        let nested_mark = self.nested_exits.mark();
         match statement {
             IrStmt::Located { origin, statement } => {
                 return self
@@ -284,11 +285,12 @@ impl Frame<'_, '_> {
             }
             _ => self.operation_statement(statement)?,
         }
-        if crate::sim::execution::statements_have_effect(
+        if self.nested_exits.finish(
             self.ctx.model,
             self.ctx.effects,
-            std::slice::from_ref(statement),
+            statement,
             crate::sim::execution::ExecutionEffect::Terminate,
+            nested_mark,
         ) {
             if self.plain_exits() {
                 self.line("if (LLG_CO_UNLIKELY(llg_rt_exiting())) goto _llg_return;");
@@ -550,10 +552,7 @@ impl Frame<'_, '_> {
                     "event_capture",
                     format!("{{ {pointer} ? {pointer}->object : NULL }}"),
                 );
-                self.event_bindings
-                    .last_mut()
-                    .expect("event scope")
-                    .insert(name.clone(), format!("&{local}"));
+                self.event_bindings.insert(name, format!("&{local}"));
             }
             IrStmt::EventDeclare { name } => {
                 let local = self.declare(
@@ -561,10 +560,7 @@ impl Frame<'_, '_> {
                     "event_local",
                     "{ llg_event_object_new() }".to_owned(),
                 );
-                self.event_bindings
-                    .last_mut()
-                    .expect("event scope")
-                    .insert(name.clone(), format!("&{local}"));
+                self.event_bindings.insert(name, format!("&{local}"));
             }
             IrStmt::DeclLocal {
                 name,

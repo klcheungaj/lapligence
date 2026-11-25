@@ -1,6 +1,7 @@
 //! Classes.
 
 use super::*;
+use crate::IdSet;
 
 impl Codegen<'_> {
     pub(in super::super) fn class_field_target(&self, node: NodeId) -> Option<NodeId> {
@@ -460,7 +461,7 @@ impl Codegen<'_> {
     ) -> Result<Vec<NodeId>, String> {
         let bodies = self.statement_bodies(h);
         let mut pending = vec![(h, ReceiverScope::Statement)];
-        let mut visited = HashSet::new();
+        let mut visited = IdSet::new();
         // Properties of computed handles, innermost and leftmost last: a
         // handle may itself read such a property (`list[i].sub[j].q`).
         let mut computed = Vec::new();
@@ -1190,7 +1191,7 @@ impl Codegen<'_> {
 
     pub(in super::super) fn node_contains_super_constructor(&self, root: NodeId) -> bool {
         let mut pending = vec![root];
-        let mut visited = HashSet::new();
+        let mut visited = IdSet::new();
         while let Some(node) = pending.pop() {
             if !visited.insert(node) {
                 continue;
@@ -1500,7 +1501,7 @@ impl Codegen<'_> {
             let class = self.class_nodes[&class_node];
             let mut fields = self
                 .class_fields
-                .iter()
+                .unordered()
                 .filter(|(_, (owner, _))| *owner == class)
                 .map(|(node, (_, index))| (*node, *index))
                 .collect::<Vec<_>>();
@@ -1508,7 +1509,7 @@ impl Codegen<'_> {
             // their declaration: they initialize in field order with the rest.
             let containers = self
                 .container_globals
-                .iter()
+                .unordered()
                 .filter_map(|(node, info)| {
                     let storage = &self.model.containers[info.ir];
                     match storage.class_field {

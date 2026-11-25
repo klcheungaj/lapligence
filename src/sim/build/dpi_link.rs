@@ -114,8 +114,7 @@ pub(super) fn declared_imports_in(extra: &[(&str, &str)]) -> BTreeSet<String> {
     extra
         .iter()
         .filter(|(name, _)| name.ends_with(".c"))
-        .flat_map(|(_, source)| source.lines())
-        .filter_map(|line| line.strip_prefix(IMPORT_MARKER))
+        .flat_map(|(_, source)| super::lines_after(source, IMPORT_MARKER))
         .filter_map(|rest| rest.split_whitespace().next())
         .map(str::to_owned)
         .collect()

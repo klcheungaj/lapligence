@@ -9,6 +9,7 @@
 //! (SV 27.3, 27.5): the owned children and instance walks leave its members
 //! out, and the declaration initializers skip it explicitly.
 
+use crate::IdSet;
 use std::collections::HashSet;
 
 use crate::core::db::{ConstraintKind, Db, NodeId, NodeKind, RandQualifier};
@@ -73,7 +74,7 @@ impl LintRule for UndrivenSignalRule {
         // `all_nodes` follows owned reference bases as well as structural
         // children, so a declaration can occur more than once in that walk.
         // Deduping by arena identity guarantees one finding per object.
-        let mut seen = HashSet::new();
+        let mut seen = IdSet::new();
         let mut emitted = HashSet::new();
         let mut out = Vec::new();
         for &id in ctx.nodes() {

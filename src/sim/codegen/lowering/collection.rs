@@ -21,6 +21,7 @@ pub(super) use dynamic_reads::ReportReadPlan;
 mod calls;
 pub(in crate::sim::codegen) use calls::CallElementCopies;
 mod captures;
+pub(super) use captures::BranchReferences;
 mod classes;
 mod const_writes;
 mod constants;
@@ -42,6 +43,8 @@ pub(super) use fixed_values::{
 mod function_bodies;
 mod gates;
 mod initialization;
+mod lexical_scopes;
+pub(super) use lexical_scopes::LexicalScopes;
 mod locals;
 mod lvalues;
 mod module_paths;

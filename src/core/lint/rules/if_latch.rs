@@ -171,8 +171,8 @@ fn analyze_stmt(db: &Db, root: NodeId) -> PathWrites {
             // wait(cond) may never proceed and fork branches may not all run:
             // every write underneath is conditional.
             let mut maybe = HashSet::new();
-            for c in &db.node(root).children {
-                let w = analyze_stmt(db, *c);
+            for child in db.walk_children(root) {
+                let w = analyze_stmt(db, child);
                 maybe.extend(w.definite);
                 maybe.extend(w.maybe);
             }
@@ -199,8 +199,8 @@ fn analyze_stmt(db: &Db, root: NodeId) -> PathWrites {
 /// leaves no latch.
 fn fold_children(db: &Db, root: NodeId) -> PathWrites {
     let mut out = PathWrites::default();
-    for c in &db.node(root).children {
-        let w = analyze_stmt(db, *c);
+    for child in db.walk_children(root) {
+        let w = analyze_stmt(db, child);
         out.definite.extend(w.definite);
         out.maybe.extend(w.maybe);
     }

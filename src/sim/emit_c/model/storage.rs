@@ -1,6 +1,7 @@
 //! Storage.
 
 use super::*;
+use crate::IdSet;
 
 /// Net records declared by one C declaration; only the text width changes.
 const NET_DECLARATIONS_PER_LINE: usize = 8;
@@ -227,7 +228,7 @@ fn render_net_views(model: &IrModel, out: &mut String) {
 /// module path sources.
 pub(in crate::sim::emit_c) fn path_source_storage(model: &IrModel, index: usize) -> String {
     let mut index = index;
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = IdSet::new();
     while seen.insert(index) {
         let Some(alias) = model.signals.get(index).and_then(|signal| signal.alias) else {
             break;

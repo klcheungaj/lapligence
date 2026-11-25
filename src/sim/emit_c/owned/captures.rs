@@ -396,10 +396,7 @@ impl Frame<'_, '_> {
                 );
                 format!("&{local}")
             };
-            self.event_bindings
-                .last_mut()
-                .expect("event scope")
-                .insert(name.to_owned(), address);
+            self.event_bindings.insert(name, address);
             return Ok(());
         }
         if matches!(
@@ -433,19 +430,15 @@ impl Frame<'_, '_> {
                 shortreal: false,
                 automatic: true,
             };
-            let scope = self
-                .bindings
-                .last_mut()
-                .expect("frame always has a binding scope");
             // Selected and projected accesses (an element of a captured
             // automatic array) name the variable by its source local, as
             // captured strings and handles do.
             if let IrExprKind::LocalRead(local) = initial.kind() {
                 if local != name {
-                    scope.insert(local.clone(), binding.clone());
+                    self.bindings.insert(local, binding.clone());
                 }
             }
-            scope.insert(name.to_owned(), binding);
+            self.bindings.insert(name, binding);
             return Ok(());
         }
         if storage.kind() == StorageKind::Opaque {
@@ -619,9 +612,7 @@ impl Frame<'_, '_> {
         }
         if formal.event && !marker {
             self.event_bindings
-                .first_mut()
-                .expect("event scope")
-                .insert(super::events::event_formal_binding(index), name);
+                .insert_outermost(&super::events::event_formal_binding(index), name);
         }
         Ok(())
     }
@@ -629,16 +620,11 @@ impl Frame<'_, '_> {
     /// Bind `alias` to the cell already bound as `name` in the innermost
     /// scope (see `IrCapture::alias`).
     pub(super) fn alias_capture(&mut self, alias: &str, name: &str) {
-        let scope = self
-            .bindings
-            .last_mut()
-            .expect("frame always has a binding scope");
-        if let Some(binding) = scope.get(name).cloned() {
-            scope.insert(alias.to_owned(), binding);
+        if let Some(binding) = self.bindings.get_innermost(name).cloned() {
+            self.bindings.insert(alias, binding);
         }
-        let natives = self.native_bindings.last_mut().expect("native scope");
-        if let Some(binding) = natives.get(name).cloned() {
-            natives.insert(alias.to_owned(), binding);
+        if let Some(binding) = self.native_bindings.get_innermost(name).cloned() {
+            self.native_bindings.insert(alias, binding);
         }
     }
 

@@ -98,8 +98,8 @@ fn collect_assign_kinds(db: &Db, root: NodeId, out: &mut AssignKinds) {
             out.nonblocking = true;
         }
     }
-    for c in &db.node(root).children {
-        collect_assign_kinds(db, *c, out);
+    for child in db.walk_children(root) {
+        collect_assign_kinds(db, child, out);
     }
 }
 

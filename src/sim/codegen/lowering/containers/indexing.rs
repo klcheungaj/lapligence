@@ -1028,7 +1028,8 @@ impl<'a> Codegen<'a> {
         self.node(node)
             .children
             .iter()
-            .filter(|child| !indices.contains(child))
+            // Of the indices only the last is a child.
+            .filter(|child| indices.last() != Some(*child))
             .find_map(|child| {
                 let Some(staged) = self.staged_nested_element(*child) else {
                     return self.staged_select_below(*child);

@@ -142,7 +142,7 @@ impl Codegen<'_> {
             return true;
         };
         if walk.cuts(callee) {
-            return !self.reads_dynamic_storage_in(body, &mut HashSet::new());
+            return !self.reads_dynamic_storage_in(body, &mut IdSet::new());
         }
         if walk.has_walked(callee, &receivers) {
             return true;

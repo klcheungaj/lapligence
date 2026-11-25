@@ -8,8 +8,13 @@
 use super::constants::{c_string_literal, emit_const, periodic_constant, round_shortreal};
 use super::context::RCtx;
 use super::frame_layout::{declaration, FrameLayout, FrameStorage};
-use super::names::{identifier_spans, identifier_spans_in_comments, FirstBytes};
-use crate::sim::execution::{CallMechanism, CoroutineId, ExecutionAnalysis, SuspensionOperation};
+use super::names::{
+    first_of, identifier_spans_in_comments, marker_starts, named_spans, named_spans_in_comments,
+    NameFilter,
+};
+use crate::sim::execution::{
+    CallMechanism, CoroutineId, ExecutionAnalysis, NestedEffects, SuspensionOperation,
+};
 use crate::sim::ir::*;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
@@ -58,6 +63,8 @@ pub(super) mod randomize;
 mod references;
 mod repeated_values;
 mod runtime_tasks;
+mod scopes;
+use scopes::Scopes;
 mod statements;
 mod storage_names;
 use dense_cells::dyn_position;
@@ -172,14 +179,16 @@ pub(super) struct Frame<'a, 'm> {
     containers: HashMap<usize, String>,
     slots: Vec<bool>,
     next_name: usize,
-    bindings: Vec<HashMap<String, Binding>>,
-    event_bindings: Vec<HashMap<String, String>>,
+    bindings: Scopes<Binding>,
+    event_bindings: Scopes<String>,
     /// The C variables of the jump states declared so far.
     jump_states: HashMap<String, String>,
     /// Locals that live in a shared activation frame (`IrStmt::SharedLocal`,
     /// `StorageOwnership::Shared` captures): name -> (frame expression, slot).
     shared_cells: HashMap<String, (String, u32)>,
-    native_bindings: Vec<HashMap<String, native::NativeBinding>>,
+    native_bindings: Scopes<native::NativeBinding>,
+    /// Which rendered statements can end the simulation.
+    nested_exits: NestedEffects,
     formal_overrides: Vec<Vec<Binding>>,
     callback_signal_overrides: Vec<HashMap<usize, usize>>,
     /// Per active inline call, the signal that is the function's result
@@ -524,11 +533,12 @@ impl<'a, 'm> Frame<'a, 'm> {
             containers: HashMap::new(),
             slots: Vec::new(),
             next_name: 0,
-            bindings: vec![HashMap::new()],
-            event_bindings: vec![HashMap::new()],
+            bindings: Scopes::new(),
+            event_bindings: Scopes::new(),
             jump_states: HashMap::new(),
             shared_cells: HashMap::new(),
-            native_bindings: vec![HashMap::new()],
+            native_bindings: Scopes::new(),
+            nested_exits: NestedEffects::default(),
             formal_overrides: Vec::new(),
             callback_signal_overrides: Vec::new(),
             callback_results: Vec::new(),
@@ -655,6 +665,10 @@ impl<'a, 'm> Frame<'a, 'm> {
     fn track_frame_blocks(&mut self, text: &str) -> Vec<usize> {
         let mut exits = Vec::new();
         let bytes = text.as_bytes();
+        // Most lines neither hold a brace nor open a comment.
+        if !self.in_block_comment && first_of(bytes, 0, *b"{}/").is_none() {
+            return exits;
+        }
         let mut index = 0;
         let mut segment_start = 0;
         let mut paren_depth = 0usize;
@@ -761,7 +775,9 @@ impl<'a, 'm> Frame<'a, 'm> {
         let bytes = text.as_bytes();
         let mut out = String::with_capacity(text.len() + 16);
         let mut copied = 0;
-        for span in identifier_spans_in_comments(text) {
+        let mut names = self.layout.field_names();
+        names.insert("self");
+        for span in named_spans_in_comments(text, names) {
             if span.start > 0 && matches!(bytes[span.start - 1], b'.' | b'>') {
                 continue;
             }
@@ -1137,9 +1153,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             return Some(binding.address);
         }
         self.native_bindings
-            .iter()
-            .rev()
-            .find_map(|scope| scope.get(name))
+            .get(name)
             .map(|binding| binding.address.clone())
     }
 
@@ -1221,12 +1235,10 @@ impl<'a, 'm> Frame<'a, 'm> {
     }
 
     fn lookup(&self, name: &str) -> Option<Binding> {
-        for bindings in self.bindings.iter().rev() {
-            if let Some(binding) = bindings.get(name) {
-                return Some(binding.clone());
-            }
+        match self.bindings.get(name) {
+            Some(binding) => Some(binding.clone()),
+            None => self.model_binding(name),
         }
-        self.model_binding(name)
     }
     /// The model storage `name` resolves to when no frame scope binds it.
     fn model_binding(&self, name: &str) -> Option<Binding> {
@@ -1324,10 +1336,7 @@ impl<'a, 'm> Frame<'a, 'm> {
                 &super::expressions::packed_default(width, signed, two_state),
             );
         }
-        self.bindings
-            .last_mut()
-            .expect("frame always has a binding scope")
-            .insert(name.to_owned(), binding.clone());
+        self.bindings.insert(name, binding.clone());
         if let Some(init) = init {
             let value = self.expression(init)?;
             let value = self.convert(value, width, signed, two_state, false);
@@ -1369,20 +1378,17 @@ impl<'a, 'm> Frame<'a, 'm> {
         };
         self.shared_cells
             .insert(name.to_owned(), (format!("(*{owner})"), 0));
-        self.bindings
-            .last_mut()
-            .expect("frame always has a binding scope")
-            .insert(
-                name.to_owned(),
-                Binding {
-                    address: address.clone(),
-                    width,
-                    signed,
-                    two_state,
-                    shortreal: false,
-                    automatic: true,
-                },
-            );
+        self.bindings.insert(
+            name,
+            Binding {
+                address: address.clone(),
+                width,
+                signed,
+                two_state,
+                shortreal: false,
+                automatic: true,
+            },
+        );
         if let Some(init) = init {
             let value = self.expression(init)?;
             let value = self.convert(value, width, signed, two_state, false);
@@ -1509,17 +1515,13 @@ impl<'a, 'm> Frame<'a, 'm> {
 
     fn resolve_declarations(&self) -> Result<String, String> {
         const PREFIX: &str = "__llg_declaration_";
+        const SUFFIX: &str = "__";
         let mut output = String::with_capacity(self.code.len());
-        let mut rest = self.code.as_str();
-        while let Some(start) = rest.find(PREFIX) {
-            output.push_str(&rest[..start]);
-            let suffix = &rest[start + PREFIX.len()..];
-            let end = suffix
-                .find("__")
-                .ok_or_else(|| "unterminated deferred coroutine declaration".to_owned())?;
-            let index = suffix[..end]
-                .parse::<usize>()
-                .map_err(|_| "invalid deferred coroutine declaration".to_owned())?;
+        let mut copied = 0;
+        for (start, _) in self.code.match_indices(PREFIX) {
+            output.push_str(&self.code[copied..start]);
+            let (index, end) = marker_index(&self.code, start + PREFIX.len(), SUFFIX)
+                .ok_or_else(|| "invalid deferred coroutine declaration".to_owned())?;
             let record = self
                 .declarations
                 .get(index)
@@ -1536,9 +1538,9 @@ impl<'a, 'm> Frame<'a, 'm> {
             } else {
                 output.push_str(&declaration(&record.ty, &record.name));
             }
-            rest = &suffix[end + 2..];
+            copied = end;
         }
-        output.push_str(rest);
+        output.push_str(&self.code[copied..]);
         Ok(output)
     }
 
@@ -1553,16 +1555,11 @@ impl<'a, 'm> Frame<'a, 'm> {
             .collect::<HashSet<_>>();
         let uses = identifier_counts(code, &locals);
         let mut output = String::with_capacity(code.len());
-        let mut rest = code;
-        while let Some(start) = rest.find(PREFIX) {
-            output.push_str(&rest[..start]);
-            let suffix = &rest[start + PREFIX.len()..];
-            let end = suffix
-                .find(SUFFIX)
-                .ok_or_else(|| "unterminated deferred coroutine local use".to_owned())?;
-            let index = suffix[..end]
-                .parse::<usize>()
-                .map_err(|_| "invalid deferred coroutine local use".to_owned())?;
+        let mut copied = 0;
+        for start in marker_starts(code, PREFIX) {
+            output.push_str(&code[copied..start]);
+            let (index, end) = marker_index(code, start + PREFIX.len(), SUFFIX)
+                .ok_or_else(|| "invalid deferred coroutine local use".to_owned())?;
             let record = self
                 .declarations
                 .get(index)
@@ -1574,11 +1571,21 @@ impl<'a, 'm> Frame<'a, 'm> {
                 output.push_str(&record.name);
                 output.push_str(");");
             }
-            rest = &suffix[end + SUFFIX.len()..];
+            copied = end;
         }
-        output.push_str(rest);
+        output.push_str(&code[copied..]);
         Ok(output)
     }
+}
+
+/// The index at `start` of a marker that `suffix` ends, and where it ends.
+fn marker_index(code: &str, start: usize, suffix: &str) -> Option<(usize, usize)> {
+    let digits = code[start..].bytes().take_while(u8::is_ascii_digit).count();
+    let end = start + digits;
+    let index = code[start..end].parse().ok()?;
+    code[end..]
+        .starts_with(suffix)
+        .then(|| (index, end + suffix.len()))
 }
 
 const NATIVE_USE_MARKER: &str = "/*__llg_native_use ";
@@ -1588,36 +1595,32 @@ const NATIVE_USE_MARKER_END: &str = " */\n";
 /// names the local, a `(void)sizeof` use when nothing does. Names are unique
 /// within a frame, so any later occurrence is this local.
 fn resolve_native_uses(code: &str) -> String {
-    let markers = code
-        .match_indices(NATIVE_USE_MARKER)
-        .filter_map(|(start, _)| {
-            let start = start + NATIVE_USE_MARKER.len();
-            let end = start + code[start..].find(NATIVE_USE_MARKER_END)?;
-            Some(&code[start..end])
+    let markers = marker_starts(code, NATIVE_USE_MARKER)
+        .filter_map(|start| {
+            let rest = &code[start + NATIVE_USE_MARKER.len()..];
+            Some((start, &rest[..rest.find(NATIVE_USE_MARKER_END)?]))
         })
-        .collect::<HashSet<_>>();
-    let mut last_uses = HashMap::with_capacity(markers.len());
-    for span in identifier_spans(code) {
-        if let Some(name) = markers.get(&code[span.clone()]) {
-            last_uses.insert(*name, span.start);
+        .collect::<Vec<_>>();
+    let mut last_uses = markers
+        .iter()
+        .map(|(start, name)| (*name, *start))
+        .collect::<HashMap<_, _>>();
+    let filter = last_uses.keys().copied().collect::<NameFilter>();
+    for span in named_spans(code, filter) {
+        if let Some(last) = last_uses.get_mut(&code[span.clone()]) {
+            *last = span.start;
         }
     }
     let mut output = String::with_capacity(code.len());
     let mut copied = 0;
-    while let Some(start) = code[copied..].find(NATIVE_USE_MARKER) {
-        let start = copied + start;
+    for (start, name) in markers {
         output.push_str(&code[copied..start]);
-        let name_start = start + NATIVE_USE_MARKER.len();
-        let Some((name, _)) = code[name_start..].split_once(NATIVE_USE_MARKER_END) else {
-            output.push_str(&code[start..]);
-            return output;
-        };
-        if last_uses.get(name).is_none_or(|last| *last < start) {
+        if last_uses[name] <= start {
             output.push_str("    (void)sizeof(");
             output.push_str(name);
             output.push_str(");\n");
         }
-        copied = name_start + name.len() + NATIVE_USE_MARKER_END.len();
+        copied = start + NATIVE_USE_MARKER.len() + name.len() + NATIVE_USE_MARKER_END.len();
     }
     output.push_str(&code[copied..]);
     output
@@ -1627,13 +1630,9 @@ fn resolve_native_uses(code: &str) -> String {
 fn identifier_counts<'n>(code: &str, names: &HashSet<&'n str>) -> HashMap<&'n str, usize> {
     let mut counts = HashMap::new();
     if !names.is_empty() {
-        let first = names.iter().copied().collect::<FirstBytes>();
-        for span in identifier_spans_in_comments(code) {
-            let identifier = &code[span];
-            if !first.may_hold(identifier) {
-                continue;
-            }
-            if let Some(name) = names.get(identifier) {
+        let filter = names.iter().copied().collect::<NameFilter>();
+        for span in named_spans_in_comments(code, filter) {
+            if let Some(name) = names.get(&code[span]) {
                 *counts.entry(*name).or_insert(0) += 1;
             }
         }
@@ -1647,7 +1646,7 @@ fn rewrite_call_paths(code: &str, flattened: &HashMap<String, String>) -> String
     const FRAME: &str = "F->";
     let mut output = String::with_capacity(code.len());
     let mut copied = 0;
-    for (start, _) in code.match_indices(FRAME) {
+    for start in marker_starts(code, FRAME) {
         let start = start + FRAME.len();
         let length = code[start..]
             .bytes()
@@ -1740,10 +1739,14 @@ fn is_runtime_suspension(text: &str) -> bool {
         "llg_mailbox_put_value",
         "llg_rt_stop_with_level",
     ];
-    text.match_indices('(').any(|(open, _)| {
+    let bytes = text.as_bytes();
+    let parentheses = std::iter::successors(first_of(bytes, 0, *b"("), |open| {
+        first_of(bytes, open + 1, *b"(")
+    });
+    parentheses.into_iter().any(|open| {
         SUSPENSIONS
             .iter()
-            .any(|suspension| text[..open].ends_with(suspension))
+            .any(|suspension| bytes[..open].ends_with(suspension.as_bytes()))
     })
 }
 

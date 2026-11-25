@@ -276,8 +276,8 @@ impl Frame<'_, '_> {
             "call_mark",
             "llg_value_scope_mark()".to_owned(),
         );
-        self.bindings.push(HashMap::new());
-        self.native_bindings.push(HashMap::new());
+        self.bindings.push();
+        self.native_bindings.push();
         let mut parameters = Vec::new();
         let mut callee = function.c_name.clone();
         if let Some(call) = virtual_call {
@@ -664,20 +664,17 @@ impl Frame<'_, '_> {
                         formal.two_state,
                         formal.shortreal,
                     );
-                    self.bindings
-                        .last_mut()
-                        .expect("call binding scope")
-                        .insert(
-                            crate::sim::ir::call_argument_name(index),
-                            Binding {
-                                address: format!("&({})", value.code),
-                                width: value.width,
-                                signed: value.signed,
-                                two_state: formal.two_state,
-                                shortreal: formal.shortreal,
-                                automatic: true,
-                            },
-                        );
+                    self.bindings.insert(
+                        &crate::sim::ir::call_argument_name(index),
+                        Binding {
+                            address: format!("&({})", value.code),
+                            width: value.width,
+                            signed: value.signed,
+                            two_state: formal.two_state,
+                            shortreal: formal.shortreal,
+                            automatic: true,
+                        },
+                    );
                     parameters.push(if by_value_inputs || value.width == 0 {
                         value.code.clone()
                     } else {

@@ -323,7 +323,7 @@ impl Frame<'_, '_> {
         if function.formals.len() != call.args.len() {
             return Err("inline evaluator call arity mismatch".to_owned());
         }
-        self.bindings.push(HashMap::new());
+        self.bindings.push();
         let mut owners = Vec::new();
         let mut bindings = vec![None; function.formals.len()];
         // Evaluate actuals before installing callee formal bindings, including
@@ -424,13 +424,10 @@ impl Frame<'_, '_> {
                 shortreal: formal.shortreal,
                 automatic: true,
             });
-            self.bindings
-                .last_mut()
-                .expect("callback argument scope")
-                .insert(
-                    crate::sim::ir::call_argument_name(index),
-                    bindings[index].clone().expect("captured input"),
-                );
+            self.bindings.insert(
+                &crate::sim::ir::call_argument_name(index),
+                bindings[index].clone().expect("captured input"),
+            );
             owners.push(value);
         }
         let result = IrLhs::WholeRef {
@@ -475,12 +472,7 @@ impl Frame<'_, '_> {
             ty.two_state(),
             default.as_ref(),
         )?;
-        if let Some(binding) = self
-            .bindings
-            .last_mut()
-            .expect("private callback frame")
-            .get_mut("_ret")
-        {
+        if let Some(binding) = self.bindings.get_innermost_mut("_ret") {
             binding.shortreal = matches!(ty, IrType::Real { shortreal: true });
         }
         // Input formals are automatic copies in the language. Materialize them
@@ -501,12 +493,7 @@ impl Frame<'_, '_> {
             let local = self
                 .lookup(&name)
                 .ok_or_else(|| "inline evaluator input copy was not created".to_owned())?;
-            if let Some(binding) = self
-                .bindings
-                .last_mut()
-                .expect("private callback frame")
-                .get_mut(&name)
-            {
+            if let Some(binding) = self.bindings.get_innermost_mut(&name) {
                 binding.shortreal = formal.shortreal;
             }
             let owner = bindings[index]

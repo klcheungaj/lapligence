@@ -2,13 +2,13 @@
 //! node once per construct.
 use super::*;
 use crate::core::compile::{compile_sources_checked, CompileOpts, OwnedSource};
-use crate::core::db::NODE_READS;
+use crate::work::{counted, Work};
 
 const SMALL: usize = 25;
 const LARGE: usize = 400;
 
 /// Lookups that lower `instances` instances of a module with `body`.
-fn lookups(body: &str, instances: usize) -> u64 {
+fn lookups(body: &str, instances: usize) -> usize {
     let output = compile_sources_checked(
         &[OwnedSource::compilation_unit(
             "scaling.sv",
@@ -26,9 +26,10 @@ fn lookups(body: &str, instances: usize) -> u64 {
     )
     .unwrap();
     let db = Db::from_slang(&output.snapshot).unwrap();
-    NODE_READS.with(|reads| reads.set(0));
-    lower_model(&db, &CodegenOptions::default()).unwrap_or_else(|error| panic!("{body}: {error}"));
-    NODE_READS.with(std::cell::Cell::get)
+    counted(Work::NodeReads, || {
+        lower_model(&db, &CodegenOptions::default())
+            .unwrap_or_else(|error| panic!("{body}: {error}"));
+    })
 }
 
 #[test]
@@ -47,7 +48,7 @@ fn lookups_grow_with_the_design() {
          initial begin c h = new; h.v = h.g(); end",
     ] {
         let (small, large) = (lookups(body, SMALL), lookups(body, LARGE));
-        let growth = (LARGE / SMALL) as u64;
+        let growth = LARGE / SMALL;
         assert!(
             large <= small * growth * 5 / 4,
             "{small} lookups for {SMALL} instances, {large} for {LARGE}: {body}"
@@ -62,7 +63,7 @@ fn diamond_lookups(
     last: &str,
     user: &str,
     levels: usize,
-) -> u64 {
+) -> usize {
     let chain: String = (0..levels)
         .map(|level| subroutine(level, &format!("s{}", level + 1)))
         .collect();
@@ -79,10 +80,10 @@ fn diamond_lookups(
     )
     .unwrap();
     let db = Db::from_slang(&output.snapshot).unwrap();
-    NODE_READS.with(|reads| reads.set(0));
-    lower_model(&db, &CodegenOptions::default())
-        .unwrap_or_else(|error| panic!("{user} of {levels}: {error}"));
-    NODE_READS.with(std::cell::Cell::get)
+    counted(Work::NodeReads, || {
+        lower_model(&db, &CodegenOptions::default())
+            .unwrap_or_else(|error| panic!("{user} of {levels}: {error}"));
+    })
 }
 
 /// A call graph with two ways from each level to the next has 2^levels call
@@ -193,7 +194,7 @@ fn lookups_do_not_follow_every_call_path() {
     ];
     let mut failures = Vec::new();
     for (name, subroutine, last, user) in cases {
-        let counts: Vec<u64> = [4, 8, 12]
+        let counts: Vec<usize> = [4, 8, 12]
             .iter()
             .map(|levels| diamond_lookups(subroutine, last, user, *levels))
             .collect();

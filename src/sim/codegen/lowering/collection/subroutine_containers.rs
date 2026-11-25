@@ -8,6 +8,7 @@
 //! and outputs back, so a callee never aliases caller storage.
 
 use super::*;
+use crate::IdSet;
 
 impl Codegen<'_> {
     /// Resizable-container shape of a subroutine formal, result or local.
@@ -73,8 +74,8 @@ impl Codegen<'_> {
     /// Whether `node` declares a container formal, result or local.
     pub(in super::super) fn is_subroutine_container(&self, node: NodeId) -> bool {
         self.subroutine_containers
-            .keys()
-            .any(|(_, declaration)| *declaration == node)
+            .unordered()
+            .any(|((_, declaration), _)| *declaration == node)
     }
 
     fn subroutine_container_nodes(&self, function: NodeId, output: &mut Vec<NodeId>) {
@@ -258,7 +259,7 @@ impl Codegen<'_> {
     /// declaration shares its elaborated type.
     pub(in super::super) fn container_formal_type(&self, formal: NodeId) -> Result<usize, String> {
         self.subroutine_containers
-            .iter()
+            .unordered()
             .filter(|((_, node), _)| *node == formal)
             .map(|(_, ir)| *ir)
             .min()
@@ -453,7 +454,7 @@ impl Codegen<'_> {
         };
         // A replicated operand would be evaluated once per element here, so
         // only patterns of distinct operands use this form.
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = IdSet::new();
         if !operands.iter().all(|operand| seen.insert(*operand)) {
             return Ok(None);
         }

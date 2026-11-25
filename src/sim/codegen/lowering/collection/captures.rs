@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::sim::ir::*;
+use crate::IdSet;
 
 impl<'a> Codegen<'a> {
     pub(in super::super) fn capture_source(&self, target: NodeId) -> Option<CaptureSource> {
@@ -344,14 +345,7 @@ impl<'a> Codegen<'a> {
     }
 
     pub(super) fn node_is_within(&self, node: NodeId, scope: NodeId) -> bool {
-        let mut current = Some(node);
-        while let Some(candidate) = current {
-            if candidate == scope {
-                return true;
-            }
-            current = self.node(candidate).parent;
-        }
-        false
+        self.nesting().contains(scope, node)
     }
 
     /// Whether automatic variable `declaration` is shared with a `join_none`
@@ -408,53 +402,39 @@ impl<'a> Codegen<'a> {
                     ) {
                         continue;
                     }
-                    let mut pending = vec![*branch];
-                    let mut visited = HashSet::new();
-                    while let Some(current) = pending.pop() {
-                        if !visited.insert(current) {
+                    for &target in &self.branch_references(*branch).targets {
+                        // A by-value formal is marked whatever the
+                        // subroutine's lifetime; only an automatic
+                        // activation's body consumes the mark.
+                        let by_value_formal = matches!(
+                            self.kind(target),
+                            NodeKind::FuncArg { direction, .. } if *direction != DbDirection::Ref
+                        );
+                        if !by_value_formal
+                            && !(matches!(
+                                self.kind(target),
+                                NodeKind::Var { .. } | NodeKind::Array { .. }
+                            ) && self.db.variable_lifetime(target)
+                                == VariableLifetime::Automatic)
+                        {
                             continue;
                         }
-                        if let NodeKind::Expr(ExprKind::Ref {
-                            target: Some(target),
-                        }) = self.kind(current)
+                        visible.insert(target);
+                        if detached
+                            || matches!(
+                                self.kind(target),
+                                NodeKind::Var { ty } | NodeKind::FuncArg { ty, .. }
+                                    if ty.kind == "string"
+                            )
+                            || self.subroutine_container_meta(target).is_some()
+                            || self.native_value_type(target).is_some()
+                            || matches!(
+                                self.kind(target),
+                                NodeKind::Var { ty } | NodeKind::FuncArg { ty, .. }
+                                    if is_handle_kind(&ty.kind)
+                            )
                         {
-                            // A by-value formal is marked whatever the
-                            // subroutine's lifetime; only an automatic
-                            // activation's body consumes the mark.
-                            let by_value_formal = matches!(
-                                self.kind(*target),
-                                NodeKind::FuncArg { direction, .. } if *direction != DbDirection::Ref
-                            );
-                            if (by_value_formal
-                                || matches!(
-                                    self.kind(*target),
-                                    NodeKind::Var { .. } | NodeKind::Array { .. }
-                                ) && self.db.variable_lifetime(*target)
-                                    == VariableLifetime::Automatic)
-                                && !self.node_is_within(*target, *branch)
-                            {
-                                visible.insert(*target);
-                                if detached
-                                    || matches!(
-                                        self.kind(*target),
-                                        NodeKind::Var { ty } | NodeKind::FuncArg { ty, .. }
-                                            if ty.kind == "string"
-                                    )
-                                    || self.subroutine_container_meta(*target).is_some()
-                                    || self.native_value_type(*target).is_some()
-                                    || matches!(
-                                        self.kind(*target),
-                                        NodeKind::Var { ty } | NodeKind::FuncArg { ty, .. }
-                                            if is_handle_kind(&ty.kind)
-                                    )
-                                {
-                                    shared.insert(*target);
-                                }
-                            }
-                        }
-                        pending.extend(self.node(current).children.iter().copied());
-                        if let NodeKind::Stmt(statement) = self.kind(current) {
-                            statement.referenced_nodes(&mut pending);
+                            shared.insert(target);
                         }
                     }
                 }
@@ -467,72 +447,127 @@ impl<'a> Codegen<'a> {
     /// Find automatic declarations referenced by a fork branch. Declarations
     /// inside the branch are owned by that branch and are not captures.
     pub(in super::super) fn fork_capture_targets(&self, branch: NodeId) -> Vec<NodeId> {
-        fn visit(
-            cg: &Codegen<'_>,
-            node: NodeId,
-            branch: NodeId,
-            visited: &mut HashSet<NodeId>,
-            out: &mut HashSet<NodeId>,
-        ) {
-            if !visited.insert(node) {
-                return;
-            }
-            let target = match cg.kind(node) {
-                NodeKind::Expr(ExprKind::Ref {
-                    target: Some(target),
-                }) => Some(*target),
-                _ => cg
-                    .lexical_proc_local(node)
+        let references = self.branch_references(branch);
+        let mut targets = references
+            .names
+            .iter()
+            .filter_map(|name| {
+                self.lexical_proc_local(*name)
                     .map(|(target, _)| target)
-                    .or_else(|| cg.lexical_proc_string_local(node).map(|(target, _)| target)),
-            };
+                    .or_else(|| {
+                        self.lexical_proc_string_local(*name)
+                            .map(|(target, _)| target)
+                    })
+            })
+            .filter(|target| !self.node_is_within(*target, branch))
+            .chain(references.targets.iter().copied())
+            .filter(|target| {
+                self.capture_source(*target)
+                    .is_some_and(|source| source.info.static_signal.is_none())
+                    || self.proc_string_local_name(*target).is_some()
+                    // A `ref` formal of the enclosing subroutine reaches
+                    // a branch by reference.
+                    || self.is_ref_formal(*target)
+                        && self.native_ref_formal_slots(*target).is_some()
+                    || self.is_ref_formal(*target)
+                        && self.func.as_ref().is_some_and(|function| {
+                            function.arg_ir.contains_key(target)
+                                || function.string_read.contains_key(target)
+                                || function.event_args.contains_key(target)
+                                || function.chandle_read.contains_key(target)
+                        })
+            })
             // `r.n` names a native record formal as a path.
-            if let NodeKind::Expr(ExprKind::HierPath { refs, .. }) = cg.kind(node) {
-                out.extend(refs.iter().flatten().copied().filter(|target| {
-                    !cg.node_is_within(*target, branch)
-                        && cg.is_ref_formal(*target)
-                        && cg.native_ref_formal_slots(*target).is_some()
-                }));
-            }
-            if let Some(target) = target {
-                if !cg.node_is_within(target, branch)
-                    && (cg
-                        .capture_source(target)
-                        .is_some_and(|source| source.info.static_signal.is_none())
-                        || cg.proc_string_local_name(target).is_some()
-                        // A `ref` formal of the enclosing subroutine reaches
-                        // a branch by reference.
-                        || cg.is_ref_formal(target)
-                            && cg.native_ref_formal_slots(target).is_some()
-                        || cg.is_ref_formal(target)
-                            && cg.func.as_ref().is_some_and(|function| {
-                                function.arg_ir.contains_key(&target)
-                                    || function.string_read.contains_key(&target)
-                                    || function.event_args.contains_key(&target)
-                                    || function.chandle_read.contains_key(&target)
-                            }))
-                {
-                    out.insert(target);
-                }
-            }
-            for child in &cg.node(node).children {
-                visit(cg, *child, branch, visited, out);
-            }
-            // Timing-control operands (`#n`, `@(e)`, `wait (c)`) are statement
-            // fields rather than structural children.
-            if let NodeKind::Stmt(statement) = cg.kind(node) {
-                let mut operands = Vec::new();
-                statement.referenced_nodes(&mut operands);
-                for operand in operands {
-                    visit(cg, operand, branch, visited, out);
-                }
-            }
-        }
-
-        let mut targets = HashSet::new();
-        visit(self, branch, branch, &mut HashSet::new(), &mut targets);
-        let mut targets = targets.into_iter().collect::<Vec<_>>();
+            .chain(references.path_targets.iter().copied().filter(|target| {
+                self.is_ref_formal(*target) && self.native_ref_formal_slots(*target).is_some()
+            }))
+            .collect::<Vec<_>>();
         targets.sort_by_key(|node| node.index());
+        targets.dedup();
         targets
     }
+
+    /// What fork branch `branch` names outside itself. A fork inside it counts
+    /// with what its own branches name.
+    fn branch_references(&self, branch: NodeId) -> std::rc::Rc<BranchReferences> {
+        if let Some(references) = self.branch_references.borrow().get(&branch) {
+            return references.clone();
+        }
+        let references = std::rc::Rc::new(self.collect_branch_references(branch));
+        self.branch_references
+            .borrow_mut()
+            .insert(branch, references.clone());
+        references
+    }
+
+    fn collect_branch_references(&self, branch: NodeId) -> BranchReferences {
+        let mut targets = HashSet::new();
+        let mut path_targets = HashSet::new();
+        let mut names = HashMap::new();
+        let mut pending = vec![branch];
+        let mut visited = IdSet::new();
+        while let Some(node) = pending.pop() {
+            if !visited.insert(node) {
+                continue;
+            }
+            crate::work::count(crate::work::Work::BranchNodes, 1);
+            let mut reach_name = |name: NodeId| {
+                if let Some(key) = self.lexical_key(name, branch) {
+                    names.entry(key).or_insert(name);
+                }
+            };
+            match self.kind(node) {
+                NodeKind::Expr(ExprKind::Ref {
+                    target: Some(target),
+                }) => {
+                    targets.insert(*target);
+                }
+                NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+                    path_targets.extend(refs.iter().flatten().copied());
+                    reach_name(node);
+                }
+                NodeKind::Stmt(StmtKind::Fork { branches, .. }) => {
+                    reach_name(node);
+                    for nested in branches {
+                        if !self.node_is_within(*nested, branch) || !visited.insert(*nested) {
+                            continue;
+                        }
+                        let nested = self.branch_references(*nested);
+                        targets.extend(nested.targets.iter().copied());
+                        path_targets.extend(nested.path_targets.iter().copied());
+                        nested.names.iter().copied().for_each(&mut reach_name);
+                    }
+                }
+                _ => reach_name(node),
+            }
+            pending.extend(self.db.walk_children(node));
+            // Timing-control operands (`#n`, `@(e)`, `wait (c)`) are statement
+            // fields rather than structural children.
+            if let NodeKind::Stmt(statement) = self.kind(node) {
+                statement.referenced_nodes(&mut pending);
+            }
+        }
+        let outside = |nodes: HashSet<NodeId>| {
+            nodes
+                .into_iter()
+                .filter(|target| !self.node_is_within(*target, branch))
+                .collect()
+        };
+        BranchReferences {
+            targets: outside(targets),
+            path_targets: outside(path_targets),
+            names: names.into_values().collect(),
+        }
+    }
+}
+
+/// What a fork branch names outside itself, in no order.
+pub(in super::super) struct BranchReferences {
+    /// What its references resolve to.
+    targets: Vec<NodeId>,
+    /// What parts of its hierarchical paths resolve to.
+    path_targets: Vec<NodeId>,
+    /// One node of those other nodes whose name is looked up in the same
+    /// blocks and loops.
+    names: Vec<NodeId>,
 }

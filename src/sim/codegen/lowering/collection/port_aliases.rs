@@ -36,6 +36,7 @@
 //! no such observer exists (see [`Codegen::collapse_variable_ports`]).
 
 use super::*;
+use crate::IdSet;
 
 /// Sampled-value system functions: their time-zero value of the formal is
 /// its own initial value under a copy (decision T0-D5).
@@ -693,7 +694,7 @@ impl Codegen<'_> {
         found: &mut HashSet<NodeId>,
     ) -> bool {
         let mut stack = vec![root];
-        let mut visited = HashSet::new();
+        let mut visited = IdSet::new();
         let mut references = Vec::new();
         while let Some(id) = stack.pop() {
             if !visited.insert(id) {
@@ -740,7 +741,7 @@ impl Codegen<'_> {
                 info.global = signals[target].c_name.clone();
             }
         };
-        for info in self.sig_globals.values_mut() {
+        for info in self.sig_globals.values_mut_unordered() {
             canonicalize(info);
         }
         for info in &mut self.signals {

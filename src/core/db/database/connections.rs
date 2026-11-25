@@ -1,6 +1,7 @@
 //! Connections.
 
 use super::*;
+use crate::IdSet;
 
 pub(super) fn peel_gate_terminal(
     snapshot: &SlangSnapshot,
@@ -8,7 +9,7 @@ pub(super) fn peel_gate_terminal(
     mut expression: NodeId,
     direction: Direction,
 ) -> Result<NodeId, DbError> {
-    let mut visited = HashSet::new();
+    let mut visited = IdSet::new();
     while visited.insert(expression) {
         let semantic = snapshot
             .semantic_nodes
@@ -47,7 +48,7 @@ pub(super) fn connection_source_expression(
     mut expression: NodeId,
     direction: Direction,
 ) -> Result<NodeId, DbError> {
-    let mut visited = HashSet::new();
+    let mut visited = IdSet::new();
     while visited.insert(expression) {
         let semantic = snapshot
             .semantic_nodes

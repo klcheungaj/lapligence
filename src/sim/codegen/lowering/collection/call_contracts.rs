@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::sim::ir::{CALLBACK_CALL_DEPTH, CALLBACK_INLINED_CALLS};
+use crate::{IdMap, IdSet};
 use std::rc::Rc;
 
 #[cfg(test)]
@@ -193,12 +194,12 @@ impl<'a> Codegen<'a> {
         expression: NodeId,
         scope_path: &str,
     ) -> Result<EvaluationEffects, String> {
-        let mut visited = HashSet::new();
+        let mut visited = IdSet::new();
         let mut effects = EvaluationEffects::default();
         self.check_event_node(expression, scope_path, &mut visited, None, &mut effects)?;
         if effects.process.is_none()
             && self
-                .callback_inlining(expression, &mut Vec::new(), &mut HashMap::new())
+                .callback_inlining(expression, &mut Vec::new(), &mut IdMap::new())
                 .is_none()
         {
             effects.process = Some(format!(
@@ -218,7 +219,7 @@ impl<'a> Codegen<'a> {
         &self,
         root: NodeId,
         path: &mut Vec<NodeId>,
-        known: &mut HashMap<NodeId, (usize, usize)>,
+        known: &mut IdMap<NodeId, (usize, usize)>,
     ) -> Option<(usize, usize)> {
         let (mut bodies, mut depth) = (0, 0);
         let mut pending = vec![root];
@@ -267,7 +268,7 @@ impl<'a> Codegen<'a> {
         if self.user_system_functions.is_empty() {
             return false;
         }
-        let mut visited = HashSet::new();
+        let mut visited = IdSet::new();
         let mut pending = vec![expression];
         while let Some(node) = pending.pop() {
             match self.kind(node) {
@@ -335,7 +336,7 @@ impl<'a> Codegen<'a> {
         &self,
         node: NodeId,
         scope_path: &str,
-        visited_functions: &mut HashSet<NodeId>,
+        visited_functions: &mut IdSet<NodeId>,
         function: Option<NodeId>,
         effects: &mut EvaluationEffects,
     ) -> Result<(), String> {
@@ -924,7 +925,7 @@ impl<'a> Codegen<'a> {
     /// Delay-bearing tasks are inlined at their call sites; the others become
     /// plain C functions.
     pub(in super::super) fn task_has_wait(&self, ft: NodeId, inst: NodeId) -> bool {
-        let mut seen: HashSet<NodeId> = HashSet::new();
+        let mut seen: IdSet<NodeId> = IdSet::new();
         self.task_has_wait_inner(ft, inst, &mut seen)
     }
 
@@ -971,7 +972,8 @@ impl<'a> Codegen<'a> {
         // waited on then spread to those their callers forward.
         let mut functions = vec![(ft, inst)];
         let mut bodies = vec![CallShapeBody::default()];
-        let mut indices = HashMap::from([((ft, inst), 0)]);
+        let mut indices = IdMap::new();
+        indices.insert((ft, inst), 0);
         let mut waited = Vec::new();
         let mut nodes = Vec::with_capacity(32);
         let mut current = 0;
@@ -981,6 +983,7 @@ impl<'a> Codegen<'a> {
                 current += 1;
                 continue;
             }
+            crate::work::count(crate::work::Work::CallBodies, 1);
             let formals = self.func_formals(function);
             let mut shape = CallShape::default();
             nodes.extend(self.func_body(function));
@@ -1202,7 +1205,7 @@ impl<'a> Codegen<'a> {
             false
         };
         let mut pending = vec![scope];
-        let mut visited = HashSet::new();
+        let mut visited = IdSet::new();
         while let Some(node) = pending.pop() {
             if !visited.insert(node) {
                 continue;
@@ -1447,8 +1450,17 @@ impl<'a> Codegen<'a> {
     /// Its call sites keep the activation visible to the caller's
     /// cancellation check, so output/inout copy-out is skipped.
     pub(in super::super) fn task_has_disable(&self, ft: NodeId, inst: NodeId) -> bool {
-        let mut seen: HashSet<NodeId> = HashSet::new();
-        self.task_has_disable_inner(ft, inst, &mut seen)
+        let mut seen: IdSet<NodeId> = IdSet::new();
+        let disables = self.task_has_disable_inner(ft, inst, &mut seen);
+        // A task is passed once, so what was decided about it on the way to a
+        // `disable` can lack what another call on that way leads to; without
+        // one, none of them leads to any.
+        if !disables {
+            self.task_disables
+                .borrow_mut()
+                .extend(seen.unordered().map(|task| (*task, false)));
+        }
+        disables
     }
 
     /// Whether a task declaration is the target of an explicit `disable`.
@@ -1576,7 +1588,7 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    fn task_has_wait_inner(&self, ft: NodeId, inst: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+    fn task_has_wait_inner(&self, ft: NodeId, inst: NodeId, seen: &mut IdSet<NodeId>) -> bool {
         if !seen.insert(ft) {
             return false;
         }
@@ -1586,17 +1598,25 @@ impl<'a> Codegen<'a> {
         self.node_has_wait(body, inst, seen)
     }
 
-    fn task_has_disable_inner(&self, ft: NodeId, inst: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+    fn task_has_disable_inner(&self, ft: NodeId, inst: NodeId, seen: &mut IdSet<NodeId>) -> bool {
+        if let Some(disables) = self.task_disables.borrow().get(&ft) {
+            return *disables;
+        }
         if !seen.insert(ft) {
             return false;
         }
         let Some(body) = self.func_body(ft) else {
             return false;
         };
-        self.node_has_disable(body, inst, seen)
+        crate::work::count(crate::work::Work::CallBodies, 1);
+        let disables = self.node_has_disable(body, inst, seen);
+        if disables {
+            self.task_disables.borrow_mut().insert(ft, true);
+        }
+        disables
     }
 
-    fn node_has_disable(&self, node: NodeId, inst: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+    fn node_has_disable(&self, node: NodeId, inst: NodeId, seen: &mut IdSet<NodeId>) -> bool {
         match self.kind(node) {
             NodeKind::Stmt(StmtKind::Disable { .. }) => true,
             NodeKind::FuncCall {
@@ -1624,7 +1644,7 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    fn node_has_wait(&self, node: NodeId, inst: NodeId, seen: &mut HashSet<NodeId>) -> bool {
+    fn node_has_wait(&self, node: NodeId, inst: NodeId, seen: &mut IdSet<NodeId>) -> bool {
         match self.kind(node) {
             NodeKind::Stmt(
                 StmtKind::DelayControl { .. }

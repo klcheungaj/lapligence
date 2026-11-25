@@ -1,6 +1,7 @@
 //! Vpi.
 
 use super::*;
+use crate::IdSet;
 
 mod dynamic;
 pub(in crate::sim::emit_c) mod pack;
@@ -156,7 +157,7 @@ pub(in crate::sim::emit_c) fn signal_storage(
     index: usize,
 ) -> Option<(String, String, String)> {
     let mut current = index;
-    let mut visited = std::collections::HashSet::new();
+    let mut visited = IdSet::new();
     loop {
         if !visited.insert(current) {
             return None;

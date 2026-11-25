@@ -4,6 +4,7 @@ use super::super::containers::PatternAssignmentKind;
 use super::writer_index::WriterIndex;
 use super::*;
 use crate::sim::codegen::error::located;
+use crate::IdSet;
 
 #[cfg(test)]
 mod tests;
@@ -79,7 +80,7 @@ impl<'a> Codegen<'a> {
             return Vec::new();
         }
         let mut pending = vec![root];
-        let mut visited = HashSet::new();
+        let mut visited = IdSet::new();
         let mut targets = Vec::new();
         let mut target_set = HashSet::new();
         while let Some(node) = pending.pop() {
@@ -125,7 +126,7 @@ impl<'a> Codegen<'a> {
     fn collect_conditional_pattern_targets(
         &self,
         pattern: NodeId,
-        visited: &mut HashSet<NodeId>,
+        visited: &mut IdSet<NodeId>,
         target_set: &mut HashSet<NodeId>,
         targets: &mut Vec<NodeId>,
     ) {
@@ -1776,7 +1777,7 @@ impl<'a> Codegen<'a> {
             return Ok(());
         };
         let mut scan = ProcessContractScan::default();
-        let mut visited = HashSet::new();
+        let mut visited = IdSet::new();
         self.scan_process_contract(stmt, &mut scan, &mut visited)?;
         let label = self.process_kind_label(Some(process_kind));
         let path = self.source_path(path);
@@ -1899,7 +1900,7 @@ impl<'a> Codegen<'a> {
             }
         }
         let mut called = Vec::new();
-        let mut seen = HashSet::new();
+        let mut seen = IdSet::new();
         while let Some(node) = pending.pop() {
             if let NodeKind::FuncCall {
                 callee: Some(callee),
@@ -2039,7 +2040,7 @@ impl<'a> Codegen<'a> {
         &self,
         node: NodeId,
         scan: &mut ProcessContractScan,
-        visited_functions: &mut HashSet<NodeId>,
+        visited_functions: &mut IdSet<NodeId>,
     ) -> Result<(), String> {
         if self.is_process_self_call(node) {
             return Ok(());

@@ -87,14 +87,14 @@ fn vector_to_i128(
         return None;
     }
     let retained = bit_width.min(u64::from(i128::BITS));
-    let mut raw = 0_u128;
-    for index in 0..retained {
-        if bit(value_words, index) {
-            raw |= 1_u128 << index;
-        }
-    }
-    if sign && retained < u64::from(i128::BITS) {
-        raw |= !0_u128 << retained;
+    let mut raw = value_words
+        .iter()
+        .take((u128::BITS / u64::BITS) as usize)
+        .rev()
+        .fold(0_u128, |raw, word| (raw << u64::BITS) | u128::from(*word));
+    if retained < u64::from(i128::BITS) {
+        let above = !0_u128 << retained;
+        raw = if sign { raw | above } else { raw & !above };
     }
     if !is_signed && bit_width == u64::from(i128::BITS) && raw > i128::MAX as u128 {
         return None;

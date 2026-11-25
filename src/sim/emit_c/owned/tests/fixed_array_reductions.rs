@@ -134,11 +134,11 @@ fn fixed_array_reduction_nested_maps_shadow_only_after_capturing_the_outer_item(
     plan.element_width = 16;
     model.validate_expr(&expr, None).unwrap();
     let mut frame = Frame::new(&ctx);
-    let depth = frame.bindings.len();
+    let depth = frame.bindings.depth();
     let value = frame.expression(&expr).unwrap();
     frame.discard(value);
     assert_eq!(frame.body().matches("for (uint64_t").count(), 2);
-    assert_eq!(frame.bindings.len(), depth);
+    assert_eq!(frame.bindings.depth(), depth);
     assert!(frame.slots.iter().all(|live| !live));
 }
 

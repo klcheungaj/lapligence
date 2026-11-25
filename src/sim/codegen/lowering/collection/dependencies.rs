@@ -2,6 +2,7 @@
 
 use super::super::packed_geometry::PackedSelectDim;
 use super::*;
+use crate::IdSet;
 use std::rc::Rc;
 
 #[cfg(test)]
@@ -57,7 +58,7 @@ struct CallWalk {
     /// Subroutines on the current call path. A call back into one is cut: the
     /// body being walked adds its storage, and the call's own `ref` actuals
     /// count as a whole.
-    active: HashSet<NodeId>,
+    active: IdSet<NodeId>,
     walked: HashSet<(NodeId, Rc<RefBindings>)>,
     /// Dependencies so far that a read left out because a caller owns them
     /// (see [`Codegen::declared_in_callee`]). A walk that left one out is not
@@ -342,7 +343,7 @@ impl<'a> Codegen<'a> {
         let writes = self.collect_process_writes(expression)?;
         let mut owned = HashSet::new();
         let mut owned_arrays = HashSet::new();
-        let mut visited = HashSet::new();
+        let mut visited = IdSet::new();
         self.collect_callee_storage(expression, &mut visited, &mut owned, &mut owned_arrays)?;
         let owned_storage = |dependency: &IrDependency| {
             let storage = match dependency {
@@ -374,7 +375,7 @@ impl<'a> Codegen<'a> {
     fn collect_callee_storage(
         &self,
         root: NodeId,
-        visited: &mut HashSet<NodeId>,
+        visited: &mut IdSet<NodeId>,
         owned: &mut HashSet<IrDependency>,
         owned_arrays: &mut HashSet<usize>,
     ) -> Result<(), String> {
@@ -1151,9 +1152,9 @@ impl<'a> Codegen<'a> {
                 }
                 _ => {}
             }
-            for child in children.iter().rev() {
-                nodes.push(*child);
-            }
+            let first = nodes.len();
+            nodes.extend(self.db.walk_children(node));
+            nodes[first..].reverse();
         }
     }
 

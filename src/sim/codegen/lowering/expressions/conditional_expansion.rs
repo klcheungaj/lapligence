@@ -225,6 +225,17 @@ impl Codegen<'_> {
     /// number of expanded conditionals on the deepest path through
     /// alternatives.
     fn expansion_levels(&self, node: NodeId) -> u32 {
+        // Every conditional around `node` asks; the types that decide are the
+        // database's.
+        if let Some(levels) = self.expansion_levels.borrow().get(&node) {
+            return *levels;
+        }
+        let levels = self.find_expansion_levels(node);
+        self.expansion_levels.borrow_mut().insert(node, levels);
+        levels
+    }
+
+    fn find_expansion_levels(&self, node: NodeId) -> u32 {
         if self.is_expanded_conditional(node) {
             if let Some((predicate, if_true, if_false)) = conditional_parts(self.kind(node)) {
                 let alternatives = self

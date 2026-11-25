@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::sim::ir::{IrVpiAutoStorage, IrVpiAutomatic};
+use crate::IdSet;
 
 impl<'a> Codegen<'a> {
     /// Emit one static C function for a function/task definition.  The body
@@ -1576,7 +1577,7 @@ impl<'a> Codegen<'a> {
         // the frame, in declaration order (decision A19-D88).
         let frame_path = self.vpi_path(ft);
         let mut pending = vec![ft];
-        let mut seen = HashSet::new();
+        let mut seen = IdSet::new();
         while let Some(node) = pending.pop() {
             if !seen.insert(node) {
                 continue;
