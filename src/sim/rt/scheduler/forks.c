@@ -314,16 +314,31 @@ void llg_program_exit(llg_proc_t* self) {
     self->chain.exiting = LLG_EXIT_ABANDON;
 }
 
-static int32_t activation_has_disabled_ancestor(llg_activation_t* activation) {
-    for (; activation; activation = activation->parent) {
-        if (activation->disabled) return 1;
-    }
+// Whether `grp` was started in an activation of the target, also one that was
+// left (S09-D9), or is the named fork itself.
+static int32_t fork_group_under_target(const llg_fork_group_t* grp,
+                                       uint32_t declaration, uint32_t instance) {
+    if (grp->has_target && grp->target_declaration == declaration &&
+        grp->target_instance == instance)
+        return 1;
+    for (const llg_activation_t* activation = grp->owner_activation; activation;
+         activation = activation->parent)
+        if (activation->declaration == declaration && activation->instance == instance)
+            return 1;
     return 0;
 }
 
+static llg_fork_group_t* fork_group_of_target(llg_fork_group_t* grp,
+                                              uint32_t declaration,
+                                              uint32_t instance) {
+    while (grp && !fork_group_under_target(grp, declaration, instance))
+        grp = grp->next_g;
+    return grp;
+}
+
 static void llg_kill_named_group(llg_fork_group_t* grp) {
-    if (!grp || !grp->parent) return;
     llg_proc_t* parent = grp->parent;
+    int32_t held = grp->terminal;
     llg_fork_child_t* child = grp->children;
     while (child) {
         if (child->proc) {
@@ -336,7 +351,12 @@ static void llg_kill_named_group(llg_fork_group_t* grp) {
     }
     grp->remaining = 0;
     grp->terminal = 1;
-    fork_group_unlink(grp);
+    if (held) {
+        held_group_unlink(grp);
+        proc_tree_released(parent);
+    } else {
+        fork_group_unlink(grp);
+    }
     grp->next_g = g.zombie_groups;
     g.zombie_groups = grp;
 
@@ -374,17 +394,9 @@ void llg_disable_target(llg_proc_t* self, uint32_t declaration,
         for (int32_t i = 0; i < g.n_procs && !target; i++) {
             llg_proc_t* proc = g.all_procs[i];
             if (!proc) continue;
-            for (llg_fork_group_t* group = proc->fork_groups; group;
-                 group = group->next_g) {
-                if ((group->has_target &&
-                     group->target_declaration == declaration &&
-                     group->target_instance == instance) ||
-                    (group->owner_activation &&
-                     activation_has_disabled_ancestor(group->owner_activation))) {
-                    target = group;
-                    break;
-                }
-            }
+            target = fork_group_of_target(proc->fork_groups, declaration, instance);
+            if (!target)
+                target = fork_group_of_target(proc->held_groups, declaration, instance);
         }
         if (!target) break;
         matched = 1;

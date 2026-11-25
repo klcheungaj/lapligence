@@ -1845,6 +1845,16 @@ fn s09_d8_updates_of_ended_processes() {
 }
 
 #[test]
+fn s09_d9_disable_ends_processes_of_left_blocks() {
+    run_decision(
+        "S09-D9_disable_ends_processes_of_left_blocks",
+        include_str!(
+            "fixtures/sim/lrm_decisions/S09-D9_disable_ends_processes_of_left_blocks.out"
+        ),
+    );
+}
+
+#[test]
 fn s27_d1_load_wakes_changed_words() {
     run_decision(
         "S27-D1_load_wakes_changed_words",

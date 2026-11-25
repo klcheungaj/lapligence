@@ -116,8 +116,10 @@ hold live descendants keeps its handle linked (for `kill()` alone; other
 methods see it terminated) and counts in its own group's `holding`; a group
 that ends with a nonzero count moves to the parent's `held_groups` instead of
 the zombie list. Kill and `disable fork` walk live and held groups, so they
-reach descendants below finished processes (SV 9.6.3, 9.7); when the last of
-them ends, the hold is released up the tree and the records are reclaimed. Process handles retain terminal identity separately from
+reach descendants below finished processes (SV 9.6.3, 9.7); `disable` ends the
+groups of either kind whose `owner_activation` chain names its target, also in
+an activation that was left (decision S09-D9). When the last descendant ends,
+the hold is released up the tree and the records are reclaimed. Process handles retain terminal identity separately from
 coroutine storage: counted storage (process variables, by-value formals,
 container elements) retains and releases; plain handle storage (class
 properties, record leaves, non-input formals, results, fork-shared slots)
