@@ -17,7 +17,7 @@ pub(super) fn render_virtual_interface_runtime(model: &IrModel, out: &mut String
         .max()
         .unwrap_or(1)
         .max(1);
-    // Clocking-block event slots exist only when a wait names one through a
+    // Event slots exist only when an operation names an event through a
     // handle, so other models keep the environment layout unchanged.
     let max_events = model
         .virtual_interfaces
@@ -30,7 +30,7 @@ pub(super) fn render_virtual_interface_runtime(model: &IrModel, out: &mut String
     } else {
         (
             format!("#define LLG_VIF_MAX_EVENTS {max_events}\n"),
-            "void *events[LLG_VIF_MAX_EVENTS];\n",
+            "void **events[LLG_VIF_MAX_EVENTS];\n",
         )
     };
     // Nested-instance slots exist only when a selection names one through a
@@ -138,8 +138,8 @@ pub(super) fn render_virtual_interface_runtime(model: &IrModel, out: &mut String
     }
     if max_events > 0 {
         out.push_str(
-            "/* The event object of a clocking block of the bound instance; a\n\
-             * failed access yields a slot holding no event. */\n\
+            "/* The handle of an event of the bound instance; a failed access\n\
+             * yields a slot holding no event. */\n\
              static void *llg_vif_invalid_event;\n\n\
              static void **llg_vif_event_quiet(void *raw, uint32_t interface_id,\n\
                                                uint32_t slot) {\n\
@@ -147,7 +147,7 @@ pub(super) fn render_virtual_interface_runtime(model: &IrModel, out: &mut String
                  if (!env || env->interface_id != interface_id || slot >= LLG_VIF_MAX_EVENTS ||\n\
                      !env->events[slot])\n\
                      return &llg_vif_invalid_event;\n\
-                 return &env->events[slot];\n\
+                 return env->events[slot];\n\
              }\n\n\
              static void **llg_vif_event(void *raw, uint32_t interface_id, uint32_t slot,\n\
                                          const char *site) {\n\
@@ -184,7 +184,7 @@ pub(super) fn render_virtual_interface_runtime(model: &IrModel, out: &mut String
                 .iter()
                 .map(|event| {
                     event
-                        .map(|index| format!("&{}__object", model.events[index].c_name()))
+                        .map(|index| format!("(void **)&{}.object", model.events[index].c_name()))
                         .unwrap_or_else(|| "NULL".to_owned())
                 })
                 .collect::<Vec<_>>();

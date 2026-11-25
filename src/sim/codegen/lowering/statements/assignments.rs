@@ -388,7 +388,9 @@ impl EmitCtx<'_, '_> {
                 self.path
             ));
         }
-        if let Some(write) = self.lower_virtual_interface_array_write(lhs, rhs, op, blocking)? {
+        if let Some(write) =
+            self.lower_virtual_interface_array_write(lhs, rhs, op, blocking, None)?
+        {
             return Ok(write);
         }
         if let Some(aggregate_assignment) = self
@@ -447,13 +449,15 @@ impl EmitCtx<'_, '_> {
     /// (SV 25.9): one assignment per instance the handle can bind, chosen by
     /// the instance bound when the statement executes (an invalid handle
     /// reports at the access and writes nothing). The right-hand side and
-    /// indices are lowered once per arm and evaluated once.
+    /// indices are lowered once per arm and evaluated once. `delay` is that of
+    /// `v.mem[i] <= #d e`.
     fn lower_virtual_interface_array_write(
         &mut self,
         lhs: NodeId,
         rhs: NodeId,
         op: Operation,
         blocking: bool,
+        delay: Option<&IrDelay>,
     ) -> Result<Option<IrStmt>, String> {
         let Some(element) = self
             .cg
@@ -498,10 +502,17 @@ impl EmitCtx<'_, '_> {
             };
             items.push(IrCaseItem::new(
                 vec![lhs_integer_expr(instance as i128)],
-                vec![IrStmt::Assign {
-                    lhs: lh,
-                    rhs: rhs_ir,
-                    nba: !blocking,
+                vec![match delay {
+                    Some(ticks) => IrStmt::DelayedAssign {
+                        lhs: lh,
+                        rhs: rhs_ir,
+                        ticks: ticks.clone(),
+                    },
+                    None => IrStmt::Assign {
+                        lhs: lh,
+                        rhs: rhs_ir,
+                        nba: !blocking,
+                    },
                 }],
             ));
         }
@@ -851,16 +862,21 @@ impl EmitCtx<'_, '_> {
                 scaled_ticks,
             )?]);
         }
-        let lh = self.cg.lower_lhs(&self.path, lhs)?;
         let op = match self.cg.kind(h) {
             NodeKind::Stmt(StmtKind::Assign { op, .. }) => *op,
             _ => unreachable!("non-assignment passed to lower_delayed_assignment"),
         };
+        if let Some(write) =
+            self.lower_virtual_interface_array_write(lhs, rhs, op, false, Some(&scaled_ticks))?
+        {
+            return Ok(vec![write]);
+        }
+        let lh = self.cg.lower_lhs(&self.path, lhs)?;
         let rhs_ir = self.lower_assignment_rhs(lhs, rhs, op, &lh)?;
         let rhs_ir = apply_lhs_assignment_context(&self.cg.model, &lh, rhs_ir);
         if self.cg.proc_local_target(lhs).is_some()
             || self.cg.subroutine_auto_target(lhs)
-            || lh.has_activation_root()
+            || lh.has_activation_root(&self.cg.model)
         {
             return Err("nonblocking delayed assignment requires persistent target storage".into());
         }
@@ -1349,7 +1365,7 @@ impl EmitCtx<'_, '_> {
 
         if self.cg.proc_local_target(lhs).is_some()
             || self.cg.subroutine_auto_target(lhs)
-            || lh.has_activation_root()
+            || lh.has_activation_root(&self.cg.model)
         {
             return Err(
                 "nonblocking event/repeat intra-assignment timing requires persistent target storage"
@@ -1444,7 +1460,7 @@ impl EmitCtx<'_, '_> {
         let rhs_ir = apply_lhs_assignment_context(&self.cg.model, &lh, rhs_ir);
         if self.cg.proc_local_target(lhs).is_some()
             || self.cg.subroutine_auto_target(lhs)
-            || lh.has_activation_root()
+            || lh.has_activation_root(&self.cg.model)
         {
             return Err(
                 "nonblocking event/repeat intra-assignment timing requires persistent target storage"
@@ -1739,8 +1755,43 @@ impl EmitCtx<'_, '_> {
         )
     }
 
+    /// The virtual-interface member at `addr` of the instance its handle binds
+    /// now, which the update writes (SV 10.4.2).
+    fn capture_interface_member(
+        &mut self,
+        frame: FrameId,
+        captures: &mut Vec<IrCapture>,
+        addr: &str,
+    ) -> Option<String> {
+        let model = &self.cg.model;
+        if !model.is_interface_member_address(addr) {
+            return None;
+        }
+        let (_, access) = model.native_access(addr.strip_prefix('&')?)?;
+        let (receiver, kind, site) = (access.receiver.clone(), access.kind, access.site.clone());
+        let storage = StorageRef::new(
+            frame,
+            captures.len() as u32,
+            StorageLifetime::Automatic,
+            StorageOwnership::Owned,
+        )
+        .with_kind(StorageKind::Opaque);
+        captures.push(IrCapture::new(
+            storage,
+            IrExpr::new(
+                IrExprKind::ObjectQuery(Box::new(IrObjectQuery::HandleCapture(receiver))),
+                1,
+                false,
+                None,
+            ),
+        ));
+        let handle = IrChandleExpr::LocalRead(Codegen::capture_local_name(storage));
+        let member = self.cg.native_access_symbol_at(handle, kind, site);
+        Some(format!("&{member}"))
+    }
+
     pub(super) fn capture_event_assignment_lhs(
-        &self,
+        &mut self,
         frame: FrameId,
         captures: &mut Vec<IrCapture>,
         lhs: IrLhs,
@@ -1831,6 +1882,21 @@ impl EmitCtx<'_, '_> {
                 width,
                 slice,
                 direction,
+            },
+            IrLhs::WholeRef {
+                addr,
+                width,
+                signed,
+                two_state,
+                shortreal,
+            } => IrLhs::WholeRef {
+                addr: self
+                    .capture_interface_member(frame, captures, &addr)
+                    .unwrap_or(addr),
+                width,
+                signed,
+                two_state,
+                shortreal,
             },
             other => other,
         })

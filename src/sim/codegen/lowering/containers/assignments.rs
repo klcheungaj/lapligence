@@ -465,6 +465,16 @@ impl<'a> Codegen<'a> {
     ) -> Result<IrStmt, String> {
         let dst = ContainerInfo { ir: dst };
         let rhs = self.class_array_upcast_operand(rhs).unwrap_or(rhs);
+        // So does an array of interface instances, whose elements are the
+        // handles of the instances.
+        let rhs = match self.kind(rhs) {
+            NodeKind::Expr(ExprKind::Cast { operand, .. })
+                if self.interface_instance_array(*operand).is_some() =>
+            {
+                *operand
+            }
+            _ => rhs,
+        };
         if let Some(statement) = self.lower_container_result_into(path, rhs, dst.ir)? {
             return Ok(statement);
         }

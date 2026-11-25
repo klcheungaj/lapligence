@@ -613,6 +613,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   depends on neither time nor addresses (S07-D9). A key is a collection root
   ([sim_006](../tests/fixtures/sim/feature_completion/sim_006/readme.md),
   [known issue](known_issues.md#class-keyed-associative-arrays-have-explicit-gaps)).
+  A chandle index (SV 6.14) has the same forms, ordered by pointer value
+  ([sim_040](../tests/fixtures/sim/feature_completion/sim_040/readme.md)).
   `ref` formals of queue, dynamic and associative type alias the caller's
   container variable, including from timed tasks and fork branches
   ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
@@ -2691,16 +2693,21 @@ These are bounded implementations, not full verification-infrastructure support.
   position that ends the run before the rest of the statement runs, without
   the final procedures (S99-D8)
   ([sim_012](../tests/fixtures/sim/feature_completion/sim_012/readme.md)).
+  An array of interface instances assigns and passes as an array of handles.
+  Named events of the bound instance trigger, wait and read `.triggered`
+  through a handle
+  ([virtual_interfaces](../tests/fixtures/sim/virtual_interfaces/readme.md),
+  [known issue](known_issues.md#event-forms-through-virtual-interfaces)).
   Synchronous drives through handles, views, class properties and array
   elements (output, skewed, cycle-delayed, selected and inout-net drives) go
   to the instance the handle names when the drive executes; rebinding never
   redirects a pending drive
   ([sim_034](../tests/fixtures/sim/feature_completion/sim_034/readme.md)).
-  Blocking and nonblocking procedural writes of whole members and of bit,
-  part and indexed part selects through a handle (class property or
-  automatic task formal) wake exactly the waiters, continuous assignments and
-  VPI value-change callbacks whose value changed, and a view's input member
-  stays read-only for selects
+  Blocking and nonblocking (untimed, `#d` and event-controlled) procedural
+  writes of whole members and of bit, part and indexed part selects through
+  a handle (class property or automatic task formal) wake exactly the
+  waiters, continuous assignments and VPI value-change callbacks whose value
+  changed, and a view's input member stays read-only for selects
   ([sim_099](../tests/fixtures/sim/feature_completion/sim_099/readme.md)).
   A member that an instance's output port also drives (illegal by SV
   §23.3.3.2, but run, as a verification library's bus example needs) keeps
@@ -2711,8 +2718,8 @@ These are bounded implementations, not full verification-infrastructure support.
   interface is a located compile error (SV §23.3.3.2, decision A21-D7,
   [ki_illegal_port_writes](../tests/fixtures/sim/feature_completion/ki_illegal_port_writes/readme.md)).
   Elements of unpacked array members (`v.mem[i]`, `v.grid[i][j]`, and their
-  bit, part and indexed part selects) are read and written with `=` or `<=`
-  through a handle on the array of the instance bound when the access
+  bit, part and indexed part selects) are read and written with `=`, `<=` or
+  `<= #d` through a handle on the array of the instance bound when the access
   executes; whole-array, slice, compound, increment, output-argument,
   event-control and wait uses of such a member are located compile-time
   errors.

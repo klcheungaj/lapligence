@@ -113,10 +113,9 @@ pub struct IrVirtualInterface {
     pub(in crate::sim) members: Vec<IrVirtualInterfaceMember>,
     pub(in crate::sim) instances: Vec<IrVirtualInterfaceInstance>,
     pub(in crate::sim) methods: Vec<IrVirtualInterfaceMethod>,
-    /// Names of the clocking blocks whose event is waited on through a
-    /// handle (`@(vif.cb)`, SV 14.13, 25.9). A slot is added only when a
-    /// wait names the block, so descriptors without such waits are
-    /// unchanged.
+    /// Names of the clocking blocks and named events used through a handle
+    /// (`@(vif.cb)`, `-> vif.e`, SV 14.13, 25.9). A slot is added only when an
+    /// operation names the event, so other descriptors are unchanged.
     pub(in crate::sim) events: Vec<String>,
     /// The nested interface instances selected through a handle
     /// (`v.tx`, `v.tx.x`). A slot is added only when a selection names
@@ -679,8 +678,8 @@ pub enum IrObjectQuery {
         handle: IrChandleExpr,
         array: super::IrInsideArray,
     },
-    /// A class handle as an unsigned 64-bit two-state associative key
-    /// ([`super::IrAssocKey::Class`]).
+    /// A class handle or chandle as an unsigned 64-bit two-state associative key
+    /// ([`super::IrAssocKey::Handle`]).
     ClassKey(IrChandleExpr),
     SemaphoreTryGet(IrChandleExpr, IrExpr),
     MailboxNum(IrChandleExpr),

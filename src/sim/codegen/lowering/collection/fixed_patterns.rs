@@ -15,11 +15,27 @@ impl Codegen<'_> {
     /// destination position.  Repeated entries intentionally keep the same
     /// node identity: the operand slot is distinct even when the source node
     /// is shared.  The count is required to be constant by SV 10.9.1.
+    /// The elements, leftmost first, of the array of interface instances that
+    /// `node` names as a value (SV 25.9): instances, or arrays of them.
+    pub(in super::super) fn interface_instance_array(&self, node: NodeId) -> Option<Vec<NodeId>> {
+        let array = match self.kind(node) {
+            NodeKind::InstanceArray => node,
+            NodeKind::Expr(ExprKind::ScopeRef { target }) => *target,
+            _ => return None,
+        };
+        (matches!(self.kind(array), NodeKind::InstanceArray)
+            && crate::sim::semantic::is_interface_instance(self.db, array))
+        .then(|| self.node(array).children.clone())
+    }
+
     pub(in super::super) fn assignment_pattern_operands(
         &self,
         path: &str,
         node: NodeId,
     ) -> Result<Option<Vec<NodeId>>, String> {
+        if let Some(instances) = self.interface_instance_array(node) {
+            return Ok(Some(instances));
+        }
         let NodeKind::Expr(ExprKind::Operation {
             op,
             operands,

@@ -355,13 +355,17 @@ impl IrLhs {
 
     /// A deferred operation must not retain a local owner or reference formal.
     /// Selected members inherit the lifetime of their root capability.
-    pub(in crate::sim) fn has_activation_root(&self) -> bool {
+    pub(in crate::sim) fn has_activation_root(&self, model: &IrModel) -> bool {
         match self {
-            Self::WholeRef { .. } | Self::Ref { .. } => true,
-            Self::PackedSelect { target, .. } | Self::TaggedSelect { target, .. } => {
-                target.has_activation_root()
+            Self::WholeRef { addr, .. } | Self::Ref { addr, .. } => {
+                !model.is_interface_member_address(addr)
             }
-            Self::Stream { parts, .. } => parts.iter().any(|(part, _)| part.has_activation_root()),
+            Self::PackedSelect { target, .. } | Self::TaggedSelect { target, .. } => {
+                target.has_activation_root(model)
+            }
+            Self::Stream { parts, .. } => parts
+                .iter()
+                .any(|(part, _)| part.has_activation_root(model)),
             _ => false,
         }
     }

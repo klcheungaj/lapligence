@@ -22,8 +22,8 @@ use effects::{is_context_import, EffectSet};
 
 use crate::sim::ir::{
     IrArrayQueryTarget, IrCallArg, IrChandleExpr, IrContainerExpr, IrContainerStmt, IrDependency,
-    IrDisplayArg, IrExpr, IrExprKind, IrInsideArray, IrInsideItem, IrJumpStateOp, IrLhs,
-    IrMailboxExpr, IrMailboxValue, IrMemoryImage, IrMemoryStorage, IrModel, IrObjectQuery,
+    IrDisplayArg, IrEventRef, IrExpr, IrExprKind, IrInsideArray, IrInsideItem, IrJumpStateOp,
+    IrLhs, IrMailboxExpr, IrMailboxValue, IrMemoryImage, IrMemoryStorage, IrModel, IrObjectQuery,
     IrObjectStmt, IrShape, IrStmt, IrStochasticStmt, IrStreamSelector, IrStreamTarget,
     IrStringExpr, IrStringInsideItem, IrSysFunc, IrValidationError, IrWaitSrc, VirtualDispatch,
 };
@@ -1674,6 +1674,11 @@ fn collect_statement_expression_effects(
         IrStmt::DelayedChandleAssign { rhs, .. } => {
             collect_chandle_effects(ir, rhs, effects, visited_calls)
         }
+        IrStmt::EventTrigger { ev }
+        | IrStmt::NonblockingEventTrigger { ev, .. }
+        | IrStmt::NonblockingEventTriggerWhen { ev, .. } => {
+            collect_event_effects(ir, ev, effects, visited_calls)
+        }
         IrStmt::EventAssign { .. }
         | IrStmt::EventCapture { .. }
         | IrStmt::EventDeclare { .. }
@@ -2530,15 +2535,32 @@ fn collect_expression_effects(
             collect_expression_effects(ir, fallback, effects, visited_calls);
             collect_stream_selector_effects(ir, selector, effects, visited_calls)
         }
+        IrExprKind::EventTriggered(event) => {
+            collect_event_effects(ir, event, effects, visited_calls)
+        }
         IrExprKind::Const(_)
         | IrExprKind::SigRead(_)
         | IrExprKind::FormalRead(_)
         | IrExprKind::Fill(_)
         | IrExprKind::UdpState(_)
-        | IrExprKind::EventTriggered(_)
         | IrExprKind::RuntimeQuery(_)
         | IrExprKind::FixedArrayCompare { .. }
         | IrExprKind::Verbatim { .. } => {}
+    }
+}
+
+fn collect_event_effects(
+    ir: &IrModel,
+    event: &IrEventRef,
+    effects: &mut EffectSet,
+    visited_calls: &mut CallVisits,
+) {
+    if let IrEventRef::Handle(handle) = event {
+        collect_chandle_effects(ir, handle, effects, visited_calls);
+    } else {
+        event.expressions(&mut |index| {
+            collect_expression_effects(ir, index, effects, visited_calls)
+        });
     }
 }
 
@@ -2564,7 +2586,9 @@ fn collect_object_statement_effects(
         IrObjectStmt::ChandleAssign(_, value) | IrObjectStmt::ChandleAssignLocal(_, value) => {
             collect_chandle_effects(ir, value, effects, visited_calls)
         }
+        // A null receiver ends the simulation (SV 8.4), here and below.
         IrObjectStmt::SemaphorePut(receiver, keys) | IrObjectStmt::SemaphoreGet(receiver, keys) => {
+            visited_calls.push_checked_exit(effects);
             collect_chandle_effects(ir, receiver, effects, visited_calls);
             collect_expression_effects(ir, keys, effects, visited_calls);
         }
@@ -2584,13 +2608,12 @@ fn collect_object_statement_effects(
         }
         IrObjectStmt::MailboxTryPut(_, mailbox, value)
         | IrObjectStmt::MailboxTryPutLocal(_, mailbox, value) => {
+            visited_calls.push_checked_exit(effects);
             collect_chandle_effects(ir, mailbox, effects, visited_calls);
             collect_mailbox_value_effects(ir, value, effects, visited_calls);
         }
         IrObjectStmt::MailboxGet(_, mailbox, _, _)
-        // A null receiver ends the simulation (SV 8.4), here and below.
         | IrObjectStmt::MailboxGetLocal(_, mailbox, _, _) => {
-            visited_calls.push_checked_exit(effects);
             collect_chandle_effects(ir, mailbox, effects, visited_calls);
             // Both get and peek are blocking mailbox tasks when their queue
             // is empty; peek only changes whether the delivered message is
@@ -2600,6 +2623,7 @@ fn collect_object_statement_effects(
         }
         IrObjectStmt::MailboxTryGet(_, mailbox, _, _)
         | IrObjectStmt::MailboxTryGetLocal(_, mailbox, _, _) => {
+            visited_calls.push_checked_exit(effects);
             collect_chandle_effects(ir, mailbox, effects, visited_calls);
         }
         // Kill may cancel the caller; any control or random method through a
@@ -2608,7 +2632,6 @@ fn collect_object_statement_effects(
             effects.push(ExecutionEffect::Terminate);
             if let IrObjectStmt::ProcessRandom { op, .. } = statement {
                 match op {
-            visited_calls.push_checked_exit(effects);
                     crate::sim::ir::IrProcessRandom::Seed(seed) => {
                         collect_expression_effects(ir, seed, effects, visited_calls)
                     }
@@ -2623,7 +2646,6 @@ fn collect_object_statement_effects(
             effects.push(ExecutionEffect::Terminate);
             collect_chandle_effects(ir, target, effects, visited_calls);
             match op {
-            visited_calls.push_checked_exit(effects);
                 crate::sim::ir::IrProcessRandom::Seed(seed) => {
                     collect_expression_effects(ir, seed, effects, visited_calls)
                 }
@@ -2725,19 +2747,23 @@ fn collect_object_query_effects(
             }
         }
         IrObjectQuery::SemaphoreTryGet(receiver, keys) => {
+            visited_calls.push_checked_exit(effects);
             collect_chandle_effects(ir, receiver, effects, visited_calls);
             collect_expression_effects(ir, keys, effects, visited_calls);
         }
         IrObjectQuery::MailboxNum(mailbox) => {
+            visited_calls.push_checked_exit(effects);
             collect_chandle_effects(ir, mailbox, effects, visited_calls);
             effects.push(ExecutionEffect::RuntimeService);
         }
         IrObjectQuery::MailboxTryPut { mailbox, value } => {
+            visited_calls.push_checked_exit(effects);
             collect_chandle_effects(ir, mailbox, effects, visited_calls);
             collect_mailbox_value_effects(ir, value, effects, visited_calls);
             effects.push(ExecutionEffect::RuntimeService);
         }
         IrObjectQuery::MailboxTryGet { mailbox, .. } => {
+            visited_calls.push_checked_exit(effects);
             collect_chandle_effects(ir, mailbox, effects, visited_calls);
             effects.push(ExecutionEffect::RuntimeService);
         }
@@ -2747,23 +2773,19 @@ fn collect_object_query_effects(
         }
         IrObjectQuery::ProcessEq(_, _) => {}
         // A null handle ends the simulation (SV 8.4).
-            visited_calls.push_checked_exit(effects);
         IrObjectQuery::ProcessStatus(_) => effects.push(ExecutionEffect::Terminate),
         IrObjectQuery::ArrayQuery(query) => {
             effects.push(ExecutionEffect::RuntimeService);
             if let IrArrayQueryTarget::String { value, .. } = &query.target {
-            visited_calls.push_checked_exit(effects);
                 collect_string_effects(ir, value, effects, visited_calls);
             }
         }
     }
-            visited_calls.push_checked_exit(effects);
 }
 
 fn collect_mailbox_value_effects(
     ir: &IrModel,
     value: &IrMailboxValue,
-            visited_calls.push_checked_exit(effects);
     effects: &mut EffectSet,
     visited_calls: &mut CallVisits,
 ) {
@@ -3052,13 +3074,7 @@ fn collect_chandle_effects(
             collect_mailbox_expr_effects(ir, mailbox, effects, visited_calls)
         }
         IrChandleExpr::EventObject(event) => {
-            if let crate::sim::ir::IrEventRef::Handle(handle) = event.as_ref() {
-                collect_chandle_effects(ir, handle, effects, visited_calls);
-            } else {
-                event.expressions(&mut |index| {
-                    collect_expression_effects(ir, index, effects, visited_calls)
-                });
-            }
+            collect_event_effects(ir, event, effects, visited_calls)
         }
         IrChandleExpr::Call {
             function,

@@ -439,7 +439,8 @@ typedef struct {
     const uint64_t* words;
 } llg_pattern_enum_t;
 // `flat_width` is the packed or flattened width; `count` the members, enum
-// members or fixed dimensions (`bounds` holds left/right per dimension).
+// members or fixed dimensions (`bounds` holds left/right per dimension); of an
+// associative array, 1 when its keys are chandles.
 // `spaced` marks an array whose non-empty full-form pattern is followed by
 // one space after its closing brace (decided by the generator).
 struct llg_pattern_type {

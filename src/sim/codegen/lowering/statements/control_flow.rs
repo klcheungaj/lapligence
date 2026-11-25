@@ -1335,7 +1335,7 @@ impl EmitCtx<'_, '_> {
                 AssocKeyStorage::Integral(local, *width, *signed, *two_state)
             }
             IrContainerKind::Associative {
-                key: IrAssocKey::Class,
+                key: IrAssocKey::Handle { .. },
             } => {
                 // The iterator is a handle variable of the block, or of the
                 // subroutine whose locals include it.

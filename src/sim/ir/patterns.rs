@@ -65,6 +65,8 @@ pub enum IrPatternType {
     },
     Associative {
         element: usize,
+        /// Whether the keys are chandles, which print as chandle values do.
+        chandle_key: bool,
     },
     Class,
     Chandle,
@@ -167,7 +169,7 @@ impl IrPatternType {
             Self::FixedArray { element, .. }
             | Self::Queue { element }
             | Self::Dynamic { element }
-            | Self::Associative { element } => vec![*element],
+            | Self::Associative { element, .. } => vec![*element],
             _ => Vec::new(),
         }
     }

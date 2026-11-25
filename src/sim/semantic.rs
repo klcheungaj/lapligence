@@ -887,6 +887,19 @@ pub(in crate::sim) fn semaphore_constructor(db: &Db, id: NodeId) -> bool {
     })
 }
 
+/// Whether `id` is an interface instance or an array of them.
+pub(in crate::sim) fn is_interface_instance(db: &Db, id: NodeId) -> bool {
+    match db.node_kind(id) {
+        NodeKind::ModuleInst { is_interface, .. } => *is_interface,
+        NodeKind::InstanceArray => db
+            .node(id)
+            .children()
+            .first()
+            .is_some_and(|element| is_interface_instance(db, *element)),
+        _ => false,
+    }
+}
+
 fn scope_reference_is_metadata(db: &Db, owner: NodeId, reference: NodeId, target: NodeId) -> bool {
     let owner_node = db.node(owner);
     match owner_node.kind() {
@@ -1081,22 +1094,17 @@ fn classify_simulation_node(
                 // unsupported binding rather than becoming an executable
                 // value merely because it names an interface.
                 matches!(db.node_kind(parent), NodeKind::Port { .. })
-            }) && (matches!(
-                db.node_kind(*target),
-                NodeKind::ModuleInst {
-                    is_interface: true,
-                    ..
-                }
-            ) || (matches!(db.node_kind(*target), NodeKind::ModPort)
-                && db.node(*target).parent().is_some_and(|parent| {
-                    matches!(
-                        db.node_kind(parent),
-                        NodeKind::ModuleInst {
-                            is_interface: true,
-                            ..
-                        }
-                    )
-                }))) =>
+            }) && (is_interface_instance(db, *target)
+                || (matches!(db.node_kind(*target), NodeKind::ModPort)
+                    && db.node(*target).parent().is_some_and(|parent| {
+                        matches!(
+                            db.node_kind(parent),
+                            NodeKind::ModuleInst {
+                                is_interface: true,
+                                ..
+                            }
+                        )
+                    }))) =>
         {
             // Interface instance references are executable values when they
             // bind or rebind a virtual interface handle. Their target is a

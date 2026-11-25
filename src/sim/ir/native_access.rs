@@ -24,9 +24,9 @@ pub enum IrNativeAccessKind {
         interface: usize,
         member: usize,
     },
-    /// The event object of the clocking block `event` of the interface
-    /// instance the receiver (a virtual-interface handle) is bound to,
-    /// readable as an event handle (SV 14.13, 25.9).
+    /// The handle of event slot `event` (a clocking block or a named event)
+    /// of the interface instance the receiver (a virtual-interface handle) is
+    /// bound to, readable as an event handle (SV 14.13, 15.5, 25.9).
     InterfaceEvent {
         interface: usize,
         event: usize,
@@ -82,6 +82,16 @@ impl IrModel {
     /// lookup reads the index instead of scanning the table: effect
     /// collection and emission look an access up at every statement that
     /// names it, and a scan made that quadratic in the model size.
+    /// Whether `addr` is the address of a virtual-interface member: signal
+    /// storage of the bound interface instance.
+    pub(in crate::sim) fn is_interface_member_address(&self, addr: &str) -> bool {
+        addr.strip_prefix('&')
+            .and_then(|name| self.native_access(name))
+            .is_some_and(|(_, access)| {
+                matches!(access.kind, IrNativeAccessKind::InterfaceMember { .. })
+            })
+    }
+
     pub(in crate::sim) fn native_access(&self, name: &str) -> Option<(usize, &IrNativeAccess)> {
         let index = name.strip_prefix("_llg_access_")?.parse::<usize>().ok()?;
         self.native_accesses

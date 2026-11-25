@@ -580,7 +580,7 @@ fn has_class_key(kind: &crate::sim::ir::IrContainerKind) -> bool {
     matches!(
         kind,
         crate::sim::ir::IrContainerKind::Associative {
-            key: crate::sim::ir::IrAssocKey::Class
+            key: crate::sim::ir::IrAssocKey::Handle { object: true }
         }
     )
 }
@@ -591,7 +591,7 @@ fn element_may_hold_object(element: &crate::sim::ir::IrContainerElement) -> bool
     match element {
         E::Opaque { kind, .. } => kind != crate::sim::ir::PROCESS_ELEMENT_KIND,
         E::Container {
-            key: Some(crate::sim::ir::IrAssocKey::Class),
+            key: Some(crate::sim::ir::IrAssocKey::Handle { object: true }),
             ..
         } => true,
         E::Aggregate { members, .. } | E::Union { members, .. } => members

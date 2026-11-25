@@ -805,9 +805,9 @@ fn dynamic_query_code(
                     }
                 }
                 IrContainerKind::Associative {
-                    key: IrAssocKey::String | IrAssocKey::Wildcard | IrAssocKey::Class,
+                    key: IrAssocKey::String | IrAssocKey::Wildcard | IrAssocKey::Handle { .. },
                 } => return Err(
-                    "array query on a string-keyed, wildcard or class-keyed associative array is unsupported"
+                    "array query on a string-keyed, wildcard or handle-keyed associative array is unsupported"
                         .to_owned(),
                 ),
             }

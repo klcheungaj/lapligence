@@ -574,7 +574,8 @@ impl EmitCtx<'_, '_> {
         let index = match key {
             IrAssocKey::Wildcard => "a wildcard `[*]` index",
             IrAssocKey::String => "a string index",
-            IrAssocKey::Class => "a class index",
+            IrAssocKey::Handle { object: true } => "a class index",
+            IrAssocKey::Handle { object: false } => "a chandle index",
             IrAssocKey::Integral { .. } => unreachable!("integral indices are accepted"),
         };
         self.cg.locate_error(

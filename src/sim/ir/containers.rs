@@ -277,14 +277,18 @@ pub enum IrAssocKey {
         two_state: bool,
     },
     String,
-    /// A class handle (7.8.3). Selecting with one uses the integral forms:
-    /// the key value is the handle as an unsigned 64-bit two-state value
-    /// ([`IrObjectQuery::ClassKey`](super::IrObjectQuery::ClassKey)), and the
-    /// runtime orders entries by the creation serial of each object.
-    Class,
+    /// A class handle (7.8.3) or a chandle (6.14). Selecting with one uses
+    /// the integral forms: the key value is the handle as an unsigned 64-bit
+    /// two-state value
+    /// ([`IrObjectQuery::ClassKey`](super::IrObjectQuery::ClassKey)). The
+    /// runtime orders class handles (`object`) by the creation serial of each
+    /// object and chandles, whose order the LRM leaves open, by value.
+    Handle {
+        object: bool,
+    },
 }
 
-/// Width of the packed form of a class handle key.
+/// Width of the packed form of a handle key.
 pub const CLASS_KEY_WIDTH: u32 = 64;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1684,7 +1688,7 @@ impl IrContainerExpr {
                 if !matches!(
                     container.kind,
                     IrContainerKind::Associative {
-                        key: IrAssocKey::Integral { .. } | IrAssocKey::Class
+                        key: IrAssocKey::Integral { .. } | IrAssocKey::Handle { .. }
                     }
                 ) {
                     return Err(IrValidationError::new(
@@ -2368,7 +2372,7 @@ impl IrContainerStmt {
                             key: IrAssocKey::String,
                         } => destination.element.is_string(),
                         IrContainerKind::Associative {
-                            key: IrAssocKey::Wildcard | IrAssocKey::Class,
+                            key: IrAssocKey::Wildcard | IrAssocKey::Handle { .. },
                         } => false,
                     }
                 } else {

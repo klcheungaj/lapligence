@@ -290,7 +290,7 @@ impl<'a> Codegen<'a> {
         fn holds(element: &IrContainerElement) -> bool {
             match element {
                 IrContainerElement::Container { key, element, .. } => {
-                    matches!(key, Some(IrAssocKey::Class)) || holds(element)
+                    matches!(key, Some(IrAssocKey::Handle { object: true })) || holds(element)
                 }
                 IrContainerElement::FixedArray { element, .. } => holds(element),
                 IrContainerElement::Aggregate { members, .. }
@@ -304,7 +304,7 @@ impl<'a> Codegen<'a> {
             matches!(
                 container.kind,
                 IrContainerKind::Associative {
-                    key: IrAssocKey::Class
+                    key: IrAssocKey::Handle { object: true }
                 }
             ) || holds(&container.element)
         });

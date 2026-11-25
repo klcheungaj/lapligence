@@ -1566,6 +1566,8 @@ and `tests/fixtures/sim/feature_completion/ki_audit/neg_delayed_native_record_co
 - A VPI dynamic-array view of a class-keyed array.
 - `a[f()] += 1`, a compound write whose key calls a function, as for any key.
 
+An array indexed by chandles has the same gaps.
+
 ### Cause
 
 The locator index forms need a queue of handles as their result, which the
@@ -2538,6 +2540,32 @@ reads per bound instance.
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/sim_099/neg_vif_sensitivity_*.sv`.
+
+## Event forms through virtual interfaces
+
+**Status:** open. Both forms reject with a located diagnostic.
+
+### Symptom
+
+An element of an event array of the interface (`-> v.ea[1]`, "cannot resolve
+named event expression") and an assignment to an event of the interface
+(`v.ie = e`, "event property `ie` has no class layout"). An event of an
+interface type without an instance, which no handle can bind, rejects like the
+former.
+
+### Cause
+
+A descriptor has one event slot per named event and clocking block; the slots
+are read only and have no index.
+
+### Intended direction
+
+Give event arrays indexed slots and event assignments the slot's address.
+
+### Reproduce
+
+`tests/fixtures/sim/virtual_interfaces/neg_event_array_trigger.sv` and
+`neg_event_assignment.sv`.
 
 ## Modport expression ports through virtual interfaces
 

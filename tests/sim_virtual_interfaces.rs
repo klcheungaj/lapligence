@@ -8,7 +8,7 @@
 //! specializations and null handles). Every executable case runs with and
 //! without optimizer passes.
 
-use crate::sim_cli;
+use crate::{sim_cli, sim_harness};
 
 #[test]
 fn virtual_interface_rebinding_and_views_match_across_optimizer_modes() {
@@ -184,5 +184,71 @@ fn wait_through_nested_instance_follows_rebinding() {
         "2 woke w=2\n",
         "INFO: nested_wait_rebind.sv:34:9: [SIM-001] (tb @ 12 ns) $finish called\n",
         &[],
+    );
+}
+
+#[test]
+fn named_events_through_virtual_interfaces() {
+    sim_cli::run_case_backend_parity(
+        "virtual_interfaces",
+        "events",
+        include_str!("fixtures/sim/virtual_interfaces/events.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn delayed_nonblocking_writes_go_to_the_instance_bound_at_issue() {
+    sim_cli::run_case_backend_parity(
+        "virtual_interfaces",
+        "delayed_nba",
+        include_str!("fixtures/sim/virtual_interfaces/delayed_nba.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn arrays_of_interface_instances_are_arrays_of_handles() {
+    sim_cli::run_case_backend_parity(
+        "virtual_interfaces",
+        "instance_arrays",
+        include_str!("fixtures/sim/virtual_interfaces/instance_arrays.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn named_event_through_a_null_handle_stops_at_once() {
+    sim_cli::run_case_checked_matrix("virtual_interfaces", "null_event", &[], &|label, output| {
+        assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "start\n",
+            "{label}"
+        );
+        assert!(
+            sim_harness::mentions(
+                &String::from_utf8_lossy(&output.stderr),
+                "virtual interface access failed: virtual interface event at drv:11:10"
+            ),
+            "{label}: {output:?}"
+        );
+    });
+}
+
+#[test]
+fn event_forms_without_a_virtual_interface_path_are_located() {
+    sim_cli::reject_case(
+        "virtual_interfaces",
+        "neg_event_array_trigger",
+        "neg_event_array_trigger.sv:7:11: [CODEGEN-002] cannot resolve named event expression",
+    );
+    sim_cli::reject_case(
+        "virtual_interfaces",
+        "neg_event_assignment",
+        "neg_event_assignment.sv:8:11: [CODEGEN-006] event property `ie` in `tb` has no class layout",
     );
 }

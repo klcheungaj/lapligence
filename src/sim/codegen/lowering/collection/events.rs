@@ -190,10 +190,10 @@ impl<'a> Codegen<'a> {
                 access: None,
             });
         }
-        // A clocking block through a virtual interface (`@(vif.cb)`): the
-        // bound instance's block event, read from the handle when the wait
-        // arms.
-        if self.virtual_clocking_event_member(node).is_some() {
+        // A clocking block or named event through a virtual interface
+        // (`@(vif.cb)`, `-> vif.e`): the bound instance's event, read from
+        // the handle when the operation is issued.
+        if self.virtual_event_member(node).is_some() {
             return Some(EventTarget {
                 declaration: node,
                 indices: Vec::new(),
@@ -621,7 +621,7 @@ impl<'a> Codegen<'a> {
             ))));
         }
         if let Some(access) = target.access {
-            if let Some(event) = self.virtual_clocking_event_ref(scope_path, access)? {
+            if let Some(event) = self.virtual_event_ref(scope_path, access)? {
                 return Ok(event);
             }
             if !target.indices.is_empty() {

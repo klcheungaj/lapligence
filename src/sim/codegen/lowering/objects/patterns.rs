@@ -507,7 +507,13 @@ impl Codegen<'_> {
                         if matches!(index, crate::core::db::AssociativeIndex::Class) {
                             self.ensure_pattern_classes()?;
                         }
-                        IrPatternType::Associative { element }
+                        IrPatternType::Associative {
+                            element,
+                            chandle_key: matches!(
+                                index,
+                                crate::core::db::AssociativeIndex::Chandle
+                            ),
+                        }
                     }
                     ArrayKind::Static => {
                         return Err("static container metadata has no pattern form".to_owned())

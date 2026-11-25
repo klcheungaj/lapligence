@@ -142,7 +142,7 @@ impl<'a> Codegen<'a> {
         path: &str,
         node: NodeId,
     ) -> Result<IrExpr, String> {
-        // A class handle key travels as its packed form (`IrAssocKey::Class`).
+        // A handle key travels as its packed form (`IrAssocKey::Handle`).
         // Generated-loop iterators and multidimensional selects stand here
         // as logical indices: their type is the element's, not the index's.
         let logical_index = self.inline_declaration(node).is_some()
@@ -982,7 +982,7 @@ impl<'a> Codegen<'a> {
                 Some((container.ir, indices))
             }
             IrContainerKind::Associative {
-                key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard | IrAssocKey::Class,
+                key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard | IrAssocKey::Handle { .. },
             } => Some((container.ir, indices)),
             IrContainerKind::Associative {
                 key: IrAssocKey::String,
@@ -1002,7 +1002,7 @@ impl<'a> Codegen<'a> {
         matches!(
             self.model.containers[container.ir].kind,
             IrContainerKind::Associative {
-                key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard | IrAssocKey::Class
+                key: IrAssocKey::Integral { .. } | IrAssocKey::Wildcard | IrAssocKey::Handle { .. }
             }
         )
         .then_some((container.ir, key))

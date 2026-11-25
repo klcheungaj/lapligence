@@ -542,7 +542,9 @@ impl Codegen<'_> {
                 };
                 self.vpi_integral_typespec(table, &ranges, *width, *signed, *two_state, None, 0)?
             }
-            AssociativeIndex::Class | AssociativeIndex::Unsupported(_) => return None,
+            AssociativeIndex::Class
+            | AssociativeIndex::Chandle
+            | AssociativeIndex::Unsupported(_) => return None,
         };
         Some(Some(table.intern(typespec)))
     }

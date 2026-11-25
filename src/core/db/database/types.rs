@@ -483,6 +483,8 @@ pub enum AssociativeIndex {
     /// A class handle of a user class (7.8.3). The built-in classes keep
     /// their own storage and stay `Unsupported`.
     Class,
+    /// A chandle (6.14).
+    Chandle,
     Unsupported(String),
 }
 

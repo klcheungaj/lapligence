@@ -625,7 +625,7 @@ impl<'a> Codegen<'a> {
                     }));
                 }
                 IrContainerKind::Associative {
-                    key: IrAssocKey::Class,
+                    key: IrAssocKey::Handle { .. },
                 } => {
                     let index = self.class_pattern_key(path, operand)?;
                     writes.push(IrStmt::Container(match &element {
@@ -662,7 +662,7 @@ impl<'a> Codegen<'a> {
                             two_state,
                         } => (*width, *signed, *two_state),
                         IrAssocKey::Wildcard => (32, true, false),
-                        IrAssocKey::String | IrAssocKey::Class => unreachable!(),
+                        IrAssocKey::String | IrAssocKey::Handle { .. } => unreachable!(),
                     };
                     writes.push(IrStmt::Container(match &element {
                         IrContainerElement::Real { .. } => Box::new(IrContainerStmt::SetReal {
@@ -769,7 +769,7 @@ impl<'a> Codegen<'a> {
                     }
                 }
                 IrContainerKind::Associative {
-                    key: IrAssocKey::Class,
+                    key: IrAssocKey::Handle { .. },
                 } => {
                     let index = self.class_pattern_key(path, operand)?;
                     match &element {
@@ -805,7 +805,7 @@ impl<'a> Codegen<'a> {
                             two_state,
                         } => (*width, *signed, *two_state),
                         IrAssocKey::Wildcard => (32, true, false),
-                        IrAssocKey::String | IrAssocKey::Class => unreachable!(),
+                        IrAssocKey::String | IrAssocKey::Handle { .. } => unreachable!(),
                     };
                     let index = pattern_key_expr(index, width, signed, two_state);
                     match &element {
