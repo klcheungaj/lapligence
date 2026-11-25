@@ -9,10 +9,10 @@ A validated builder supports frontend-independent tests.
 
 Import validates the dense semantic ID domain and resolves IDs by checked arena
 index without retaining an identity hash map.
-Source positions use lazy per-file byte checkpoints and a bounded repeated-offset
-cache. Queries scan at most one checkpoint interval and preserve byte columns
-and UTF-8 boundary validation, with memory bounded by source bytes plus a small
-fixed cache per queried file.
+Source positions use a lazy per-file index of line starts, searched per query
+unless the offset is on the line found last. Columns count bytes and offsets are
+moved to their character's boundary; memory is one offset per line of a queried
+file, freed after the import.
 
 Per-node storage is kept proportional to distinct metadata: nodes share one
 type descriptor per frontend type record, one native detail spelling per

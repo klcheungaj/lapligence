@@ -463,69 +463,31 @@ pub(super) fn expression_from_slang(
     }))
 }
 
-// Bound scan work and indexing memory; template offsets use a bounded cache.
-const SOURCE_POSITION_CHECKPOINT_BYTES: usize = 4096;
-const SOURCE_POSITION_CACHE_ENTRIES: usize = 256;
-
 #[cfg(test)]
 thread_local! {
     static SOURCE_INDEX_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static SOURCE_QUERY_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-#[derive(Clone, Copy)]
-struct SourceCheckpoint {
-    offset: usize,
-    line: usize,
-    line_start: usize,
-}
-
-#[derive(Clone, Copy)]
-struct CachedPosition {
-    offset: usize,
-    line: u32,
-    column: u32,
-}
-
+/// The lines of a source text, for repeated lookups of byte offsets.
 pub(super) struct SourceLines<'a> {
     text: &'a str,
-    checkpoints: Vec<SourceCheckpoint>,
-    positions: Box<[Option<CachedPosition>]>,
+    /// Byte offset of the start of each line.
+    starts: Vec<usize>,
+    /// The line found last: the next offset is often on it.
+    last: usize,
 }
 
 impl<'a> SourceLines<'a> {
     pub(super) fn new(text: &'a str) -> Self {
-        let mut checkpoints = Vec::with_capacity(text.len() / SOURCE_POSITION_CHECKPOINT_BYTES + 1);
-        let mut line = 1;
-        let mut line_start = 0;
-        for (offset, character) in text.char_indices() {
-            #[cfg(test)]
-            SOURCE_INDEX_BYTES.with(|work| work.set(work.get() + character.len_utf8()));
-            // Following a UTF-8 boundary is safe: earlier offsets in this bucket
-            // are inside the preceding character and cannot be queried.
-            while checkpoints.len() * SOURCE_POSITION_CHECKPOINT_BYTES <= offset {
-                checkpoints.push(SourceCheckpoint {
-                    offset,
-                    line,
-                    line_start,
-                });
-            }
-            if character == '\n' {
-                line += 1;
-                line_start = offset + 1;
-            }
-        }
-        while checkpoints.len() * SOURCE_POSITION_CHECKPOINT_BYTES <= text.len() {
-            checkpoints.push(SourceCheckpoint {
-                offset: text.len(),
-                line,
-                line_start,
-            });
-        }
+        #[cfg(test)]
+        SOURCE_INDEX_BYTES.with(|work| work.set(work.get() + text.len()));
+        let starts = std::iter::once(0)
+            .chain(text.match_indices('\n').map(|(offset, _)| offset + 1))
+            .collect();
         Self {
             text,
-            checkpoints,
-            positions: vec![None; SOURCE_POSITION_CACHE_ENTRIES].into_boxed_slice(),
+            starts,
+            last: 0,
         }
     }
 
@@ -545,30 +507,18 @@ impl<'a> SourceLines<'a> {
         while !self.text.is_char_boundary(offset) {
             offset -= 1;
         }
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        offset.hash(&mut hasher);
-        let slot = hasher.finish() as usize % SOURCE_POSITION_CACHE_ENTRIES;
-        if let Some(position) = self.positions[slot].filter(|position| position.offset == offset) {
-            return Ok((position.line, position.column));
+        let on_last = self.starts[self.last] <= offset
+            && self
+                .starts
+                .get(self.last + 1)
+                .is_none_or(|next| offset < *next);
+        if !on_last {
+            self.last = self.starts.partition_point(|start| *start <= offset) - 1;
         }
-        let checkpoint = self.checkpoints[offset / SOURCE_POSITION_CHECKPOINT_BYTES];
-        let prefix = &self.text[checkpoint.offset..offset];
-        #[cfg(test)]
-        SOURCE_QUERY_BYTES.with(|work| work.set(work.get() + prefix.len()));
-        let line =
-            u32::try_from(checkpoint.line + prefix.bytes().filter(|byte| *byte == b'\n').count())
-                .map_err(|_| DbError::InvalidSnapshot("source line number is too large".into()))?;
-        let line_start = prefix
-            .rfind('\n')
-            .map_or(checkpoint.line_start, |index| checkpoint.offset + index + 1);
-        let column = u32::try_from(offset - line_start + 1)
+        let line = u32::try_from(self.last + 1)
+            .map_err(|_| DbError::InvalidSnapshot("source line number is too large".into()))?;
+        let column = u32::try_from(offset - self.starts[self.last] + 1)
             .map_err(|_| DbError::InvalidSnapshot("source column is too large".into()))?;
-        self.positions[slot] = Some(CachedPosition {
-            offset,
-            line,
-            column,
-        });
         Ok((line, column))
     }
 }
@@ -739,34 +689,33 @@ mod source_position_tests {
     use super::*;
 
     #[test]
-    fn source_position_scan_work_scales_with_source_bytes_and_queries() {
-        let mut measured = Vec::new();
-        for count in [
-            SOURCE_POSITION_CHECKPOINT_BYTES / 64,
-            SOURCE_POSITION_CHECKPOINT_BYTES / 4,
-        ] {
-            let text = format!("{}\n", "x".repeat(63)).repeat(count);
-            let before_index = SOURCE_INDEX_BYTES.with(std::cell::Cell::get);
-            let before_query = SOURCE_QUERY_BYTES.with(std::cell::Cell::get);
-            let mut lines = SourceLines::new(&text);
-            for index in 0..count {
-                assert_eq!(lines.position(index * 64).unwrap(), (index as u32 + 1, 1));
-                assert_eq!(
-                    lines.position(index * 64 + 63).unwrap(),
-                    (index as u32 + 1, 64)
-                );
-            }
-            let indexed = SOURCE_INDEX_BYTES.with(std::cell::Cell::get) - before_index;
-            let queried = SOURCE_QUERY_BYTES.with(std::cell::Cell::get) - before_query;
-            assert_eq!(indexed, text.len());
-            assert!(queried <= count * 2 * SOURCE_POSITION_CHECKPOINT_BYTES);
-            measured.push(indexed + queried);
+    fn source_positions_match_a_scan_in_any_query_order() {
+        let text = "one\n\n\r\nfour é\n\nlast".repeat(40);
+        let scanned = |offset: usize| {
+            let before = &text[..offset];
+            let line = before.matches('\n').count() as u32 + 1;
+            let start = before.rfind('\n').map_or(0, |index| index + 1);
+            (line, (offset - start) as u32 + 1)
+        };
+        let offsets = (0..=text.len())
+            .filter(|offset| text.is_char_boundary(*offset))
+            .collect::<Vec<_>>();
+        let indexed = || SOURCE_INDEX_BYTES.with(std::cell::Cell::get);
+        let before = indexed();
+        let mut lines = SourceLines::new(&text);
+        for offset in offsets
+            .iter()
+            .chain(offsets.iter().rev())
+            .chain(offsets.iter().step_by(37))
+        {
+            assert_eq!(lines.position(*offset).unwrap(), scanned(*offset));
         }
-        assert_eq!(measured[1], measured[0] * 16);
+        // The text is read once, however many positions are asked for.
+        assert_eq!(indexed() - before, text.len());
     }
 
     #[test]
-    fn source_position_preserves_byte_columns_crlf_and_utf8_checkpoint_boundaries() {
+    fn source_position_preserves_byte_columns_crlf_and_utf8_boundaries() {
         let text = "a\r\né\nlast";
         let mut lines = SourceLines::new(text);
         for (offset, expected) in [
@@ -785,29 +734,6 @@ mod source_position_tests {
         assert_eq!(lines.position(4).unwrap(), (2, 1));
         assert!(lines.position(11).is_err());
         assert_eq!(SourceLines::new("").position(0).unwrap(), (1, 1));
-        let text = format!(
-            "{}é\nlast",
-            "x".repeat(SOURCE_POSITION_CHECKPOINT_BYTES - 1)
-        );
-        let mut lines = SourceLines::new(&text);
-        // The checkpoint offset is inside `é`, whose position it has.
-        assert_eq!(
-            lines.position(SOURCE_POSITION_CHECKPOINT_BYTES).unwrap(),
-            (1, SOURCE_POSITION_CHECKPOINT_BYTES as u32)
-        );
-        assert_eq!(
-            lines
-                .position(SOURCE_POSITION_CHECKPOINT_BYTES + 1)
-                .unwrap(),
-            (1, SOURCE_POSITION_CHECKPOINT_BYTES as u32 + 2)
-        );
-        assert_eq!(
-            lines
-                .position(SOURCE_POSITION_CHECKPOINT_BYTES + 2)
-                .unwrap(),
-            (2, 1)
-        );
-        assert_eq!(lines.position(text.len()).unwrap(), (2, 5));
     }
 
     /// Independent per-node walk used as the reference for shared names.
