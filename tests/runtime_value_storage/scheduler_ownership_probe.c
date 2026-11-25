@@ -426,7 +426,8 @@ static void check_time_and_io(void) {
     CHECK(result == -(double)UINT64_MAX);
     CHECK(llg_plusarg_integral_real("123_x", 5, 'd', &result) && result == 0.0);
     CHECK(!llg_plusarg_integral_real("123q", 4, 'd', &result));
-    CHECK(!llg_plusarg_integral_real("0x", 2, 'h', &result));
+    CHECK(llg_plusarg_integral_real("0x", 2, 'h', &result) && result == 0.0);
+    CHECK(!llg_plusarg_integral_real("0g", 2, 'h', &result));
     size_t digits = 300000;
     char* long_binary = malloc(digits + 1u);
     CHECK(long_binary != NULL);
