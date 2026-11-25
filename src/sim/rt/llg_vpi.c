@@ -14193,6 +14193,7 @@ void llg_vpi_shutdown(void) {
             if (!event->pending) free(event);
         }
         if (slot->kind == SLOT_FIRED_CB) free(slot->pointer);
+        if (slot->kind == SLOT_DYNELEM) dyn_release_path(slot);
         free(slot->items);
     }
     free(g_vpi.slots);
