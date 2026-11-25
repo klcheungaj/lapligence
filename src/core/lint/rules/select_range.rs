@@ -30,11 +30,11 @@ impl LintRule for OutOfRangeSelectRule {
     fn check(&self, ctx: &LintCtx<'_>) -> Vec<LintDiag> {
         let db = ctx.db;
         let ids = ctx.nodes();
-        let nested_array_selects = nested_array_element_selects(db, ids);
+        let nested_array_selects = nested_array_element_selects(ctx);
         let mut visited = HashSet::new();
         let mut out = Vec::new();
 
-        for &id in ids {
+        for &id in ctx.until_cancelled(ids) {
             if !visited.insert(id) || nested_array_selects.contains(&id) {
                 continue;
             }
@@ -315,9 +315,10 @@ fn check_packed_indexed_part_select(
 /// Return all nested select nodes represented as the extra packed selector of
 /// an array select.  They are checked through the outer ArraySelect so one
 /// source select cannot produce two findings.
-fn nested_array_element_selects(db: &Db, ids: &[NodeId]) -> HashSet<NodeId> {
+fn nested_array_element_selects(ctx: &LintCtx<'_>) -> HashSet<NodeId> {
+    let db = ctx.db;
     let mut out = HashSet::new();
-    for id in ids {
+    for id in ctx.until_cancelled(ctx.nodes()) {
         let NodeKind::Expr(ExprKind::ArraySelect { base, indices, .. }) = db.node_kind(*id) else {
             continue;
         };

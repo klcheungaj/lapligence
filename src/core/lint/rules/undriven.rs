@@ -36,6 +36,9 @@ impl LintRule for UndrivenSignalRule {
     fn check(&self, ctx: &LintCtx<'_>) -> Vec<LintDiag> {
         let db = ctx.db;
         let (reads, drivers) = design_activity(ctx);
+        if ctx.is_cancelled() {
+            return Vec::new();
+        }
         let mut exempt = top_external_port_signals(db);
         exempt.extend(unconnected_port_signals(db));
         // A black-box (unknown module) connection may drive the signal.
@@ -76,7 +79,7 @@ impl LintRule for UndrivenSignalRule {
         let mut seen = HashSet::new();
         let mut emitted = HashSet::new();
         let mut out = Vec::new();
-        for &id in ctx.nodes() {
+        for &id in ctx.until_cancelled(ctx.nodes()) {
             if !seen.insert(id) || !is_signal(db, id) {
                 continue;
             }
@@ -127,7 +130,7 @@ fn design_activity(ctx: &LintCtx<'_>) -> (HashSet<NodeId>, HashSet<NodeId>) {
     let mut reads = HashSet::new();
     let mut drivers = HashSet::new();
 
-    for &id in ctx.nodes() {
+    for &id in ctx.until_cancelled(ctx.nodes()) {
         match db.node_kind(id) {
             NodeKind::Process { .. } | NodeKind::ContAssign { .. } => {
                 reads.extend(collect_reads(db, id));

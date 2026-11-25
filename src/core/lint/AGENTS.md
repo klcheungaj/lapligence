@@ -30,6 +30,8 @@ All in `mod.rs` (item docs give the details):
 - `parse_toml` stays a library API; no driver option reads `llg-lint.toml`.
 - Rule IDs are stable: the CLI JSON and the LSP diagnostic code use them.
 - Use `core::elab` for value/width facts.
+- The language server cancels a pass: a rule that does much per node loops over
+  `LintCtx::until_cancelled`.
 
 ## Pointers
 

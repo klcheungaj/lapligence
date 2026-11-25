@@ -184,6 +184,54 @@ public:
   uint32_t status;
 };
 
+// The request's cancellation callback (LlgSlangCompileRequest::cancelled).
+class Cancellation {
+public:
+  explicit Cancellation(const LlgSlangCompileRequest& request)
+      : cancelled(request.cancelled), context(request.cancel_context) {}
+
+  // Whether the caller may cancel the compile at all.
+  explicit operator bool() const { return cancelled != nullptr; }
+
+  // Throws when the caller cancelled the compile.
+  void poll() const {
+    if (cancelled && cancelled(context) != 0)
+      throw BridgeFailure(LLG_SLANG_STATUS_CANCELLED, "the compile was cancelled");
+  }
+
+  // `poll` as a CompilationOptions::checkpoint.
+  static void checkpoint(const void* cancellation) {
+    static_cast<const Cancellation*>(cancellation)->poll();
+  }
+
+private:
+  uint32_t (*cancelled)(const void*);
+  const void* context;
+};
+
+// Export bytes between two polls of a cancellable capture: a few thousand
+// semantic nodes, which take a few milliseconds.
+constexpr uint64_t kCancellationPollBytes = 1024 * 1024;
+
+// Polls at intervals of a loop over capture tables that charges nothing.
+class CancellationSteps {
+public:
+  explicit CancellationSteps(const Cancellation& cancellation)
+      : cancellation(cancellation) {}
+
+  void step() {
+    if ((++steps & (kInterval - 1)) == 0)
+      cancellation.poll();
+  }
+
+private:
+  // A step takes about a microsecond at most. A power of two.
+  static constexpr uint32_t kInterval = 8 * 1024;
+
+  const Cancellation& cancellation;
+  uint32_t steps = 0;
+};
+
 uint64_t effectiveLimit(uint64_t requested, uint64_t defaultValue,
                         uint64_t hardLimit) {
   return std::min(requested == 0 ? defaultValue : requested, hardLimit);
@@ -245,7 +293,8 @@ class SemanticNodeCount final
 public:
   uint64_t count = 0;
 
-  explicit SemanticNodeCount(bool simulationFacts) : simulationFacts(simulationFacts) {}
+  SemanticNodeCount(bool simulationFacts, const Cancellation& cancellation)
+      : simulationFacts(simulationFacts), cancellation(cancellation) {}
 
   template<typename T>
   void handle(const T& node) {
@@ -254,11 +303,13 @@ public:
         return;
     }
     ++count;
+    cancellation.step();
     visitDefault(node);
   }
 
 private:
   bool simulationFacts;
+  CancellationSteps cancellation;
 };
 
 struct EditionPolicy {
@@ -341,6 +392,10 @@ struct CaptureOutput {
   uint32_t flags = 0;
   uint64_t output_bytes = 0;
   uint64_t output_byte_limit = kDefaultMaxOutputBytes;
+  // Export bytes at which `chargeExport` stops for a poll or at the limit; at
+  // most `output_byte_limit`.
+  uint64_t charge_limit = 0;
+  const Cancellation& cancellation;
   std::unordered_set<std::string, SnapshotStringHash, std::equal_to<>> strings;
   std::vector<LlgSlangFile> files;
   std::vector<LlgSlangDiagnostic> diagnostics;
@@ -367,6 +422,18 @@ struct CaptureOutput {
   std::vector<LlgSlangMacroDefinition> macro_definitions;
   std::vector<LlgSlangMacroReference> macro_references;
   std::vector<LlgSlangInclude> includes;
+
+  CaptureOutput(const Cancellation& cancellation, uint64_t byteLimit)
+      : output_byte_limit(byteLimit), cancellation(cancellation) {
+    extendCharge();
+  }
+
+  // The charge limit of the bytes stored now.
+  void extendCharge() {
+    charge_limit = output_byte_limit;
+    if (cancellation && output_byte_limit - output_bytes > kCancellationPollBytes)
+      charge_limit = output_bytes + kCancellationPollBytes;
+  }
 };
 
 namespace {
@@ -417,12 +484,40 @@ size_t utf8SequenceLength(std::string_view text, size_t at) {
   return length;
 }
 
+// Charges that do not fit below the charge limit: the budget is exhausted, or
+// a cancellable capture is due for a poll.
+void chargeBeyondLimit(CaptureOutput& snapshot, uint64_t bytes) {
+  if (bytes > snapshot.output_byte_limit - snapshot.output_bytes) {
+    throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
+        "export byte limit exceeded (limit=" +
+        std::to_string(snapshot.output_byte_limit) +
+        ", bytes=" + std::to_string(snapshot.output_bytes) +
+        ", nodes=" + std::to_string(snapshot.semantic_nodes.size()) +
+        ", types=" + std::to_string(snapshot.types.size()) +
+        ", constants=" + std::to_string(snapshot.constants.size()) +
+        ", instances=" + std::to_string(snapshot.instances.size()) + ")");
+  }
+  snapshot.cancellation.poll();
+  snapshot.output_bytes += bytes;
+  snapshot.extendCharge();
+}
+
+// Charges `bytes` against the export budget, before they are stored. A
+// capture charges in all its phases, so this is also where it notices that it
+// was cancelled.
+void chargeExport(CaptureOutput& snapshot, uint64_t bytes) {
+  if (bytes > snapshot.charge_limit - snapshot.output_bytes) [[unlikely]] {
+    chargeBeyondLimit(snapshot, bytes);
+    return;
+  }
+  snapshot.output_bytes += bytes;
+}
+
 // A SystemVerilog string constant: arbitrary bytes, not text.
 LlgSlangString storeBytes(CaptureOutput& snapshot, std::string_view value) {
   if (value.empty())
     return {nullptr, 0};
-  addChecked(snapshot.output_bytes, value.size(), snapshot.output_byte_limit,
-             "export byte");
+  chargeExport(snapshot, value.size());
   auto found = snapshot.strings.find(value);
   if (found == snapshot.strings.end())
     found = snapshot.strings.emplace(value).first;
@@ -452,19 +547,7 @@ LlgSlangString storeString(CaptureOutput& snapshot, std::string_view value) {
 }
 
 void chargeRecord(CaptureOutput& snapshot, uint64_t bytes) {
-  if (bytes > snapshot.output_byte_limit ||
-      snapshot.output_bytes > snapshot.output_byte_limit - bytes) {
-    throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
-        "export byte limit exceeded (limit=" +
-        std::to_string(snapshot.output_byte_limit) +
-        ", bytes=" + std::to_string(snapshot.output_bytes) +
-        ", nodes=" + std::to_string(snapshot.semantic_nodes.size()) +
-        ", types=" + std::to_string(snapshot.types.size()) +
-        ", constants=" + std::to_string(snapshot.constants.size()) +
-        ", instances=" + std::to_string(snapshot.instances.size()) + ")");
-  }
-  addChecked(snapshot.output_bytes, bytes, snapshot.output_byte_limit,
-             "export byte");
+  chargeExport(snapshot, bytes);
 }
 
 uint32_t diagnosticSubsystem(DiagSubsystem subsystem) {
@@ -668,7 +751,7 @@ struct Capture {
   [[noreturn]] void throwSemanticNodeLimit() const {
     std::optional<uint64_t> needed;
     if (semanticRoot) {
-      SemanticNodeCount counter(simulationFacts());
+      SemanticNodeCount counter(simulationFacts(), output.cancellation);
       semanticRoot->visit(counter);
       // The capture already stored a full budget of nodes.
       needed = std::max(counter.count, maxSemanticNodes() + 1);
@@ -1803,7 +1886,9 @@ struct Capture {
 
   void finalizeSemanticEdges() {
     output.semantic_edges.reserve(static_cast<size_t>(semanticEdgeCount));
+    CancellationSteps cancellation(output.cancellation);
     for (size_t i = 0; i < pendingEdges.size(); i++) {
+      cancellation.step();
       auto& node = output.semantic_nodes[i];
       node.edge_start = output.semantic_edges.size();
       node.edge_count = pendingEdges[i].size();
@@ -10147,7 +10232,9 @@ public:
                 [&](const auto& left, const auto& right) {
                   return rangeLess(left.range, right.range);
                 });
+    CancellationSteps cancellation(capture.output.cancellation);
     for (const auto& binding : capture.lexicalBindings) {
+      cancellation.step();
       if (binding.range.file_id == LLG_SLANG_INVALID_ID)
         continue;
       const auto key = std::tuple{binding.range.file_id, binding.range.start,
@@ -10174,6 +10261,7 @@ public:
     }
     for (size_t nodeIndex = 0; nodeIndex < capture.output.semantic_nodes.size();
          nodeIndex++) {
+      cancellation.step();
       const auto& node = capture.output.semantic_nodes[nodeIndex];
       if (node.range.file_id == LLG_SLANG_INVALID_ID)
         continue;
@@ -10239,6 +10327,7 @@ public:
     }
 
     for (auto& token : capture.output.lexical_tokens) {
+      cancellation.step();
       const bool expandedMacro = token.kind == LLG_SLANG_LEXICAL_MACRO &&
           (token.flags & LLG_SLANG_LEXICAL_MACRO_EXPANSION) != 0;
       // The array methods `unique`, `and`, `or` and `xor` (IEEE 1800-2009
@@ -12050,7 +12139,8 @@ void captureNavigation(Compilation& compilation, Capture& capture) {
   visitor.bindUninstantiatedConnections(compilation);
 }
 
-std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request) {
+std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request,
+                                           const Cancellation& cancellation) {
   if (request.abi_version != LLG_SLANG_ABI_VERSION)
     throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
                         "unsupported Slang ABI version");
@@ -12445,6 +12535,16 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
   parsing::ParserOptions parserOptions;
   parserOptions.languageVersion = edition.languageVersion;
   parserOptions.maxRecursionDepth = request.max_nesting_depth;
+  // The options refer to it as long as the sources are parsed.
+  const auto pollBufferChange = [&cancellation](BufferID, bool, bool) {
+    cancellation.poll();
+  };
+  if (cancellation) {
+    // The preprocessor reports each buffer that it enters or returns to.
+    preprocessorOptions.bufferChangeCB = pollBufferChange;
+    compilationOptions.checkpoint = Cancellation::checkpoint;
+    compilationOptions.checkpointContext = &cancellation;
+  }
   Bag parseOptions;
   parseOptions.set(std::move(preprocessorOptions));
   parseOptions.set(std::move(lexerOptions));
@@ -12455,6 +12555,7 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
   std::vector<std::shared_ptr<syntax::SyntaxTree>> trees;
   auto addTree = [&](std::shared_ptr<syntax::SyntaxTree> tree) {
     trees.push_back(std::move(tree));
+    cancellation.poll();
   };
   bool anyCompilationUnit = false;
   if ((request.flags & LLG_SLANG_COMPILE_MERGED_COMPILATION_UNITS) != 0) {
@@ -12535,7 +12636,9 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
   trees.clear();
 
   parseStage.finish();
-  auto output = std::make_unique<CaptureOutput>();
+  auto output = std::make_unique<CaptureOutput>(
+      cancellation, effectiveLimit(request.limits.max_output_bytes,
+                                   kDefaultMaxOutputBytes, kHardMaxOutputBytes));
   output->flags |= edition.snapshotFlag;
   if ((request.flags & LLG_SLANG_COMPILE_MERGED_COMPILATION_UNITS) != 0)
     output->flags |= LLG_SLANG_SNAPSHOT_MERGED_COMPILATION_UNITS;
@@ -12543,8 +12646,6 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
     output->flags |= LLG_SLANG_SNAPSHOT_DELAY_SELECT_MIN;
   if ((request.flags & LLG_SLANG_COMPILE_DELAY_SELECT_MAX) != 0)
     output->flags |= LLG_SLANG_SNAPSHOT_DELAY_SELECT_MAX;
-  output->output_byte_limit = effectiveLimit(request.limits.max_output_bytes,
-      kDefaultMaxOutputBytes, kHardMaxOutputBytes);
   Capture capture{*output, sourceManager, request.limits, request.flags};
   capture.lexerSources = &sourceManager;
   output->sanitize_strings = std::any_of(
@@ -13079,8 +13180,9 @@ extern "C" uint32_t llg_slang_compile(const LlgSlangCompileRequest* request,
     return LLG_SLANG_STATUS_INVALID_ARGUMENT;
   }
 
+  const Cancellation cancellation(*request);
   try {
-    auto output = compileImpl(*request);
+    auto output = compileImpl(*request, cancellation);
     // The compilation, syntax trees and capture indexes are destroyed by
     // now. glibc keeps their freed pages resident inside its heap; return
     // them to the system before the receiver builds its owned copy.
@@ -13098,6 +13200,9 @@ extern "C" uint32_t llg_slang_compile(const LlgSlangCompileRequest* request,
     return LLG_SLANG_STATUS_SINK_ABORTED;
   }
   catch (const BridgeFailure& error) {
+    // The compile that replaces a cancelled one starts with its memory free.
+    if (error.status == LLG_SLANG_STATUS_CANCELLED)
+      llg::wrapper::platform::releaseFreedHeapPages();
     *out_error = makeError(error.status, error.what());
     return error.status;
   }

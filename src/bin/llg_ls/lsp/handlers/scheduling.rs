@@ -1243,13 +1243,15 @@ impl Backend {
             if let Some(mut span) = staging_span.take() {
                 span.complete("ok", files.len() + include_deps.len());
             }
+            // Nothing cancels it.
             let mut analysis = features::analyze_with_config_context_parent(
                 &opts,
                 &job.lint_config,
                 &root_identity,
                 job.generation,
                 Some(job_span.id()),
-            );
+            )
+            .ok()?;
             // Every admitted include (a unit that another unit includes as
             // well) with the compile's own search prefixes: the isolated
             // open-buffer token parse resolves the same headers from them,

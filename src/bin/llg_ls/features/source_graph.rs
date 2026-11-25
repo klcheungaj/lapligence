@@ -121,8 +121,10 @@ pub(super) fn module_graph_from_slang(
     snapshot: &llg::ffi::slang::Snapshot,
     sources: &[(&str, &str)],
     database: Option<&llg::core::db::Db>,
-) -> ModuleGraph {
+    cancel: &CancelToken,
+) -> Result<ModuleGraph, Cancelled> {
     use llg::ffi::slang::{SemanticDefinitionKind, SemanticKind};
+    let mut poller = cancel.poller();
     let files: HashMap<_, _> = snapshot
         .files
         .iter()
@@ -133,30 +135,31 @@ pub(super) fn module_graph_from_slang(
         .iter()
         .map(|&(file, text)| (file, tokens::SourcePositions::new(text)))
         .collect();
-    let declaration_types: HashMap<_, _> = database
-        .into_iter()
-        .flat_map(llg::core::db::Db::nodes)
-        .filter_map(|node| {
-            let ty = match node.kind() {
-                llg::core::db::NodeKind::Port { ty, .. }
-                | llg::core::db::NodeKind::Net { ty, .. }
-                | llg::core::db::NodeKind::Var { ty }
-                | llg::core::db::NodeKind::Genvar { ty }
-                | llg::core::db::NodeKind::Array { ty }
-                | llg::core::db::NodeKind::Param { ty, .. } => ty,
-                _ => return None,
-            };
-            Some((
-                (
-                    node.file()?.to_owned(),
-                    node.line(),
-                    node.column(),
-                    node.name().to_owned(),
-                ),
-                ty.clone(),
-            ))
-        })
-        .collect();
+    let mut declaration_types = HashMap::new();
+    for node in database.into_iter().flat_map(llg::core::db::Db::nodes) {
+        poller.step()?;
+        let ty = match node.kind() {
+            llg::core::db::NodeKind::Port { ty, .. }
+            | llg::core::db::NodeKind::Net { ty, .. }
+            | llg::core::db::NodeKind::Var { ty }
+            | llg::core::db::NodeKind::Genvar { ty }
+            | llg::core::db::NodeKind::Array { ty }
+            | llg::core::db::NodeKind::Param { ty, .. } => ty,
+            _ => continue,
+        };
+        let Some(file) = node.file() else {
+            continue;
+        };
+        declaration_types.insert(
+            (
+                file.to_owned(),
+                node.line(),
+                node.column(),
+                node.name().to_owned(),
+            ),
+            ty.clone(),
+        );
+    }
     let mut definitions = Vec::new();
     let mut definition_keys = HashMap::new();
     for node in &snapshot.semantic_nodes {
@@ -203,11 +206,11 @@ pub(super) fn module_graph_from_slang(
     });
     definitions.dedup_by(|left, right| left.id == right.id);
 
-    let semantic_by_id: HashMap<_, _> = snapshot
-        .semantic_nodes
-        .iter()
-        .map(|node| (node.id, node))
-        .collect();
+    let mut semantic_by_id = HashMap::with_capacity(snapshot.semantic_nodes.len());
+    for node in &snapshot.semantic_nodes {
+        poller.step()?;
+        semantic_by_id.insert(node.id, node);
+    }
     if let Some(database) = database {
         fn direct_instance_children(
             database: &llg::core::db::Db,
@@ -274,6 +277,7 @@ pub(super) fn module_graph_from_slang(
         }
     }
     for node in &snapshot.semantic_nodes {
+        poller.step()?;
         if node.kind != SemanticKind::Instance
             || node.is_top()
             || (database.is_some() && !node.is_uninstantiated())
@@ -360,6 +364,7 @@ pub(super) fn module_graph_from_slang(
     }
 
     for node in &snapshot.semantic_nodes {
+        poller.step()?;
         if !matches!(
             node.kind,
             SemanticKind::Port
@@ -499,6 +504,7 @@ pub(super) fn module_graph_from_slang(
     let types_by_id: HashMap<_, _> = snapshot.types.iter().map(|ty| (ty.id, ty)).collect();
     let mut elaborated_types = Vec::new();
     for node in &snapshot.semantic_nodes {
+        poller.step()?;
         if !matches!(
             node.kind,
             SemanticKind::Port
@@ -542,10 +548,10 @@ pub(super) fn module_graph_from_slang(
             elaborated_types.push(item);
         }
     }
-    ModuleGraph {
+    Ok(ModuleGraph {
         definitions,
         elaborated_types,
-    }
+    })
 }
 
 fn source_net_kind(subkind: u32) -> &'static str {

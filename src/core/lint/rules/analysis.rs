@@ -1197,8 +1197,8 @@ pub fn all_nodes(db: &Db) -> Vec<NodeId> {
 /// source-oriented rules that promise function/task coverage must use this
 /// traversal rather than [`all_nodes`].
 pub fn all_design_nodes(db: &Db) -> Vec<NodeId> {
-    fn walk(db: &Db, id: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {
-        if !seen.insert(id) {
+    fn walk(db: &Db, id: NodeId, seen: &mut [bool], out: &mut Vec<NodeId>) {
+        if std::mem::replace(&mut seen[id.index()], true) {
             return;
         }
         out.push(id);
@@ -1207,7 +1207,7 @@ pub fn all_design_nodes(db: &Db) -> Vec<NodeId> {
         }
     }
 
-    let mut seen = HashSet::new();
+    let mut seen = vec![false; db.node_count()];
     let mut out = Vec::new();
     for root in db
         .tops()

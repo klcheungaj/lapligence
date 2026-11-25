@@ -7,9 +7,11 @@
 //! - [`config`] defines the `llg.toml` schema shared by the `llg` driver and the
 //!   language server: parsing, validation, path resolution and discovery.
 //! - [`memory_limit`] supplies the shared process-memory safeguard.
+//! - [`cancel`] stops an analysis whose result is no longer wanted.
 //!
 //! LSP protocol and async dependencies remain in the `llg_ls` binary.
 
+pub mod cancel;
 pub mod config;
 pub mod core;
 pub mod ffi;

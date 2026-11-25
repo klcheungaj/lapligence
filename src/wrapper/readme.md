@@ -51,6 +51,20 @@ and [patch preparation](../../patches/README.md).
 Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
 `slang_c_api.cpp`. A larger export budget does not bound total Slang/Rust RSS.
 
+## Cancellation
+
+A request may name a callback (`LlgSlangCompileRequest::cancelled`). The compile
+asks it at every buffer the preprocessor enters or leaves and after every syntax
+tree, through Slang's `Compilation::checkpoint` at every instance, generate block,
+class, subroutine and procedure of the elaboration and analysis visits (the
+`slang-operator-overload` and `slang-block-parameter-defparam` patches), at every
+MiB of exported bytes during the capture, and at intervals of the loops that
+export nothing. A cancelled compile throws out of Slang, destroys everything it
+built, returns its heap pages to the system and ends with
+`LLG_SLANG_STATUS_CANCELLED`. Without a callback each of these places costs one
+predicted branch, or none in the capture, whose byte charge is one comparison in
+both cases. The stream asks no callback: its receiver aborts it.
+
 ## Library sources and recovery
 
 - Library sources follow the compilation-unit mode: one syntax tree per file in

@@ -11,10 +11,25 @@ index 133958b90..888bc04cb 100644
          TYPE(ScalarType);
          TYPE(FloatingType);
 diff --git a/include/slang/ast/Compilation.h b/include/slang/ast/Compilation.h
-index 90d225362..a6465d32e 100644
+index 90d225362..e05f8d7d2 100644
 --- a/include/slang/ast/Compilation.h
 +++ b/include/slang/ast/Compilation.h
-@@ -266,6 +266,9 @@ struct SLANG_EXPORT HierarchyOverrideNode {
+@@ -221,6 +221,14 @@ struct SLANG_EXPORT CompilationOptions {
+     /// A list of library names, in the order in which they should be searched
+     /// when binding cells to instances.
+     std::vector<std::string> defaultLiblist;
++
++    /// If set, called with @a checkpointContext at intervals during elaboration and
++    /// analysis. It may throw to abandon the work, after which the compilation can
++    /// only be destroyed.
++    void (*checkpoint)(const void* context) = nullptr;
++
++    /// The argument of @a checkpoint.
++    const void* checkpointContext = nullptr;
+ };
+ 
+ /// Information about how a bind directive applies to some definition
+@@ -266,6 +274,9 @@ struct SLANG_EXPORT HierarchyOverrideNode {
  
          /// The source defparam syntax node doing the overriding, if any (can be null).
          const syntax::SyntaxNode* defparam = nullptr;
@@ -24,7 +39,20 @@ index 90d225362..a6465d32e 100644
      };
  
      /// A map of parameters in the current scope to override.
-@@ -656,6 +659,34 @@ public:
+@@ -306,6 +317,12 @@ public:
+     /// Gets the set of options used to construct the compilation.
+     const CompilationOptions& getOptions() const { return options; }
+ 
++    /// Calls the checkpoint of the compilation options, if there is one.
++    void checkpoint() const {
++        if (options.checkpoint) [[unlikely]]
++            options.checkpoint(options.checkpointContext);
++    }
++
+     /// Returns true if the given flag(s) are enabled for this compilation.
+     bool hasFlag(bitmask<CompilationFlags> flags) const { return options.flags.has(flags); }
+ 
+@@ -656,6 +673,34 @@ public:
      /// This will cause appropriate errors to be issued.
      void noteNameConflict(const Symbol& symbol);
  
@@ -59,7 +87,7 @@ index 90d225362..a6465d32e 100644
      using AliasBitRange = std::pair<uint64_t, uint64_t>;
  
      /// Makes note of an alias defined between the bit ranges of the two given symbols.
-@@ -817,6 +848,10 @@ private:
+@@ -817,6 +862,10 @@ private:
      friend class Scope;
      friend struct DiagnosticVisitor;
  
@@ -357,10 +385,21 @@ index 4f1fbb325..52ea8f8a0 100644
  token externKeyword
  list<AttributeInstance> actualAttributes
 diff --git a/source/analysis/AnalysisScopeVisitor.h b/source/analysis/AnalysisScopeVisitor.h
-index d03210214..616627997 100644
+index d03210214..871411803 100644
 --- a/source/analysis/AnalysisScopeVisitor.h
 +++ b/source/analysis/AnalysisScopeVisitor.h
-@@ -61,7 +61,9 @@ struct AnalysisScopeVisitor {
+@@ -37,7 +37,9 @@ struct AnalysisScopeVisitor {
+     AnalysisScopeVisitor(AnalysisManager::WorkerState& state, AnalyzedScope& scope,
+                          const AnalyzedProcedure* parentProcedure) :
+         state(state), context(state.context), manager(*context.manager), result(scope),
+-        parentProcedure(parentProcedure) {}
++        parentProcedure(parentProcedure) {
++        scope.scope.getCompilation().checkpoint();
++    }
+ 
+     void visit(const InstanceSymbol& symbol) {
+         if (symbol.body.flags.has(InstanceFlags::Uninstantiated))
+@@ -61,7 +63,9 @@ struct AnalysisScopeVisitor {
          visitExprs(symbol);
  
          for (auto& conn : symbol.getPortConnections()) {
@@ -371,7 +410,15 @@ index d03210214..616627997 100644
                  manager.driverTracker.add(state.context, state.driverAlloc,
                                            *std::get<0>(conn.actual), symbol);
              }
-@@ -401,7 +403,8 @@ struct AnalysisScopeVisitor {
+@@ -115,6 +119,7 @@ struct AnalysisScopeVisitor {
+     template<typename T>
+         requires(IsAnyOf<T, ProceduralBlockSymbol, ContinuousAssignSymbol>)
+     void visit(const T& symbol) {
++        result.scope.getCompilation().checkpoint();
+         result.procedures.emplace_back(manager.analyzeProcedure(context, symbol, parentProcedure));
+         manager.driverTracker.add(state.context, state.driverAlloc, result.procedures.back());
+         for (auto& listener : manager.procListeners)
+@@ -401,7 +406,8 @@ struct AnalysisScopeVisitor {
                           ModportClockingSymbol, ElabSystemTaskSymbol, UninstantiatedDefSymbol,
                           DefParamSymbol, PrimitivePortSymbol, CoverageBinSymbol, TimingPathSymbol,
                           PulseStyleSymbol, SystemTimingCheckSymbol, NetAliasSymbol,
@@ -381,7 +428,7 @@ index d03210214..616627997 100644
                   std::is_base_of_v<Type, T>)
      void visit(const T& symbol) {
          // Everything else doesn't need to be analyzed (except visiting expressions, if necessary).
-@@ -559,6 +562,12 @@ private:
+@@ -559,6 +565,12 @@ private:
                  break;
  
              if (auto found = scope->find(symbol.name)) {
@@ -395,7 +442,7 @@ index d03210214..616627997 100644
                                                                     : diag::ShadowHierarchy;
  
 diff --git a/source/ast/ElabVisitors.h b/source/ast/ElabVisitors.h
-index 5058df7d0..6ce05ba65 100644
+index 5058df7d0..bd3f4fac6 100644
 --- a/source/ast/ElabVisitors.h
 +++ b/source/ast/ElabVisitors.h
 @@ -145,10 +145,22 @@ struct DiagnosticVisitor : public ASTVisitor<DiagnosticVisitor> {
@@ -421,6 +468,36 @@ index 5058df7d0..6ce05ba65 100644
      }
  
      void handle(const MethodPrototypeSymbol& symbol) {
+@@ -182,6 +194,7 @@ struct DiagnosticVisitor : public ASTVisitor<DiagnosticVisitor> {
+     }
+ 
+     void handle(const ClassType& symbol) {
++        compilation.checkpoint();
+         if (!handleDefault(symbol))
+             return;
+ 
+@@ -302,6 +315,7 @@ struct DiagnosticVisitor : public ASTVisitor<DiagnosticVisitor> {
+     }
+ 
+     void handle(const InstanceSymbol& symbol) {
++        compilation.checkpoint();
+         if (finishedEarly())
+             return;
+ 
+@@ -352,7 +366,13 @@ struct DiagnosticVisitor : public ASTVisitor<DiagnosticVisitor> {
+         }
+     }
+ 
++    void handle(const GenerateBlockSymbol& symbol) {
++        compilation.checkpoint();
++        handleDefault(symbol);
++    }
++
+     void handle(const SubroutineSymbol& symbol) {
++        compilation.checkpoint();
+         if (!handleDefault(symbol))
+             return;
+ 
 diff --git a/source/ast/Expression.cpp b/source/ast/Expression.cpp
 index 2f0389a41..13dd6c9d1 100644
 --- a/source/ast/Expression.cpp

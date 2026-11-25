@@ -12,6 +12,7 @@ Module ownership is in the `lib.rs` crate docs; child guides own their contracts
 - `wrapper/`: C++ Slang capture behind the C ABI ([guide](wrapper/AGENTS.md)).
 - `sim/`: simulator pipeline and C11 runtime ([guide](sim/AGENTS.md)).
 - `bin/`: `llg`, `llg_ls` and demos ([guide](bin/AGENTS.md)).
+- `cancel.rs`: stopping an analysis (module docs); only `llg_ls` cancels.
 - `stack.rs`: the nesting limit and the stack every compile runs on (module
   docs).
 - `memory_limit.rs`: process-memory policy (module docs); platform primitives in

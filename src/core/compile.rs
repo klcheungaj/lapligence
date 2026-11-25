@@ -3,6 +3,7 @@
 //! The native compiler receives in-memory source buffers and returns an owned
 //! snapshot. No native Slang object escapes the FFI call.
 
+use crate::cancel::CancelToken;
 use crate::core::macros::MacroTable;
 use crate::core::tokens::{Bindings, FileTokens};
 use crate::ffi::secure_fs::{self, AdmittedTarget, FileIdentity, OpenedPath};
@@ -225,6 +226,9 @@ pub struct CompileOpts {
     /// `missing-timescale` lint rule reports.
     pub default_time_scale: Option<SemanticTimeScale>,
     pub limits: Limits,
+    /// Stops the compile, which then fails with
+    /// [`StartupErrorKind::Cancelled`].
+    pub cancel: CancelToken,
 }
 
 /// Frontend-neutral diagnostic class retained by Rust consumers.
@@ -310,6 +314,8 @@ pub(crate) fn attach_logical_positions(diagnostics: &mut [Diag], snapshot: &Snap
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum StartupErrorKind {
+    /// The caller stopped the compile: no statement about the sources.
+    Cancelled,
     InvalidArgument,
     Input,
     LimitExceeded,
@@ -1270,6 +1276,7 @@ fn compile_source_groups(
         default_time_scale: opts.default_time_scale,
         edition: opts.edition,
         limits: opts.limits,
+        cancel: opts.cancel.clone(),
     };
     let mut snapshot = slang::compile(&CompileRequest {
         sources: &borrowed,
@@ -1277,6 +1284,7 @@ fn compile_source_groups(
         options: &options,
     })
     .map_err(startup_from_slang)?;
+    let _diagnostics_stage = crate::profile::Stage::new("frontend.diagnostics");
     library_configs::restore_source_text(&mut snapshot.files, map_originals, map_work)?;
     let mut diagnostics = project_diagnostics(&snapshot);
     let edition_diagnostics = edition_diagnostics(
@@ -4987,6 +4995,7 @@ fn parse_override(value: &str) -> Result<ParameterOverride, StartupError> {
 fn startup_from_slang(error: slang::SlangError) -> StartupError {
     use slang::SlangErrorKind;
     let kind = match error.kind() {
+        SlangErrorKind::Cancelled => StartupErrorKind::Cancelled,
         SlangErrorKind::InvalidArgument => StartupErrorKind::InvalidArgument,
         SlangErrorKind::LimitExceeded => StartupErrorKind::LimitExceeded,
         SlangErrorKind::Frontend => StartupErrorKind::Frontend,

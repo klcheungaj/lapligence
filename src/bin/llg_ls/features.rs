@@ -32,6 +32,7 @@ use tower_lsp::lsp_types::{
 };
 
 use crate::semantic_tokens;
+use llg::cancel::{CancelToken, Cancelled};
 use llg::core::compile::{self, CompileOpts};
 use llg::core::compile::{Diag, Severity};
 use llg::core::design_checks::{self, DesignDiag, Reporter};
@@ -43,6 +44,7 @@ use llg::core::model::{
     InstanceModel, ModuleDef, PackageDef, ParamModel, PortModel, SignalModel, SymKind, TypeInfo,
 };
 use llg::core::tokens::{self, DeclTarget, FileTokens, ParseDeclPositions, TokenInfo};
+use llg::profile::Stage;
 
 // ── Analysis ──────────────────────────────────────────────────────────────────
 
