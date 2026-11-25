@@ -2776,6 +2776,9 @@ impl Codegen<'_> {
                 }
             }
         }
+        if let Some(reads) = self.parameter_record_reads(source)? {
+            return self.leaf_reads_into(path, target, reads, nba);
+        }
         // A record member of a record call result (`f().r`) comes from the
         // temporary that holds the result.
         if let Some((call, members)) = self.native_call_member(source) {
@@ -3026,7 +3029,10 @@ impl Codegen<'_> {
             .is_some()
             || self.native_call_node(rhs)
             || self.native_record_conditional(self.p30_unwrap_cast(rhs))
-            || self.is_container_record(rhs);
+            || self.is_container_record(rhs)
+            || self
+                .parameter_record_reads(self.p30_unwrap_cast(rhs))?
+                .is_some();
         if !lhs_native && !rhs_native {
             return Ok(None);
         }
@@ -3608,7 +3614,7 @@ impl Codegen<'_> {
             Some(endpoint) => endpoint,
             None => match self.native_endpoint(node)? {
                 Some((endpoint, _)) => endpoint,
-                None => return Ok(None),
+                None => return self.parameter_leaf_reads(node),
             },
         };
         let mut reads = Vec::new();
@@ -3617,6 +3623,33 @@ impl Codegen<'_> {
             self.settled_leaf_read(leaf_path, read, setup.as_deref_mut(), &mut reads)?;
         }
         Ok(Some(reads))
+    }
+
+    /// Write leaf values that read no storage to a native or module record.
+    fn leaf_reads_into(
+        &mut self,
+        path: &str,
+        target: &NativeEndpoint,
+        reads: LeafReads,
+        nba: bool,
+    ) -> Result<IrStmt, String> {
+        let targets = self.endpoint_leaves(target)?;
+        if targets.len() != reads.len()
+            || targets
+                .iter()
+                .zip(&reads)
+                .any(|((left, _), (right, _))| left != right)
+        {
+            return Err(format!(
+                "native record transfer has incompatible leaf layouts in `{path}`"
+            ));
+        }
+        let writes = targets
+            .iter()
+            .zip(reads)
+            .map(|((_, leaf), (_, value))| self.endpoint_leaf_write(path, leaf, value, nba))
+            .collect::<Result<_, _>>()?;
+        Ok(IrStmt::Block(writes))
     }
 
     /// Add one leaf read to `reads`; a fixed member array has no value of its
@@ -3707,7 +3740,12 @@ impl Codegen<'_> {
             || self.is_container_record(right)
             || self.native_record_select(path, left)?.is_some()
             || self.native_record_select(path, right)?.is_some();
-        if !element && !self.native_record_operand(left)? && !self.native_record_operand(right)? {
+        if !element
+            && !self.native_record_operand(left)?
+            && !self.native_record_operand(right)?
+            && self.parameter_record_reads(left)?.is_none()
+            && self.parameter_record_reads(right)?.is_none()
+        {
             return Ok(None);
         }
         let mut setup = Vec::new();

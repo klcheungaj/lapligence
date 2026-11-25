@@ -1,0 +1,26 @@
+'{"ab", "", "ef"} 
+'{1.5, -2.25} 
+'{x:7, s:"seven"}
+'{'{x:1, s:"a"}, '{x:-2, s:"b"}}
+'{x:-2, s:"b"}
+'{x:9, s:"n"} '{"u", "v"}  '{4, 5} 
+'{x:7, s:"seven"}
+same
+same
+same
+same
+same
+same
+'{"ab", "", "ef"} 
+'{1.5, -2.25} 
+'{x:8, s:"eight"}
+'{'{x:1, s:"a"}, '{x:-2, s:"b"}}
+'{x:-2, s:"b"}
+'{x:9, s:"n"} '{"u", "v"}  '{4, 5} 
+'{x:8, s:"eight"}
+same
+same
+same
+same
+same
+same

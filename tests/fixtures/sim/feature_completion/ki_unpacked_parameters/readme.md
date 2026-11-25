@@ -26,4 +26,6 @@ part of the repository.
 | `contexts.sv` | class and interface parameters, continuous assignments, `always_comb`, function arguments |
 | `times.sv` | `realtime` and `time` elements, an element as a delay |
 | `nonexistent.sv` | unknown and out-of-range indices read the default of the element type (7.4.6) |
-| `neg_string_copy.sv`, `neg_record_copy.sv` | a whole array or structure with strings or reals is a located error |
+| `records.sv` | structures with strings or reals that constant selectors reach: assignment to variables, members, elements, class properties and queues, arguments, `return`, comparison |
+| `patterns.sv` | `%p` and `%0p` of arrays and structures with strings and reals print what variables with the same values print |
+| `neg_string_copy.sv`, `neg_record_element.sv` | a copy of a whole array with strings or reals, and of a structure with them that a run-time index selects, are located errors |

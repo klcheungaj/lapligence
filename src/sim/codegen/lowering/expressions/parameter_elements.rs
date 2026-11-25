@@ -7,6 +7,7 @@
 
 use super::*;
 use crate::core::db::ElementValue;
+use crate::sim::codegen::lowering::collection::native_values::{LeafReads, LeafValue};
 use crate::sim::codegen::lowering::collection::{
     element_descriptor, image_path_descriptor, image_width,
 };
@@ -154,28 +155,7 @@ impl<'a> Codegen<'a> {
             return Ok(None);
         };
         if rest.is_empty() {
-            return match (&descriptor.shape, &value) {
-                (TypeShape::Real { .. }, ConstantPart::Value(ElementValue::Singular(value))) => {
-                    Ok(match value {
-                        Val::Real(value) => Some(real_literal_expr(*value)),
-                        _ => None,
-                    })
-                }
-                (TypeShape::Real { .. }, ConstantPart::Nonexistent) => {
-                    Ok(Some(real_literal_expr(0.0)))
-                }
-                _ => {
-                    let Some(width) = image_width(&descriptor, None) else {
-                        return Ok(None);
-                    };
-                    let Some(bits) = part_image(&value, &descriptor) else {
-                        return Ok(None);
-                    };
-                    let value = constant_image(&elab::Value::from_bits(bits, false))?;
-                    ir_to_storage(value, width, descriptor.info.signed, descriptor.two_state)
-                        .map(Some)
-                }
-            };
+            return constant_part_value(&value, &descriptor);
         }
         if let (ConstantPart::Value(value), Some((SelectPart::Index(index), inner))) =
             (&value, rest.split_first())
@@ -438,6 +418,42 @@ impl<'a> Codegen<'a> {
         Ok(Some(IrObjectQuery::StringGetc(text, Box::new(character))))
     }
 
+    /// The leaves of the part of a parameter of a fixed unpacked type that
+    /// constant selectors in `node` reach.
+    pub(in super::super) fn parameter_leaf_reads(
+        &self,
+        node: NodeId,
+    ) -> Result<Option<LeafReads>, String> {
+        let Some((parameter, parts)) = self.parameter_select(node) else {
+            return Ok(None);
+        };
+        let Some((ConstantPart::Value(value), descriptor, [])) =
+            self.constant_parameter_part(parameter, &parts)
+        else {
+            return Ok(None);
+        };
+        let mut reads = Vec::new();
+        Ok(constant_leaves(value, &descriptor, &mut Vec::new(), &mut reads)?.map(|()| reads))
+    }
+
+    /// The leaves of an unpacked structure with a string or real member that
+    /// constant selectors in `node` reach in a parameter. One without them is
+    /// read as one packed value.
+    pub(in super::super) fn parameter_record_reads(
+        &self,
+        node: NodeId,
+    ) -> Result<Option<LeafReads>, String> {
+        if self.query_descriptor(node).is_none_or(|descriptor| {
+            !matches!(
+                &descriptor.shape,
+                TypeShape::Aggregate(layout) if layout.kind == AggregateKind::UnpackedStruct
+            ) || image_width(descriptor, None).is_some()
+        }) {
+            return Ok(None);
+        }
+        self.parameter_leaf_reads(node)
+    }
+
     /// The string that `parts` select in `parameter`.
     fn parameter_string(
         &mut self,
@@ -609,6 +625,101 @@ fn part_select(base: IrExpr, offset: u32, width: u32) -> IrExpr {
         false,
         None,
     )
+}
+
+/// The packed or real value of a parameter part, if it has one.
+fn constant_part_value(
+    part: &ConstantPart<'_>,
+    descriptor: &TypeDescriptor,
+) -> Result<Option<IrExpr>, String> {
+    match (&descriptor.shape, part) {
+        (TypeShape::Real { .. }, ConstantPart::Value(ElementValue::Singular(value))) => {
+            Ok(match value {
+                Val::Real(value) => Some(real_literal_expr(*value)),
+                _ => None,
+            })
+        }
+        (TypeShape::Real { .. }, ConstantPart::Nonexistent) => Ok(Some(real_literal_expr(0.0))),
+        _ => {
+            let Some(width) = image_width(descriptor, None) else {
+                return Ok(None);
+            };
+            let Some(bits) = part_image(part, descriptor) else {
+                return Ok(None);
+            };
+            let value = constant_image(&elab::Value::from_bits(bits, false))?;
+            ir_to_storage(value, width, descriptor.info.signed, descriptor.two_state).map(Some)
+        }
+    }
+}
+
+/// The leaves of `value`, a part of a parameter with type `descriptor`, at
+/// their paths below `path`. `None` for a value of another type.
+fn constant_leaves(
+    value: &ElementValue,
+    descriptor: &TypeDescriptor,
+    path: &mut Vec<AggregatePathPart>,
+    reads: &mut LeafReads,
+) -> Result<Option<()>, String> {
+    let mut below = |part, value, descriptor: &TypeDescriptor| {
+        path.push(part);
+        let found = constant_leaves(value, descriptor, path, reads);
+        path.pop();
+        found
+    };
+    match (value, &descriptor.shape) {
+        (ElementValue::Elements(elements), TypeShape::FixedArray { dimensions, .. }) => {
+            let (Some((left, right)), Some(element)) =
+                (dimensions.first(), element_descriptor(descriptor))
+            else {
+                return Ok(None);
+            };
+            let step = if left <= right { 1 } else { -1 };
+            for (value, offset) in elements.iter().zip(0i32..) {
+                let index = AggregatePathPart::Index(left + step * offset);
+                if below(index, value, &element)?.is_none() {
+                    return Ok(None);
+                }
+            }
+            Ok(Some(()))
+        }
+        (
+            ElementValue::Elements(members),
+            TypeShape::Aggregate(crate::core::db::AggregateLayout {
+                kind: AggregateKind::UnpackedStruct,
+                members: layout,
+                ..
+            }),
+        ) => {
+            for (value, member) in members.iter().zip(layout) {
+                let part = AggregatePathPart::Member(member.name.clone());
+                if below(part, value, &member.descriptor)?.is_none() {
+                    return Ok(None);
+                }
+            }
+            Ok(Some(()))
+        }
+        (ElementValue::Singular(_), TypeShape::String) => {
+            let text = IrStringExpr::Literal(string_bytes(value)?);
+            reads.push((path.clone(), LeafValue::String(text)));
+            Ok(Some(()))
+        }
+        (ElementValue::Singular(_), shape) => {
+            let leaf = constant_part_value(&ConstantPart::Value(value), descriptor)?;
+            let Some(leaf) = leaf else {
+                return Ok(None);
+            };
+            reads.push((
+                path.clone(),
+                match shape {
+                    TypeShape::Real { .. } => LeafValue::Real(leaf),
+                    _ => LeafValue::Packed(leaf),
+                },
+            ));
+            Ok(Some(()))
+        }
+        _ => Ok(None),
+    }
 }
 
 /// The packed image of a parameter part, most significant bit first, in the

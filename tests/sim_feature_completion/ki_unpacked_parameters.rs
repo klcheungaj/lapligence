@@ -96,6 +96,28 @@ fn nonexistent_elements_of_array_parameters() {
 }
 
 #[test]
+fn records_of_unpacked_parameters_are_values() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "records",
+        include_str!("../fixtures/sim/feature_completion/ki_unpacked_parameters/records.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn patterns_of_unpacked_parameters() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "patterns",
+        include_str!("../fixtures/sim/feature_completion/ki_unpacked_parameters/patterns.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
 fn strings_and_characters_of_unpacked_parameters() {
     sim_cli::run_case_backend_parity(
         SUITE,
@@ -117,7 +139,7 @@ fn unsupported_reads_of_unpacked_parameters_are_located() {
     );
     sim_cli::reject_case(
         SUITE,
-        "neg_record_copy",
-        "neg_record_copy.sv:6:5 unpacked aggregate used as a scalar assignment LHS in `tb`",
+        "neg_record_element",
+        "neg_record_element.sv:6:11 unpacked aggregate used as a scalar assignment LHS in `tb`",
     );
 }
