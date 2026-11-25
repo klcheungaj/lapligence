@@ -120,12 +120,8 @@ void llg_rt_failed_access(const char* failure, const char* site) {
         failed_access(failure, site, strlen(site), "", site);
 }
 
-void llg_rt_null_wait(const char* location) {
-    const char* access = g.null_wait;
-    if (!access) return;
-    g.null_wait = NULL;
-    failed_access("null event handle access", access, strlen(access), location ? location : "",
-                  "");
+void llg_rt_failed_arm(const char* failure, const char* site) {
+    llg_rt_failed_access(failure, site);
 }
 
 uint64_t llg_rt_severity_count(int32_t severity) {

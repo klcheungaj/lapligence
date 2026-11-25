@@ -136,17 +136,9 @@ void llg_event_watch_remove(llg_event_object_t* ev) {
 // The outcome of waiting on a null event is undefined (SV 15.5.5.2); like an
 // access through a null class handle (8.4) it ends the simulation (S14-D8).
 // `.triggered` of one is false (15.5.3).
-// The wait's statement reports it, at its source location
-// (llg_rt_null_wait).
-LLG_COLD LLG_NOINLINE static void event_handle_null(const char* access) {
-    if (!llg_rt_exiting()) g.null_wait = access;
-}
-
-// Whether a wait names a null event, which ends the simulation.
+// The wait's statement reports it (llg_arm_at).
 static inline int32_t event_control_null(const llg_event_t* ev) {
-    if (LLG_CO_LIKELY(ev && ev->object)) return 0;
-    event_handle_null("event wait");
-    return 1;
+    return LLG_CO_UNLIKELY(!ev || !ev->object);
 }
 
 int32_t llg_event_triggered(const llg_event_t* ev) {
@@ -273,9 +265,7 @@ llg_co_arm_t llg_arm_order(llg_proc_t* self,
     if (n <= 0 || !result || !self || !region_can_mutate("wait scheduling"))
         return LLG_CO_ARM_READY;
     for (int32_t i = 0; i < n; i++) {
-        if (LLG_CO_LIKELY(evs[i] && evs[i]->object)) continue;
-        event_handle_null("wait_order");
-        return LLG_CO_ARM_EXIT;
+        if (event_control_null(evs[i])) return LLG_CO_ARM_EXIT;
     }
     // SV 15.5.4: "Only the first event in the list can wait for the
     // persistent triggered property." A first event already triggered in
@@ -488,7 +478,7 @@ uint64_t llg_repeat_count(sv4_t value) {
 static int32_t event_specs_null(const llg_expr_event_spec_t* specs, int32_t n) {
     for (int32_t i = 0; i < n; i++)
         if (specs[i].event && event_control_null(specs[i].event)) {
-            llg_rt_null_wait(NULL);
+            llg_rt_failed_access("null event handle access", "event wait");
             return 1;
         }
     return 0;

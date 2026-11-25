@@ -135,7 +135,7 @@ static void single_and_heap_paths(void) {
           llg_sv4_word(padded, 0, LLG_SV4_Z) == 4 && llg_sv4_signed(padded) == 1);
     ready_again(proc);
     sv4_destroy(&padded);
-    CHECK(llg_arm_at(llg_arm_event(proc, NULL), "probe.sv:1:1") == LLG_CO_ARM_EXIT);
+    CHECK(llg_arm_at(llg_arm_event(proc, NULL), "null event handle access", "event wait") == LLG_CO_ARM_EXIT);
     CHECK(proc->wait.kind == W_NONE && g.finish);
     g.current = NULL;
     llg_rt_cleanup();

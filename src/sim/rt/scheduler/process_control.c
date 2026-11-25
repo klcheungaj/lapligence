@@ -582,7 +582,7 @@ llg_semaphore_t* llg_semaphore_new(sv4_t key_count) {
 
 void llg_semaphore_put(llg_semaphore_t* semaphore, sv4_t key_count) {
     if (!region_can_mutate("semaphore put") ||
-        !semaphore_valid(semaphore, "put"))
+        !semaphore)
         return;
     uint64_t keys = 0;
     if (!semaphore_key_count(key_count, &keys) || keys == 0) return;
@@ -601,7 +601,7 @@ llg_co_arm_t llg_arm_semaphore_get(llg_proc_t* self,
                                    sv4_t key_count) {
     llg_runtime_service_enter(self, "semaphore::get");
     if (!region_can_mutate("semaphore get")) return LLG_CO_ARM_READY;
-    if (!semaphore_valid(semaphore, "get")) return LLG_CO_ARM_EXIT;
+    if (!semaphore) return LLG_CO_ARM_EXIT;
     if (!self) {
         llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "semaphore get requested outside a simulation process");
         llg_last_failure = 1;
@@ -647,7 +647,7 @@ llg_co_arm_t llg_arm_semaphore_get(llg_proc_t* self,
 
 int32_t llg_semaphore_try_get(llg_semaphore_t* semaphore, sv4_t key_count) {
     if (!region_can_mutate("semaphore try_get") ||
-        !semaphore_valid(semaphore, "try_get"))
+        !semaphore)
         return 0;
     uint64_t keys = 0;
     if (!semaphore_key_count(key_count, &keys)) return 0;

@@ -887,19 +887,20 @@ impl<'a, 'm> Frame<'a, 'm> {
     fn await_event_arm(
         &mut self,
         operation: SuspensionOperation,
+        access: &str,
         arm: impl AsRef<str>,
     ) -> Result<(), String> {
-        let location = self
-            .pending_sites
-            .front()
-            .and_then(|site| site.origin)
-            .map_or_else(
-                || "NULL".to_owned(),
-                |origin| c_string_literal(&origin.location()),
-            );
+        let site = match self.pending_sites.front().and_then(|site| site.origin) {
+            Some(origin) => format!("{access}\u{1f}{}", origin.location()),
+            None => access.to_owned(),
+        };
         self.await_arm(
             operation,
-            format!("llg_arm_at({}, {location})", arm.as_ref()),
+            format!(
+                "llg_arm_at({}, \"null event handle access\", {})",
+                arm.as_ref(),
+                c_string_literal(&site)
+            ),
         )
     }
     fn dispatch(&self) -> String {

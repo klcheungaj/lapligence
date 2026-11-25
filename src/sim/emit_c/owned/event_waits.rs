@@ -80,6 +80,7 @@ impl Frame<'_, '_> {
                     let event = self.event_address(event)?;
                     return self.await_event_arm(
                         SuspensionOperation::EventWait,
+                        "event wait",
                         format!("llg_arm_event(self, {event})"),
                     );
                 }
@@ -137,6 +138,7 @@ impl Frame<'_, '_> {
             );
             return self.await_event_arm(
                 SuspensionOperation::EventWait,
+                "event wait",
                 format!("llg_arm_events(self, {array}, {})", events.len()),
             );
         }
@@ -171,12 +173,14 @@ impl Frame<'_, '_> {
             );
             return self.await_event_arm(
                 SuspensionOperation::EventWait,
+                "event wait",
                 format!("llg_arm_mixed(self, {array}, {})", entries.len()),
             );
         }
         let array = self.event_specs(specs, true)?;
         self.await_event_arm(
             SuspensionOperation::EventWait,
+            "event wait",
             format!("llg_arm_expressions(self, {array}, {})", specs.len()),
         )
     }

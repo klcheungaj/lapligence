@@ -919,8 +919,6 @@ typedef struct {
     int32_t suspended;
     int32_t stop_policy;
     llg_proc_t* stop_proc;
-    // What met a null event in the wait being armed (llg_rt_null_wait).
-    const char* null_wait;
     llg_region_t stop_region;
     int32_t config_error;
     uint64_t zero_loop_limit;

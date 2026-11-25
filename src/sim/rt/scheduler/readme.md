@@ -133,11 +133,11 @@ container elements) retains and releases; plain handle storage (class
 properties, record leaves, non-input formals, results, fork-shared slots)
 holds `llg_process_pin`ned handles, whose pin `llg_rt_cleanup` drops. Process
 methods through a null handle and `await` on the caller are fatal.
-A null handle of a built-in class is reported where it is used: generated code
-checks the receiver of a mailbox, semaphore or process method
-(`llg_rt_require`) with the call's framed site, and a wait armed on a null
-event leaves what it met in `g.null_wait` for the awaiting statement, which
-reports it at its location on the arm's EXIT path (`llg_arm_at`). Normal process completion returns `LLG_CO_DONE`; terminating
+A null handle of a built-in class is reported where it is used, at the framed
+site generated code passes: a mailbox or semaphore operation and an event wait
+do nothing with one, and the generated statement reports it after the call or,
+for a blocking operation, on the arm's EXIT path (`llg_arm_at`); a process
+method's receiver is checked before the call (`llg_rt_require`). Normal process completion returns `LLG_CO_DONE`; terminating
 services set `chain.exiting` and the generated continuation returns
 `LLG_CO_EXIT` after unwinding its lexical scopes.
 

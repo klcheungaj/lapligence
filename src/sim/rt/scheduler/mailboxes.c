@@ -512,17 +512,6 @@ void llg_mailbox_trace(llg_value_visit_fn visit, void* context) {
     }
 }
 
-static llg_mailbox_t* mailbox_require(llg_mailbox_t* mailbox,
-                                      const char* operation) {
-    if (LLG_CO_LIKELY(mailbox)) return mailbox;
-    // The model reported it at the call (llg_rt_require).
-    if (llg_rt_exiting()) return NULL;
-    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "mailbox %s on a null handle", operation);
-    llg_last_failure = 1;
-    llg_rt_request_finish();
-    return NULL;
-}
-
 llg_mailbox_t* llg_mailbox_new(sv4_t bound, int32_t kind, uint32_t width,
                                int32_t is_signed, int32_t two_state, int32_t shortreal) {
     if (sv4_is_unknown(bound)) {
@@ -585,7 +574,6 @@ sv4_t* llg_mailbox_dependency(llg_mailbox_t* mailbox) {
 }
 
 uint64_t llg_mailbox_num(const llg_mailbox_t* mailbox) {
-    mailbox = mailbox_require((llg_mailbox_t*)mailbox, "num");
     return mailbox ? mailbox->length : 0;
 }
 
@@ -593,7 +581,6 @@ llg_co_arm_t llg_arm_mailbox_put_value(llg_proc_t* self,
                                        llg_mailbox_t* mailbox,
                                        llg_mailbox_value_t value) {
     llg_runtime_service_enter(self, "mailbox::put");
-    mailbox = mailbox_require(mailbox, "put");
     if (!mailbox) {
         mailbox_value_destroy(&value);
         return LLG_CO_ARM_EXIT;
@@ -633,7 +620,6 @@ llg_co_arm_t llg_arm_mailbox_put_value(llg_proc_t* self,
 
 int32_t llg_mailbox_try_put_value(llg_mailbox_t* mailbox,
                               llg_mailbox_value_t value) {
-    mailbox = mailbox_require(mailbox, "try_put");
     if (!mailbox) {
         mailbox_value_destroy(&value);
         return 0;
@@ -699,7 +685,6 @@ llg_co_arm_t llg_arm_mailbox_get_value(llg_proc_t* self,
                                        llg_mailbox_t* mailbox,
                                        llg_mailbox_target_t target, int32_t peek) {
     llg_runtime_service_enter(self, "mailbox::get");
-    mailbox = mailbox_require(mailbox, "get");
     if (!mailbox) return LLG_CO_ARM_EXIT;
     int32_t result = mailbox_take_value(mailbox, &target, peek);
     if (result < 0) {
@@ -715,7 +700,6 @@ llg_co_arm_t llg_arm_mailbox_get_value(llg_proc_t* self,
 
 int32_t llg_mailbox_try_get_value(llg_mailbox_t* mailbox,
                               llg_mailbox_target_t target, int32_t peek) {
-    mailbox = mailbox_require(mailbox, peek ? "try_peek" : "try_get");
     if (!mailbox) return 0;
     return mailbox_take_value(mailbox, &target, peek);
 }

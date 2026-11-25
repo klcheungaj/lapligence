@@ -275,6 +275,7 @@ impl Frame<'_, '_> {
                 let await_mark = self.cancellation_mark();
                 self.await_event_arm(
                     SuspensionOperation::EventTriggeredWait,
+                    "event wait",
                     format!("llg_arm_event_triggered(self, {event})"),
                 )?;
                 self.cancellation_check_covering(await_mark)?;
@@ -1362,6 +1363,7 @@ impl Frame<'_, '_> {
         let await_mark = self.cancellation_mark();
         self.await_event_arm(
             SuspensionOperation::WaitOrder,
+            "wait_order",
             format!(
                 "llg_arm_order(self, {list}, {}, &{success_flag})",
                 events.len()

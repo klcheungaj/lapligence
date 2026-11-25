@@ -10,6 +10,29 @@ struct Message {
     native: Vec<NativeValue>,
 }
 
+/// The receiver of a method of a synchronization object.
+struct Receiver {
+    code: String,
+    /// What a null receiver fails, and the site, as C literals.
+    failure: Option<(&'static str, String)>,
+}
+
+impl std::fmt::Display for Receiver {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.code)
+    }
+}
+
+impl Receiver {
+    /// The blocking operation `arm`, reporting a null receiver.
+    fn arm(&self, arm: String) -> String {
+        match &self.failure {
+            Some((failure, site)) => format!("llg_arm_at({arm}, \"{failure}\", {site})"),
+            None => arm,
+        }
+    }
+}
+
 impl Frame<'_, '_> {
     pub(super) fn mailbox_handle(&mut self, expression: &IrMailboxExpr) -> Result<String, String> {
         Ok(match expression {
@@ -278,15 +301,38 @@ impl Frame<'_, '_> {
     }
 
     /// The receiver of a method of a synchronization object, evaluated once.
-    fn receiver(&mut self, handle: &IrChandleExpr) -> Result<String, String> {
+    fn receiver(&mut self, handle: &IrChandleExpr) -> Result<Receiver, String> {
+        let (handle, failure) = match handle {
+            IrChandleExpr::RequiredSynchronization {
+                handle,
+                object,
+                site,
+            } => {
+                let failure = match object {
+                    IrSynchronization::Mailbox => "null mailbox handle access",
+                    IrSynchronization::Semaphore => "null semaphore handle access",
+                };
+                (handle.as_ref(), Some((failure, c_string_literal(site))))
+            }
+            handle => (handle, None),
+        };
         let handle = self.chandle(handle)?;
-        Ok(self.scalar("void*", handle))
+        Ok(Receiver {
+            code: self.scalar("void*", handle),
+            failure,
+        })
     }
 
-    /// Leave after a method call whose null receiver the runtime reported
-    /// (SV 8.4).
-    fn leave_after_null(&mut self, receiver: &str) {
-        self.exit_on_failed_access(&format!("!{receiver}"));
+    /// Report a null receiver after the call, which did nothing (SV 8.4), and
+    /// leave.
+    fn leave_after_null(&mut self, receiver: &Receiver) {
+        let code = &receiver.code;
+        if let Some((failure, site)) = &receiver.failure {
+            self.line(format!(
+                "if (LLG_CO_UNLIKELY(!{code})) llg_rt_failed_access(\"{failure}\", {site});"
+            ));
+        }
+        self.exit_on_failed_access(&format!("!{code}"));
     }
 
     pub(super) fn mailbox_statement(&mut self, statement: &IrObjectStmt) -> Result<(), String> {
@@ -308,10 +354,10 @@ impl Frame<'_, '_> {
                 } else {
                     self.await_arm(
                         SuspensionOperation::SemaphoreGet,
-                        format!(
+                        receiver.arm(format!(
                             "llg_arm_semaphore_get(self, (llg_semaphore_t*){receiver}, {})",
                             keys.code
-                        ),
+                        )),
                     )?;
                 }
                 self.discard(keys);
@@ -379,10 +425,10 @@ impl Frame<'_, '_> {
                 } else {
                     self.await_arm(
                         SuspensionOperation::MailboxGet,
-                        format!(
+                        mailbox.arm(format!(
                             "llg_arm_mailbox_get_value(self, (llg_mailbox_t*){mailbox}, {target}, {})",
                             u8::from(*peek)
-                        ),
+                        )),
                     )?;
                     // A destination that is not written at delivery is
                     // written on resume, so the write lands in live storage
@@ -414,10 +460,10 @@ impl Frame<'_, '_> {
         } else {
             self.await_arm(
                 SuspensionOperation::MailboxPut,
-                format!(
+                mailbox.arm(format!(
                     "llg_arm_mailbox_put_value(self, (llg_mailbox_t*){mailbox}, {})",
                     message.code
-                ),
+                )),
             )?;
         }
         self.release_message_operands(message);
