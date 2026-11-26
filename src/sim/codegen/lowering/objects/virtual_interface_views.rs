@@ -1200,6 +1200,34 @@ impl Codegen<'_> {
                     })
             })
         else {
+            // Without an instance of the interface type, an unpacked member
+            // has no storage to give a view its shape (docs/known_issues.md).
+            let declaration = match self.kind(node) {
+                NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs.last().copied().flatten(),
+                _ => None,
+            };
+            let unpacked = declaration.is_some_and(|declaration| {
+                matches!(
+                    self.query_descriptor(declaration)
+                        .map(|descriptor| &descriptor.shape),
+                    Some(TypeShape::FixedArray { .. } | TypeShape::Container { .. })
+                )
+            });
+            if unpacked
+                && !self
+                    .virtual_interface_instances
+                    .values()
+                    .any(|(owner, _)| *owner == descriptor)
+            {
+                return Err(self.locate_error(
+                    node,
+                    format!(
+                        "unpacked member `{}` of virtual interface `{}` is not supported when \
+                         the design has no instance of its interface type, in `{path}`",
+                        target.member, target.spelling
+                    ),
+                ));
+            }
             return Ok(None);
         };
         let same = |first: IrInterfaceStorage, other: IrInterfaceStorage| match (first, other) {

@@ -400,3 +400,13 @@ fn unpacked_member_of_a_null_handle_fails_at_runtime() {
          access",
     );
 }
+
+#[test]
+fn unpacked_member_of_an_interface_type_without_instances_is_rejected() {
+    sim_cli::reject_case(
+        "virtual_interfaces",
+        "neg_member_array_no_instance",
+        "neg_member_array_no_instance.sv:15:8 unpacked member `a` of virtual interface `ifc` is not \
+         supported when the design has no instance of its interface type, in `tb`",
+    );
+}

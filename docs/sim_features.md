@@ -405,7 +405,12 @@ Macros, includes and their edition-specific behavior are counted in §11.
   range: run-time selects,
   slices, patterns, whole copies, equality, ambiguous conditional merges and
   untimed or `#delay` NBAs act on owned elements, and on members of elements
-  (decision S07-D4); event controls and bit/part selects reach those members,
+  (decision S07-D4); an element of a fixed array of queues, dynamic or
+  associative arrays is also a whole equality operand, an unpacked
+  concatenation item and a function `ref` actual (a task `ref` actual is a
+  [known issue](known_issues.md#fixed-arrays-of-containers-task-references-and-row-spacing),
+  [operands](../tests/fixtures/sim/feature_completion/ki_fixed_view_ranges/readme.md));
+  event controls and bit/part selects reach those members,
   and event-controlled NBAs reach record targets (S07-D6).
   Class handles are identity leaves of native records (`r.h.v` reaches the
   object). Run-time indices into native member arrays of subroutine records and
@@ -531,8 +536,12 @@ Macros, includes and their edition-specific behavior are counted in §11.
   commits after its last event (SIM-014).
   Delayed continuous drivers, automatic monitors and broader aggregate
   combinations remain restricted; automatic
-  procedural-block strings and handles share the fork limit of block records
-  ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage));
+  procedural-block strings, handles, virtual interfaces and events that a
+  `join_none`/`join_any` fork keeps live while their block runs again are
+  locals of each activation, shared with its branches
+  ([ki_block_activation_locals](../tests/fixtures/sim/feature_completion/ki_block_activation_locals/readme.md)),
+  while block records there reject
+  ([known issue](known_issues.md#automatic-block-records-captured-by-a-fork-that-runs-again));
   class handles and records declared in a `join_none` branch of a function
   belong to the branch and its receiver's properties are reached through the
   captured receiver, while strings declared there stay limited
@@ -1237,8 +1246,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   and do not suspend the issuer; `.triggered` holds for the time step and is
   false for null (S14-D9); waiting on a null event ends the run (S14-D8);
   declaration initializers (an event, `null`, an event array) execute in every
-  scope, whole fixed event arrays assign and compare, and a conditional
-  operator selects an event (SD10-D3);
+  scope, whole fixed event arrays assign and compare, queues, dynamic,
+  associative and fixed arrays of event queues nest like other containers
+  ([ki_nested_event_containers](../tests/fixtures/sim/feature_completion/ki_nested_event_containers/readme.md)),
+  and a conditional operator selects an event (SD10-D3);
   events test false only when null; `wait_order` lets its
   first event use the triggered state, and a failure without an `else` is a
   run-time error that ends the run at once, without final procedures
@@ -2737,6 +2748,9 @@ These are bounded implementations, not full verification-infrastructure support.
   it is evaluated (decision VM-D1); a nonblocking write locates its target
   at issue (VM-D2), a timed blocking one after its control
   ([virtual_interfaces](../tests/fixtures/sim/virtual_interfaces/readme.md)).
+  Through a handle of an interface type the design never instantiates, an
+  unpacked member is a located compile error
+  ([known issue](known_issues.md#unpacked-members-of-an-interface-type-without-instances)).
   Handles held by class objects whose virtual methods use them, sent through
   `mailbox #(virtual ifc)`, passed to timed tasks and captured by fork
   branches execute. Modport expression ports and an interface instance used
@@ -3190,8 +3204,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   member values, writes and `cbValueChange`, packed or unpacked, nested and
   in elements of unpacked arrays of structures (decisions A19-D1..D4).
   Structure objects (ADV-019 family 2): `vpiHighConn` and `vpiPortType` of
-  ports, port bits (`vpiBit`, `vpiPortBit`), interface and modport ports
-  whose connections are `vpiRefObj` objects with `vpiActual`, `vpiModport`,
+  ports, port bits (`vpiBit`, `vpiPortBit`, by index, decision A19-D93),
+  interface and modport ports whose connections are `vpiRefObj` objects
+  with `vpiActual`, `vpiModport`,
   instance arrays (`vpiModuleArray`, `vpiInterfaceArray`, `vpiGateArray`,
   `vpiSwitchArray`, `vpiUdpArray`) with `vpiRange`, element iteration,
   `vpi_handle_by_index` and the elements' `vpiIndex`, primitives (`vpiGate`,

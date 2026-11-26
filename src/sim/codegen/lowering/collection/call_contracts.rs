@@ -1180,17 +1180,12 @@ impl<'a> Codegen<'a> {
     pub(in super::super) fn native_observed(&self, declaration: NodeId, inst: NodeId) -> bool {
         let scope = match self.enclosing_func_task(declaration) {
             Some(function) => self.func_body(function),
-            None => {
-                // The outermost procedural ancestor below the instance.
-                let mut scope = declaration;
-                while let Some(parent) = self.node(scope).parent {
-                    if matches!(self.kind(parent), NodeKind::ModuleInst { .. }) {
-                        break;
-                    }
-                    scope = parent;
-                }
-                Some(scope)
-            }
+            // A procedural-block variable is visible only in the block
+            // whose statement declares it.
+            None => self
+                .block_activation_locals
+                .get(&declaration)
+                .and_then(|statement| self.node(*statement).parent),
         };
         let Some(scope) = scope else {
             return false;

@@ -39,3 +39,31 @@ each element is its own container (7.4.2 L8060).
 `real_elements.sv`: reading one real element of such an array (`x[1][0]`, a
 module, class, static class and package array) failed the model check
 ("container expression must produce a packed value", without a position).
+
+`operands.sv`: an element of such an array (a module's, an automatic one, a
+class property's; queues, dynamic and associative arrays of integral, real and
+string elements; one and two fixed dimensions) as a whole operand. Equality
+of two elements or of an element and a queue variable (also in `if`, `?:` and
+`while` conditions), elements as items of an unpacked array concatenation
+(also into the same element), and an element passed to a `ref` or
+`const ref` formal of a function (also one that reallocates a dynamic array)
+were refused ("container element access in tb requires a scalar value", "a
+queue or dynamic array nested in a container element as the ref actual of
+`x` is not supported"). Each element is read, or written in place, through
+an alias of its own storage for the statement.
+
+- 7.4.3 L8089-8095: "The following operations can be performed on all
+  arrays, packed or unpacked." ... "Reading and writing an element of the
+  array, e.g., A[i] = B[i]" ... "Equality operations on the array or slice of
+  the array, e.g., A==B, A[i:j] != B[i:j]".
+- 10.10 L13836-13838: "An item whose self-determined type is an unpacked
+  array whose slowest-varying dimension's element type is assignment
+  compatible with the element type of the target array shall represent as
+  many elements as exist in that item".
+- 13.5.2 L19103-19104: "Arguments passed by reference are not copied into the
+  subroutine area, rather, a reference to the original argument is passed to
+  the subroutine."
+
+`neg_task_ref.sv`: the same element passed to a `ref` formal of a task stays
+a located error. The alias publishes its changes when the call returns, and a
+task can suspend while another process waits on the array.

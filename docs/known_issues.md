@@ -653,11 +653,10 @@ result (`f(...).inner`; scalar members such as `f(...).s` work); native outputs
 bound inside an expression (call them as a statement instead); record ports
 whose type has a built-in semaphore, mailbox or process member (those handles
 publish no change marker) or a chandle member (chandle ports themselves are
-illegal, SV 6.14, and value links carry no chandle leaf); an automatic record, string, chandle or class
-handle declared in a procedural block that a `join_any` or `join_none` fork
-can keep live while the block is entered again (declared in such a fork that
-runs again, such as the `for (...) fork automatic string s = ...; join_none`
-idiom, or in a block that runs again and starts such a fork reading it); a
+illegal, SV 6.14, and value links carry no chandle leaf); an automatic record declared in a procedural block that a `join_any` or
+`join_none` fork can keep live while the block is entered again (see
+[Automatic block records captured by a fork that runs
+again](#automatic-block-records-captured-by-a-fork-that-runs-again)); a
 member default whose value is itself a record with native members (its
 frontend constant is not captured). Tagged unions with real, string, record or
 class-handle members execute as module, static and subroutine values
@@ -719,7 +718,7 @@ roots for forked automatic block records, strings and handles.
 `sim_008/neg_record_ref_element_select_value.sv`,
 `sim_008/neg_record_ref_subroutine_slot_container.sv`,
 `sim_007/bad_block_record_*.sv`,
-`sim_007/bad_block_native_*.sv`, `sim_007/bad_record_member_default.sv`,
+`sim_007/bad_record_member_default.sv`,
 `sim_007/bad_record_element_*.sv`, `sim_007/bad_record_container_element.sv`,
 `sim_007/bad_module_record_element_queue.sv`,
 `sim_011/neg_record_container_property.sv`, `sim_007/bad_multidim_row_*.sv` and `sim_007/bad_tagged_*.sv`.
@@ -2648,30 +2647,35 @@ Storage slots in the descriptor, as unpacked members have
 
 ## Unpacked members of an interface type without instances
 
-**Status:** open. Each use rejects with a located diagnostic.
+**Status:** open. Each use rejects with a located diagnostic ("unpacked
+member `a` of virtual interface `ifc` is not supported when the design has no
+instance of its interface type").
 
 ### Symptom
 
 When the design has no instance of an interface type, a use of an unpacked
 member through a virtual interface of that type (`v.a[1] = 3` with
-`int a[4]`) stops compilation at the use (for an element, "cannot resolve
-array base of select `a`"). Such a handle can only be null, so the use
-could only fail at run time, which is what a packed member does.
+`int a[4]`) stops compilation at the use. Such a handle can only be null, so
+the use could only fail at run time, which is what a packed member does and
+what the reference does ("uninitialized virtual interface object" at the
+use, after `(v == null) ? 1 : v.a[0]` and `$size(v.a)` have run).
 
 ### Cause
 
-A view of an unpacked member takes its shape from the member's storage in
-an instance of the interface; without one there is no shape.
+A view of an unpacked member takes its shape (an array or container of the
+model) from the member's storage in an instance of the interface, and the
+binding of a view, including the emitted callback fallback, names the
+storage of a bound instance; without one there is neither.
 
 ### Intended direction
 
-Shape the view from the member's declaration and fail at the use as for a
-null handle.
+Shape the view from the member's declaration (a storage template on the
+virtual-interface descriptor), let the binding of a descriptor without
+instances fail as for a null handle, and drop the error.
 
 ### Reproduce
 
-`interface ifc; int a[4]; endinterface` and
-`module tb; virtual ifc v; initial v.a[1] = 3; endmodule`.
+`tests/fixtures/sim/virtual_interfaces/neg_member_array_no_instance.sv`.
 
 ## Remaining items of unpacked array concatenations
 
@@ -4319,85 +4323,66 @@ cancellation and a bound).
 Open a file with a module, send `textDocument/didChange` that adds a port to it, and
 `textDocument/documentSymbol`.
 
-## Queues and arrays of event queues
+## Fixed arrays of containers: task references and row spacing
 
-**Status:** open; rejected with a located diagnostic (CODEGEN-009).
-
-### Symptom
-
-A queue, dynamic or associative array whose elements are themselves event
-queues or arrays (`event w[$][$]`, `event d[2][$]`) reports "event container
-element ... requires an event handle or null" wherever it is declared.
-Event arrays of one container level, and fixed event arrays, work.
-
-### Cause
-
-Event containers hold only event handles, not nested containers.
-
-### Intended direction
-
-Let an event container nest like containers of other element types.
-
-### Reproduce
-
-`event a; event w[$][$]; initial w.push_back({a});`
-
-## Fixed arrays of containers: element patterns, equality and concatenation
-
-**Status:** open; rejected with located diagnostics (CODEGEN-009).
+**Status:** open; a task `ref` actual rejects with a located diagnostic
+(CODEGEN-001).
 
 ### Symptom
 
-For a fixed array of queues, dynamic or associative arrays (`int q[2][$]`), an
-assignment pattern written to an element or the whole array
-(`q[0] = '{'{1}, '{2}}` as a declaration initializer, `q[0] <= '{3}`), an
-equality of two elements (`q[0] == q[1]`), an element inside an unpacked
-concatenation (`t = {q[0], q[1]}`, `q[0] = {q[0], 6}`) and an element passed
-to a `ref` formal are refused. `q[0] = '{1, 2}`, copies, methods, `foreach`
-and `%p` work. A two-dimensional fixed array of queues prints `%p` without the
-space after its inner closing braces that another implementation prints (white
-space is implementation dependent, 21.2.1.7).
+For a fixed array of queues or dynamic arrays (`int q[2][$]`), an element
+passed to a `ref` formal of a task is refused ("a queue or dynamic array
+nested in a container element as the ref actual of `t` is not supported");
+a function's `ref` formal takes it. A two-dimensional fixed array of queues
+prints `%p` without the space after its inner closing braces that another
+implementation prints (white space is implementation dependent, 21.2.1.7).
 
 ### Cause
 
-Container element operands and nested patterns are lowered only for whole
-container variables.
+The element is bound to an alias of its storage for the statement, which
+publishes its changes to the array when the statement ends; a task that
+suspends would hide them from waiters until it returns. The `%p` space
+follows the type of the whole array only (decision S24-D2).
 
 ### Intended direction
 
-Stage an element into a temporary container, as `foreach` and methods select
-it, and lower these forms on the temporary.
+Let changes through the alias publish to the array as they happen, then
+accept task `ref` actuals.
 
 ### Reproduce
 
-`int q[2][$]; initial begin q[0] = '{1}; q[1] = '{1}; $display(q[0] == q[1]);
-end`
+`int q[2][$]; task automatic t(ref int x[$]); #1 x.push_back(1); endtask
+initial t(q[0]);`
 
-## Automatic block variables captured by a fork that runs again
+## Automatic block records captured by a fork that runs again
 
 **Status:** open; rejected with a located diagnostic (CODEGEN-001).
 
 ### Symptom
 
-An automatic string, class handle, virtual interface, event or record declared
-in a procedural block and read by a `join_none`/`join_any` fork in a loop that
-runs again ("can be live in two activations through a `join_any`/`join_none`
-fork that runs again") is refused, as is a queue, dynamic array or record of a
-subroutine activation that a fork branch reads ("capturing native subroutine
-storage in a fork is not supported (SIM-010)"). Integral and real automatics
-work.
+An automatic unpacked record with string, real, handle or container members
+declared in a procedural block and read by a `join_none`/`join_any` fork
+while the block runs again ("automatic record `r` ... can be live in two
+activations through a `join_any`/`join_none` fork that runs again") is
+refused. Automatic block strings, class handles, chandles, virtual
+interfaces and events in the same position are locals of each activation and
+work ([fixture](../tests/fixtures/sim/feature_completion/ki_block_activation_locals/readme.md)),
+as do integral, real and container automatics and records of a subroutine
+activation.
 
 ### Cause
 
-Block variables of these types are one model object per declaration, not one
-per activation, and fork frames copy only packed, real and handle slots.
+A block record is leaf model storage collected with its scope (one set of
+leaves per declaration, which the waveform table also names), not one per
+activation. The activation form of a native record (a native value in a
+shared fork frame) exists only for subroutine bodies.
 
 ### Intended direction
 
-Give such variables activation storage in the process frame and capture them
-into the fork frame like integral automatics.
+Give such a record the subroutine native-value activation storage in the
+process body, declared at block entry and shared through the fork frame like
+a subroutine record.
 
 ### Reproduce
 
-`foreach (q[k]) begin automatic virtual ifc z = q[k]; fork #1 z.n = 30;
-join_none end`
+`tests/fixtures/sim/feature_completion/sim_007/bad_block_record_fork.sv`.

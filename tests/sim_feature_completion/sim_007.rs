@@ -519,20 +519,6 @@ fn procedural_block_strings_and_handles_keep_static_and_automatic_lifetimes() {
 }
 
 #[test]
-fn procedural_block_native_boundaries_are_rejected_explicitly() {
-    sim_cli::reject_case(
-        SUITE,
-        "bad_block_native_fork",
-        "bad_block_native_fork.sv:9:34 automatic variable `name` in `tb` can be live in two activations through a `join_any`/`join_none` fork that runs again; this is not supported",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "bad_block_native_always_fork",
-        "bad_block_native_always_fork.sv:10:23 automatic variable `h` in `tb` can be live in two activations through a `join_any`/`join_none` fork that runs again; this is not supported",
-    );
-}
-
-#[test]
 fn record_member_defaults_initialize_module_and_block_records() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_007/record_member_defaults.out");
