@@ -164,16 +164,6 @@ enum AssocKeyStorage {
     Class(ChandleTarget, IrChandleExpr),
 }
 
-fn foreach_local_decl(info: &ProcLocalInfo) -> IrStmt {
-    IrStmt::DeclLocal {
-        name: info.c_name.clone(),
-        width: info.width,
-        signed: info.signed,
-        two_state: info.two_state,
-        init: default_real_local_initializer(info.width),
-    }
-}
-
 fn foreach_local_read(info: &ProcLocalInfo) -> IrExpr {
     IrExpr::new(
         IrExprKind::LocalRead(info.c_name.clone()),
@@ -1113,7 +1103,7 @@ impl EmitCtx<'_, '_> {
                 bind: Option<IrStmt>,
                 first: String,
             },
-            Fixed(ProcLocalInfo, i32, i32),
+            Fixed(ProcLocalInfo, i32, i32, bool),
         }
         let name = self.cg.node(array).name.clone();
         let mut declarations = Vec::new();
@@ -1128,12 +1118,13 @@ impl EmitCtx<'_, '_> {
                 let selects = depth == 0 && self.cg.is_fixed_view(storage);
                 if let Some(variable) = variable {
                     let local = self.foreach_integral_local(*variable)?;
-                    declarations.push(foreach_local_decl(&local));
+                    declarations.push(self.foreach_local_decl(*variable, &local));
                     if selects {
                         let index = IrExpr::resize_to(foreach_local_read(&local), 32, true);
                         indices.push(self.cg.fixed_view_position(storage, index));
                     }
-                    levels.push(Level::Fixed(local, left, right));
+                    let shared = self.cg.shared_locals.contains(variable);
+                    levels.push(Level::Fixed(local, left, right, shared));
                 } else if selects {
                     omitted = true;
                 }
@@ -1177,6 +1168,7 @@ impl EmitCtx<'_, '_> {
                             }),
                             items: Vec::new(),
                             container: alias,
+                            live: false,
                         })));
                         storage = alias;
                     }
@@ -1223,7 +1215,7 @@ impl EmitCtx<'_, '_> {
                 continue;
             }
             let local = self.foreach_integral_local(*variable)?;
-            declarations.push(foreach_local_decl(&local));
+            declarations.push(self.foreach_local_decl(*variable, &local));
             let size = match (&key, selected) {
                 (None, 0) => IrContainerExpr::Size(storage),
                 (None, _) => IrContainerExpr::NestedSize {
@@ -1272,8 +1264,8 @@ impl EmitCtx<'_, '_> {
                         body: nested,
                     }];
                 }
-                Level::Fixed(local, left, right) => {
-                    nested = self.fixed_foreach_loop(&local, left, right, nested);
+                Level::Fixed(local, left, right, shared) => {
+                    nested = self.fixed_foreach_loop(&local, left, right, shared, nested);
                 }
                 Level::Keyed {
                     storage,
@@ -1292,6 +1284,33 @@ impl EmitCtx<'_, '_> {
         Ok(vec![IrStmt::Block(declarations)])
     }
 
+    /// The declaration of the integral iterator `variable` of a `foreach`.
+    /// A loop variable belongs to the loop, not to an iteration (SV 12.7.3),
+    /// so a `join_none`/`join_any` branch that names it shares the loop's
+    /// one cell (a shared frame cell) and sees the value the loop leaves.
+    fn foreach_local_decl(&mut self, variable: NodeId, info: &ProcLocalInfo) -> IrStmt {
+        let (name, width, signed, two_state) =
+            (info.c_name.clone(), info.width, info.signed, info.two_state);
+        let init = default_real_local_initializer(width);
+        if self.cg.fork_shared(variable) {
+            self.cg.shared_locals.insert(variable);
+            return IrStmt::SharedLocal {
+                name,
+                width,
+                signed,
+                two_state,
+                init,
+            };
+        }
+        IrStmt::DeclLocal {
+            name,
+            width,
+            signed,
+            two_state,
+            init,
+        }
+    }
+
     fn foreach_integral_local(&mut self, variable: NodeId) -> Result<ProcLocalInfo, String> {
         let local = self.cg.collect_loop_var(&self.path, variable)?;
         if local.width == 0 {
@@ -1305,11 +1324,15 @@ impl EmitCtx<'_, '_> {
     }
 
     /// One fixed foreach dimension from `left` to `right` around `body`.
+    /// The loop leaves its iterator at `right` unless a fork branch shares
+    /// it (`shared`): then it steps once more, past `right`, as the loop of
+    /// 12.7.3 does whose test fails after the last index.
     fn fixed_foreach_loop(
         &mut self,
         local: &ProcLocalInfo,
         left: i32,
         right: i32,
+        shared: bool,
         mut body: Vec<IrStmt>,
     ) -> Vec<IrStmt> {
         let read = || foreach_local_read(local);
@@ -1335,9 +1358,14 @@ impl EmitCtx<'_, '_> {
             rhs: IrExpr::resize_to(next, local.width, local.signed),
             nba: false,
         };
+        let mut leave = Vec::with_capacity(2);
+        if shared {
+            leave.push(incr.clone());
+        }
+        leave.push(IrStmt::Goto(done.clone()));
         body.push(IrStmt::If {
             cond: at_endpoint,
-            then_: vec![IrStmt::Goto(done.clone())],
+            then_: leave,
             els: None,
             check: IrUniquePriorityCheck::None,
         });
@@ -1366,7 +1394,7 @@ impl EmitCtx<'_, '_> {
                     },
             } => {
                 let local = self.foreach_integral_local(variable)?;
-                declarations.push(foreach_local_decl(&local));
+                declarations.push(self.foreach_local_decl(variable, &local));
                 AssocKeyStorage::Integral(local, *width, *signed, *two_state)
             }
             IrContainerKind::Associative {
@@ -1401,9 +1429,19 @@ impl EmitCtx<'_, '_> {
                         name
                     } else {
                         let name = self.cg.collect_loop_string_var(&self.path, variable)?;
-                        declarations.push(IrStmt::DeclString {
-                            name: name.clone(),
-                            init: None,
+                        // A fork branch shares the loop's one key (SV 12.7.3).
+                        declarations.push(if self.cg.fork_shared(variable) {
+                            self.cg.shared_locals.insert(variable);
+                            IrStmt::SharedString {
+                                name: name.clone(),
+                                init: None,
+                                observed: self.cg.native_observed(variable, self.inst),
+                            }
+                        } else {
+                            IrStmt::DeclString {
+                                name: name.clone(),
+                                init: None,
+                            }
                         });
                         name
                     };
@@ -1598,6 +1636,8 @@ impl EmitCtx<'_, '_> {
             .unwrap_or(array);
         let value = self.cg.lower_string(&self.path, source)?;
         let local = self.cg.collect_loop_var(&self.path, *variable)?;
+        // Declared before the body, whose fork branches look up the sharing.
+        let declaration = self.foreach_local_decl(*variable, &local);
         let (source_body, brk) = self.lower_loop_body(body)?;
         let read = || {
             IrExpr::new(
@@ -1620,13 +1660,7 @@ impl EmitCtx<'_, '_> {
             true,
         );
         let mut statements = vec![
-            IrStmt::DeclLocal {
-                name: local.c_name.clone(),
-                width: local.width,
-                signed: local.signed,
-                two_state: local.two_state,
-                init: default_real_local_initializer(local.width),
-            },
+            declaration,
             IrStmt::For {
                 init: vec![IrStmt::Assign {
                     lhs: lhs(),
@@ -1694,22 +1728,21 @@ impl EmitCtx<'_, '_> {
 
             let mut locals = Vec::with_capacity(vars.len());
             for variable in &vars {
-                let info = variable
-                    .map(|variable| self.cg.collect_loop_var(&self.path, variable))
-                    .transpose()?;
-                if let Some(info) = &info {
-                    if info.width == 0 {
-                        return Err(format!(
-                            "`foreach` iterator `{}` in `{}` must be an integral index",
-                            variable
-                                .map(|id| self.cg.node(id).name.as_str())
-                                .unwrap_or(""),
-                            self.path
-                        ));
-                    }
-                    declarations.push(foreach_local_decl(info));
+                let Some(variable) = *variable else {
+                    locals.push(None);
+                    continue;
+                };
+                let info = self.cg.collect_loop_var(&self.path, variable)?;
+                if info.width == 0 {
+                    return Err(format!(
+                        "`foreach` iterator `{}` in `{}` must be an integral index",
+                        self.cg.node(variable).name,
+                        self.path
+                    ));
                 }
-                locals.push(info);
+                declarations.push(self.foreach_local_decl(variable, &info));
+                let shared = self.cg.shared_locals.contains(&variable);
+                locals.push(Some((info, shared)));
             }
 
             let (source_body, brk) = self.lower_loop_body(body)?;
@@ -1717,8 +1750,8 @@ impl EmitCtx<'_, '_> {
             for (local, (left, right)) in locals.iter().zip(dimensions.iter()).rev() {
                 // An omitted dimension is not traversed and does not consume
                 // or synthesize an iterator local.
-                if let Some(local) = local {
-                    nested = self.fixed_foreach_loop(local, *left, *right, nested);
+                if let Some((local, shared)) = local {
+                    nested = self.fixed_foreach_loop(local, *left, *right, *shared, nested);
                 }
             }
             nested.extend(brk);
@@ -1829,7 +1862,7 @@ impl EmitCtx<'_, '_> {
                     self.path
                 ));
             }
-            declarations.push(foreach_local_decl(&local));
+            declarations.push(self.foreach_local_decl(variable, &local));
             let (source_body, brk) = self.lower_loop_body(body)?;
             let read = || foreach_local_read(&local);
             if !matches!(

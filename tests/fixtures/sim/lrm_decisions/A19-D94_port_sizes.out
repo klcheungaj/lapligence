@@ -1,0 +1,15 @@
+s: size=1 scalar=1 vector=0
+v: size=4 scalar=0 vector=1
+pk: size=6 scalar=0 vector=1
+ua: size=1 scalar=1 vector=0
+ub: size=4 scalar=0 vector=1
+ui: size=32 scalar=0 vector=1
+ra: size=64 scalar=0 vector=1
+spa: size=4 scalar=0 vector=1
+pa: size=6 scalar=0 vector=1
+su: size=1 scalar=1 vector=0
+sua: size=1 scalar=1 vector=0
+o: size=3 scalar=0 vector=1
+m: size=1 scalar=1 vector=0
+f: size=1 scalar=1 vector=0
+str: size=-1

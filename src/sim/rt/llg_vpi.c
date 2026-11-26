@@ -2390,6 +2390,30 @@ static vpiHandle port_bit_conn(const llg_vpi_slot_t* slot, int32_t high) {
  * A19-D47) and an interface or modport port refuses them. An index outside
  * the range answers as on the declaration itself: NULL, with an error for
  * a packed array (decisions S42-D7, A19-D67). */
+/* 37.14: the size of a port, which detail 6 makes the base of vpiScalar and
+ * vpiVector. A port whose value has no packed width of its own follows
+ * decision A19-D94: an interface or modport port and an unpacked structure or
+ * union count as one bit, an unpacked array port has the size of one element,
+ * and a string has no size (vpiUndefined). */
+static PLI_INT32 port_size(const llg_vpi_model_object_t* port) {
+    if (port->detail) return 1;
+    const llg_vpi_typespec_t* typespec = typespec_ref(port->typespec);
+    int32_t array = 0;
+    /* Each element step names another table entry, so the walk is bounded. */
+    for (uint32_t guard = 0; typespec && typespec->type == vpiArrayTypespec &&
+                             guard < g_vpi.types->typespec_count;
+         ++guard) {
+        typespec = typespec_ref(typespec->element);
+        array = 1;
+    }
+    if (typespec && typespec->type == vpiStringTypespec) return vpiUndefined;
+    if (is_aggregate_typespec(typespec) && (typespec->flags & LLG_VPI_TS_UNPACKED)) return 1;
+    if (!array || !typespec) return (PLI_INT32)port->width;
+    if (typespec->type == vpiRealTypespec) return 64;
+    if (typespec->type == vpiShortRealTypespec) return 32;
+    return (PLI_INT32)typespec->width;
+}
+
 static vpiHandle port_bit_by_indices(uint32_t row, const int64_t* indices, uint32_t count) {
     const llg_vpi_model_object_t* port = row_object(row);
     if (port->detail) {
@@ -10397,6 +10421,8 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
         case vpiType:
             return type;
         case vpiSize: {
+            if (slot->kind == SLOT_OBJECT && object && object->type == vpiPort)
+                return port_size(object);
             /* 37.17 detail 9: an unpacked structure or union reports its
              * number of fields. */
             const llg_vpi_typespec_t* value_type = value_typespec(slot);
@@ -10419,8 +10445,6 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
             if (slot->kind == SLOT_OBJECT && object && object->type == vpiFunction)
                 return (PLI_INT32)object->width; /* 37.37 detail 12: 0 for void */
             if (slot->kind == SLOT_PORTBIT) return 1;
-            if (slot->kind == SLOT_OBJECT && object && object->type == vpiPort)
-                return (PLI_INT32)object->width;
             if (slot->kind == SLOT_RANGE) {
                 int64_t extent = slot->left > slot->right ? slot->left - slot->right
                                                           : slot->right - slot->left;
@@ -10445,8 +10469,10 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
         case vpiScalar:
         case vpiVector:
             /* 37.14 detail 6: a port is scalar or vector by its own size. */
-            if (slot->kind == SLOT_OBJECT && object && object->type == vpiPort && !object->detail)
-                return property == vpiScalar ? object->width == 1 : object->width > 1;
+            if (slot->kind == SLOT_OBJECT && object && object->type == vpiPort) {
+                PLI_INT32 size = port_size(object);
+                return property == vpiScalar ? size == 1 : size > 1;
+            }
             if (slot->kind == SLOT_PORTBIT) return property == vpiScalar;
             /* 37.17 detail 20: FALSE for the other variables (real). */
             if (has_value && real && is_variable_type(type)) return 0;

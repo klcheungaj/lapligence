@@ -971,6 +971,16 @@ fn s12_d1_foreach_array_each_bound_check() {
 }
 
 #[test]
+fn s12_d3_foreach_loop_variables_shared_with_forks() {
+    run_decision(
+        "S12-D3_foreach_loop_variables_shared_with_forks",
+        include_str!(
+            "fixtures/sim/lrm_decisions/S12-D3_foreach_loop_variables_shared_with_forks.out"
+        ),
+    );
+}
+
+#[test]
 fn s11_d4_short_circuit_container_actual() {
     run_decision(
         "S11-D4_short_circuit_container_actual",
@@ -3659,6 +3669,15 @@ fn a19_d93_port_bits_by_index() {
         "A19-D93_port_bits_by_index",
         &["task $d93()"],
         include_str!("fixtures/sim/lrm_decisions/A19-D93_port_bits_by_index.out"),
+    );
+}
+
+#[test]
+fn a19_d94_port_sizes() {
+    run_vpi_decision(
+        "A19-D94_port_sizes",
+        &["task $d94()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D94_port_sizes.out"),
     );
 }
 

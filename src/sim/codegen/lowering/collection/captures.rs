@@ -87,11 +87,12 @@ impl<'a> Codegen<'a> {
             return None;
         }
         // A block string live in two activations (see
-        // `collect_block_native`) is a process string local.
-        if let Some(name) = self
-            .proc_string_local_name(target)
-            .filter(|_| self.is_block_native(target))
-        {
+        // `collect_block_native`) and a fork-shared string `foreach` key are
+        // process string locals.
+        if let Some(name) = self.proc_string_local_name(target).filter(|_| {
+            self.is_block_native(target)
+                || self.shared_locals.contains(&target) && self.is_foreach_iterator(target)
+        }) {
             return Some(CaptureSource {
                 info: ProcLocalInfo {
                     c_name: name.to_owned(),

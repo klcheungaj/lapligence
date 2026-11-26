@@ -1,0 +1,48 @@
+(A) nested i=3 j=3
+(A) nested i=3 j=3
+(A) nested i=3 j=3
+(A) nested i=3 j=3
+(A) nested i=3 j=3
+(A) nested i=3 j=3
+(A) nested i=3 j=3
+(A) nested i=3 j=3
+(A) nested i=3 j=3
+(A) string key s=y j=1
+(A) string key s=y j=1
+(A) string key s=y j=1
+(A) class key k.v=2
+(A) class key k.v=2
+(A) dynamic i=2
+(A) dynamic i=2
+(B) task n=7 i=2
+(B) task n=7 i=2
+(B) static task s=q
+(B) static task s=q
+(B) function i=2
+(B) function i=2
+(C) copy k=0 i=3
+(C) copy k=1 i=3
+(C) copy k=2 i=3
+(C) waited i=3
+(C) waited i=3
+(C) waited i=3
+(C) waited s=y
+(C) waited s=y
+(C) named i=3
+(C) named i=3
+(C) named i=3
+(D) joined i=0
+(D) join_none i=0
+(D) after #0 i=0
+(D) joined i=1
+(D) join_none i=1
+(D) after #0 i=1
+(D) joined i=2
+(D) join_none i=2
+(D) after #0 i=2
+(E) always i=3 t=19
+(E) always i=3 t=19
+(E) always i=3 t=19
+(E) always i=3 t=21
+(E) always i=3 t=21
+(E) always i=3 t=21
