@@ -5,12 +5,17 @@ Blocking Slang work and filesystem isolation stay in scheduling/staging.
 
 - `state`: owned root snapshots and synchronous queries/updates.
 - `scheduling`: jobs, debounce, rescans, config reloads and watchers.
+- `inputs`: the files the newest analysis of a root read, and the rules that
+  decide from them whether an event starts another one.
 - `identifiers`: the one table that answers a document's semantic-token and
-  definition requests; which positions of the committed analysis hold in the
-  current text of a document (`answers_at`, `current_locations`). In an edited
-  document that no commit has reached, hover, references and definitions name only
-  positions whose identifier the text still has there; `prepareRename` and `rename`
-  answer `ContentModified`, because an edit elsewhere would change something else.
+  definition requests, and the isolated parses behind it.
+- `positions`: the texts of the open documents beside those that the committed
+  analyses compiled, and the positions between them (`../../position_map.rs`). An
+  unedited document shares its text with the analysis, so a pointer comparison tells
+  it. Hover, references, definitions in other documents, symbols, the explorer and the
+  token dump answer at the places of the current texts and leave out what has none;
+  `prepareRename` and `rename` answer `ContentModified` for an edited document, because
+  an edit elsewhere would change something else.
 - `staging`: bounded inputs, private shadow paths and include authorization.
 - `diagnostics`: commits, ticket-ordered publication, deduplication and shared-file
   aggregation.

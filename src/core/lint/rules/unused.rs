@@ -31,6 +31,7 @@
 
 use std::collections::HashSet;
 
+use crate::cancel::{Cancelled, Poller};
 use crate::core::db::{Db, Direction, NodeId, NodeKind};
 use crate::core::lint::rules::analysis::{
     black_box_connection_signals, collect_reads, collect_writes_with_members,
@@ -61,16 +62,22 @@ impl LintRule for UnusedSignalRule {
         let mut writes = HashSet::new();
         let mut cont_writes = HashSet::new();
         let instances: Vec<NodeId> = iter_instances(db).map(|(id, _)| id).collect();
+        let mut poller = ctx.poller();
         for inst_id in &instances {
-            let (r, w, c) = instance_activity(db, *inst_id);
-            reads.extend(r);
-            writes.extend(w);
-            cont_writes.extend(c);
+            let Ok(activity) = instance_activity(db, *inst_id, &mut poller) else {
+                return Vec::new();
+            };
+            reads.extend(activity.reads);
+            writes.extend(activity.writes);
+            cont_writes.extend(activity.cont_writes);
+        }
+        if ctx.is_cancelled() {
+            return Vec::new();
         }
         // A subroutine body (including an exported one) reads and writes
         // signals of its declaring scope, or of another scope by hierarchical
         // name; package and class subroutines are outside every instance.
-        for &id in ctx.design_nodes() {
+        for &id in ctx.until_cancelled(ctx.design_nodes()) {
             if matches!(db.node_kind(id), NodeKind::FuncTask { .. }) {
                 if let Some(body) = subroutine_body(db, id) {
                     reads.extend(collect_reads(db, body));
@@ -89,6 +96,9 @@ impl LintRule for UnusedSignalRule {
                     .into_iter()
                     .filter(|read| *read != signal),
             );
+        }
+        if ctx.is_cancelled() {
+            return Vec::new();
         }
         // Primitive instances (gates and UDPs) read their input terminals and
         // drive their output terminals, like a continuous assignment does.
@@ -122,8 +132,11 @@ impl LintRule for UnusedSignalRule {
         let members = virtual_interface_members(db);
         extend_virtual_interface_members(&mut reads, &members);
         extend_virtual_interface_members(&mut writes, &members);
+        if ctx.is_cancelled() {
+            return Vec::new();
+        }
         let mut out = Vec::new();
-        for inst_id in instances {
+        for inst_id in ctx.until_cancelled(instances) {
             for sig in &db.node(inst_id).children {
                 if !is_signal(db, *sig) {
                     continue;
@@ -177,25 +190,39 @@ impl LintRule for UnusedSignalRule {
     }
 }
 
+/// The signals that some scopes read, write, and write by continuous
+/// assignment.
+#[derive(Default)]
+struct Activity {
+    reads: Vec<NodeId>,
+    writes: Vec<NodeId>,
+    cont_writes: Vec<NodeId>,
+}
+
 /// Reads, writes, and continuous-assignment writes across a scope's own
 /// processes and continuous assigns, including descendant gen scopes but not
 /// child module instances.
-fn instance_activity(db: &Db, scope: NodeId) -> (Vec<NodeId>, Vec<NodeId>, Vec<NodeId>) {
-    let mut reads = Vec::new();
-    let mut writes = Vec::new();
-    let mut cont_writes = Vec::new();
+fn instance_activity(
+    db: &Db,
+    scope: NodeId,
+    poller: &mut Poller<'_>,
+) -> Result<Activity, Cancelled> {
+    let mut activity = Activity::default();
     let mut stack = vec![scope];
     while let Some(id) = stack.pop() {
         for c in &db.node(id).children {
+            poller.step()?;
             match db.node_kind(*c) {
                 NodeKind::Process { .. } => {
-                    reads.extend(collect_reads(db, *c));
-                    writes.extend(collect_writes_with_members(db, *c));
+                    activity.reads.extend(collect_reads(db, *c));
+                    activity.writes.extend(collect_writes_with_members(db, *c));
                 }
                 NodeKind::ContAssign { .. } => {
-                    reads.extend(collect_reads(db, *c));
-                    writes.extend(collect_writes_with_members(db, *c));
-                    cont_writes.extend(collect_writes_with_members(db, *c));
+                    activity.reads.extend(collect_reads(db, *c));
+                    activity.writes.extend(collect_writes_with_members(db, *c));
+                    activity
+                        .cont_writes
+                        .extend(collect_writes_with_members(db, *c));
                 }
                 NodeKind::GenScopeArray | NodeKind::GenScope => stack.push(*c),
                 // A clocking block reads its clock and samples every input
@@ -203,13 +230,13 @@ fn instance_activity(db: &Db, scope: NodeId) -> (Vec<NodeId>, Vec<NodeId>, Vec<N
                 // whether or not a process reads the clockvar.
                 _ if db.is_clocking_block(*c) => {
                     if let Some(block) = db.clocking_block(*c) {
-                        reads.extend(collect_reads(db, block.event));
+                        activity.reads.extend(collect_reads(db, block.event));
                     }
                     for variable in &db.node(*c).children {
                         if let Some(info) = db.clocking_var(*variable).filter(|info| {
                             matches!(info.direction, Direction::Input | Direction::Inout)
                         }) {
-                            reads.extend(collect_reads(db, info.expression));
+                            activity.reads.extend(collect_reads(db, info.expression));
                         }
                     }
                 }
@@ -217,7 +244,7 @@ fn instance_activity(db: &Db, scope: NodeId) -> (Vec<NodeId>, Vec<NodeId>, Vec<N
             }
         }
     }
-    (reads, writes, cont_writes)
+    Ok(activity)
 }
 
 #[cfg(test)]

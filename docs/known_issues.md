@@ -4194,28 +4194,56 @@ Two files that both define `module dup_top;` with
 
 ## Symbol lists of the last analysis (llg_ls)
 
-**Status:** found by FIN-002 step 4 (failure matrix); not fixed. Requests by
-position answer for the current text only.
+**Status:** found by FIN-002 step 4 (failure matrix); not fixed. The places of the
+listed symbols follow unsaved edits
+([positions in edited files](config.md#positions-in-edited-files)).
 
 ### Symptom
 
-`textDocument/documentSymbol` and `workspace/symbol` that follow an edit at once
-list the symbols and ranges of the analysis before the edit. An editor asks for
-the outline after each change, so it can show the old one until the next change.
+`textDocument/documentSymbol`, `workspace/symbol` and `llg/moduleExplorer` list the
+symbols of the last analysis, which an edit does not start. An editor asks for the
+outline after each change, so it lacks a declaration that was typed since the save,
+until the first change after the edit was saved and analysed.
 
 ### Cause
 
-Both answer from `last_good` at once. Dropping the symbols whose text moved would
-leave the outline empty while an edit is analysed, and nothing asks the editor to
-read it again.
+They answer from `last_good`. Nothing asks the editor to read the outline again after
+the analysis.
 
 ### Intended direction
 
-Let the two requests wait until the analysis of the current texts is committed or
-refused (a notification of the root's commits, with the request's cancellation and
-a bound), then answer from it.
+Answer `documentSymbol` for an edited document from its isolated parse, as tokens
+and definitions are, and let a request that follows a save wait for the analysis
+(a notification of the root's commits, with the request's cancellation and a
+bound).
 
 ### Reproduce
 
-Open a file with a module, send `textDocument/didChange` with a line inserted above
-it and `textDocument/documentSymbol` right behind it.
+Open a file with a module, send `textDocument/didChange` with another module added
+below it and `textDocument/documentSymbol`.
+
+## Diagnostics of an analysis that an edit overtook (llg_ls)
+
+**Status:** noticed while positions were made to follow unsaved edits; not fixed.
+
+### Symptom
+
+Diagnostics of an analysis that ends after a further edit are published at the
+positions of the text it read. An editor moves only the markers that it already
+shows, so these are off by the lines inserted above them until the next save.
+
+### Cause
+
+`commit_job` publishes the analysed positions. The digests that suppress unchanged
+payloads, the unions for shared files and the payload replayed at `didOpen` all hold
+them.
+
+### Intended direction
+
+Map the ranges when a payload is sent (`lsp/handlers/positions.rs`), after the digest
+was compared, and leave those whose place is gone where they were.
+
+### Reproduce
+
+Save a file with an error whose analysis takes a second, insert a line above the
+error within that second and read `textDocument/publishDiagnostics`.

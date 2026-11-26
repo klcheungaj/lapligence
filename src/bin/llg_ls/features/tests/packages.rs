@@ -263,19 +263,19 @@ fn package_item_hover_shows_enum_value() {
 fn package_item_completion_after_scope_prefix() {
     let a = package_item_analysis();
     // Cursor at the end of `my_pkg::` (8 chars) → the scope branch fires.
-    let items = completion_at(&a, hp("/x/u.sv"), 0, 8, "my_pkg::");
+    let items = completion_at(&a, &[], 8, "my_pkg::");
     let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
     assert!(labels.contains(&"P"), "items: {labels:?}");
     assert!(labels.contains(&"IDLE"), "items: {labels:?}");
     assert!(labels.contains(&"RUN"), "items: {labels:?}");
     // Prefix filtering applies to the item after `::` (cursor at the end
     // of the typed prefix, so col == line length).
-    let items = completion_at(&a, hp("/x/u.sv"), 0, 9, "my_pkg::I");
+    let items = completion_at(&a, &[], 9, "my_pkg::I");
     let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
     assert!(labels.contains(&"IDLE"), "items: {labels:?}");
     assert!(!labels.contains(&"P"), "items: {labels:?}");
     // Unknown packages offer nothing.
-    let items = completion_at(&a, hp("/x/u.sv"), 0, 6, "nope::");
+    let items = completion_at(&a, &[], 6, "nope::");
     assert!(items.is_empty(), "items: {items:?}");
 }
 
@@ -445,7 +445,7 @@ fn analyze_full_pipeline_package_items() {
     );
 
     // Completion after `my_pkg::` offers the package items.
-    let items = completion_at(&a, &u_sv.to_string_lossy(), 0, 8, "my_pkg::");
+    let items = completion_at(&a, &[], 8, "my_pkg::");
     let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
     assert!(labels.contains(&"P"), "items: {labels:?}");
     assert!(labels.contains(&"IDLE"), "items: {labels:?}");

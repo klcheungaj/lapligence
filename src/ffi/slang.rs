@@ -10,6 +10,7 @@
 #![allow(clippy::duplicated_attributes)]
 
 use std::collections::HashSet;
+use std::ffi::c_void;
 use std::sync::Arc;
 use std::{fmt, ptr, slice, str};
 
@@ -43,6 +44,8 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
+use crate::cancel::{CancelToken, Cancelled};
+
 const ABI_VERSION: u32 = 88;
 const INVALID_ID: u64 = u64::MAX;
 
@@ -52,6 +55,7 @@ const STATUS_LIMIT_EXCEEDED: u32 = 2;
 const STATUS_FRONTEND_ERROR: u32 = 3;
 const STATUS_INTERNAL_ERROR: u32 = 4;
 const STATUS_SINK_ABORTED: u32 = 5;
+const STATUS_CANCELLED: u32 = 6;
 
 const COMPILE_LIBRARY_UNITS: u32 = 1 << 0;
 const COMPILE_EDITION_VERILOG_2001: u32 = 1 << 1;
@@ -485,6 +489,8 @@ pub struct CompileOptions {
     /// that the user chose it, even when it equals the built-in one.
     pub default_time_scale: Option<SemanticTimeScale>,
     pub limits: Limits,
+    /// Stops the compile, which then fails with [`SlangErrorKind::Cancelled`].
+    pub cancel: CancelToken,
 }
 
 /// Sources and options borrowed for the duration of one blocking compile call.
@@ -498,6 +504,7 @@ pub struct CompileRequest<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SlangErrorKind {
+    Cancelled,
     InvalidArgument,
     LimitExceeded,
     Frontend,
@@ -2248,6 +2255,8 @@ struct RawCompileRequest {
     max_nesting_depth: u32,
     limits: RawLimits,
     default_time_scale: RawTimeScale,
+    cancelled: Option<unsafe extern "C" fn(*const c_void) -> u32>,
+    cancel_context: *const c_void,
 }
 
 #[repr(C)]
@@ -2660,6 +2669,7 @@ impl Drop for ErrorOwner {
 pub fn compile(request: &CompileRequest<'_>) -> Result<Snapshot, SlangError> {
     validate_request(request)?;
     let mut builder = StreamBuilder::new(request.options.limits);
+    builder.cancel = request.options.cancel.clone();
     let sink = sink_for(&mut builder);
     // The sink's context is `builder`, which is not otherwise used until the
     // blocking call returns.
@@ -2859,15 +2869,31 @@ fn call_native(request: &CompileRequest<'_>, sink: &RawSink) -> (u32, ErrorOwner
             .default_time_scale
             .unwrap_or(SemanticTimeScale::DEFAULT)
             .raw(),
+        cancelled: request
+            .options
+            .cancel
+            .can_cancel()
+            .then_some(compile_cancelled),
+        cancel_context: ptr::from_ref(&request.options.cancel).cast(),
     };
 
     let mut error = ptr::null_mut();
-    // SAFETY: all request pointers refer to live vectors or borrowed strings
-    // that remain valid for this blocking call; the sink's callbacks match
-    // the header's signatures and its context is reserved by the caller; the
-    // error output pointer is writable.
+    // SAFETY: all request pointers refer to live vectors, borrowed strings or
+    // the borrowed cancel token, which remain valid for this blocking call;
+    // the sink's callbacks and the cancellation callback match the header's
+    // signatures, and the sink's context is reserved by the caller; the error
+    // output pointer is writable.
     let status = unsafe { llg_slang_compile(&raw_request, sink, &mut error) };
     (status, ErrorOwner(error))
+}
+
+/// The cancellation callback of a [`RawCompileRequest`].
+///
+/// # Safety
+/// `token` is the live [`CancelToken`] of the request.
+unsafe extern "C" fn compile_cancelled(token: *const c_void) -> u32 {
+    // SAFETY: the caller passes the request's token, which the compile borrows.
+    u32::from(unsafe { &*token.cast::<CancelToken>() }.is_cancelled())
 }
 
 fn validate_request(request: &CompileRequest<'_>) -> Result<(), SlangError> {
@@ -3248,6 +3274,7 @@ fn take_native_error(status: u32, owner: ErrorOwner) -> SlangError {
 
 fn status_kind(status: u32) -> SlangErrorKind {
     match status {
+        STATUS_CANCELLED => SlangErrorKind::Cancelled,
         STATUS_INVALID_ARGUMENT => SlangErrorKind::InvalidArgument,
         STATUS_LIMIT_EXCEEDED => SlangErrorKind::LimitExceeded,
         STATUS_FRONTEND_ERROR => SlangErrorKind::Frontend,
@@ -3258,6 +3285,10 @@ fn status_kind(status: u32) -> SlangErrorKind {
 
 fn invalid_argument(message: impl Into<String>) -> SlangError {
     SlangError::new(SlangErrorKind::InvalidArgument, message)
+}
+
+fn cancelled(cancelled: Cancelled) -> SlangError {
+    SlangError::new(SlangErrorKind::Cancelled, cancelled.to_string())
 }
 
 fn limit_exceeded(message: impl Into<String>) -> SlangError {

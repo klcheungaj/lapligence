@@ -4,9 +4,10 @@ use std::error::Error;
 use std::fmt;
 
 use super::{
-    AssertionExprKind, ConditionalPatternKind, Db, DriverDelay, ExprKind, NodeId, NodeKind,
-    StmtKind,
+    AssertionExprKind, ConditionalPatternKind, Db, DbError, DriverDelay, ExprKind, NodeId,
+    NodeKind, StmtKind,
 };
+use crate::cancel::CancelToken;
 
 /// A structural invariant violation in an owned [`Db`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,7 +51,18 @@ impl Db {
     /// Validate arena links and side-table references after semantic import.
     pub fn validate(&self) -> Result<(), DbValidationError> {
         let validator = Validator { db: self };
-        validator.validate()
+        validator.validate_nodes(|| Ok(()))?;
+        validator.validate_tables()
+    }
+
+    /// [`Self::validate`], unless `cancel` stops it.
+    pub(super) fn validate_unless_cancelled(&self, cancel: &CancelToken) -> Result<(), DbError> {
+        let validator = Validator { db: self };
+        let mut poller = cancel.poller();
+        validator.validate_nodes(|| poller.step().map_err(DbError::from))?;
+        cancel.check()?;
+        validator.validate_tables()?;
+        Ok(())
     }
 }
 
@@ -59,21 +71,26 @@ struct Validator<'db> {
 }
 
 impl Validator<'_> {
-    fn validate(&self) -> Result<(), DbValidationError> {
+    /// The links of every node; `step` is called before each one.
+    fn validate_nodes<E: From<DbValidationError>>(
+        &self,
+        mut step: impl FnMut() -> Result<(), E>,
+    ) -> Result<(), E> {
         let (semantic_kinds, semantic_details) = self.db.semantic_metadata_lengths();
         if semantic_kinds != 0 && semantic_kinds != self.db.nodes().len() {
-            return self.fail(
+            self.fail::<()>(
                 "semantic_kinds",
                 "native semantic category table does not match node arena",
-            );
+            )?;
         }
         if semantic_details != 0 && semantic_details != self.db.nodes().len() {
-            return self.fail(
+            self.fail::<()>(
                 "semantic_details",
                 "native semantic detail table does not match node arena",
-            );
+            )?;
         }
         for (index, node) in self.db.nodes().iter().enumerate() {
+            step()?;
             let path = format_args!("nodes[{index}]");
             if let Some(parent) = node.parent {
                 self.node(parent, format_args!("{path}.parent"))?;
@@ -86,6 +103,10 @@ impl Validator<'_> {
             }
             self.validate_kind_refs(&node.kind, format_args!("{path}.kind"))?;
         }
+        Ok(())
+    }
+
+    fn validate_tables(&self) -> Result<(), DbValidationError> {
         for (call, info) in self.db.randomize_call_entries() {
             let path = format_args!("randomize_calls[{}]", call.0);
             if !matches!(

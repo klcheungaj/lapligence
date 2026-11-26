@@ -7,9 +7,11 @@ Components: [readme](readme.md), [handlers](handlers/readme.md). Server rules:
 ## Directory map
 
 - `handlers/state.rs`: backend/root state, `DiscoveryOrder`, `ClientOrder`.
+- `handlers/inputs.rs`: which events start an analysis (module docs).
 - `handlers/scheduling.rs`: rescans, jobs, debounce, reloads, watchers.
 - `handlers/identifiers.rs`: the table that answers a document's token and
   definition requests.
+- `handlers/positions.rs`: positions between an analysed and an edited text.
 - `handlers/staging.rs`: bounded snapshots, authorized includes, private mirrors,
   single-flight tables.
 - `handlers/diagnostics.rs`: publication order and shared-file unions.
@@ -20,14 +22,24 @@ Components: [readme](readme.md), [handlers](handlers/readme.md). Server rules:
 
 - Build Slang, DB, model and indexes in one `spawn_blocking` closure. Hold no
   backend lock across discovery, cleanup, admission or compilation.
+- An event starts an analysis only through the content comparisons of
+  `inputs.rs`; a change only admits its text
+  ([user rules](../../../../docs/config.md#when-an-analysis-starts)).
+- A job asks its token (`RootJob::cancel`) after each wait and stage. A cancelled
+  one returns `JobEnd::Cancelled`: it publishes nothing, leaves `last_good` and
+  `analysed` alone and has one `event=root_job.end outcome=cancelled` line.
+- No handler takes the staging lock on the async runtime: a job holds it for a
+  whole analysis, and its handler would keep the save that cancels it waiting.
 - tower-lsp runs notifications concurrently: apply a discovery only when no
   later-started one was applied, discard stale generations, and only the job
   holding the root's current generation releases its running slot.
 - Always publish diagnostics, after the state lock is released, through the
   ticketed `publish_ordered` path (`diagnostics.rs` docs).
 - Valid analysis replaces `last_good`; compile/admission failures keep navigation.
-- A position from `last_good` leaves the server only through the current-text
-  checks of `identifiers.rs` ([handlers](handlers/readme.md)).
+- A request position reaches `last_good` only through `Placement::analysed`, and
+  its positions leave the server only through `Places`, or not at all
+  ([handlers](handlers/readme.md)). Open texts change only through
+  `BackendState::set_document` and `remove_document`.
 - Watched-file registrations are serialized by their own gate and read the
   watcher set only after taking their turn. No notification handler waits for
   a reply of the client: tower-lsp stops reading when its handlers are taken.
@@ -58,11 +70,15 @@ Components: [readme](readme.md), [handlers](handlers/readme.md). Server rules:
 - An isolated parse uses captured revisions, admitted text and the committed
   analysis' include and package context (never a file access), so it runs beside
   a project analysis, one at a time (`isolated_parse_lock`); recheck staleness
-  before cache lookup, flight admission and the blocking compile. Saturated
-  single-flight tables refuse new work; the committed table answers.
+  before cache lookup, flight admission and the blocking compile. An edit cancels
+  the parse of the older text (`cancel_superseded`). Saturated single-flight tables
+  refuse new work; the committed table answers.
 - Record each token request's inputs under the capture lock; a commit that
   changes its stream sends `workspace/semanticTokens/refresh` from a spawned
   task (`ServedTokens` docs), never from a request handler.
+- Shutdown, `exit` and the end of the input (once its requests are answered)
+  cancel the running analysis and isolated parse (`cancel_analyses`), whose end
+  the cleanup waits for.
 - Shutdown clears roots, caches, flights, watchers and the private process
   mirror; only the per-process child of the staging root is ever removed
   (`--staging-dir` handling: `main.rs`).

@@ -180,7 +180,7 @@ fn protected_body_keeps_the_plaintext_header_without_errors() {
     let target = definition_at(&a, hp("/virtual/top.sv"), line, col + 1)
         .expect("definition of the module name");
     assert_eq!(target.range.start, Position::new(0, 7), "{target:?}");
-    let completion = completion_at(&a, hp("/virtual/top.sv"), line, col + 4, "  body");
+    let completion = completion_at(&a, &[], col + 4, "  body");
     assert!(
         completion.iter().any(|item| item.label == "body_prot"),
         "{completion:?}"

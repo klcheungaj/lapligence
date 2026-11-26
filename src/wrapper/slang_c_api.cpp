@@ -184,6 +184,54 @@ public:
   uint32_t status;
 };
 
+// The request's cancellation callback (LlgSlangCompileRequest::cancelled).
+class Cancellation {
+public:
+  explicit Cancellation(const LlgSlangCompileRequest& request)
+      : cancelled(request.cancelled), context(request.cancel_context) {}
+
+  // Whether the caller may cancel the compile at all.
+  explicit operator bool() const { return cancelled != nullptr; }
+
+  // Throws when the caller cancelled the compile.
+  void poll() const {
+    if (cancelled && cancelled(context) != 0)
+      throw BridgeFailure(LLG_SLANG_STATUS_CANCELLED, "the compile was cancelled");
+  }
+
+  // `poll` as a CompilationOptions::checkpoint.
+  static void checkpoint(const void* cancellation) {
+    static_cast<const Cancellation*>(cancellation)->poll();
+  }
+
+private:
+  uint32_t (*cancelled)(const void*);
+  const void* context;
+};
+
+// Export bytes between two polls of a cancellable capture: a few thousand
+// semantic nodes, which take a few milliseconds.
+constexpr uint64_t kCancellationPollBytes = 1024 * 1024;
+
+// Polls at intervals of a loop over capture tables that charges nothing.
+class CancellationSteps {
+public:
+  explicit CancellationSteps(const Cancellation& cancellation)
+      : cancellation(cancellation) {}
+
+  void step() {
+    if ((++steps & (kInterval - 1)) == 0)
+      cancellation.poll();
+  }
+
+private:
+  // A step takes about a microsecond at most. A power of two.
+  static constexpr uint32_t kInterval = 8 * 1024;
+
+  const Cancellation& cancellation;
+  uint32_t steps = 0;
+};
+
 uint64_t effectiveLimit(uint64_t requested, uint64_t defaultValue,
                         uint64_t hardLimit) {
   return std::min(requested == 0 ? defaultValue : requested, hardLimit);
@@ -245,7 +293,8 @@ class SemanticNodeCount final
 public:
   uint64_t count = 0;
 
-  explicit SemanticNodeCount(bool simulationFacts) : simulationFacts(simulationFacts) {}
+  SemanticNodeCount(bool simulationFacts, const Cancellation& cancellation)
+      : simulationFacts(simulationFacts), cancellation(cancellation) {}
 
   template<typename T>
   void handle(const T& node) {
@@ -254,11 +303,13 @@ public:
         return;
     }
     ++count;
+    cancellation.step();
     visitDefault(node);
   }
 
 private:
   bool simulationFacts;
+  CancellationSteps cancellation;
 };
 
 struct EditionPolicy {
@@ -341,6 +392,10 @@ struct CaptureOutput {
   uint32_t flags = 0;
   uint64_t output_bytes = 0;
   uint64_t output_byte_limit = kDefaultMaxOutputBytes;
+  // Export bytes at which `chargeExport` stops for a poll or at the limit; at
+  // most `output_byte_limit`.
+  uint64_t charge_limit = 0;
+  const Cancellation& cancellation;
   std::unordered_set<std::string, SnapshotStringHash, std::equal_to<>> strings;
   std::vector<LlgSlangFile> files;
   std::vector<LlgSlangDiagnostic> diagnostics;
@@ -367,6 +422,18 @@ struct CaptureOutput {
   std::vector<LlgSlangMacroDefinition> macro_definitions;
   std::vector<LlgSlangMacroReference> macro_references;
   std::vector<LlgSlangInclude> includes;
+
+  CaptureOutput(const Cancellation& cancellation, uint64_t byteLimit)
+      : output_byte_limit(byteLimit), cancellation(cancellation) {
+    extendCharge();
+  }
+
+  // The charge limit of the bytes stored now.
+  void extendCharge() {
+    charge_limit = output_byte_limit;
+    if (cancellation && output_byte_limit - output_bytes > kCancellationPollBytes)
+      charge_limit = output_bytes + kCancellationPollBytes;
+  }
 };
 
 namespace {
@@ -417,12 +484,40 @@ size_t utf8SequenceLength(std::string_view text, size_t at) {
   return length;
 }
 
+// Charges that do not fit below the charge limit: the budget is exhausted, or
+// a cancellable capture is due for a poll.
+void chargeBeyondLimit(CaptureOutput& snapshot, uint64_t bytes) {
+  if (bytes > snapshot.output_byte_limit - snapshot.output_bytes) {
+    throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
+        "export byte limit exceeded (limit=" +
+        std::to_string(snapshot.output_byte_limit) +
+        ", bytes=" + std::to_string(snapshot.output_bytes) +
+        ", nodes=" + std::to_string(snapshot.semantic_nodes.size()) +
+        ", types=" + std::to_string(snapshot.types.size()) +
+        ", constants=" + std::to_string(snapshot.constants.size()) +
+        ", instances=" + std::to_string(snapshot.instances.size()) + ")");
+  }
+  snapshot.cancellation.poll();
+  snapshot.output_bytes += bytes;
+  snapshot.extendCharge();
+}
+
+// Charges `bytes` against the export budget, before they are stored. A
+// capture charges in all its phases, so this is also where it notices that it
+// was cancelled.
+void chargeExport(CaptureOutput& snapshot, uint64_t bytes) {
+  if (bytes > snapshot.charge_limit - snapshot.output_bytes) [[unlikely]] {
+    chargeBeyondLimit(snapshot, bytes);
+    return;
+  }
+  snapshot.output_bytes += bytes;
+}
+
 // A SystemVerilog string constant: arbitrary bytes, not text.
 LlgSlangString storeBytes(CaptureOutput& snapshot, std::string_view value) {
   if (value.empty())
     return {nullptr, 0};
-  addChecked(snapshot.output_bytes, value.size(), snapshot.output_byte_limit,
-             "export byte");
+  chargeExport(snapshot, value.size());
   auto found = snapshot.strings.find(value);
   if (found == snapshot.strings.end())
     found = snapshot.strings.emplace(value).first;
@@ -452,19 +547,7 @@ LlgSlangString storeString(CaptureOutput& snapshot, std::string_view value) {
 }
 
 void chargeRecord(CaptureOutput& snapshot, uint64_t bytes) {
-  if (bytes > snapshot.output_byte_limit ||
-      snapshot.output_bytes > snapshot.output_byte_limit - bytes) {
-    throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
-        "export byte limit exceeded (limit=" +
-        std::to_string(snapshot.output_byte_limit) +
-        ", bytes=" + std::to_string(snapshot.output_bytes) +
-        ", nodes=" + std::to_string(snapshot.semantic_nodes.size()) +
-        ", types=" + std::to_string(snapshot.types.size()) +
-        ", constants=" + std::to_string(snapshot.constants.size()) +
-        ", instances=" + std::to_string(snapshot.instances.size()) + ")");
-  }
-  addChecked(snapshot.output_bytes, bytes, snapshot.output_byte_limit,
-             "export byte");
+  chargeExport(snapshot, bytes);
 }
 
 uint32_t diagnosticSubsystem(DiagSubsystem subsystem) {
@@ -553,7 +636,7 @@ struct Capture {
   // identity. Canonical pointers alone are only unique for nominal classes.
   std::unordered_map<const DefinitionSymbol*, std::vector<const VirtualInterfaceType*>>
       virtualInterfaceTypes;
-  std::unordered_map<const void*, uint64_t> semanticIds;
+  flat_hash_map<const void*, uint64_t> semanticIds;
   // DPI-C export declarations by the syntax node that holds them, each as
   // (exported subroutine name, C identifier), filled on first use. Every
   // instance of a declaring scope shares that scope's syntax, so this finds
@@ -568,9 +651,43 @@ struct Capture {
   // filled on first use. The syntax outlives capture.
   std::unordered_set<const syntax::ModuleDeclarationSyntax*> directiveTimeScaled;
   bool directiveTimeScaledReady = false;
-  std::vector<std::vector<LlgSlangSemanticEdge>> pendingEdges;
-  // Small nodes retain cheap scans. Only high-fanout parents pay for indexes;
-  // positions refer to the authoritative ordered edge vector, never its memory.
+  // The edges of a node as a chain in the order of their capture. A design has
+  // millions of them, so `edgeMemory` owns them all and frees them at once.
+  struct PendingEdge {
+    LlgSlangSemanticEdge edge;
+    PendingEdge* next = nullptr;
+  };
+  struct PendingEdges {
+    PendingEdge* first = nullptr;
+    PendingEdge* last = nullptr;
+    size_t count = 0;
+
+    void append(PendingEdge* added) {
+      (last ? last->next : first) = added;
+      last = added;
+      count++;
+    }
+
+    // Drop the edges that `matches` accepts and return how many there were.
+    template<typename Matches>
+    size_t remove(Matches&& matches) {
+      PendingEdge* edge = first;
+      const size_t before = count;
+      *this = {};
+      while (edge) {
+        PendingEdge* const next = edge->next;
+        if (!matches(edge->edge)) {
+          edge->next = nullptr;
+          append(edge);
+        }
+        edge = next;
+      }
+      return before - count;
+    }
+  };
+  BumpAllocator edgeMemory;
+  std::vector<PendingEdges> pendingEdges;
+  // Small nodes retain cheap scans. Only high-fanout parents pay for indexes.
   static constexpr size_t kIndexedSemanticEdgeThreshold = 64;
   // Dimensions walked to reach the typedef of a declared type; a type that
   // nests more is reported without a typedef name.
@@ -579,13 +696,14 @@ struct Capture {
     return (static_cast<uint64_t>(role) << 32) | index;
   }
   struct SemanticEdgeIndex {
-    std::map<uint64_t, size_t> roles;
-    std::unordered_map<uint64_t, std::vector<size_t>> children;
+    std::map<uint64_t, PendingEdge*> roles;
+    std::unordered_map<uint64_t, std::vector<PendingEdge*>> children;
 
-    void add(const LlgSlangSemanticEdge& edge, size_t position) {
-      roles.emplace(semanticEdgeKey(edge.role, edge.index), position);
+    void add(PendingEdge* pending) {
+      const LlgSlangSemanticEdge& edge = pending->edge;
+      roles.emplace(semanticEdgeKey(edge.role, edge.index), pending);
       if (edge.role == LLG_SLANG_EDGE_CHILD)
-        children[edge.target_id].push_back(position);
+        children[edge.target_id].push_back(pending);
     }
   };
   std::unordered_map<uint64_t, SemanticEdgeIndex> indexedSemanticEdges;
@@ -601,8 +719,14 @@ struct Capture {
   std::unordered_map<uint64_t, LlgSlangSourceRange> bodyDeclarations;
   std::vector<NameRepeat> nameRepeats;
   std::unordered_map<uint64_t, uint64_t> lexicalTargetAliases;
-  std::unordered_map<const syntax::SyntaxNode*, std::vector<uint64_t>>
-      sourceIdentityGroups;
+  // The nodes that stem from one syntax node, as a chain in the order opposite
+  // to their capture that starts at the index `sourceIdentityGroups` has.
+  struct SourceIdentity {
+    uint64_t semantic_id;
+    uint64_t previous;
+  };
+  std::vector<SourceIdentity> sourceIdentities;
+  flat_hash_map<const syntax::SyntaxNode*, uint64_t> sourceIdentityGroups;
   std::unordered_set<const ParameterSymbol*> overriddenParameters;
   std::unordered_map<uint64_t, SourceLocation> unitValueDeclarations;
   // Parameter override spellings the bridge rewrote for Slang, so
@@ -668,7 +792,7 @@ struct Capture {
   [[noreturn]] void throwSemanticNodeLimit() const {
     std::optional<uint64_t> needed;
     if (semanticRoot) {
-      SemanticNodeCount counter(simulationFacts());
+      SemanticNodeCount counter(simulationFacts(), output.cancellation);
       semanticRoot->visit(counter);
       // The capture already stored a full budget of nodes.
       needed = std::max(counter.count, maxSemanticNodes() + 1);
@@ -1626,40 +1750,41 @@ struct Capture {
   }
 
   SemanticEdgeIndex* semanticEdgeIndex(uint64_t source) {
-    const auto& edges = pendingEdges[static_cast<size_t>(source)];
-    if (edges.size() < kIndexedSemanticEdgeThreshold)
+    const PendingEdges& edges = pendingEdges[static_cast<size_t>(source)];
+    if (edges.count < kIndexedSemanticEdgeThreshold)
       return nullptr;
     auto [it, inserted] = indexedSemanticEdges.try_emplace(source);
     if (inserted) {
-      for (size_t position = 0; position < edges.size(); position++)
-        it->second.add(edges[position], position);
+      for (PendingEdge* edge = edges.first; edge; edge = edge->next)
+        it->second.add(edge);
     }
     return &it->second;
   }
 
   LlgSlangSemanticEdge* findSemanticEdge(uint64_t source, uint32_t role,
                                         uint32_t index) {
-    auto& edges = pendingEdges[static_cast<size_t>(source)];
     if (auto* lookup = semanticEdgeIndex(source)) {
       const auto it = lookup->roles.find(semanticEdgeKey(role, index));
-      return it == lookup->roles.end() ? nullptr : &edges[it->second];
+      return it == lookup->roles.end() ? nullptr : &it->second->edge;
     }
-    for (auto& edge : edges) {
-      if (edge.role == role && edge.index == index)
-        return &edge;
+    PendingEdge* pending = pendingEdges[static_cast<size_t>(source)].first;
+    for (; pending; pending = pending->next) {
+      if (pending->edge.role == role && pending->edge.index == index)
+        return &pending->edge;
     }
     return nullptr;
   }
 
   LlgSlangSemanticEdge* findSemanticChild(uint64_t source, uint64_t target) {
-    auto& edges = pendingEdges[static_cast<size_t>(source)];
     if (auto* lookup = semanticEdgeIndex(source)) {
       const auto it = lookup->children.find(target);
-      return it == lookup->children.end() ? nullptr : &edges[it->second.front()];
+      return it == lookup->children.end() ? nullptr : &it->second.front()->edge;
     }
-    for (auto& edge : edges) {
-      if (edge.role == LLG_SLANG_EDGE_CHILD && edge.target_id == target)
-        return &edge;
+    PendingEdge* pending = pendingEdges[static_cast<size_t>(source)].first;
+    for (; pending; pending = pending->next) {
+      if (pending->edge.role == LLG_SLANG_EDGE_CHILD &&
+          pending->edge.target_id == target)
+        return &pending->edge;
     }
     return nullptr;
   }
@@ -1677,9 +1802,10 @@ struct Capture {
       return 0;
     }
     uint32_t index = 0;
-    for (const auto& edge : pendingEdges[static_cast<size_t>(source)]) {
-      if (edge.role == LLG_SLANG_EDGE_CHILD)
-        index = std::max(index, edge.index + 1);
+    const PendingEdge* pending = pendingEdges[static_cast<size_t>(source)].first;
+    for (; pending; pending = pending->next) {
+      if (pending->edge.role == LLG_SLANG_EDGE_CHILD)
+        index = std::max(index, pending->edge.index + 1);
     }
     return index;
   }
@@ -1697,11 +1823,12 @@ struct Capture {
     if (semanticEdgeCount >= maxSemanticEdges())
       throwCountLimit("semantic edge", maxSemanticEdges());
     chargeRecord(output, sizeof(LlgSlangSemanticEdge));
-    auto& edges = pendingEdges[static_cast<size_t>(source)];
-    edges.push_back({role, index, target});
+    auto* pending = edgeMemory.emplace<PendingEdge>(
+        PendingEdge{{role, index, target}});
+    pendingEdges[static_cast<size_t>(source)].append(pending);
     if (auto it = indexedSemanticEdges.find(source);
         it != indexedSemanticEdges.end())
-      it->second.add(edges.back(), edges.size() - 1);
+      it->second.add(pending);
     semanticEdgeCount++;
   }
 
@@ -1715,22 +1842,15 @@ struct Capture {
   void semanticRole(uint64_t source, const void* targetIdentity, uint32_t role,
                     uint32_t index = 0) {
     const uint64_t target = ensureSemantic(targetIdentity);
-    auto& edges = pendingEdges[static_cast<size_t>(source)];
     if (const auto* existing = findSemanticEdge(source, role, index)) {
       if (existing->target_id != target)
         throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
                             "conflicting semantic edge role and index");
       if (!findSemanticChild(source, target))
         return;
-      const size_t oldSize = edges.size();
-      edges.erase(std::remove_if(edges.begin(), edges.end(),
-          [=](const LlgSlangSemanticEdge& edge) {
-            return edge.role == LLG_SLANG_EDGE_CHILD &&
-                   edge.target_id == target;
-          }), edges.end());
-      if (oldSize != edges.size())
-        indexedSemanticEdges.erase(source);
-      semanticEdgeCount -= oldSize - edges.size();
+      removeEdges(source, [=](const LlgSlangSemanticEdge& edge) {
+        return edge.role == LLG_SLANG_EDGE_CHILD && edge.target_id == target;
+      });
       return;
     }
     if (auto* edge = findSemanticChild(source, target)) {
@@ -1738,14 +1858,14 @@ struct Capture {
           it != indexedSemanticEdges.end()) {
         auto& lookup = it->second;
         lookup.roles.erase(semanticEdgeKey(edge->role, edge->index));
-        auto& positions = lookup.children.at(target);
-        const size_t position = positions.front();
+        auto& children = lookup.children.at(target);
+        PendingEdge* const pending = children.front();
         if (role != LLG_SLANG_EDGE_CHILD) {
-          positions.erase(positions.begin());
-          if (positions.empty())
+          children.erase(children.begin());
+          if (children.empty())
             lookup.children.erase(target);
         }
-        lookup.roles.emplace(semanticEdgeKey(role, index), position);
+        lookup.roles.emplace(semanticEdgeKey(role, index), pending);
       }
       edge->role = role;
       edge->index = index;
@@ -1781,43 +1901,54 @@ struct Capture {
   void replaceChildRoles(uint64_t source, uint32_t role) {
     indexedSemanticEdges.erase(source);
     uint32_t index = 0;
-    for (auto& edge : pendingEdges[static_cast<size_t>(source)]) {
-      if (edge.role == LLG_SLANG_EDGE_CHILD) {
-        edge.role = role;
-        edge.index = index++;
+    PendingEdge* pending = pendingEdges[static_cast<size_t>(source)].first;
+    for (; pending; pending = pending->next) {
+      if (pending->edge.role == LLG_SLANG_EDGE_CHILD) {
+        pending->edge.role = role;
+        pending->edge.index = index++;
       }
     }
   }
 
-  void removeChildEdges(uint64_t source) {
-    auto& edges = pendingEdges[static_cast<size_t>(source)];
-    const size_t oldSize = edges.size();
-    edges.erase(std::remove_if(edges.begin(), edges.end(),
-        [](const LlgSlangSemanticEdge& edge) {
-          return edge.role == LLG_SLANG_EDGE_CHILD;
-        }), edges.end());
-    if (oldSize != edges.size())
+  template<typename Matches>
+  void removeEdges(uint64_t source, Matches&& matches) {
+    const size_t removed =
+        pendingEdges[static_cast<size_t>(source)].remove(matches);
+    if (removed)
       indexedSemanticEdges.erase(source);
-    semanticEdgeCount -= oldSize - edges.size();
+    semanticEdgeCount -= removed;
+  }
+
+  void removeChildEdges(uint64_t source) {
+    removeEdges(source, [](const LlgSlangSemanticEdge& edge) {
+      return edge.role == LLG_SLANG_EDGE_CHILD;
+    });
   }
 
   void finalizeSemanticEdges() {
     output.semantic_edges.reserve(static_cast<size_t>(semanticEdgeCount));
+    CancellationSteps cancellation(output.cancellation);
     for (size_t i = 0; i < pendingEdges.size(); i++) {
+      cancellation.step();
       auto& node = output.semantic_nodes[i];
       node.edge_start = output.semantic_edges.size();
-      node.edge_count = pendingEdges[i].size();
-      output.semantic_edges.insert(output.semantic_edges.end(),
-                                   pendingEdges[i].begin(), pendingEdges[i].end());
-      std::vector<LlgSlangSemanticEdge>().swap(pendingEdges[i]);
+      node.edge_count = pendingEdges[i].count;
+      const PendingEdge* pending = pendingEdges[i].first;
+      for (; pending; pending = pending->next)
+        output.semantic_edges.push_back(pending->edge);
     }
-    std::vector<std::vector<LlgSlangSemanticEdge>>().swap(pendingEdges);
+    std::vector<PendingEdges>().swap(pendingEdges);
+    edgeMemory = BumpAllocator();
     indexedSemanticEdges.clear();
   }
 
   void sourceIdentity(const syntax::SyntaxNode* syntaxNode, uint64_t semanticId) {
-    if (syntaxNode)
-      sourceIdentityGroups[syntaxNode].push_back(semanticId);
+    if (!syntaxNode)
+      return;
+    const uint64_t index = sourceIdentities.size();
+    auto [last, first] = sourceIdentityGroups.try_emplace(syntaxNode, index);
+    sourceIdentities.push_back({semanticId, first ? LLG_SLANG_INVALID_ID : last->second});
+    last->second = index;
   }
 
   void markOverriddenParameters() {
@@ -1834,10 +1965,16 @@ struct Capture {
   }
 
   void finalizeSourceIdentities() {
-    for (const auto& [syntaxNode, ids] : sourceIdentityGroups) {
+    std::vector<uint64_t> ids;
+    for (const auto& [syntaxNode, last] : sourceIdentityGroups) {
       (void)syntaxNode;
-      if (ids.size() < 2)
+      if (sourceIdentities[last].previous == LLG_SLANG_INVALID_ID)
         continue;
+      ids.clear();
+      for (uint64_t index = last; index != LLG_SLANG_INVALID_ID;
+           index = sourceIdentities[index].previous)
+        ids.push_back(sourceIdentities[index].semantic_id);
+      std::reverse(ids.begin(), ids.end());
       uint64_t representative = *std::min_element(ids.begin(), ids.end());
       for (uint64_t id : ids) {
         const auto& node = output.semantic_nodes[static_cast<size_t>(id)];
@@ -10196,7 +10333,9 @@ public:
                 [&](const auto& left, const auto& right) {
                   return rangeLess(left.range, right.range);
                 });
+    CancellationSteps cancellation(capture.output.cancellation);
     for (const auto& binding : capture.lexicalBindings) {
+      cancellation.step();
       if (binding.range.file_id == LLG_SLANG_INVALID_ID)
         continue;
       const auto key = std::tuple{binding.range.file_id, binding.range.start,
@@ -10223,6 +10362,7 @@ public:
     }
     for (size_t nodeIndex = 0; nodeIndex < capture.output.semantic_nodes.size();
          nodeIndex++) {
+      cancellation.step();
       const auto& node = capture.output.semantic_nodes[nodeIndex];
       if (node.range.file_id == LLG_SLANG_INVALID_ID)
         continue;
@@ -10288,6 +10428,7 @@ public:
     }
 
     for (auto& token : capture.output.lexical_tokens) {
+      cancellation.step();
       const bool expandedMacro = token.kind == LLG_SLANG_LEXICAL_MACRO &&
           (token.flags & LLG_SLANG_LEXICAL_MACRO_EXPANSION) != 0;
       // The array methods `unique`, `and`, `or` and `xor` (IEEE 1800-2009
@@ -12099,7 +12240,8 @@ void captureNavigation(Compilation& compilation, Capture& capture) {
   visitor.bindUninstantiatedConnections(compilation);
 }
 
-std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request) {
+std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request,
+                                           const Cancellation& cancellation) {
   if (request.abi_version != LLG_SLANG_ABI_VERSION)
     throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
                         "unsupported Slang ABI version");
@@ -12495,6 +12637,16 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
   parsing::ParserOptions parserOptions;
   parserOptions.languageVersion = edition.languageVersion;
   parserOptions.maxRecursionDepth = request.max_nesting_depth;
+  // The options refer to it as long as the sources are parsed.
+  const auto pollBufferChange = [&cancellation](BufferID, bool, bool) {
+    cancellation.poll();
+  };
+  if (cancellation) {
+    // The preprocessor reports each buffer that it enters or returns to.
+    preprocessorOptions.bufferChangeCB = pollBufferChange;
+    compilationOptions.checkpoint = Cancellation::checkpoint;
+    compilationOptions.checkpointContext = &cancellation;
+  }
   Bag parseOptions;
   parseOptions.set(std::move(preprocessorOptions));
   parseOptions.set(std::move(lexerOptions));
@@ -12505,6 +12657,7 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
   std::vector<std::shared_ptr<syntax::SyntaxTree>> trees;
   auto addTree = [&](std::shared_ptr<syntax::SyntaxTree> tree) {
     trees.push_back(std::move(tree));
+    cancellation.poll();
   };
   bool anyCompilationUnit = false;
   if ((request.flags & LLG_SLANG_COMPILE_MERGED_COMPILATION_UNITS) != 0) {
@@ -12585,7 +12738,9 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
   trees.clear();
 
   parseStage.finish();
-  auto output = std::make_unique<CaptureOutput>();
+  auto output = std::make_unique<CaptureOutput>(
+      cancellation, effectiveLimit(request.limits.max_output_bytes,
+                                   kDefaultMaxOutputBytes, kHardMaxOutputBytes));
   output->flags |= edition.snapshotFlag;
   if ((request.flags & LLG_SLANG_COMPILE_MERGED_COMPILATION_UNITS) != 0)
     output->flags |= LLG_SLANG_SNAPSHOT_MERGED_COMPILATION_UNITS;
@@ -12593,8 +12748,6 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
     output->flags |= LLG_SLANG_SNAPSHOT_DELAY_SELECT_MIN;
   if ((request.flags & LLG_SLANG_COMPILE_DELAY_SELECT_MAX) != 0)
     output->flags |= LLG_SLANG_SNAPSHOT_DELAY_SELECT_MAX;
-  output->output_byte_limit = effectiveLimit(request.limits.max_output_bytes,
-      kDefaultMaxOutputBytes, kHardMaxOutputBytes);
   Capture capture{*output, sourceManager, request.limits, request.flags};
   capture.lexerSources = &sourceManager;
   output->sanitize_strings = std::any_of(
@@ -13129,8 +13282,9 @@ extern "C" uint32_t llg_slang_compile(const LlgSlangCompileRequest* request,
     return LLG_SLANG_STATUS_INVALID_ARGUMENT;
   }
 
+  const Cancellation cancellation(*request);
   try {
-    auto output = compileImpl(*request);
+    auto output = compileImpl(*request, cancellation);
     // The compilation, syntax trees and capture indexes are destroyed by
     // now. glibc keeps their freed pages resident inside its heap; return
     // them to the system before the receiver builds its owned copy.
@@ -13148,6 +13302,9 @@ extern "C" uint32_t llg_slang_compile(const LlgSlangCompileRequest* request,
     return LLG_SLANG_STATUS_SINK_ABORTED;
   }
   catch (const BridgeFailure& error) {
+    // The compile that replaces a cancelled one starts with its memory free.
+    if (error.status == LLG_SLANG_STATUS_CANCELLED)
+      llg::wrapper::platform::releaseFreedHeapPages();
     *out_error = makeError(error.status, error.what());
     return error.status;
   }

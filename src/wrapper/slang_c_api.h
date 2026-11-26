@@ -175,6 +175,14 @@ typedef struct {
    * are LLG_SLANG_TIME_UNIT_* codes other than NONE, magnitudes 1, 10 or 100,
    * and the precision is not coarser than the unit. */
   LlgSlangTimeScale default_time_scale;
+  /* (ABI v87) Cancellation. `cancelled`, when not NULL, is called at intervals
+   * on the calling thread with `cancel_context`, which it must leave valid for
+   * the call; it must not throw, unwind or call back into this API. A nonzero
+   * result stops the compile, which releases everything it built and returns
+   * LLG_SLANG_STATUS_CANCELLED. While the sink receives records, the sink is
+   * asked instead: it ends the call with a result of its own. */
+  uint32_t (*cancelled)(const void* cancel_context);
+  const void* cancel_context;
 } LlgSlangCompileRequest;
 
 enum {
@@ -183,7 +191,8 @@ enum {
   LLG_SLANG_STATUS_LIMIT_EXCEEDED = 2,
   LLG_SLANG_STATUS_FRONTEND_ERROR = 3,
   LLG_SLANG_STATUS_INTERNAL_ERROR = 4,
-  LLG_SLANG_STATUS_SINK_ABORTED = 5
+  LLG_SLANG_STATUS_SINK_ABORTED = 5,
+  LLG_SLANG_STATUS_CANCELLED = 6
 };
 
 enum {

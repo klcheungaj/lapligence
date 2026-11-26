@@ -11,7 +11,7 @@ supplement elaborated data for precise navigation and highlighting.
 | `fallback.rs` | Syntax-error feature extraction. |
 | `protected.rs` | Protected envelopes as black boxes: hints instead of errors the hidden text explains ([behavior](../../../../docs/config.md#lsp-protected-source)). |
 | `symbol_index.rs` | Declaration index of document and workspace symbols, completion and the explorer. |
-| `requests.rs` | Pure projections: the identifier table of a document (tokens and definitions), hover, references. |
+| `requests.rs` | Pure projections, in the positions of the analysed text: the identifier table of a document (tokens and definitions), hover, references. |
 | `tests.rs`, `tests/` | Shared helpers and domain regressions. |
 
 Test domains cover graphs, recovery, coordinates, hover, identifiers, bindings/connections,

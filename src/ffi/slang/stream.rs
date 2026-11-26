@@ -54,7 +54,6 @@
 //! [`compile`]: super::compile
 
 use super::*;
-use std::ffi::c_void;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 pub(super) const SINK_CONTINUE: u32 = 0;
@@ -197,6 +196,8 @@ impl Header {
 /// Owned destination of one capture stream; see the module documentation.
 pub(super) struct StreamBuilder {
     limits: Limits,
+    /// Asked for every batch.
+    pub(super) cancel: CancelToken,
     /// Profile marker of the current phase: `native` until the header
     /// arrives, then `ffi.stream`.
     profile: Option<crate::profile::Stage>,
@@ -253,6 +254,7 @@ impl StreamBuilder {
     pub(super) fn new(limits: Limits) -> Self {
         Self {
             limits,
+            cancel: CancelToken::default(),
             profile: Some(crate::profile::Stage::new("native")),
             header: None,
             open: 0,
@@ -592,6 +594,7 @@ impl StreamBuilder {
 
     /// Admit one batch of `table`, closing every earlier table first.
     fn enter(&mut self, table: Table, count: usize) -> Result<(), SlangError> {
+        self.cancel.check().map_err(cancelled)?;
         let announced = self.header()?.count(table);
         if self.finished {
             return Err(invalid_native(

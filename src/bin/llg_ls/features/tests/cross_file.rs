@@ -173,17 +173,3 @@ fn workspace_symbols_filters_by_query() {
         .iter()
         .any(|symbol| symbol.name == "top" && symbol.kind == SymbolKind::MODULE));
 }
-
-#[test]
-fn symbol_index_merge_unions_and_dedupes_shared_occurrences() {
-    let _guards = analysis_guards();
-    let a = cross_file_analysis();
-    // Merging an index with itself must dedupe every declaration and
-    // reference by position while keeping the lookup maps functional.
-    let merged = SymbolIndex::merge([&a.index, &a.index]);
-    assert_eq!(merged.decls.len(), a.index.decls.len());
-    assert_eq!(merged.refs.len(), a.index.refs.len());
-    let (line, col) = cursor(A_SV, "logic |clk,");
-    let port = merged.decl_at(hp("/x/a.sv"), line, col).expect("port");
-    assert_eq!((port.name.as_str(), port.kind), ("clk", SymKind::Port));
-}

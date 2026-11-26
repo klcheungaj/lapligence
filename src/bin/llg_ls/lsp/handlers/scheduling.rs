@@ -1,5 +1,6 @@
 //! Debounced analysis scheduling and dynamic watcher registration.
 
+use super::inputs::{closed_texts, AnalysisInputs, RunningAnalysis};
 use super::*;
 
 /// The client calls watcher registration makes; a trait so the ordering of
@@ -135,12 +136,12 @@ pub(super) async fn register_watchers_with<C: WatcherClient>(
 /// Debounced analysis task for ONE armed root (free-standing because spawned
 /// commit tasks re-arm follow-ups without a `&Backend`).
 ///
-/// After the trailing-edge quiet period it claims the root's running slot
-/// (`Pending→Running`), builds exactly one job from the latest state, runs
-/// and commits it; when triggers arrived during the run the root is dirty and
-/// this function re-arms itself once.  While the run executes no further job
-/// can be created for the root — new triggers only set the dirty flag — so a
-/// burst of N events yields at most two runs instead of N racing jobs.
+/// After the delay it claims the root's running slot (`Pending→Running`),
+/// builds exactly one job from the latest state, runs and commits it; when
+/// triggers arrived during the run the root is dirty and this function re-arms
+/// itself once.  While the run executes no further job can be created for the
+/// root — the first new trigger cancels the run and sets the dirty flag — so
+/// a burst of N events yields at most two runs instead of N racing jobs.
 pub(super) fn spawn_debounced_run(client: Client, state: Arc<Mutex<BackendState>>, key: RootKey) {
     tokio::spawn(async move {
         let timer_started = std::time::Instant::now();
@@ -149,42 +150,31 @@ pub(super) fn spawn_debounced_run(client: Client, state: Arc<Mutex<BackendState>
             key.display(),
             RECOMPILE_DEBOUNCE.as_millis()
         );
-        // Async timer: unlike the previous per-trigger blocking sleep this
-        // occupies no thread while waiting out the quiet period.
         tokio::time::sleep(RECOMPILE_DEBOUNCE).await;
-        let fire = {
+        // The slot is claimed and the inputs are captured in one step, so a
+        // trigger is either before both or cancels the job.
+        let job = {
             let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
             if guard.shutting_down {
                 if let Some(root) = guard.roots.get_mut(&key) {
                     root.scheduler.cancel_pending();
                 }
-                FireDecision::Ignore
+                None
             } else {
-                guard
-                    .roots
-                    .get_mut(&key)
-                    .map_or(FireDecision::Ignore, |root| root.scheduler.timer_fired())
+                Backend::start_job(&mut guard, &key)
             }
         };
-        if fire != FireDecision::StartJob {
-            crate::llg_debug!(
-                "event=scheduler.debounce.end outcome=cancelled root={} decision={:?} elapsed_us={}",
-                key.display(),
-                fire,
-                timer_started.elapsed().as_micros()
-            );
-            return;
-        }
         crate::llg_debug!(
-            "event=scheduler.debounce.end outcome=start_job root={} decision={:?} elapsed_us={}",
+            "event=scheduler.debounce.end outcome={} root={} elapsed_us={}",
+            if job.is_some() {
+                "start_job"
+            } else {
+                "cancelled"
+            },
             key.display(),
-            fire,
             timer_started.elapsed().as_micros()
         );
-        let mut jobs = Backend::make_jobs(&state, vec![key.clone()]);
-        let Some(job) = jobs.pop() else {
-            // The root disappeared between the two locks; its scheduler died
-            // with the RootState.
+        let Some(job) = job else {
             return;
         };
         let job_started = std::time::Instant::now();
@@ -213,20 +203,29 @@ pub(super) fn spawn_debounced_run(client: Client, state: Arc<Mutex<BackendState>
         let compile_state = Arc::clone(&state);
         let result =
             tokio::task::spawn_blocking(move || Backend::compile_job(&compile_state, job)).await;
-        let Ok(Some(result)) = result else {
-            end_to_end_span.outcome("stale-or-aborted");
-            crate::llg_debug!(
-                "event=root_job.end outcome=stale-or-aborted root={} generation={} elapsed_us={}",
-                key.display(),
-                generation,
-                job_started.elapsed().as_micros()
-            );
-            // Aborted mid-flight (stale/shutdown): still release the slot so
-            // a dirty marker from this window is honored.
-            if Backend::finish_root_run(&state, &key, generation) {
-                spawn_debounced_run(client, state, key);
+        let result = match result {
+            Ok(JobEnd::Completed(result)) => *result,
+            end => {
+                let cancelled = matches!(end, Ok(JobEnd::Cancelled));
+                let outcome = if cancelled {
+                    "cancelled"
+                } else {
+                    "stale-or-aborted"
+                };
+                end_to_end_span.outcome(outcome);
+                crate::llg_debug!(
+                    "event=root_job.end outcome={} root={} generation={} elapsed_us={}",
+                    outcome,
+                    key.display(),
+                    generation,
+                    job_started.elapsed().as_micros()
+                );
+                // Still release the slot so a dirty marker is honored.
+                if Backend::finish_root_run(&state, &key, generation, cancelled) {
+                    spawn_debounced_run(client, state, key);
+                }
+                return;
             }
-            return;
         };
         crate::llg_debug!(
             "event=root_job.compile.end outcome={} root={} generation={} diagnostics={} lint={} compiled_files={} include_deps={} elapsed_us={}",
@@ -253,7 +252,9 @@ pub(super) fn spawn_debounced_run(client: Client, state: Arc<Mutex<BackendState>
             result.include_deps.len(),
             job_started.elapsed().as_micros()
         );
+        let commit_stage = Stage::new("ls.commit");
         let mut outcome = Backend::commit_job(&state, &key, generation, result);
+        drop(commit_stage);
         let publication_count = outcome.publications.len();
         let ready = outcome.ready;
         crate::llg_debug!(
@@ -312,7 +313,7 @@ pub(super) fn spawn_debounced_run(client: Client, state: Arc<Mutex<BackendState>
         }
         // Latest-wins coalescing: at most ONE debounced follow-up run when
         // triggers landed while this job executed.
-        if Backend::finish_root_run(&state, &key, generation) {
+        if Backend::finish_root_run(&state, &key, generation, false) {
             end_to_end_span.complete("ok-follow-up", publication_count);
             crate::llg_debug!(
                 "event=root_job.end outcome=ok-follow-up root={} generation={} publications={} elapsed_us={}",
@@ -620,94 +621,59 @@ impl Backend {
         best.map(|(_, relative)| relative)
     }
 
-    /// Snapshot the latest inputs of each named root into exactly one job per
-    /// root, assigning fresh generations.  Static over the shared state so
-    /// spawned debounce tasks (which cannot borrow `&Backend`) can call it.
-    pub(super) fn make_jobs(state: &Arc<Mutex<BackendState>>, keys: Vec<RootKey>) -> Vec<RootJob> {
-        let mut state = state.lock().unwrap_or_else(|error| error.into_inner());
-        Self::purge_oversized_documents(&mut state);
-        let documents = state.documents.clone();
-        let descriptors: Vec<_> = state
-            .roots
-            .values()
-            .map(|root| root.descriptor.clone())
-            .collect();
-        let mut jobs = Vec::new();
-        let mut seen = BTreeSet::new();
-        for key in keys {
-            if !seen.insert(key.clone()) {
-                continue;
-            }
-            state.next_generation += 1;
-            let generation = state.next_generation;
-            let Some(root) = state.roots.get_mut(&key) else {
-                continue;
-            };
-            // Longest-root ownership is authoritative: a discovered file
-            // whose structural owner is a different (e.g. nested) root must
-            // not be compiled by this root, even when discovery filters would
-            // include it.
-            let mut files: BTreeSet<PathBuf> = root
-                .discovered
-                .iter()
-                .filter(|file| {
-                    workspace::owning_root_unfiltered(file, &descriptors)
-                        .is_some_and(|owner| owner.root == root.descriptor.root)
-                })
-                .cloned()
-                .collect();
-            let config = root.descriptor.effective_config();
-            let mut open_documents = BTreeMap::new();
-            for (uri, text) in &documents {
-                let Some(path) = Self::uri_to_path(uri) else {
-                    continue;
-                };
-                let Some(owner) = workspace::owning_root_unfiltered(&path, &descriptors) else {
-                    continue;
-                };
-                if owner.root != root.descriptor.root {
-                    continue;
-                }
-                open_documents.insert(path.clone(), Arc::clone(text));
-                if config::is_compilation_unit(&path) {
-                    // Same relative base as discovery time (source-dir-
-                    // relative), falling back to the ownership-relative path
-                    // for open units outside every source directory.
-                    let relative = Self::source_relative_path(&config, &path)
-                        .unwrap_or_else(|| owner.relative_path.clone());
-                    if root.descriptor.allows_file(&relative) {
-                        files.insert(path.clone());
-                    }
-                }
-            }
-            root.generation = generation;
-            let parent_id = root.pending_parent_id.take();
-            let files: Vec<PathBuf> = files.into_iter().collect();
-            crate::llg_debug!(
-                "event=root_job.snapshot root={} generation={} files={} open_documents={} previous_include_deps={} defines={} param_overrides={} include_dirs={} parent_id={:?}",
-                root.descriptor.root.display(),
-                generation,
-                files.len(),
-                open_documents.len(),
-                root.include_deps.len(),
-                config.compile.defines.len(),
-                config.compile.param_overrides.len(),
-                config.compile.include_dirs.len(),
-                parent_id
-            );
-            jobs.push(RootJob {
-                key,
-                generation,
-                parent_id,
-                shadow: root.shadow.clone(),
-                files,
-                previous_include_deps: root.include_deps.clone(),
-                open_documents,
-                lint_config: root.lint_config.clone(),
-                config,
-            });
+    /// Claim the running slot of root `key` and snapshot its latest inputs
+    /// into one job, with a fresh generation.  `None` when no timer was pending
+    /// or the root is gone.  Static over the shared state so spawned debounce
+    /// tasks (which cannot borrow `&Backend`) can call it.
+    pub(super) fn start_job(state: &mut BackendState, key: &RootKey) -> Option<RootJob> {
+        let root = state.roots.get_mut(key)?;
+        match root.scheduler.timer_fired() {
+            FireDecision::StartJob => {}
+            FireDecision::Ignore => return None,
         }
-        jobs
+        Self::purge_oversized_documents(state);
+        state.next_generation += 1;
+        let generation = state.next_generation;
+        let descriptors = state.descriptors();
+        let root = state.roots.get(key)?;
+        let config = root.descriptor.effective_config();
+        let open_documents = state.open_documents(root, &descriptors);
+        let files: Vec<PathBuf> = root
+            .units(&descriptors, &config, &open_documents)
+            .into_iter()
+            .collect();
+        let cancel = server_token().child();
+        let root = state.roots.get_mut(key)?;
+        root.generation = generation;
+        root.running = Some(RunningAnalysis::new(
+            cancel.clone(),
+            AnalysisInputs::new(&files, &open_documents),
+        ));
+        let parent_id = root.pending_parent_id.take();
+        crate::llg_debug!(
+            "event=root_job.snapshot root={} generation={} files={} open_documents={} previous_include_deps={} defines={} param_overrides={} include_dirs={} parent_id={:?}",
+            root.descriptor.root.display(),
+            generation,
+            files.len(),
+            open_documents.len(),
+            root.include_deps.len(),
+            config.compile.defines.len(),
+            config.compile.param_overrides.len(),
+            config.compile.include_dirs.len(),
+            parent_id
+        );
+        Some(RootJob {
+            key: key.clone(),
+            generation,
+            parent_id,
+            shadow: root.shadow.clone(),
+            files,
+            previous_include_deps: root.include_deps.clone(),
+            open_documents,
+            lint_config: root.lint_config.clone(),
+            config,
+            cancel,
+        })
     }
 
     pub(super) fn schedule_all(&self, parent_id: Option<u64>) {
@@ -715,19 +681,17 @@ impl Backend {
         self.schedule_roots_with_parent(keys, parent_id);
     }
 
-    /// Request a re-analysis of the given roots.
+    /// Request a re-analysis of the given roots.  Every root coalesces its own
+    /// triggers and cancels its running analysis (see [`SchedulerState`]).
     ///
-    /// Every root coalesces its own triggers (see [`SchedulerState`]): the
-    /// first trigger arms ONE trailing-edge debounce timer, further triggers
-    /// during the quiet period are absorbed by it, and triggers landing while
-    /// a job runs only mark the root dirty so completion owes exactly one
-    /// follow-up run built from the latest state.
-    /// Request a re-analysis while retaining the originating lifecycle ID
-    /// through the scheduler.  The scheduler still coalesces triggers; when
+    /// The originating lifecycle ID is retained through the scheduler; when
     /// several meaningful notifications arrive, only the latest parent is
     /// attached to the eventual run.  Internal/startup calls intentionally
     /// pass `None` and are logged as having no originating request.
     pub(super) fn schedule_roots_with_parent(&self, keys: Vec<RootKey>, parent_id: Option<u64>) {
+        if keys.is_empty() {
+            return;
+        }
         let mut armed = Vec::new();
         let requested = keys.len();
         let mut coalesced = 0usize;
@@ -741,6 +705,16 @@ impl Backend {
                     match root.scheduler.trigger() {
                         TriggerDecision::ArmTimer => armed.push(key),
                         TriggerDecision::Coalesce => coalesced += 1,
+                        TriggerDecision::CancelRunning => {
+                            if let Some(running) = &root.running {
+                                crate::llg_debug!(
+                                    "event=root_job.cancel root={} generation={}",
+                                    key.display(),
+                                    root.generation
+                                );
+                                running.cancel();
+                            }
+                        }
                     }
                 }
             }
@@ -757,10 +731,10 @@ impl Backend {
         }
     }
 
-    /// Release a root's running slot after its claimed run finished.  Returns
-    /// `true` when triggers arrived during the run and one debounced
-    /// follow-up must be armed now.  A vanished or shutting-down root never
-    /// owes a follow-up.
+    /// Release a root's running slot after its claimed run ended, with a
+    /// result or `cancelled`.  Returns `true` when triggers arrived during the
+    /// run and one debounced follow-up must be armed now.  A vanished or
+    /// shutting-down root never owes a follow-up.
     ///
     /// Only the job holding the root's current `generation` releases the slot.
     /// A job that outlived its root (folder removed and added again while it
@@ -770,6 +744,7 @@ impl Backend {
         state: &Arc<Mutex<BackendState>>,
         key: &RootKey,
         generation: u64,
+        cancelled: bool,
     ) -> bool {
         let mut guard = state.lock().unwrap_or_else(|error| error.into_inner());
         if guard.shutting_down {
@@ -779,21 +754,44 @@ impl Backend {
             .roots
             .get_mut(key)
             .filter(|root| root.generation == generation)
-            .is_some_and(|root| root.scheduler.job_finished())
+            .is_some_and(|root| {
+                root.running = None;
+                root.scheduler.job_finished(cancelled)
+            })
     }
 
-    pub(super) fn job_current(state: &Arc<Mutex<BackendState>>, job: &RootJob) -> bool {
+    /// How a job ends now that need not go on.
+    fn abandoned(state: &Arc<Mutex<BackendState>>, job: &RootJob) -> Option<JobEnd> {
+        if job.cancel.is_cancelled() {
+            return Some(JobEnd::Cancelled);
+        }
         let state = state.lock().unwrap_or_else(|error| error.into_inner());
-        state
+        let current = state
             .roots
             .get(&job.key)
-            .is_some_and(|root| !state.shutting_down && root.generation == job.generation)
+            .is_some_and(|root| !state.shutting_down && root.generation == job.generation);
+        (!current).then_some(JobEnd::Stale)
     }
 
-    pub(super) fn compile_job(
+    /// Note the texts that the analysis of a job reads.
+    fn record_admitted(
         state: &Arc<Mutex<BackendState>>,
-        job: RootJob,
-    ) -> Option<CompileResult> {
+        job: &RootJob,
+        snapshots: &InputSnapshots,
+    ) {
+        let texts = closed_texts(snapshots, &job.open_documents);
+        let mut state = state.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(running) = state
+            .roots
+            .get_mut(&job.key)
+            .filter(|root| root.generation == job.generation)
+            .and_then(|root| root.running.as_mut())
+        {
+            running.admit(texts);
+        }
+    }
+
+    pub(super) fn compile_job(state: &Arc<Mutex<BackendState>>, job: RootJob) -> JobEnd {
         let root_identity = job.key.to_string_lossy().into_owned();
         let job_started = std::time::Instant::now();
         let mut job_span = crate::logging::LifecycleSpan::analysis_with_parent(
@@ -819,29 +817,32 @@ impl Backend {
             job.files.len(),
             Some(job_span.id()),
         ));
-        if !Self::job_current(state, &job) {
-            staging_span.as_mut().unwrap().outcome("stale");
+        if let Some(end) = Self::abandoned(state, &job) {
+            staging_span.as_mut().unwrap().outcome(end.log_outcome());
             crate::llg_debug!(
-                "event=root_job.frontend.end outcome=stale root={} generation={} elapsed_us={}",
+                "event=root_job.frontend.end outcome={} after=start root={} generation={} elapsed_us={}",
+                end.log_outcome(),
                 root_identity,
                 job.generation,
                 job_started.elapsed().as_micros()
             );
-            return None;
+            return end;
         }
         let _shadow_guard = shadow_staging_lock()
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        if !Self::job_current(state, &job) {
-            staging_span.as_mut().unwrap().outcome("stale");
+        if let Some(end) = Self::abandoned(state, &job) {
+            staging_span.as_mut().unwrap().outcome(end.log_outcome());
             crate::llg_debug!(
-                "event=root_job.frontend.end outcome=stale-after-lock root={} generation={} elapsed_us={}",
+                "event=root_job.frontend.end outcome={} after=staging-lock root={} generation={} elapsed_us={}",
+                end.log_outcome(),
                 root_identity,
                 job.generation,
                 job_started.elapsed().as_micros()
             );
-            return None;
+            return end;
         }
+        let staging_stage = Stage::new("ls.staging");
         let budget_started = std::time::Instant::now();
         let mut budget_span = crate::logging::LifecycleSpan::phase_with_parent(
             "analysis.input_budget",
@@ -918,10 +919,11 @@ impl Backend {
                     include_deps.len(),
                     job_started.elapsed().as_micros()
                 );
-                return Some(CompileResult {
+                return JobEnd::completed(CompileResult {
                     analysis: Some(analysis),
                     files: compile_result_files(&job.files),
                     include_deps,
+                    snapshots: InputSnapshots::default(),
                 });
             }
         };
@@ -991,10 +993,11 @@ impl Backend {
                                 analysis.diagnostics.len(),
                                 job_started.elapsed().as_micros()
                             );
-                            return Some(CompileResult {
+                            return JobEnd::completed(CompileResult {
                                 analysis: Some(analysis),
                                 files: compile_result_files(&job.files),
                                 include_deps: job.previous_include_deps,
+                                snapshots: InputSnapshots::default(),
                             });
                         }
                     };
@@ -1031,10 +1034,11 @@ impl Backend {
                         analysis.diagnostics.len(),
                         job_started.elapsed().as_micros()
                     );
-                    return Some(CompileResult {
+                    return JobEnd::completed(CompileResult {
                         analysis: Some(analysis),
                         files: compile_result_files(&job.files),
                         include_deps: job.previous_include_deps,
+                        snapshots: InputSnapshots::default(),
                     });
                 }
             };
@@ -1058,15 +1062,16 @@ impl Backend {
             stage_started.elapsed().as_micros()
         );
         drop(stage_span);
-        if !Self::job_current(state, &job) {
-            staging_span.as_mut().unwrap().outcome("stale");
+        if let Some(end) = Self::abandoned(state, &job) {
+            staging_span.as_mut().unwrap().outcome(end.log_outcome());
             crate::llg_debug!(
-                "event=root_job.frontend.end outcome=stale-after-input-stage root={} generation={} elapsed_us={}",
+                "event=root_job.frontend.end outcome={} after=input-stage root={} generation={} elapsed_us={}",
+                end.log_outcome(),
                 root_identity,
                 job.generation,
                 job_started.elapsed().as_micros()
             );
-            return None;
+            return end;
         }
         let mut include_deps = BTreeSet::new();
         let include_preflight_started = std::time::Instant::now();
@@ -1132,15 +1137,16 @@ impl Backend {
             }
             Some(analysis)
         } else {
-            if !Self::job_current(state, &job) {
-                staging_span.as_mut().unwrap().outcome("stale");
+            if let Some(end) = Self::abandoned(state, &job) {
+                staging_span.as_mut().unwrap().outcome(end.log_outcome());
                 crate::llg_debug!(
-                    "event=root_job.frontend.end outcome=stale-before-include-stage root={} generation={} elapsed_us={}",
+                    "event=root_job.frontend.end outcome={} after=include-preflight root={} generation={} elapsed_us={}",
+                    end.log_outcome(),
                     root_identity,
                     job.generation,
                     job_started.elapsed().as_micros()
                 );
-                return None;
+                return end;
             }
             let include_stage_started = std::time::Instant::now();
             let mut include_stage_span = crate::logging::LifecycleSpan::phase_with_parent(
@@ -1191,10 +1197,11 @@ impl Backend {
                         include_deps.len(),
                         job_started.elapsed().as_micros()
                     );
-                    return Some(CompileResult {
+                    return JobEnd::completed(CompileResult {
                         analysis: Some(analysis),
                         files: compile_result_files(&job.files),
                         include_deps,
+                        snapshots: InputSnapshots::default(),
                     });
                 }
             };
@@ -1229,27 +1236,42 @@ impl Backend {
                     }
                 })
                 .collect();
-            let opts = config::compile_opts_sources(&job.config, sources);
-            if !Self::job_current(state, &job) {
-                staging_span.as_mut().unwrap().outcome("stale");
+            let opts = CompileOpts {
+                cancel: job.cancel.clone(),
+                ..config::compile_opts_sources(&job.config, sources)
+            };
+            if let Some(end) = Self::abandoned(state, &job) {
+                staging_span.as_mut().unwrap().outcome(end.log_outcome());
                 crate::llg_debug!(
-                    "event=root_job.frontend.end outcome=stale-before-analysis root={} generation={} elapsed_us={}",
+                    "event=root_job.frontend.end outcome={} after=include-stage root={} generation={} elapsed_us={}",
+                    end.log_outcome(),
                     root_identity,
                     job.generation,
                     job_started.elapsed().as_micros()
                 );
-                return None;
+                return end;
             }
             if let Some(mut span) = staging_span.take() {
                 span.complete("ok", files.len() + include_deps.len());
             }
-            let mut analysis = features::analyze_with_config_context_parent(
+            drop(staging_stage);
+            Self::record_admitted(state, &job, &input_snapshots);
+            let Ok(mut analysis) = features::analyze_with_config_context_parent(
                 &opts,
                 &job.lint_config,
                 &root_identity,
                 job.generation,
                 Some(job_span.id()),
-            );
+            ) else {
+                job_span.outcome("cancelled");
+                crate::llg_debug!(
+                    "event=root_job.frontend.end outcome=cancelled after=analysis root={} generation={} elapsed_us={}",
+                    root_identity,
+                    job.generation,
+                    job_started.elapsed().as_micros()
+                );
+                return JobEnd::Cancelled;
+            };
             // Every admitted include (a unit that another unit includes as
             // well) with the compile's own search prefixes: the isolated
             // open-buffer token parse resolves the same headers from them,
@@ -1314,10 +1336,11 @@ impl Backend {
             include_deps.len(),
             job_started.elapsed().as_micros()
         );
-        Some(CompileResult {
+        JobEnd::completed(CompileResult {
             analysis,
             files,
             include_deps,
+            snapshots: input_snapshots,
         })
     }
 

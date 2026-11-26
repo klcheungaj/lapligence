@@ -1211,7 +1211,7 @@ fn st_50_a_package_change_in_another_file_refreshes_the_open_importer() {
         .open(&pkg, EXAMPLE_PKG)
         .expect("open example package");
     client
-        .change(&pkg, 2, &edited)
+        .change_and_save(&pkg, 2, &edited)
         .expect("edit example package");
     client
         .wait_for_server_request(REFRESH)

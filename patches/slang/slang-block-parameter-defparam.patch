@@ -60,10 +60,26 @@ index c438539ee..8adb01841 100644
      mutable bool fromStringLit = false;
      mutable bool needsCoercion = false;
 diff --git a/source/ast/DefParamResolver.cpp b/source/ast/DefParamResolver.cpp
-index e057f6fea..f90bbbbdb 100644
+index e057f6fea..c6837e0a6 100644
 --- a/source/ast/DefParamResolver.cpp
 +++ b/source/ast/DefParamResolver.cpp
-@@ -547,6 +547,7 @@ void Compilation::resolveDefParamsAndBinds() {
+@@ -361,6 +361,7 @@ struct DefParamVisitor : public ASTVisitor<DefParamVisitor> {
+     }
+ 
+     void handle(const InstanceSymbol& symbol) {
++        symbol.body.getCompilation().checkpoint();
+         if (symbol.name.empty() || symbol.body.flags.has(InstanceFlags::Uninstantiated) ||
+             hierarchyProblem) {
+             return;
+@@ -405,6 +406,7 @@ struct DefParamVisitor : public ASTVisitor<DefParamVisitor> {
+     }
+ 
+     void handle(const GenerateBlockSymbol& symbol) {
++        symbol.getCompilation().checkpoint();
+         if (symbol.isUninstantiated || hierarchyProblem)
+             return;
+ 
+@@ -547,6 +549,7 @@ void Compilation::resolveDefParamsAndBinds() {
          const SyntaxNode* defparamSyntax = nullptr;
          ConstantValue value;
          std::string pathStr;
@@ -71,7 +87,7 @@ index e057f6fea..f90bbbbdb 100644
      };
      SmallVector<OverrideEntry, 4> overrides;
  
-@@ -585,7 +586,8 @@ void Compilation::resolveDefParamsAndBinds() {
+@@ -585,7 +588,8 @@ void Compilation::resolveDefParamsAndBinds() {
              auto node = getNodeFor(entry.path, c);
              auto [it, inserted] = node->paramOverrides.emplace(
                  entry.targetSyntax,
@@ -81,7 +97,7 @@ index e057f6fea..f90bbbbdb 100644
  
              if (!inserted && isFinal) {
                  SLANG_ASSERT(it->second.defparam);
-@@ -636,9 +638,10 @@ void Compilation::resolveDefParamsAndBinds() {
+@@ -636,9 +640,10 @@ void Compilation::resolveDefParamsAndBinds() {
                  overrides.emplace_back();
              }
              else {
@@ -95,7 +111,7 @@ index e057f6fea..f90bbbbdb 100644
              }
          }
  
-@@ -696,6 +699,7 @@ void Compilation::resolveDefParamsAndBinds() {
+@@ -696,6 +701,7 @@ void Compilation::resolveDefParamsAndBinds() {
              diag << visitor.hierarchyProblem->getDefinition().getKindString();
              diag << options.maxInstanceDepth;
              sawFatalError = true;
@@ -103,7 +119,7 @@ index e057f6fea..f90bbbbdb 100644
              return true;
          }
          return false;
-@@ -813,7 +817,13 @@ void Compilation::resolveDefParamsAndBinds() {
+@@ -813,7 +819,13 @@ void Compilation::resolveDefParamsAndBinds() {
                      return;
                  }
  

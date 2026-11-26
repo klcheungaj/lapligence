@@ -7,6 +7,7 @@ use llg::core::model::{GenScopeModel, TypeInfo};
 use llg::core::tokens;
 
 mod bindings;
+mod cancellation;
 mod completion;
 mod connection_tokens;
 mod coordinates;
@@ -30,6 +31,12 @@ mod packages;
 mod parameter_connections;
 mod protected;
 mod shadow_paths;
+
+/// The hover at the 0-based position in the text that was analysed.
+fn hover_at(a: &Analysis, file: &str, line: u32, col: u32) -> Option<Hover> {
+    let text = hover_text_at(a, file, line, col)?;
+    Some(text.render(text.range(), |definition| Some(definition.line0)))
+}
 
 /// The host path a `file:` URI names. `Url::path` keeps the URI spelling
 /// (`/C:/x/top.sv` on Windows), which only equals the path on Unix.

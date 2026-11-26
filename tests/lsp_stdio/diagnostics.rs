@@ -73,7 +73,7 @@ fn lsp_stdio_slang_diagnostics_publish_utf16_and_clear() {
     );
 
     client
-        .change(&path, 2, valid)
+        .change_and_save(&path, 2, valid)
         .expect("repair malformed source");
     let cleared = wait_for_diagnostics(&mut client, &uri, |params| {
         params

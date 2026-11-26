@@ -50,7 +50,7 @@ use hierarchy::{graph_elaborated_scope, merge_source_scope};
 mod compatibility;
 use compatibility::{collect_instances_bounded, instance_node};
 mod presentation;
-use presentation::{remap_content_uris, remap_instance_uris, remap_uri};
+use presentation::{visit_content_places, visit_instance_places};
 mod types;
 use types::{
     bracket_spans, clean_name, direction, explorer_location, explorer_type_with_context,
@@ -538,21 +538,25 @@ pub(crate) fn merge(snapshots: impl IntoIterator<Item = ExplorerSnapshot>) -> Ex
     ExplorerSnapshot { modules, roots }
 }
 
-/// Remap file URIs in a snapshot from a root's private shadow tree to the
-/// real project paths.  IDs intentionally remain untouched: they are based on
-/// the committed model's hierarchy identity and remain stable across updates.
-pub(crate) fn remap_uris(snapshot: &mut ExplorerSnapshot, map: impl Fn(&Path) -> Option<PathBuf>) {
+/// Call `visit` with each URI of a snapshot and the range that is in it, to
+/// replace them by those the client knows. A declaration without a range has no
+/// location. IDs remain untouched: they are based on the committed model's
+/// hierarchy identity and remain stable across updates.
+pub(crate) fn visit_places(
+    snapshot: &mut ExplorerSnapshot,
+    mut visit: impl FnMut(&mut Option<String>, &mut Option<ExplorerRange>),
+) {
     for module in &mut snapshot.modules {
-        remap_uri(&mut module.uri, &map);
-        remap_content_uris(
+        visit(&mut module.uri, &mut module.range);
+        visit_content_places(
             &mut module.ports,
             &mut module.params,
             &mut module.signals,
-            &map,
+            &mut visit,
         );
     }
     for root in &mut snapshot.roots {
-        remap_instance_uris(root, &map);
+        visit_instance_places(root, &mut visit);
     }
 }
 

@@ -15,14 +15,17 @@ pub(super) fn rebuild_dep_dependents(state: &mut BackendState) {
 
 // ── Shared-file aggregation ──────────────────────────────────────────────────
 
-/// Number of roots whose discovery or resolved include-dep sets track `path`.
+/// Whether the discovery or the resolved include-dep set of `root` has `path`.
+fn tracks(root: &RootState, path: &Path) -> bool {
+    root.discovered.iter().any(|file| file == path) || root.include_deps.contains(path)
+}
+
+/// Number of roots that track `path`.
 pub(super) fn shared_tracker_count(state: &BackendState, path: &Path) -> usize {
     state
         .roots
         .values()
-        .filter(|root| {
-            root.discovered.iter().any(|file| file == path) || root.include_deps.contains(path)
-        })
+        .filter(|root| tracks(root, path))
         .count()
 }
 
@@ -142,6 +145,66 @@ pub(super) fn remap_related_diagnostic_uris(diagnostics: &mut [Diagnostic], shad
     }
 }
 
+fn root_names(state: &BackendState) -> BTreeMap<RootKey, String> {
+    state
+        .roots
+        .iter()
+        .map(|(key, root)| (key.clone(), root.descriptor.id.clone()))
+        .collect()
+}
+
+/// The union of what the last analyses of the roots `keys` found in `file`.
+fn file_diagnostics(
+    state: &BackendState,
+    file: &Path,
+    keys: &[RootKey],
+    descriptors: &[RootDescriptor],
+    names: &BTreeMap<RootKey, String>,
+) -> Vec<Diagnostic> {
+    let owner = workspace::owning_root_unfiltered(file, descriptors).map(|owner| owner.root);
+    let entries = keys
+        .iter()
+        .filter_map(|key| Some((key, state.roots.get(key)?.all_diagnostics.get(file)?)))
+        .flat_map(|(key, diagnostics)| {
+            let is_owner = owner.as_ref() == Some(key);
+            diagnostics
+                .iter()
+                .map(move |diagnostic| (key.clone(), is_owner, diagnostic.clone()))
+        })
+        .collect();
+    merge_shared_file_diagnostics(entries, names)
+}
+
+/// What the client should show for `file`, which root `owner` owns, when it
+/// opens the file: the findings of the last analyses.
+pub(super) fn retained_diagnostics(
+    state: &BackendState,
+    owner: &RootKey,
+    file: &Path,
+) -> Vec<Diagnostic> {
+    let trackers: Vec<RootKey> = state
+        .roots
+        .iter()
+        .filter(|(_, root)| tracks(root, file))
+        .map(|(key, _)| key.clone())
+        .collect();
+    if trackers.len() > 1 {
+        file_diagnostics(
+            state,
+            file,
+            &trackers,
+            &state.descriptors(),
+            &root_names(state),
+        )
+    } else {
+        state
+            .roots
+            .get(owner)
+            .and_then(|root| root.all_diagnostics.get(file).cloned())
+            .unwrap_or_default()
+    }
+}
+
 /// Compute the diagnostic union for every file tracked by more than one root
 /// and publish the unions that changed since the last commit.
 ///
@@ -169,16 +232,8 @@ pub(super) fn aggregate_shared_publications(
     if skip_uris.is_empty() && state.roots.len() < 2 && state.published_shared.is_empty() {
         return Vec::new();
     }
-    let names: BTreeMap<RootKey, String> = state
-        .roots
-        .iter()
-        .map(|(key, root)| (key.clone(), root.descriptor.id.clone()))
-        .collect();
-    let descriptors: Vec<RootDescriptor> = state
-        .roots
-        .values()
-        .map(|root| root.descriptor.clone())
-        .collect();
+    let names = root_names(state);
+    let descriptors = state.descriptors();
     let mut trackers: BTreeMap<PathBuf, Vec<RootKey>> = BTreeMap::new();
     for (key, root) in &state.roots {
         for file in root.discovered.iter().chain(&root.include_deps) {
@@ -197,30 +252,12 @@ pub(super) fn aggregate_shared_publications(
         if keys.len() < 2 && !was_published {
             continue;
         }
-        let owner = workspace::owning_root_unfiltered(&file, &descriptors).map(|o| o.root);
-        let mut entries = Vec::new();
-        for key in &keys {
-            let Some(root) = state.roots.get(key) else {
-                continue;
-            };
-            let Some(diagnostics) = root.all_diagnostics.get(&file) else {
-                continue;
-            };
-            let is_owner = owner.as_ref().is_some_and(|owner| owner == key);
-            for diagnostic in diagnostics {
-                entries.push((key.clone(), is_owner, diagnostic.clone()));
-            }
-        }
+        let union = file_diagnostics(state, &file, &keys, &descriptors, &names);
         // Empty result for a still-tracked file: clear a previously
         // published union (the diagnostics were fixed/cleared elsewhere);
         // never-published files stay unpublished.
-        let merged = if entries.is_empty() {
-            was_published.then(Vec::new)
-        } else {
-            Some(merge_shared_file_diagnostics(entries, &names))
-        };
-        if let Some(diagnostics) = merged {
-            computed.insert(uri, diagnostics);
+        if !union.is_empty() || was_published {
+            computed.insert(uri, union);
         }
     }
     let mut publications = Vec::new();
@@ -449,6 +486,16 @@ impl Backend {
             }
         }
         let refresh_supported = state.semantic_tokens_refresh;
+        let mut result = result;
+        // What the analysis read of the documents that are open now; the other
+        // admitted texts are released here.
+        let snapshots = std::mem::take(&mut result.snapshots);
+        let mut read: BTreeMap<PathBuf, SharedText> = state
+            .documents
+            .files()
+            .filter_map(|(path, _)| Some((path.clone(), Arc::clone(snapshots.shared(path)?))))
+            .collect();
+        drop(snapshots);
         let Some(root) = state.roots.get_mut(key) else {
             return CommitOutcome::default();
         };
@@ -460,6 +507,9 @@ impl Backend {
                 root.generation
             );
             return CommitOutcome::default();
+        }
+        if let Some(running) = root.running.take() {
+            root.analysed = running.finish();
         }
         let usable = result
             .analysis
@@ -475,7 +525,6 @@ impl Backend {
             (Some(_), None) => true,
             _ => false,
         };
-        let mut result = result;
         let watchers_refresh = usable || !result.include_deps.is_empty();
         root.include_deps = result.include_deps.clone();
         for file in root.discovered.iter().chain(&root.include_deps) {
@@ -551,9 +600,7 @@ impl Backend {
         let snapshot_replaced = result.analysis.is_none() || usable;
         if result.analysis.is_none() {
             root.last_good = None;
-            // The served snapshot changed (it disappeared): memoized results
-            // keyed on the previous epoch become unreachable.
-            root.analysis_epoch = next_analysis_epoch();
+            read.clear();
         } else if usable {
             root.last_good = result.analysis.map(|mut analysis| {
                 // Undefined-macro hovers name the config file that produced
@@ -568,8 +615,24 @@ impl Backend {
                 );
                 Arc::new(analysis)
             });
-            root.analysis_epoch = next_analysis_epoch();
+            read.retain(|path, text| {
+                let fingerprint = root
+                    .analysed
+                    .as_ref()
+                    .and_then(|inputs| inputs.read(path))
+                    .unwrap_or_else(|| features::SourceFingerprint::of(text));
+                root.compiled(path, fingerprint)
+            });
         }
+        if snapshot_replaced {
+            // The served snapshot changed (or disappeared): memoized results
+            // keyed on the previous epoch become unreachable.
+            root.analysis_epoch = next_analysis_epoch();
+            state.set_analysed_texts(key, read);
+        }
+        let Some(root) = state.roots.get_mut(key) else {
+            return CommitOutcome::default();
+        };
         // Token requests record their inputs only for a client that takes
         // refresh requests, so nothing is compared otherwise.
         let semantic_tokens_refresh = refresh_supported && {
@@ -579,6 +642,7 @@ impl Backend {
                 .map(|analysis| Arc::clone(&analysis.include_context))
                 .unwrap_or_default();
             let documents = &state.documents;
+            let texts = &root.analysed_texts;
             root.served_tokens.take_refresh(
                 snapshot_replaced,
                 &defines,
@@ -586,12 +650,11 @@ impl Backend {
                 |uri| documents.contains_key(uri),
                 |uri| {
                     let path = Self::uri_to_path(uri)?;
-                    let fingerprint = features::SourceFingerprint::of(documents.get(uri)?);
-                    let analysis = analysis?;
-                    let path = path.to_str()?;
-                    analysis
-                        .compiled_from(path, fingerprint)
-                        .then(|| stream_digest(&features::semantic_tokens_for(analysis, path)))
+                    let compiled = Arc::ptr_eq(documents.get(uri)?, texts.get(&path)?);
+                    let (analysis, path) = (analysis.filter(|_| compiled)?, path.to_str()?);
+                    Some(stream_digest(&features::semantic_tokens_for(
+                        analysis, path,
+                    )))
                 },
             )
         };
@@ -629,7 +692,6 @@ impl Backend {
             state.initial_pending.len(),
             ready
         );
-        Self::rebuild_merged(state);
         rebuild_dep_dependents(state);
         let published_uris: BTreeSet<Url> =
             publications.iter().map(|(uri, _)| uri.clone()).collect();

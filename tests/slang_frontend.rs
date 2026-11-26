@@ -1008,7 +1008,7 @@ fn exhausted_export_string_budget_names_its_limit() {
     assert!(
         error
             .message()
-            .contains("export byte limit exceeded (limit=32)"),
+            .contains("export byte limit exceeded (limit=32, bytes=32,"),
         "{}",
         error.message()
     );

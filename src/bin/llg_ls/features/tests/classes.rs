@@ -169,7 +169,7 @@ fn document_symbols_include_class_with_members() {
 #[test]
 fn completion_after_class_scope_prefix_offers_members() {
     let a = class_analysis();
-    let items = completion_at(&a, hp("/x/c.sv"), 0, 9, "Counter::");
+    let items = completion_at(&a, &[], 9, "Counter::");
     let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
     assert!(labels.contains(&"new"), "items: {labels:?}");
     assert!(labels.contains(&"get"), "items: {labels:?}");
@@ -187,12 +187,12 @@ fn completion_after_class_scope_prefix_offers_members() {
         "count must be a variable: {items:?}"
     );
     // Prefix filtering applies after `::`.
-    let items = completion_at(&a, hp("/x/c.sv"), 0, 10, "Counter::g");
+    let items = completion_at(&a, &[], 10, "Counter::g");
     let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
     assert!(labels.contains(&"get"), "items: {labels:?}");
     assert!(!labels.contains(&"count"), "items: {labels:?}");
     // Unknown classes offer nothing.
-    let items = completion_at(&a, hp("/x/c.sv"), 0, 8, "Nope::");
+    let items = completion_at(&a, &[], 8, "Nope::");
     assert!(items.is_empty(), "items: {items:?}");
 }
 
@@ -339,7 +339,7 @@ fn analyze_full_pipeline_classes() {
     }
 
     // Completion after `Counter::` offers methods and fields.
-    let items = completion_at(&a, &path, 0, 9, "Counter::");
+    let items = completion_at(&a, &[], 9, "Counter::");
     let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
     for want in ["new", "get", "count"] {
         assert!(labels.contains(&want), "items: {labels:?}");

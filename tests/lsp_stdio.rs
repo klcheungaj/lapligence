@@ -22,6 +22,8 @@ use support::lsp::{default_init_options, file_uri, LspProcess};
 
 use serde_json::{json, Value};
 
+#[path = "lsp_stdio/analysis_triggers.rs"]
+mod analysis_triggers;
 #[path = "lsp_stdio/black_box.rs"]
 mod black_box;
 #[path = "lsp_stdio/broken_edits.rs"]
@@ -52,6 +54,8 @@ mod limits;
 mod recovery;
 #[path = "lsp_stdio/semantic_tokens.rs"]
 mod semantic_tokens;
+#[path = "lsp_stdio/unsaved_positions.rs"]
+mod unsaved_positions;
 #[path = "lsp_stdio/workspace.rs"]
 mod workspace;
 use definitions::single_location;
