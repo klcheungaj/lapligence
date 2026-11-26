@@ -509,6 +509,16 @@ pub struct IrSequenceExpr {
     pub(in crate::sim) value: IrExpr,
 }
 
+impl IrSequenceExpr {
+    /// Whether the statements only bind views of interface members before
+    /// the value (`IrStmt::InterfaceBind`), which writes nothing.
+    pub(in crate::sim) fn binds_views_only(&self) -> bool {
+        self.statements
+            .iter()
+            .all(|statement| matches!(statement.unlocated(), IrStmt::InterfaceBind(_)))
+    }
+}
+
 /// Explicit sequencing metadata for an expression-valued mutation.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrMutationExpr {

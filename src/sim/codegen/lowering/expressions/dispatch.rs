@@ -477,7 +477,14 @@ impl<'a> Codegen<'a> {
                 reordered,
                 assignment,
                 operands,
-            }) => self.lower_operation(scope_path, *op, *reordered, *assignment, operands),
+            }) => {
+                if *assignment || *op == Operation::Assignment {
+                    if let Some(error) = self.nested_assignment_in_place_error(h) {
+                        return Err(error);
+                    }
+                }
+                self.lower_operation(scope_path, *op, *reordered, *assignment, operands)
+            }
             NodeKind::Expr(ExprKind::Cast { .. }) => self.lower_cast(scope_path, h),
             NodeKind::SysCall { name } => self.lower_sys_func_expr(scope_path, name, h),
             NodeKind::FuncCall {
@@ -544,10 +551,18 @@ impl<'a> Codegen<'a> {
                 return Ok(Some(value));
             }
         }
-        if let Some(HoistedValue::Packed(name, width, signed)) = self.hoisted_value(h) {
-            let value = IrExpr::new(IrExprKind::LocalRead(name.clone()), *width, *signed, None);
-            self.note_hoisted_read(h);
-            return Ok(Some(value));
+        match self.hoisted_value(h) {
+            Some(HoistedValue::Packed(name, width, signed)) => {
+                let value = IrExpr::new(IrExprKind::LocalRead(name.clone()), *width, *signed, None);
+                self.note_hoisted_read(h);
+                return Ok(Some(value));
+            }
+            Some(HoistedValue::Target) => {
+                if let Some(target) = self.assigned_target(h) {
+                    return self.lower_expr(scope_path, target).map(Some);
+                }
+            }
+            _ => {}
         }
         if self.checker_sampling {
             if let Some(value) = self.checker_formal_read(scope_path, h)? {

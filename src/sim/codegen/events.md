@@ -78,7 +78,8 @@ starts (decision VM-D1): an `IrExprKind::Sequence` before a read, before the
 first selector of an element target or actual, which an untimed assignment
 locates after its right-hand side (the timed split with no control, its
 `placed_target_bindings`), and again before a container element actual's
-copy-out store. A timed blocking assignment binds its target's views again
+copy-out store. The value of a set scanned member by member (decision EO-D2)
+is such a use, bound again for each comparison. A timed blocking assignment binds its target's views again
 after its control, and an event-controlled or delayed NBA holds the target it
 located at issue (decision VM-D2). Copy supported automatic evaluator captures and
 transitively reject disallowed callback effects/captures. Named/mixed events retain

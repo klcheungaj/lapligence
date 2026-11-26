@@ -124,6 +124,9 @@ pub(in crate::sim::codegen) enum HoistedValue {
     Handle(String),
     /// A lexical native value of the element's record type.
     Record(usize),
+    /// A nested assignment to an unpacked value that already ran: reads of
+    /// it read its target (`Codegen::assigned_target`, decision EO-D1).
+    Target,
 }
 
 /// What a staging walks again once a bound associative array exposes the
@@ -2090,13 +2093,6 @@ impl Codegen<'_> {
         Ok((before, after))
     }
 
-    /// Whether statement `h` stages container members around it.
-    pub(in crate::sim::codegen) fn stages_members(&self, h: NodeId) -> bool {
-        let (mut members, mut nested) = (Vec::new(), Vec::new());
-        self.collect_statement_members(h, &mut members, &mut nested);
-        !members.is_empty() || !nested.is_empty()
-    }
-
     /// Collect what statement `h` stages.
     fn collect_statement_members(
         &self,
@@ -2601,7 +2597,21 @@ impl Codegen<'_> {
         }
         let (mut members, mut nested) = (Vec::new(), Vec::new());
         self.collect_staged_members(lhs, true, &mut members, &mut nested);
-        if nested.is_empty() {
+        // An element, bit or part target in a staged member is located
+        // after a value with an effect (decisions EO-D4, VM-D1), so the
+        // value runs before the member is staged.
+        let late_member = !members.is_empty()
+            && matches!(
+                self.kind(lhs),
+                NodeKind::Expr(
+                    ExprKind::ArraySelect { .. }
+                        | ExprKind::BitSelect { .. }
+                        | ExprKind::PartSelect { .. }
+                        | ExprKind::IndexedPartSelect { .. }
+                )
+            )
+            && self.contains_evaluation_effect(rhs);
+        if nested.is_empty() && !late_member {
             return Ok(Vec::new());
         }
         let name = format!("_llg_rhs{}", rhs.0);
@@ -2979,6 +2989,28 @@ impl Codegen<'_> {
                 function: self.cur_fn_ir,
             });
         Ok(name)
+    }
+
+    /// The index selectors, outermost first, of the record element of
+    /// container storage whose packed or real member `lhs` names whole
+    /// (`rq[k].v`, not an element of a member array): the selectors a
+    /// whole-member target evaluates.
+    pub(in crate::sim::codegen) fn member_target_selectors(
+        &self,
+        lhs: NodeId,
+    ) -> Option<Vec<NodeId>> {
+        let (selection, path) = self.element_member_path(lhs)?;
+        let ElementSelector::Indices(indices) = &selection.selector else {
+            return None;
+        };
+        let (_, _, leaves) = self
+            .element_leaves(selection.container, selection.depth())
+            .ok()?;
+        leaves
+            .scalars
+            .iter()
+            .any(|leaf| leaf.path == path)
+            .then(|| indices.clone())
     }
 
     /// Typed read of the element leaf named by `node`.

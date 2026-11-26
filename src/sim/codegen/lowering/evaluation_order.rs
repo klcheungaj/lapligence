@@ -17,7 +17,16 @@
 //! (of `?:`, `&&`, `||`, `->`, `inside`, an array method's `with` clause)
 //! keeps the assignments it holds in place. Increments and decrements run in
 //! place. Where nothing else of the expression reads storage or calls a
-//! subroutine, the assignments run in place, which is the same order.
+//! subroutine, the assignments run in place, which is the same order. A
+//! packed or real target is written by one mutation expression; a string or
+//! handle target, a target that expression does not reach (a container
+//! element, a class property select) and an element target of a value with
+//! an effect are written by the assignment statement form from a temporary
+//! of the value, which the expression reads; an unpacked array, record or
+//! container target is written by the statement form and read again
+//! ([`NestedAssignment`]). These run first wherever the expression runs its
+//! nested assignments first and are rejected in an operand that may be
+//! skipped or repeated.
 //!
 //! A set with a member whose effect runs at its place is scanned member by
 //! member (EO-D2, `Codegen::lower_inside_in_order`). An input actual with an effect
@@ -140,7 +149,7 @@ impl Codegen<'_> {
             let Some(node) = pending.pop() else {
                 return Vec::new();
             };
-            if self.hoistable_assignment(node) {
+            if self.nested_assignment(node).is_some() {
                 break;
             }
             pending.extend_from_slice(self.hoisting_operands(node));
@@ -152,7 +161,7 @@ impl Codegen<'_> {
             operands.iter().rev().map(|node| (*node, false)).collect();
         while let Some((node, done)) = pending.pop() {
             if done {
-                if self.hoistable_assignment(node) {
+                if self.nested_assignment(node).is_some() {
                     out.push(node);
                 }
                 continue;
@@ -222,7 +231,12 @@ impl Codegen<'_> {
         target: Option<NodeId>,
         hoists: Vec<NodeId>,
     ) -> Vec<NodeId> {
-        if hoists.is_empty() {
+        // Only a mutation has an in-place form.
+        if hoists.is_empty()
+            || hoists
+                .iter()
+                .any(|hoist| self.nested_assignment(*hoist) != Some(NestedAssignment::Mutation))
+        {
             return hoists;
         }
         let mut pending = operands.to_vec();
@@ -265,17 +279,14 @@ impl Codegen<'_> {
         Vec::new()
     }
 
-    /// Whether `node` is the target of a copied-out actual.
-    pub(in crate::sim::codegen) fn copy_out_wrapper_target(&self, node: NodeId) -> bool {
-        self.node(node)
-            .parent
-            .is_some_and(|parent| self.copy_out_wrapper(parent))
-    }
-
-    /// Whether `node` is a simple or compound assignment operator whose
-    /// target holds a packed or real value, the forms an expression can
-    /// yield.
-    fn hoistable_assignment(&self, node: NodeId) -> bool {
+    /// How nested assignment operator `node` runs when its full expression
+    /// runs it first (decision EO-D1), or `None` for a node that is not one
+    /// (an increment, a decrement, an overloaded update, the copy-out of an
+    /// output actual) or whose target has no such form (an event).
+    pub(in crate::sim::codegen) fn nested_assignment(
+        &self,
+        node: NodeId,
+    ) -> Option<NestedAssignment> {
         let NodeKind::Expr(ExprKind::Operation {
             op,
             assignment,
@@ -283,7 +294,7 @@ impl Codegen<'_> {
             ..
         }) = self.kind(node)
         else {
-            return false;
+            return None;
         };
         if !(*op == Operation::Assignment || *assignment)
             || matches!(
@@ -297,28 +308,127 @@ impl Codegen<'_> {
             )
             || self.copy_out_wrapper(node)
         {
-            return false;
+            return None;
         }
-        let Some(target) = operands.first() else {
-            return false;
-        };
-        match self
-            .query_descriptor(*target)
-            .map(|descriptor| &descriptor.shape)
-        {
+        let target = *operands.first()?;
+        let simple = *op == Operation::Assignment;
+        let shape = self
+            .query_descriptor(target)
+            .map(|descriptor| &descriptor.shape);
+        let packed = match shape {
             None | Some(TypeShape::PackedAtom { .. } | TypeShape::Real { .. }) => true,
             Some(TypeShape::Aggregate(layout)) => matches!(
                 layout.kind,
                 AggregateKind::PackedStruct | AggregateKind::PackedUnion
             ),
             Some(_) => false,
+        };
+        if packed {
+            let value = simple.then(|| operands.get(1)).flatten();
+            return Some(self.packed_nested_assignment(target, value));
         }
+        match shape? {
+            TypeShape::String => simple.then_some(NestedAssignment::Store(StoredValue::String)),
+            TypeShape::Opaque { kind } if kind == "Class" || kind == "Chandle" => {
+                simple.then_some(NestedAssignment::Store(StoredValue::Handle))
+            }
+            TypeShape::Aggregate(_)
+            | TypeShape::FixedArray { .. }
+            | TypeShape::Container { .. } => simple.then_some(NestedAssignment::Whole),
+            _ => None,
+        }
+    }
+
+    /// The form of a nested assignment to packed or real `target`, of
+    /// `value` for a simple one: one mutation expression where that locates
+    /// the target as the statement form would, otherwise the statement
+    /// form, which stores a value evaluated first. That is an element, bit
+    /// or part target of a value with an [effect](Self::evaluation_effect),
+    /// located after it as a statement's is (decisions EO-D1, EO-D4), and
+    /// a target the mutation does not reach: an element or member of a
+    /// queue, dynamic or associative array, or a select of a class
+    /// property.
+    fn packed_nested_assignment(&self, target: NodeId, value: Option<&NodeId>) -> NestedAssignment {
+        let selected = matches!(
+            self.kind(target),
+            NodeKind::Expr(
+                ExprKind::ArraySelect { .. }
+                    | ExprKind::BitSelect { .. }
+                    | ExprKind::PartSelect { .. }
+                    | ExprKind::IndexedPartSelect { .. }
+            )
+        );
+        if (selected && value.is_some_and(|value| self.contains_evaluation_effect(*value)))
+            || !self.mutation_reaches(target)
+        {
+            NestedAssignment::Store(StoredValue::Packed)
+        } else {
+            NestedAssignment::Mutation
+        }
+    }
+
+    /// Whether the mutation expression locates packed or real `target`:
+    /// not an element or member of a queue, dynamic or associative array,
+    /// nor a select of a class property.
+    fn mutation_reaches(&self, target: NodeId) -> bool {
+        let mut node = target;
+        loop {
+            node = match self.kind(node) {
+                NodeKind::Expr(
+                    ExprKind::ArraySelect { base, .. }
+                    | ExprKind::BitSelect { base, .. }
+                    | ExprKind::PartSelect { base, .. }
+                    | ExprKind::IndexedPartSelect { base, .. }
+                    | ExprKind::MemberSelect { base, .. },
+                ) => *base,
+                _ => return true,
+            };
+            let container = matches!(
+                self.query_descriptor(node)
+                    .map(|descriptor| &descriptor.shape),
+                Some(TypeShape::Container { .. })
+            );
+            if container
+                || self.container_of(node).is_some()
+                || self.class_field_target(node).is_some()
+            {
+                return false;
+            }
+        }
+    }
+
+    /// The error for nested assignment `node` lowered where it is evaluated
+    /// (an operand that may be skipped or repeated), when only the
+    /// statement form it runs first in has its target: `None` for one the
+    /// mutation expression lowers there.
+    pub(in crate::sim::codegen) fn nested_assignment_in_place_error(
+        &self,
+        node: NodeId,
+    ) -> Option<String> {
+        let target = match self.nested_assignment(node)? {
+            NestedAssignment::Mutation => return None,
+            NestedAssignment::Store(StoredValue::Packed) => {
+                let NodeKind::Expr(ExprKind::Operation { operands, .. }) = self.kind(node) else {
+                    return None;
+                };
+                *operands.first()?
+            }
+            NestedAssignment::Store(_) | NestedAssignment::Whole => node,
+        };
+        if target != node && self.mutation_reaches(target) {
+            return None;
+        }
+        Some(self.locate_error(
+            node,
+            "an assignment operator to a string, a handle, an unpacked value, a container element or a class property select is supported in an operand that its full expression evaluates once (decision EO-D1), not in one of `?:`, `&&`, `||`, `->`, `inside` or an array method's `with` clause; assign the value in a statement of its own first".to_owned(),
+        ))
     }
 
     /// Run the nested assignments `nodes` (from
     /// [`Self::hoisted_assignment_nodes`]) into temporaries that later reads
-    /// of the nodes return. The caller ends them with
-    /// [`Self::end_hoisted_assignments`] once the operands are lowered.
+    /// of the nodes return, or for an unpacked target into the target that
+    /// later reads name ([`Self::assigned_target`]). The caller ends them
+    /// with [`Self::end_hoisted_assignments`] once the operands are lowered.
     pub(in crate::sim::codegen) fn hoist_assignments(
         &mut self,
         path: &str,
@@ -326,21 +436,231 @@ impl Codegen<'_> {
     ) -> Result<Vec<IrStmt>, String> {
         let mut statements = Vec::with_capacity(nodes.len());
         for node in nodes {
-            let value = self.lower_expr(path, *node)?;
-            let (width, signed) = (value.width, value.signed);
+            let form = self.nested_assignment(*node).ok_or_else(|| {
+                self.locate_error(*node, "nested assignment without a hoisted form".to_owned())
+            })?;
             let name = format!("_llg_na{}", node.0);
-            statements.push(IrStmt::DeclLocal {
-                name: name.clone(),
-                width,
-                signed,
-                two_state: false,
-                init: Some(Box::new(value)),
-            });
-            self.hoisted_values
-                .insert(*node, HoistedValue::Packed(name, width, signed));
-            self.hoisted_assignments.insert(*node, false);
+            match form {
+                NestedAssignment::Mutation => {
+                    let value = self.lower_expr(path, *node)?;
+                    let (width, signed) = (value.width, value.signed);
+                    statements.push(IrStmt::DeclLocal {
+                        name: name.clone(),
+                        width,
+                        signed,
+                        two_state: false,
+                        init: Some(Box::new(value)),
+                    });
+                    self.hoisted_values
+                        .insert(*node, HoistedValue::Packed(name, width, signed));
+                    self.hoisted_assignments.insert(*node, false);
+                }
+                NestedAssignment::Store(kind) => {
+                    let hoisted =
+                        self.store_nested_assignment(path, *node, kind, name, &mut statements)?;
+                    self.hoisted_values.insert(*node, hoisted);
+                    self.hoisted_assignments.insert(*node, false);
+                }
+                NestedAssignment::Whole => {
+                    statements.push(self.run_whole_nested_assignment(path, *node)?);
+                    self.hoisted_values.insert(*node, HoistedValue::Target);
+                    // Reads name the target; none is an evaluation of its own.
+                    self.hoisted_assignments.insert(*node, true);
+                }
+            }
         }
         Ok(statements)
+    }
+
+    /// Nested assignment `node` in its statement form: its value into
+    /// temporary `name` of the target's kind, then the target, located
+    /// after the value as a statement's element target is, assigned that
+    /// temporary. The value of a compound assignment reads the target, so
+    /// its selectors must have no effect. Returns what reads of `node` read.
+    fn store_nested_assignment(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        kind: StoredValue,
+        name: String,
+        statements: &mut Vec<IrStmt>,
+    ) -> Result<HoistedValue, String> {
+        let NodeKind::Expr(ExprKind::Operation { op, operands, .. }) = self.kind(node) else {
+            unreachable!("nested assignment is an operation");
+        };
+        let (op, operands) = (*op, operands.clone());
+        let [target, value_node] = operands[..] else {
+            return Err(
+                self.locate_error(node, "nested assignment without two operands".to_owned())
+            );
+        };
+        let hoisted = match kind {
+            StoredValue::String => {
+                statements.push(IrStmt::DeclString {
+                    name: name.clone(),
+                    init: Some(self.lower_string(path, value_node)?),
+                });
+                HoistedValue::String(name)
+            }
+            StoredValue::Handle => {
+                if !self.is_chandle_expr(path, target) {
+                    return Err(self.locate_error(
+                        node,
+                        format!("an assignment operator to this handle in an operand of an expression in `{path}` is not supported; assign the value in a statement of its own first"),
+                    ));
+                }
+                let value = self.lower_chandle(path, value_node)?;
+                statements.push(IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
+                    name.clone(),
+                    Some(value),
+                ))));
+                HoistedValue::Handle(name)
+            }
+            StoredValue::Packed => {
+                let simple = op == Operation::Assignment;
+                if !simple && self.has_evaluation_effect(target) {
+                    return Err(self.locate_error(
+                        node,
+                        format!("a compound assignment operator in an operand of an expression whose target in `{path}` is selected with a call or an assignment is not supported; assign the value in a statement of its own first"),
+                    ));
+                }
+                let descriptor = self.query_descriptor(target).map(|descriptor| {
+                    (
+                        descriptor.two_state,
+                        descriptor.info.width,
+                        descriptor.info.signed,
+                    )
+                });
+                let two_state = descriptor.is_some_and(|(two_state, _, _)| two_state);
+                let value = if simple {
+                    // The frontend converts the value to the target's type;
+                    // the target is located after it, so it is not lowered
+                    // here.
+                    let value = self.lower_expr(path, value_node)?;
+                    match descriptor
+                        .filter(|_| !value.is_real())
+                        .and_then(|(_, width, signed)| Some((width?, signed)))
+                    {
+                        Some((width, signed)) if (width, signed) != (value.width, value.signed) => {
+                            IrExpr::convert_to(value, width, signed)
+                        }
+                        _ => value,
+                    }
+                } else {
+                    // A compound target is located before its value, and its
+                    // current value is read there.
+                    if let Some(declarations) = self.take_receiver_root(target) {
+                        statements.extend(declarations);
+                    }
+                    let current = self.lower_expr(path, target)?;
+                    let value = self.lower_expr(path, value_node)?;
+                    let value = lower_compound_expr_ir(path, op, current.clone(), value)?;
+                    if current.is_real() || value.is_real() {
+                        value
+                    } else {
+                        IrExpr::convert_to(value, current.width, current.signed)
+                    }
+                };
+                let value = if two_state && !value.is_real() {
+                    IrExpr::to_two_state(value)
+                } else {
+                    value
+                };
+                let (width, signed) = (value.width, value.signed);
+                statements.push(IrStmt::DeclLocal {
+                    name: name.clone(),
+                    width,
+                    signed,
+                    two_state: false,
+                    init: Some(Box::new(value)),
+                });
+                HoistedValue::Packed(name, width, signed)
+            }
+        };
+        // The store reads the temporary where it would read the value.
+        let outer = self.hoisted_values.insert(value_node, hoisted.clone());
+        let store = self.lower_nested_store(path, target, value_node);
+        match outer {
+            Some(outer) => self.hoisted_values.insert(value_node, outer),
+            None => self.hoisted_values.remove(&value_node),
+        };
+        statements.push(store?);
+        Ok(hoisted)
+    }
+
+    /// Nested assignment `node` to an unpacked array, record or container,
+    /// as a statement; reads of `node` read the target again, which must
+    /// therefore be selected without an effect.
+    fn run_whole_nested_assignment(&mut self, path: &str, node: NodeId) -> Result<IrStmt, String> {
+        let NodeKind::Expr(ExprKind::Operation { operands, .. }) = self.kind(node) else {
+            unreachable!("nested assignment is an operation");
+        };
+        let [target, value_node] = operands[..] else {
+            return Err(
+                self.locate_error(node, "nested assignment without two operands".to_owned())
+            );
+        };
+        if self.has_evaluation_effect(target) {
+            return Err(self.locate_error(
+                node,
+                format!("an assignment operator to an unpacked value selected with a call or an assignment in an operand of an expression in `{path}` is not supported; assign the value in a statement of its own first"),
+            ));
+        }
+        self.lower_nested_store(path, target, value_node)
+    }
+
+    /// The blocking assignment statement of `target` from `value`, after
+    /// the computed handles of the target that the statement evaluates at
+    /// the target (decision EO-D4).
+    fn lower_nested_store(
+        &mut self,
+        path: &str,
+        target: NodeId,
+        value: NodeId,
+    ) -> Result<IrStmt, String> {
+        let mut statements = self.take_receiver_root(target).unwrap_or_default();
+        let function = self.func.clone();
+        let depth = self.depth_arg.clone();
+        let instance = self.inst;
+        statements.push(
+            EmitCtx::new(self, path.to_owned(), instance, &depth, function, false)
+                .lower_assignment_operands(target, value, true, Operation::Assignment, false)?,
+        );
+        Ok(match statements.len() {
+            1 => statements.remove(0),
+            _ => IrStmt::Block(statements),
+        })
+    }
+
+    /// The target whose value stands for assignment `node`: the target of
+    /// a copied-out actual, or of a nested assignment to an unpacked value
+    /// that already ran ([`Self::hoist_assignments`]).
+    pub(in crate::sim::codegen) fn assigned_target(&self, node: NodeId) -> Option<NodeId> {
+        let NodeKind::Expr(ExprKind::Operation {
+            op: Operation::Assignment,
+            operands,
+            ..
+        }) = self.kind(node)
+        else {
+            return None;
+        };
+        (matches!(self.hoisted_value(node), Some(HoistedValue::Target))
+            || self.copy_out_wrapper(node))
+        .then(|| operands.first().copied())
+        .flatten()
+    }
+
+    /// The target of simple assignment `node` nested in an expression,
+    /// whose type its value has.
+    pub(in crate::sim::codegen) fn nested_assignment_target(&self, node: NodeId) -> Option<NodeId> {
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::Assignment,
+                operands,
+                ..
+            }) if !self.copy_out_wrapper(node) => operands.first().copied(),
+            _ => None,
+        }
     }
 
     /// Note that a lowering read the value nested assignment `node` left.
@@ -403,6 +723,29 @@ impl Codegen<'_> {
     }
 }
 
+/// How a nested assignment operator runs first (decision EO-D1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::sim::codegen) enum NestedAssignment {
+    /// One mutation expression locates, writes and yields a packed or real
+    /// target, into a temporary or in place.
+    Mutation,
+    /// The value goes to a temporary that the assignment statement form
+    /// stores and later reads read.
+    Store(StoredValue),
+    /// An unpacked array, record or container target is assigned by the
+    /// statement form, and later reads read the target.
+    Whole,
+}
+
+/// The kind of temporary a [`NestedAssignment::Store`] evaluates its value
+/// into.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::sim::codegen) enum StoredValue {
+    Packed,
+    String,
+    Handle,
+}
+
 /// An input actual a call evaluates into a temporary before the copy-ins
 /// and bindings of the formals after it (decision EO-D3), as the call reads
 /// it.
@@ -441,10 +784,21 @@ impl Codegen<'_> {
             NodeKind::FuncArg { direction, .. } => Some(*direction),
             _ => None,
         };
-        // Only the inputs before the last inout or `ref` actual matter.
-        let bindings = formals.iter().rposition(|(io, _)| {
-            matches!(direction(*io), Some(DbDirection::Inout | DbDirection::Ref))
-        })?;
+        // Only the inputs before the last inout or `ref` actual matter, or
+        // before an output actual selected through a computed handle that
+        // the call evaluates at its place (decision EO-D4).
+        let bindings =
+            formals
+                .iter()
+                .enumerate()
+                .rposition(|(idx, (io, _))| match direction(*io) {
+                    Some(DbDirection::Inout | DbDirection::Ref) => true,
+                    Some(DbDirection::Output) => bound.get(idx).is_some_and(|arg| {
+                        self.receiver_roots
+                            .contains_key(&self.unwrap_output_actual(arg.expr))
+                    }),
+                    _ => false,
+                })?;
         formals[..bindings]
             .iter()
             .enumerate()
@@ -603,9 +957,8 @@ impl Codegen<'_> {
     /// whose target is an element, a bit or a part of something (a select)
     /// and whose right-hand side has an [effect](Self::evaluation_effect):
     /// such a target is located after the right-hand side (decision EO-D4),
-    /// whatever handle it is selected through. A statement that stages
-    /// container members around it keeps the handles of its target before
-    /// it.
+    /// whatever handle it is selected through, also in a statement that
+    /// stages container members around it.
     pub(in crate::sim::codegen) fn source_before_target(&self, h: NodeId) -> Option<NodeId> {
         let NodeKind::Stmt(StmtKind::Assign {
             blocking: true,
@@ -627,10 +980,7 @@ impl Codegen<'_> {
                     | ExprKind::IndexedPartSelect { .. }
             )
         );
-        (selected
-            && self.contains_evaluation_effect(*rhs)
-            && !(self.element_staging_possible && self.stages_members(h)))
-        .then_some(*rhs)
+        (selected && self.contains_evaluation_effect(*rhs)).then_some(*rhs)
     }
 
     /// The computed handle (`ca[k]`, `f()`) that the whole-property target
@@ -688,6 +1038,112 @@ impl Codegen<'_> {
             Some(TypeShape::Opaque { kind }) if kind == "Class"
         );
         (node != *lhs && computed && class && self.contains_evaluation_effect(*rhs)).then_some(node)
+    }
+
+    /// The selectors of the record element of a queue, dynamic or
+    /// associative array whose packed or real member the blocking
+    /// assignment `h` writes whole (`rq[k].v = f()`, `rq[k].v += f()`), when
+    /// its right-hand side has an [effect](Self::evaluation_effect): such a
+    /// target is located before the right-hand side (decision EO-D4), so
+    /// the selectors that are not literals are evaluated first. A selector
+    /// with `$` is evaluated with the target.
+    pub(in crate::sim::codegen) fn member_target_selectors_first(
+        &self,
+        h: NodeId,
+    ) -> Option<Vec<NodeId>> {
+        let NodeKind::Stmt(StmtKind::Assign {
+            blocking: true,
+            delay: None,
+            ..
+        }) = self.kind(h)
+        else {
+            return None;
+        };
+        let [lhs, rhs] = self.node(h).children.as_slice() else {
+            return None;
+        };
+        if !matches!(
+            self.kind(*lhs),
+            NodeKind::Expr(ExprKind::MemberSelect { .. } | ExprKind::HierPath { .. })
+        ) {
+            return None;
+        }
+        let selectors = self.member_target_selectors(*lhs)?;
+        if !self.contains_evaluation_effect(*rhs) {
+            return None;
+        }
+        let unbounded = |root: NodeId| {
+            let mut pending = vec![root];
+            while let Some(node) = pending.pop() {
+                if matches!(self.kind(node), NodeKind::Expr(ExprKind::Unbounded)) {
+                    return true;
+                }
+                pending.extend(self.node(node).children.iter().copied());
+            }
+            false
+        };
+        if selectors.iter().any(|selector| unbounded(*selector)) {
+            return None;
+        }
+        let computed: Vec<NodeId> = selectors
+            .into_iter()
+            .filter(|selector| {
+                !matches!(
+                    self.kind(*selector),
+                    NodeKind::Expr(ExprKind::Constant { .. })
+                )
+            })
+            .collect();
+        (!computed.is_empty()).then_some(computed)
+    }
+
+    /// Evaluate the selectors `nodes` ([`Self::member_target_selectors_first`])
+    /// into temporaries that every lowering of them reads until
+    /// [`Self::end_target_selectors`].
+    pub(in crate::sim::codegen) fn hoist_target_selectors(
+        &mut self,
+        path: &str,
+        nodes: &[NodeId],
+    ) -> Result<Vec<IrStmt>, String> {
+        let mut statements = Vec::with_capacity(nodes.len());
+        for node in nodes {
+            let value = self.lower_expr(path, *node)?;
+            let (width, signed) = (value.width, value.signed);
+            let name = format!("_llg_ts{}", node.0);
+            statements.push(IrStmt::DeclLocal {
+                name: name.clone(),
+                width,
+                signed,
+                two_state: false,
+                init: Some(Box::new(value)),
+            });
+            self.hoisted_values
+                .insert(*node, HoistedValue::Packed(name, width, signed));
+            self.hoisted_assignments.insert(*node, false);
+        }
+        Ok(statements)
+    }
+
+    /// Forget the selectors [`Self::hoist_target_selectors`] evaluated. One
+    /// that no lowering read would have been evaluated twice.
+    pub(in crate::sim::codegen) fn end_target_selectors(
+        &mut self,
+        nodes: &[NodeId],
+    ) -> Result<(), String> {
+        let mut unread = None;
+        for node in nodes {
+            self.hoisted_values.remove(node);
+            if self.hoisted_assignments.remove(node) != Some(true) && unread.is_none() {
+                unread = Some(*node);
+            }
+        }
+        match unread {
+            Some(node) => Err(self.locate_error(
+                node,
+                "a selector of the record element this assignment writes is not supported here; assign the element's index to a variable first",
+            )),
+            None => Ok(()),
+        }
     }
 
     /// Evaluate handle `node` ([`Self::target_handle_first`]) into a

@@ -792,6 +792,16 @@ impl EmitCtx<'_, '_> {
                 early[idx] = Some(actual.argument());
                 continue;
             }
+            // The computed handle an output or inout actual is selected
+            // through, when an effect of the statement precedes it, is
+            // evaluated at the actual's place among the actuals (decisions
+            // EO-D3, EO-D4); its copy-out names the same object.
+            if *is_out {
+                let target = self.cg.unwrap_output_actual(bound[idx].expr);
+                if let Some(declarations) = self.cg.take_receiver_root(target) {
+                    before.extend(declarations);
+                }
+            }
             // A DPI-C open-array formal whose actual crosses in storage of
             // its own type (outside the payload, or a dynamic array or
             // queue): the call's specialization has a formal of that type.

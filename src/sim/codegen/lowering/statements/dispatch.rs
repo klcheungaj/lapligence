@@ -133,6 +133,32 @@ impl EmitCtx<'_, '_> {
         h: NodeId,
         targets: Vec<IrStmt>,
     ) -> Result<Vec<IrStmt>, String> {
+        // A whole member of a container record element is located before
+        // the right-hand side.
+        if let Some(selectors) = self.cg.member_target_selectors_first(h) {
+            let path = self.path.clone();
+            let lowered =
+                self.cg
+                    .hoist_target_selectors(&path, &selectors)
+                    .and_then(|mut statements| {
+                        statements.extend(self.lower_handle_located_target(h, targets)?);
+                        Ok(vec![IrStmt::Block(statements)])
+                    });
+            let ended = self.cg.end_target_selectors(&selectors);
+            let lowered = lowered?;
+            ended?;
+            return Ok(lowered);
+        }
+        self.lower_handle_located_target(h, targets)
+    }
+
+    /// [`Self::lower_located_target`] once the selectors of a record
+    /// element target are evaluated.
+    fn lower_handle_located_target(
+        &mut self,
+        h: NodeId,
+        targets: Vec<IrStmt>,
+    ) -> Result<Vec<IrStmt>, String> {
         if let Some(handle) = self.cg.target_handle_first(h) {
             let path = self.path.clone();
             let declare = self.cg.hoist_target_handle(&path, handle);

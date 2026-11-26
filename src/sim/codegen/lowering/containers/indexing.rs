@@ -553,14 +553,10 @@ impl<'a> Codegen<'a> {
                 .and_then(|target| self.container_declaration(target))
                 .or_else(|| self.static_property_container(refs))
                 .or_else(|| self.record_member_container(node)),
-            NodeKind::Expr(ExprKind::Operation {
-                op: Operation::Assignment,
-                operands,
-                ..
-            }) => operands
-                .first()
-                .and_then(|operand| self.container_of(*operand)),
-            _ => self.record_member_container(node),
+            _ => match self.assigned_target(node) {
+                Some(target) => self.container_of(target),
+                None => self.record_member_container(node),
+            },
         }
     }
 

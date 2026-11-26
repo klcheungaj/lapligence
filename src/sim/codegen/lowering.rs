@@ -3139,12 +3139,9 @@ impl<'a> Codegen<'a> {
                 .or_else(|| refs.last().copied().flatten())
                 .and_then(|target| self.array_target(target)),
             NodeKind::Expr(ExprKind::Cast { operand, .. }) => self.array_of(*operand),
-            NodeKind::Expr(ExprKind::Operation {
-                op: Operation::Assignment,
-                operands,
-                ..
-            }) => operands.first().and_then(|operand| self.array_of(*operand)),
-            _ => None,
+            _ => self
+                .assigned_target(node)
+                .and_then(|target| self.array_of(target)),
         }
     }
 

@@ -49,6 +49,9 @@ impl Codegen<'_> {
             self.note_hoisted_read(node);
             return Ok(value);
         }
+        if let Some(error) = self.nested_assignment_in_place_error(node) {
+            return Err(error);
+        }
         if let Some(value) = self
             .inline_string_key_read(node)
             .or_else(|| self.inline_string_index_read(node))

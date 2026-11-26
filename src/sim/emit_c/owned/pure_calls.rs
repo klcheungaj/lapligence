@@ -137,26 +137,17 @@ fn callback_safe_expression(expr: &IrExpr, result: Option<usize>) -> Result<(), 
         IrExprKind::Pattern(_) => Err(pending(
             "side-effect-capable evaluator expressions: conditional pattern binding",
         )),
-        IrExprKind::Sequence(sequence) if !binds_views_only(sequence) => Err(pending(
+        IrExprKind::Sequence(sequence) if !sequence.binds_views_only() => Err(pending(
             "side-effect-capable evaluator expressions: statement sequence",
         )),
         _ => Ok(()),
     }
 }
 
-/// Whether `sequence` only binds views of interface members before its
-/// value (`IrStmt::InterfaceBind`), which writes nothing.
-pub(super) fn binds_views_only(sequence: &crate::sim::ir::IrSequenceExpr) -> bool {
-    sequence
-        .statements
-        .iter()
-        .all(|statement| matches!(statement.unlocated(), IrStmt::InterfaceBind(_)))
-}
-
 /// Whether `expr` binds views of interface members before its value, as
 /// the first index of a use bound where it starts does (decision VM-D1).
 pub(super) fn binds_views(expr: &IrExpr) -> bool {
-    matches!(&expr.kind, IrExprKind::Sequence(sequence) if binds_views_only(sequence))
+    matches!(&expr.kind, IrExprKind::Sequence(sequence) if sequence.binds_views_only())
 }
 
 fn callback_effect(statement: &IrStmt) -> String {

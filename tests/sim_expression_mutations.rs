@@ -39,3 +39,14 @@ fn selected_lvalue_selectors_evaluate_exactly_once() {
         &[],
     );
 }
+
+/// A nested assignment whose target only the statement form reaches (a
+/// string) is rejected with its location in an operand `?:` may skip.
+#[test]
+fn nested_string_assignment_in_skipped_operand_is_rejected() {
+    sim_cli::reject_case(
+        "expression_mutations",
+        "nested_assignment_skipped_operand",
+        "nested_assignment_skipped_operand.sv:9:15 an assignment operator to a string, a handle, an unpacked value",
+    );
+}
