@@ -568,6 +568,41 @@ impl Query {
 }
 
 impl Backend {
+    /// Tell the client that the module explorer has other places, after an
+    /// edit of `uri` and a pause ([`EXPLORER_EDIT_DEBOUNCE`]), when the last
+    /// analysis of a root read the file.
+    pub(super) fn explorer_moved_by(&self, uri: &Url) {
+        let edit = {
+            let mut state = self.lock_state();
+            let Some(path) = Self::uri_to_path(uri) else {
+                return;
+            };
+            let read = state
+                .roots
+                .values()
+                .any(|root| root.last_good.is_some() && root.analysed_texts.contains_key(&path));
+            if !read {
+                return;
+            }
+            state.explorer_edits += 1;
+            state.explorer_edits
+        };
+        let (client, state) = (self.client.clone(), Arc::clone(&self.state));
+        tokio::spawn(async move {
+            tokio::time::sleep(EXPLORER_EDIT_DEBOUNCE).await;
+            let last = {
+                let state = state.lock().unwrap_or_else(|error| error.into_inner());
+                state.explorer_edits == edit && !state.shutting_down
+            };
+            if last {
+                crate::llg_debug!("event=module_explorer.moved edits={edit}");
+                client
+                    .send_notification::<LlgModuleExplorerChanged>(ModuleExplorerChangedParams {})
+                    .await;
+            }
+        });
+    }
+
     /// What requests about `uri` are answered from now. `None` for a document
     /// that no root owns.
     pub(super) fn query(

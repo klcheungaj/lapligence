@@ -688,6 +688,9 @@ The server compares the two texts and asks the analysis about what the user sees
   current text. Completion offers the names of the last analysis and up to 4096 that
   the current text declares, read from its last isolated parse.
 - A rename is refused until the save and its analysis.
+- 300 ms after the last edit of a file that the last analysis read, the server
+  sends `llg/moduleExplorerChanged`, so that a client reads the module explorer
+  again at the new places.
 - The server sends no diagnostics on an edit: the editor moves those it shows with
   the text. Diagnostics that it sends while a file has unsaved edits (an analysis
   that ended after an edit, a file that opens) are at the places of the current

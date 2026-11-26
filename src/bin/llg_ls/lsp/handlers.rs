@@ -51,6 +51,10 @@ use state::{
 /// triggers join the run and do not restart the delay, so a burst of events
 /// (a workspace-wide save, a checkout) costs one run (see `crate::scheduler`).
 const RECOMPILE_DEBOUNCE: Duration = Duration::from_millis(300);
+/// Delay between the last edit of a file that the module explorer has places
+/// in and `llg/moduleExplorerChanged`, so that typing asks the client to read
+/// the explorer once a pause in it.
+const EXPLORER_EDIT_DEBOUNCE: Duration = Duration::from_millis(300);
 const WATCH_REGISTRATION_ID: &str = "llg-watched-files";
 /// The client-to-server initialization protocol version this server accepts.
 const CLIENT_PROTOCOL_VERSION: u32 = 1;
@@ -173,7 +177,8 @@ impl tower_lsp::lsp_types::notification::Notification for LlgConfigChanged {
 }
 
 /// Empty server→client signal that a committed analysis changed the module
-/// explorer data.  Clients refetch the complete snapshot, avoiding partial
+/// explorer data, or that an edit moved its places ([`EXPLORER_EDIT_DEBOUNCE`]
+/// after the last one).  Clients refetch the complete snapshot, avoiding partial
 /// update ordering problems when multiple roots commit close together.
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub(crate) struct ModuleExplorerChangedParams {}
@@ -757,6 +762,9 @@ impl LanguageServer for Backend {
             }
         };
         self.cancel_superseded_parses(&uri);
+        if changed {
+            self.explorer_moved_by(&uri);
+        }
         // An edit is analysed when the user saves; until then the isolated
         // parse of the document answers for it (`identifiers.rs`), and the
         // analysis at the places that the edit left (`positions.rs`).

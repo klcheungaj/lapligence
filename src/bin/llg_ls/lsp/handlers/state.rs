@@ -71,6 +71,9 @@ pub(super) struct BackendState {
     /// The texts of edited documents beside those that analyses compiled, by
     /// path. A document has one pair unless roots compiled different texts of it.
     pub(super) text_pairs: HashMap<PathBuf, Vec<Arc<TextPair>>>,
+    /// Edits that moved places of the module explorer, so that only the last
+    /// one of a burst notifies the client.
+    pub(super) explorer_edits: u64,
     /// The names that the last isolated parse of an edited document found.
     pub(super) unsaved_names: HashMap<Url, Arc<Vec<features::DeclaredName>>>,
     /// What a watched-file event found on the disk for an open document that

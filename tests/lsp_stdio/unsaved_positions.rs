@@ -448,3 +448,40 @@ endmodule
     }
     session.client.shutdown();
 }
+
+/// An edit moves the places that the module explorer shows: the client is told
+/// once a burst of edits pauses, and the explorer then answers at the new
+/// places.
+#[test]
+fn lsp_stdio_edits_tell_explorer_clients_once_they_pause() {
+    let mut session = Session::ready("unsaved-explorer", &[("top.sv", TOP), ("sub.sv", SUB)]);
+    session.open("top.sv", TOP);
+    let moved = "event=module_explorer.moved";
+    assert!(session.logged(&[moved]).is_empty());
+    for lines in 1..=3 {
+        let text = format!("{}{TOP}", "// A note.\n".repeat(lines));
+        assert_eq!(session.change("top.sv", &text), "admitted");
+    }
+    session.wait_logged(&[moved], 1);
+    // Longer than the server's delay: no other notice follows.
+    thread::sleep(Duration::from_millis(900));
+    assert_eq!(session.logged(&[moved]).len(), 1);
+    let query = json!({ "query": "no such symbol" });
+    session.ask("workspace/symbol", query);
+    let notices = session
+        .client
+        .notifications
+        .iter()
+        .filter(|message| message["method"] == "llg/moduleExplorerChanged")
+        .count();
+    assert!(notices >= 1, "no llg/moduleExplorerChanged");
+    let explorer = session.ask("llg/moduleExplorer", json!({}));
+    let top = explorer["modules"]
+        .as_array()
+        .expect("modules")
+        .iter()
+        .find(|module| module["name"] == "top")
+        .expect("top");
+    assert_eq!(top["range"]["startLine"], json!(4), "{top}");
+    session.client.shutdown();
+}
