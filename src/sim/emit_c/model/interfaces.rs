@@ -342,6 +342,17 @@ static llg_vif_storage_t *llg_vif_valid(llg_vif_storage_t *storage,\n\
     if (storage) return storage;\n\
     llg_vif_fail(site);\n\
     return fallback;\n\
+}\n\n\
+/* The cells of a bound array view: dense four-state, real, or the\n\
+ * descriptor of a sparse array. A use calls these after its check. */\n\
+static sv4_t *llg_vif_dense(const llg_vif_storage_t *storage) {\n\
+    return (sv4_t *)storage->base;\n\
+}\n\n\
+static double *llg_vif_real(const llg_vif_storage_t *storage) {\n\
+    return (double *)storage->base;\n\
+}\n\n\
+static llg_fixed_array_t *llg_vif_sparse(const llg_vif_storage_t *storage) {\n\
+    return (llg_fixed_array_t *)storage->base;\n\
 }\n\n";
 
 /// The initializer of one storage slot of an instance environment.

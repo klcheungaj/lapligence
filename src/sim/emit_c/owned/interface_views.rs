@@ -23,6 +23,10 @@ impl Frame<'_, '_> {
                 binding.interface, binding.slot
             ),
         );
+        // The storage may go unread, as where a statement names the member
+        // only for its constant shape (the header of a `foreach` over a fixed
+        // array, an array query); the C compiler must not warn about it.
+        self.line(format!("(void){storage};"));
         let site = c_string_literal(&binding.site);
         // Where a failed access cannot leave (a callback), a use through an
         // unbound view reports and reads the storage of the first instance,
@@ -66,16 +70,19 @@ impl Frame<'_, '_> {
     ) -> Result<(), String> {
         match view {
             IrInterfaceStorage::Array(index) => {
+                // A typed accessor rather than a cast keeps the base of an
+                // element address a runtime call, which coroutine frames may
+                // take addresses through.
                 let array = self.ctx.model.array(index);
-                let ty = if array.sparse() {
-                    "llg_fixed_array_t"
+                let accessor = if array.sparse() {
+                    "llg_vif_sparse"
                 } else if array.real {
-                    "double"
+                    "llg_vif_real"
                 } else {
-                    "sv4_t"
+                    "llg_vif_dense"
                 };
                 self.fixed_arrays
-                    .insert(index, format!("(({ty}*){base}->base)"));
+                    .insert(index, format!("{accessor}({base})"));
             }
             IrInterfaceStorage::Container(index) => {
                 let (ty, _, _) = super::super::containers::activation_storage(
