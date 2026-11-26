@@ -184,7 +184,7 @@ static void assertion_events_order(void) {
         if (i && assertion_event_compare(&queue->items[i - 1u], &queue->items[i]) > 0)
             ordered = 0;
     }
-    if (!ordered) qsort(queue->items, count, sizeof(*queue->items), assertion_event_compare);
+    if (!ordered) llg_sort(queue->items, count, sizeof(*queue->items), assertion_event_compare);
 }
 
 static void assertion_event_push(const llg_acov_item_t* item, int32_t event, uint64_t cb_time,

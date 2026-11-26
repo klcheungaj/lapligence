@@ -182,3 +182,4 @@ lrm_decisions/S07-D6_record_event_nba.sv	mixed-assignments	15:3
 lrm_decisions/S09-D11_event_controlled_updates.sv	mixed-assignments	102:3
 lrm_decisions/S14-D7_event_nba_order.sv	mixed-assignments	17:3
 virtual_interfaces/member_array_forms.sv	mixed-assignments	35:3
+virtual_interfaces/member_array_order.sv	mixed-assignments	64:3

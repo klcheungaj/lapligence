@@ -29,7 +29,12 @@ typedef struct llg_free_set {
 static int32_t free_assertion_identity_cmp(const void* left, const void* right) {
     const llg_concurrent_assertion_t* a = *(llg_concurrent_assertion_t* const*)left;
     const llg_concurrent_assertion_t* b = *(llg_concurrent_assertion_t* const*)right;
-    return a->identity < b->identity ? -1 : a->identity > b->identity ? 1 : 0;
+    if (a->identity != b->identity) return a->identity < b->identity ? -1 : 1;
+    // The runtime does not require identities to be unique; the address makes
+    // the order total, so what the lookup below finds does not depend on how
+    // the C library's qsort orders ties.
+    uintptr_t x = (uintptr_t)a, y = (uintptr_t)b;
+    return x < y ? -1 : x > y;
 }
 
 /* Resolve every set's assume identities with one sorted pass over the
@@ -49,7 +54,7 @@ static int32_t free_sets_resolve(void) {
         for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
              assertion = assertion->next)
             sorted[index++] = assertion;
-        qsort(sorted, total, sizeof(*sorted), free_assertion_identity_cmp);
+        llg_sort(sorted, total, sizeof(*sorted), free_assertion_identity_cmp);
     }
     int32_t ok = 1;
     for (llg_free_set_t* set = g.free_sets; set && ok; set = set->next) {

@@ -2579,6 +2579,10 @@ struct Codegen<'a> {
     staged_interface_views: HashMap<NodeId, objects::InterfaceView>,
     /// What each open staging of views added, innermost last.
     interface_stagings: Vec<objects::InterfaceStaging>,
+    /// Bindings of views through computed handles that run where their use
+    /// is evaluated, by the node that use starts at (VM-D1): the lowering
+    /// of that node runs them first.
+    placed_interface_bindings: HashMap<NodeId, Vec<IrStmt>>,
     /// Views staged for a read walk (`stage_dependency_views`): the handle,
     /// descriptor and storage slot a wait on the view resolves when it arms,
     /// or why no wait can.
@@ -2962,6 +2966,7 @@ impl<'a> Codegen<'a> {
             interface_views_possible: false,
             staged_interface_views: HashMap::new(),
             interface_stagings: Vec::new(),
+            placed_interface_bindings: HashMap::new(),
             dependency_views: HashMap::new(),
             virtual_interface_methods: HashMap::new(),
             virtual_interface_views: HashMap::new(),
@@ -3753,6 +3758,11 @@ struct EmitCtx<'c, 'a> {
     /// assignment being lowered names, run again when its control has
     /// passed (`Codegen::target_interface_bindings`).
     target_rebinds: Vec<IrStmt>,
+    /// The bindings of the views of its own that the target of the blocking
+    /// assignment being split around a control (or around nothing) names
+    /// through a computed handle (decision VM-D1): they run after the
+    /// control, where the target is located, in the write's scope.
+    placed_target_bindings: Vec<IrStmt>,
     /// Exact process kind for the root process being lowered. Nested
     /// function/task contexts leave this unset; it distinguishes plain
     /// `always @*` from the SystemVerilog implicit-sensitivity forms.

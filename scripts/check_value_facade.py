@@ -25,7 +25,7 @@ METADATA = {
     # typespec rows of packed arrays carry metadata widths, not value payloads.
     'rt/llg_vpi.c': ('a[i]', 'alias', 'args[i]', 'argument', 'b[i]', 'b[k]', 'call->args[i]',
                      'conn->ref', 'from', 'g_vpi.objects[row]', 'link', 'net->net', 'node',
-                     'object', 'object->conns[i].ref', 'operand', 'out->row', 'outer', 'owner',
+                     'object', 'object->conns[i].ref', 'operand', 'other', 'out->row', 'outer', 'owner',
                      'part', 'port', 'port->target', 'query', 'ref', 'site->args[i]', 'source',
                      'span', 'start', 'target', 'to', 'typespec'),
     # VPI catalog rows and their nets: strength views are sized by the

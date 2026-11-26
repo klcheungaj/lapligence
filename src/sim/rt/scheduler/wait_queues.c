@@ -418,7 +418,7 @@ static void wait_subscriptions_register(llg_wait_t* wait) {
         }
     }
     if (!keys.count) return;
-    qsort(keys.keys, keys.count, sizeof(*keys.keys), wait_key_compare);
+    llg_sort(keys.keys, keys.count, sizeof(*keys.keys), wait_key_compare);
     size_t unique = 0;
     for (size_t i = 0; i < keys.count; i++)
         if (!unique || keys.keys[i] != keys.keys[unique - 1])

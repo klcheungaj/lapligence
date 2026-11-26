@@ -1892,7 +1892,7 @@ static uint32_t cr_ex_expand(cr_ex_t* ex, uint32_t root) {
         cr_tpl_operands(ex->p, n, &ex->dfs);
     }
     size_t count = ex->work.len - base;
-    qsort(ex->work.data + base, count, sizeof(uint32_t), cr_u32_cmp);
+    llg_sort(ex->work.data + base, count, sizeof(uint32_t), cr_u32_cmp);
     uint32_t result = LLG_CR_NONE;
     for (size_t i = 0; i < count; ++i) {
         uint32_t n = ex->work.data[base + i];

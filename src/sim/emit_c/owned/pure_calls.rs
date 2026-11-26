@@ -153,6 +153,12 @@ pub(super) fn binds_views_only(sequence: &crate::sim::ir::IrSequenceExpr) -> boo
         .all(|statement| matches!(statement.unlocated(), IrStmt::InterfaceBind(_)))
 }
 
+/// Whether `expr` binds views of interface members before its value, as
+/// the first index of a use bound where it starts does (decision VM-D1).
+pub(super) fn binds_views(expr: &IrExpr) -> bool {
+    matches!(&expr.kind, IrExprKind::Sequence(sequence) if binds_views_only(sequence))
+}
+
 fn callback_effect(statement: &IrStmt) -> String {
     let reason = match statement.unlocated() {
         IrStmt::Delay { .. }

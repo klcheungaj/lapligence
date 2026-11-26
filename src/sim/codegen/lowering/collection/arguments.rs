@@ -1175,10 +1175,17 @@ impl<'a> Codegen<'a> {
         ),
         String,
     > {
-        let lhs = match self.fixed_storage_lhs(path, actual)? {
+        let mut lhs = match self.fixed_storage_lhs(path, actual)? {
             Some(lhs) => lhs,
             None => self.lower_lhs(path, actual)?,
         };
+        // An element through a computed handle is located where the copy-in
+        // reads it and again at the copy-out (decision VM-D1).
+        if let Some(bindings) = self.take_placed_interface_bindings(actual) {
+            lhs = self
+                .target_after_bindings(lhs, bindings)
+                .map_err(|error| self.locate_error(actual, error))?;
+        }
         let mut captures = Vec::new();
         let mut sequence = 0usize;
         let (lhs, read) = match selectors {
@@ -1611,6 +1618,9 @@ pub(in super::super) enum CallWriteback {
         keys: super::super::containers::ElementKeys,
         element: IrContainerElement,
         prelude: Vec<IrStmt>,
+        /// Bindings of the actual's own view through a computed handle,
+        /// run again just before the store (decision VM-D1).
+        rebind: Vec<IrStmt>,
     },
 }
 
@@ -1637,6 +1647,7 @@ impl CallWriteback {
                 container,
                 keys,
                 element,
+                rebind,
                 ..
             } => {
                 let real = matches!(element, IrContainerElement::Real { .. });
@@ -1672,7 +1683,12 @@ impl CallWriteback {
                         value,
                     },
                 };
-                IrStmt::Container(Box::new(statement))
+                let statement = IrStmt::Container(Box::new(statement));
+                if rebind.is_empty() {
+                    statement
+                } else {
+                    IrStmt::Block(rebind.into_iter().chain([statement]).collect())
+                }
             }
         })
     }

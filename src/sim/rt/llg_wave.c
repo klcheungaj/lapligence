@@ -47,7 +47,7 @@
 
 #define LLG_WAVE_QUEUE_CAP 1024u
 // End-of-step batches up to this size are sorted by insertion; larger ones
-// by qsort.
+// by llg_sort.
 #define LLG_WAVE_BATCH_INSERTION_MAX 16u
 #define LLG_WAVE_NO_REG UINT32_MAX
 #define LLG_WAVE_HIER_SEP '\x1f'
@@ -725,7 +725,7 @@ static uint32_t* sorted_registrations(void) {
         return NULL;
     }
     for (uint32_t i = 0; i < g_wave.reg_count; i++) order[i] = i;
-    qsort(order, g_wave.reg_count, sizeof(uint32_t), registration_name_compare);
+    llg_sort(order, g_wave.reg_count, sizeof(uint32_t), registration_name_compare);
     return order;
 }
 
@@ -1249,7 +1249,7 @@ static int32_t batch_compare(const void* lhs, const void* rhs) {
 static void writer_write_batch(writer_t* w) {
     uint32_t count = w->batch_count;
     if (count > LLG_WAVE_BATCH_INSERTION_MAX) {
-        qsort(w->batch, count, sizeof(*w->batch), batch_compare);
+        llg_sort(w->batch, count, sizeof(*w->batch), batch_compare);
     } else {
         for (uint32_t i = 1; i < count; i++) {
             wave_event_t moving = w->batch[i];

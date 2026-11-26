@@ -16,6 +16,14 @@ impl<'a> Codegen<'a> {
     /// converted to [`IrLhs`] (identical by construction during the seam
     /// transition; sub-expression codes ride along verbatim).
     pub(in super::super) fn lower_lhs(&mut self, path: &str, lhs: NodeId) -> Result<IrLhs, String> {
+        // A target through a computed handle located after an effect of the
+        // statement binds its view before its first selector (VM-D1).
+        if let Some(bindings) = self.take_placed_interface_bindings(lhs) {
+            let target = self.lower_lhs(path, lhs)?;
+            return self
+                .target_after_bindings(target, bindings)
+                .map_err(|error| self.locate_error(lhs, error));
+        }
         self.with_interface_select(lhs, |this| this.lower_lhs_node(path, lhs))
             .map_err(|error| self.locate_error(lhs, error))
     }

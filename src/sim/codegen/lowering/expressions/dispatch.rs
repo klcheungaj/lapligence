@@ -373,6 +373,11 @@ impl<'a> Codegen<'a> {
         h: NodeId,
     ) -> Result<IrExpr, String> {
         self.check_stack(h)?;
+        // A use through a computed handle that an effect of the statement
+        // precedes binds its view where it starts (decision VM-D1).
+        if let Some(bindings) = self.take_placed_interface_bindings(h) {
+            return Ok(after_statements(bindings, self.lower_expr(scope_path, h)?));
+        }
         self.with_interface_select(h, |this| this.lower_expr_node(scope_path, h))
             .map(|value| self.settle_two_state_select(h, value))
             .map_err(|error| self.locate_error(h, error))

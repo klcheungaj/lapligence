@@ -30,6 +30,14 @@ impl Codegen<'_> {
         node: NodeId,
     ) -> Result<IrStringExpr, String> {
         self.check_stack(node)?;
+        // A string element through a computed handle that an effect of the
+        // statement precedes binds its view before its index (VM-D1).
+        if let Some(bindings) = self.take_placed_interface_bindings(node) {
+            let value = self.lower_string(path, node)?;
+            return self
+                .string_after_bindings(value, bindings)
+                .map_err(|error| self.locate_error(node, error));
+        }
         self.lower_string_unlocated(path, node)
             .map_err(|error| self.locate_error(node, error))
     }

@@ -23,6 +23,7 @@ mod calls;
 pub(in crate::sim::codegen) use calls::CallElementCopies;
 mod captures;
 pub(super) use captures::BranchReferences;
+pub(super) use design::data_query;
 mod classes;
 mod const_writes;
 mod constants;

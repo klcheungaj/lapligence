@@ -1,0 +1,4 @@
+tb.u1 ports: zz[0]{0 0 0 0} aa[1] mm[2]{2 2}
+tb.u0 ports: b[0] a[1] c[2]
+tb.u2 ports: b[0] a[1] c[2]
+tb.st io: zz dir=1 aa dir=2 mm dir=3

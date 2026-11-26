@@ -1239,7 +1239,9 @@ impl<'a> Codegen<'a> {
         )
     }
 
-    fn unwrap_output_actual(&self, node: NodeId) -> NodeId {
+    /// The target of an output or inout actual, which the frontend wraps in
+    /// an assignment from the formal.
+    pub(in super::super) fn unwrap_output_actual(&self, node: NodeId) -> NodeId {
         match self.kind(node) {
             NodeKind::Expr(ExprKind::Operation { op, operands, .. })
                 if *op == Operation::Assignment =>

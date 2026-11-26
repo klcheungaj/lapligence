@@ -815,9 +815,12 @@ static int32_t types_valid(const llg_vpi_type_tables_t* t) {
     return 1;
 }
 
+/* By full name, then catalog order among rows of one name. */
 static int32_t compare_rows(const void* left, const void* right) {
     uint32_t a = *(const uint32_t*)left, b = *(const uint32_t*)right;
-    return strcmp(g_vpi.objects[a].full_name, g_vpi.objects[b].full_name);
+    int32_t order = strcmp(g_vpi.objects[a].full_name, g_vpi.objects[b].full_name);
+    if (order) return order;
+    return a < b ? -1 : a > b;
 }
 
 static uint64_t dims_element_count(const llg_vpi_model_object_t* object) {
@@ -962,7 +965,7 @@ static int32_t vpi_ready(void) {
             g_vpi.objects[i].type != vpiAttribute &&
             !(g_vpi.objects[i].flags & LLG_VPI_OBJ_UNNAMED))
             g_vpi.sorted[g_vpi.sorted_count++] = (uint32_t)i;
-    qsort(g_vpi.sorted, g_vpi.sorted_count, sizeof(*g_vpi.sorted), compare_rows);
+    llg_sort(g_vpi.sorted, g_vpi.sorted_count, sizeof(*g_vpi.sorted), compare_rows);
     g_vpi.indexed = 1;
     return 1;
 }
@@ -3253,9 +3256,11 @@ static size_t g_vpi_tchk_row_count;
 static int32_t g_vpi_tchk_rows_built;
 
 static int32_t compare_tchk_rows(const void* left, const void* right) {
-    uintptr_t a = (uintptr_t)((const llg_vpi_tchk_row_t*)left)->check;
-    uintptr_t b = (uintptr_t)((const llg_vpi_tchk_row_t*)right)->check;
-    return a < b ? -1 : a > b;
+    const llg_vpi_tchk_row_t* x = (const llg_vpi_tchk_row_t*)left;
+    const llg_vpi_tchk_row_t* y = (const llg_vpi_tchk_row_t*)right;
+    uintptr_t a = (uintptr_t)x->check, b = (uintptr_t)y->check;
+    if (a != b) return a < b ? -1 : 1;
+    return x->row < y->row ? -1 : x->row > y->row;
 }
 
 static void tchk_rows_build(void) {
@@ -3286,7 +3291,7 @@ static void tchk_rows_build(void) {
             }
         }
     }
-    qsort(g_vpi_tchk_rows, count, sizeof(*g_vpi_tchk_rows), compare_tchk_rows);
+    llg_sort(g_vpi_tchk_rows, count, sizeof(*g_vpi_tchk_rows), compare_tchk_rows);
     g_vpi_tchk_row_count = count;
 }
 
@@ -5333,7 +5338,8 @@ static int32_t handle_bound(const llg_vpi_slot_t* slot, int32_t left, int64_t* v
 
 static int32_t compare_storage(const void* left, const void* right) {
     const llg_vpi_storage_t *a = (const llg_vpi_storage_t*)left, *b = (const llg_vpi_storage_t*)right;
-    return a->begin < b->begin ? -1 : a->begin > b->begin ? 1 : 0;
+    if (a->begin != b->begin) return a->begin < b->begin ? -1 : 1;
+    return a->row < b->row ? -1 : a->row > b->row;
 }
 
 /* Index the rows that own storage (variables, nets, arrays and members kept
@@ -5358,7 +5364,7 @@ static int32_t storage_index(void) {
         entry->size = object->is_real ? sizeof(double) : sizeof(sv4_t);
         entry->row = row;
     }
-    qsort(entries, count, sizeof(*entries), compare_storage);
+    llg_sort(entries, count, sizeof(*entries), compare_storage);
     g_vpi.storage = entries;
     g_vpi.storage_count = count;
     return 1;
@@ -8414,12 +8420,18 @@ static void conn_spans(uint32_t row, uint32_t index, int32_t lhs, llg_vpi_spans_
 }
 
 static int32_t compare_links(const void* left, const void* right) {
-    const llg_vpi_link_t *a = (const llg_vpi_link_t*)left, *b = (const llg_vpi_link_t*)right;
-    if (a->row != b->row) return a->row < b->row ? -1 : 1;
-    if (a->element != b->element) return a->element < b->element ? -1 : 1;
-    if (a->lsb != b->lsb) return a->lsb < b->lsb ? -1 : 1;
-    if (a->source != b->source) return a->source < b->source ? -1 : 1;
-    return a->aux < b->aux ? -1 : a->aux > b->aux;
+    const llg_vpi_link_t* link = (const llg_vpi_link_t*)left;
+    const llg_vpi_link_t* other = (const llg_vpi_link_t*)right;
+    if (link->row != other->row) return link->row < other->row ? -1 : 1;
+    if (link->element != other->element) return link->element < other->element ? -1 : 1;
+    if (link->lsb != other->lsb) return link->lsb < other->lsb ? -1 : 1;
+    if (link->source != other->source) return link->source < other->source ? -1 : 1;
+    if (link->aux != other->aux) return link->aux < other->aux ? -1 : 1;
+    /* The rest only makes the order total. */
+    if (link->width != other->width) return link->width < other->width ? -1 : 1;
+    if (link->offset != other->offset) return link->offset < other->offset ? -1 : 1;
+    if (link->kind != other->kind) return link->kind < other->kind ? -1 : 1;
+    return link->flags < other->flags ? -1 : link->flags > other->flags;
 }
 
 /* Append one link per span of `spans`, then empty it. */
@@ -8460,9 +8472,11 @@ static uint8_t direction_roles(int32_t direction, int32_t high) {
 }
 
 static int32_t compare_port_links(const void* left, const void* right) {
-    const llg_vpi_link_t* a = &g_vpi.links[*(const uint32_t*)left];
-    const llg_vpi_link_t* b = &g_vpi.links[*(const uint32_t*)right];
-    return a->source < b->source ? -1 : a->source > b->source;
+    uint32_t x = *(const uint32_t*)left, y = *(const uint32_t*)right;
+    const llg_vpi_link_t* a = &g_vpi.links[x];
+    const llg_vpi_link_t* b = &g_vpi.links[y];
+    if (a->source != b->source) return a->source < b->source ? -1 : 1;
+    return x < y ? -1 : x > y;
 }
 
 /* Build the link table once. */
@@ -8519,7 +8533,7 @@ static void links_build(void) {
     }
     free(spans.items);
     if (g_vpi.link_count)
-        qsort(g_vpi.links, g_vpi.link_count, sizeof(*g_vpi.links), compare_links);
+        llg_sort(g_vpi.links, g_vpi.link_count, sizeof(*g_vpi.links), compare_links);
     /* The connection links of each port, by port row. */
     size_t ports = 0;
     for (size_t i = 0; i < g_vpi.link_count; ++i)
@@ -8529,7 +8543,7 @@ static void links_build(void) {
         for (size_t i = 0; i < g_vpi.link_count; ++i)
             if (g_vpi.links[i].kind == LINK_PORT_HIGH || g_vpi.links[i].kind == LINK_PORT_LOW)
                 g_vpi.port_links[g_vpi.port_link_count++] = (uint32_t)i;
-        qsort(g_vpi.port_links, g_vpi.port_link_count, sizeof(*g_vpi.port_links),
+        llg_sort(g_vpi.port_links, g_vpi.port_link_count, sizeof(*g_vpi.port_links),
               compare_port_links);
     }
     g_vpi.links_built = 1;
@@ -8913,7 +8927,7 @@ static vpiHandle link_items_iterator(int32_t type, llg_vpi_link_items_t* items) 
     }
     /* By link_order, then catalog (declaration) order; force statements
      * last. */
-    qsort(items->items, items->count, sizeof(*items->items), compare_link_items);
+    llg_sort(items->items, items->count, sizeof(*items->items), compare_link_items);
     uintptr_t* handles = (uintptr_t*)vpi_calloc(items->count, sizeof(*handles));
     uint32_t made = 0;
     for (size_t i = 0; i < items->count; ++i) {
@@ -9273,11 +9287,14 @@ static vpiHandle make_list_iterator(int32_t type, uintptr_t* items, uint32_t cou
     return handle;
 }
 
+/* Port (clocking io, io declaration) order of object handles, then catalog
+ * order. The handles are object rows' static handles (object_handle). */
 static int32_t compare_ports(const void* left, const void* right) {
-    uint32_t a = (uint32_t)(*(const uintptr_t*)left & LLG_VPI_INDEX_MASK) - 1u;
-    uint32_t b = (uint32_t)(*(const uintptr_t*)right & LLG_VPI_INDEX_MASK) - 1u;
+    uint32_t a = handle_index((vpiHandle)(*(const uintptr_t*)left));
+    uint32_t b = handle_index((vpiHandle)(*(const uintptr_t*)right));
     uint32_t pa = g_vpi.objects[a].port_index, pb = g_vpi.objects[b].port_index;
-    return pa < pb ? -1 : pa > pb;
+    if (pa != pb) return pa < pb ? -1 : 1;
+    return a < b ? -1 : a > b;
 }
 
 /* The object types of 37.78 that own attribute instances, and the
@@ -9329,7 +9346,7 @@ static vpiHandle iterate_children(int32_t type, uint32_t parent) {
         }
     }
     if ((type == vpiPort || type == vpiClockingIODecl || type == vpiIODecl) && count > 1)
-        qsort(items, count, sizeof(*items), compare_ports);
+        llg_sort(items, count, sizeof(*items), compare_ports);
     return make_list_iterator(type, items, (uint32_t)count);
 }
 

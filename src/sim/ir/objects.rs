@@ -105,7 +105,9 @@ pub enum IrInterfaceStorage {
 /// binds each view it uses once, before it runs (a timed blocking
 /// assignment binds the views of its target again when its control has
 /// passed); an expression evaluated more than once binds before each
-/// evaluation. The binding itself never
+/// evaluation. A view of one use through a computed handle that a call or
+/// assignment operator of the statement precedes is bound where that use
+/// starts, in an `IrExprKind::Sequence` (decision VM-D1). The binding itself never
 /// fails: a null handle leaves the view unbound, and each use of an unbound
 /// view reports at `site` and ends the run (decision S99-D8).
 ///

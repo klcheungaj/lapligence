@@ -982,8 +982,9 @@ impl EmitCtx<'_, '_> {
             return lower(self);
         };
         let lowered = lower(self);
-        self.cg.end_interface_views();
+        let ended = self.cg.end_interface_views();
         statements.push(lowered?);
+        ended?;
         Ok(IrStmt::Block(statements))
     }
 
