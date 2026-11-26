@@ -243,15 +243,24 @@ impl Server {
         }
     }
 
+    /// [`without_root`] of this server's root: every comparison of answer
+    /// text that may name a file goes through it.
+    fn without_root(&self, text: &str) -> String {
+        without_root(&self.root, text)
+    }
+
     /// A location with the name of its file.
     fn place(&self, location: &Location) -> Place {
         let path = location.uri.to_file_path().expect("a file");
-        let name = path
+        let relative = path
             .strip_prefix(&self.root)
-            .expect("a file of the project")
-            .to_str()
-            .expect("UTF-8");
-        (name.to_owned(), key(location.range))
+            .unwrap_or_else(|_| panic!("a file of the project: {path:?}"));
+        // Components, so a file in a subdirectory has one name on every host.
+        let name: Vec<&str> = relative
+            .iter()
+            .map(|part| part.to_str().expect("UTF-8"))
+            .collect();
+        (name.join("/"), key(location.range))
     }
 
     async fn hover(&self, name: &str, position: Position) -> Option<(RangeKey, String)> {
@@ -266,10 +275,9 @@ impl Server {
         let HoverContents::Markup(contents) = hover.contents else {
             panic!("markup expected");
         };
-        let root = format!("{}/", self.root.display());
         Some((
             key(hover.range.expect("a hover range")),
-            contents.value.replace(&root, ""),
+            self.without_root(&contents.value),
         ))
     }
 
@@ -411,7 +419,7 @@ impl Server {
             .expect("dumpTokens")
             .lines;
         lines.retain(|line| !line.starts_with('#'));
-        lines
+        lines.iter().map(|line| self.without_root(line)).collect()
     }
 
     async fn completions(&self, name: &str, position: Position) -> BTreeSet<String> {
@@ -454,6 +462,38 @@ impl Drop for Server {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.root);
     }
+}
+
+/// `text` without `root` and the separator after it wherever a path in it
+/// starts with the root, in either separator (Windows hovers spell paths with
+/// `\`), so that answers of servers over different roots compare equal on
+/// every host. Other backslashes (escaped identifiers) stay.
+fn without_root(root: &std::path::Path, text: &str) -> String {
+    let root = root.to_str().expect("UTF-8");
+    let root = root.trim_end_matches(['/', '\\']);
+    let mut text = text.to_owned();
+    for spelling in [root.replace('\\', "/"), root.replace('/', "\\")] {
+        for separator in ['/', '\\'] {
+            text = text.replace(&format!("{spelling}{separator}"), "");
+        }
+    }
+    text
+}
+
+#[test]
+fn answers_compare_without_their_root_in_either_separator() {
+    let root = std::path::Path::new("/tmp/llg_positions_edited_1");
+    for text in [
+        "defined at /tmp/llg_positions_edited_1/defs.svh:2",
+        "defined at \\tmp\\llg_positions_edited_1\\defs.svh:2",
+    ] {
+        assert_eq!(without_root(root, text), "defined at defs.svh:2");
+    }
+    assert_eq!(without_root(root, "\\esc+name"), "\\esc+name");
+    assert_eq!(
+        without_root(root, "defined at /tmp/llg_positions_fresh_1/defs.svh:2"),
+        "defined at /tmp/llg_positions_fresh_1/defs.svh:2"
+    );
 }
 
 type RangeKey = (PosKey, PosKey);
