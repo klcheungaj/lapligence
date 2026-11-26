@@ -178,13 +178,16 @@ fn compact_parity_vpi_waveform() {
     );
 }
 
+/// `selector=0`: `wide[(wide = 0) +: 1] = wide` runs the nested assignment
+/// before reading the right-hand side (decision EO-D1, IEEE 1800-2009 11.4.2
+/// L14500).
 #[test]
 fn compact_parity_arithmetic_destinations() {
     sim_cli::run_case_backend_parity(
         "emit_value_traffic",
         "arithmetic",
         &format!(
-            "nba=22\noutput=8,9\nselector=1\nxz={},zzzz\nunsigned65=08000000000000000\nsigned65=18000000000000000\nback64=8000000000000000\n",
+            "nba=22\noutput=8,9\nselector=0\nxz={},zzzz\nunsigned65=08000000000000000\nsigned65=18000000000000000\nback64=8000000000000000\n",
             "x".repeat(128)
         ),
         &[],
