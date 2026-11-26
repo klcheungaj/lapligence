@@ -19,10 +19,8 @@ static PLI_INT32 d94(PLI_BYTE8* data) {
         const char* name = vpi_get_str(vpiName, port);
         vpi_printf("%s:", name ? name : "NULL");
         property("size", vpiSize, port);
-        if (!name || strcmp(name, "str") != 0) {
-            property("scalar", vpiScalar, port);
-            property("vector", vpiVector, port);
-        }
+        property("scalar", vpiScalar, port);
+        property("vector", vpiVector, port);
         vpi_printf("\n");
     }
     return 0;

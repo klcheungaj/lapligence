@@ -12,4 +12,5 @@ sua: size=1 scalar=1 vector=0
 o: size=3 scalar=0 vector=1
 m: size=1 scalar=1 vector=0
 f: size=1 scalar=1 vector=0
-str: size=-1
+str: size=-1 scalar=0 vector=1
+sa: size=64 scalar=0 vector=1
