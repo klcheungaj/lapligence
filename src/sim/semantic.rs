@@ -152,21 +152,52 @@ impl SimulationIssue {
     /// `None` when no enclosing node has a position either; the text is then
     /// [`diagnostic`](Self::diagnostic), which names the synthetic origin.
     pub fn located(&self, model: &SemanticModel<'_>) -> (String, Option<String>) {
-        let mut node = Some(self.node);
-        while let Some(id) = node {
+        // A placeholder without a parent (the import's stand-in for an
+        // elaborated object) is reached through a reference; the first
+        // referring node with a position stands for it.
+        let site = Self::source_location(model, self.node)
+            .map(|location| (location, String::new()))
+            .or_else(|| {
+                model.db.node_ids().find_map(|referrer| {
+                    let node = model.db.node(referrer);
+                    let mut references = Vec::new();
+                    node.kind().append_references(&mut references);
+                    if !node.children().contains(&self.node) && !references.contains(&self.node) {
+                        return None;
+                    }
+                    Self::source_location(model, referrer)
+                        .map(|location| (location, node.full_name().to_owned()))
+                })
+            });
+        let Some((location, scope)) = site else {
+            return (self.diagnostic(model), None);
+        };
+        let path = model.db.node(self.node).full_name();
+        let path = if path.is_empty() {
+            scope
+        } else {
+            path.to_owned()
+        };
+        let text = if path.is_empty() {
+            format!("unsupported executable node `{}`", self.detail)
+        } else {
+            format!("unsupported executable node `{}` in `{path}`", self.detail)
+        };
+        (text, Some(location))
+    }
+
+    /// The source position of `node` or of its nearest enclosing node that
+    /// has one.
+    fn source_location(model: &SemanticModel<'_>, node: NodeId) -> Option<String> {
+        let mut current = Some(node);
+        while let Some(id) = current {
             let origin = model.origin_of(id).and_then(|origin| model.origin(origin));
             if let Some(origin @ Origin::Source { .. }) = origin {
-                let path = model.db.node(self.node).full_name();
-                let text = if path.is_empty() {
-                    format!("unsupported executable node `{}`", self.detail)
-                } else {
-                    format!("unsupported executable node `{}` in `{path}`", self.detail)
-                };
-                return (text, Some(origin.location()));
+                return Some(origin.location());
             }
-            node = model.db.node(id).parent();
+            current = model.db.node(id).parent();
         }
-        (self.diagnostic(model), None)
+        None
     }
 }
 
@@ -2132,6 +2163,42 @@ mod tests {
             (
                 "unsupported executable node `Invalid` in `top`".to_owned(),
                 Some("test.sv:4:7".to_owned())
+            )
+        );
+    }
+
+    #[test]
+    fn a_placeholder_without_a_parent_is_located_at_its_referrer() {
+        let mut connection = node(
+            NodeKind::IfaceConn {
+                actual: NodeId(2),
+                modport: String::new(),
+            },
+            Some(NodeId(0)),
+            vec![],
+        );
+        connection.line = 3;
+        connection.col = 9;
+        connection.full_name = "top.p".into();
+        let mut placeholder = node(NodeKind::Other, None, vec![]);
+        placeholder.file = None;
+        let db = Db::from_test_nodes(
+            "top",
+            vec![top(vec![NodeId(1)]), connection, placeholder],
+            vec![NodeId(0)],
+            HashMap::new(),
+        )
+        .unwrap();
+        let model = SemanticModel::from_db(&db);
+        let issues = model
+            .validate_simulation()
+            .expect_err("the placeholder is reachable through the connection");
+        assert_eq!(issues[0].node, NodeId(2));
+        assert_eq!(
+            issues[0].located(&model),
+            (
+                "unsupported executable node `owned node kind Other` in `top.p`".to_owned(),
+                Some("test.sv:3:9".to_owned())
             )
         );
     }

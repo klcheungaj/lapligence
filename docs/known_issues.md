@@ -4298,3 +4298,29 @@ it, and lower these forms on the temporary.
 
 `int q[2][$]; initial begin q[0] = '{1}; q[1] = '{1}; $display(q[0] == q[1]);
 end`
+
+## Ports that are arrays of interfaces
+
+**Status:** open; rejected with a located diagnostic (CODEGEN-001).
+
+### Symptom
+
+A module port declared as an array of interface instances (`module sub(ifc
+p[2])`) connected to an interface array reports "unsupported executable node
+`owned node kind Other` in `tb.s.p`" at the port, whatever the module does with
+it. Single interface ports and virtual interface arrays work.
+
+### Cause
+
+The import connects such a port to a placeholder without a parent for the
+interface array, and nothing lowers it.
+
+### Intended direction
+
+Connect the port to the elements of the actual interface array, as a
+connection of each element to an interface port is.
+
+### Reproduce
+
+`interface ifc; int d; endinterface module sub(ifc p[2]); initial #1
+$display("%0d", p[1].d); endmodule module tb; ifc i[2](); sub s(i); endmodule`
