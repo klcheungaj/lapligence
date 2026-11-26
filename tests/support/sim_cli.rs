@@ -685,6 +685,13 @@ pub(crate) fn run_case_checked_matrix(
     run_case_checked_matrix_with_files(suite, fixture, args, &[], check);
 }
 
+/// How many outputs one [`run_case_checked_matrix`] call hands to its check:
+/// one per optimizer mode and value lane, six outside a matrix cell and one
+/// inside it.
+pub(crate) fn checked_matrix_runs() -> usize {
+    sim_harness::optimizer_modes().len() * sim_harness::value_lanes().len()
+}
+
 /// [`run_case_checked_matrix`] with checked-in input `files` (name,
 /// contents) written into every run's working directory.
 pub(crate) fn run_case_checked_matrix_with_files(

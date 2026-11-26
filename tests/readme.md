@@ -2049,5 +2049,7 @@ executable the public CLI built. Runtime-cache entries are keyed by that
 identity and a model only links against its own runtime, so cells cannot share
 a runtime archive; compiler caches key on the preprocessed source, which
 includes the selection. The output directory holds `metadata.tsv` (revision),
-`summary.tsv` (one row per cell with counts and wall time), and per cell its
+`summary.tsv` (one row per cell with JUnit counts, nextest's skipped count, which
+includes the tests outside the cell's scope and ignored ones, and wall time),
+and per cell its
 log, JUnit report, `groups.tsv` (counts per binary and suite) and failed tests.

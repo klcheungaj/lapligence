@@ -282,7 +282,7 @@ fn random_sources_replay_deterministically() {
         );
     }
     let outputs = outputs.into_inner();
-    assert_eq!(outputs.len(), 12);
+    assert_eq!(outputs.len(), 2 * sim_cli::checked_matrix_runs());
     let (first_label, first) = &outputs[0];
     let relations = "replay equal: 1\ncontinuation differs: 1\n\
                      randc cycle complete: 1\n";

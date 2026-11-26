@@ -41,6 +41,7 @@ xml = "<testsuites>" + "".join(
 junit = Path(os.environ["CARGO_TARGET_DIR"]) / "nextest" / "value-matrix" / "junit.xml"
 junit.parent.mkdir(parents=True, exist_ok=True)
 junit.write_text(xml, encoding="utf-8")
+print("     Summary [   1.000s] 2 tests run: 2 passed, 7 skipped")
 sys.exit(100 if mode == "fail-legacy" and cell.startswith("legacy/") else 0)
 '''
 
@@ -100,6 +101,7 @@ class ValueMatrixTest(unittest.TestCase):
         self.assertEqual([row["status"] for row in rows], ["ok"] * 4)
         self.assertEqual([row["scope"] for row in rows], ["all"] + ["backend-dependent"] * 3)
         self.assertEqual(rows[0]["passed"], "2")
+        self.assertEqual(rows[0]["nextest_skipped"], "7")
         self.assertTrue((out / "legacy.no-opt.junit.xml").is_file())
         groups = (out / "compact-gmp.normal.groups.tsv").read_text(encoding="utf-8").splitlines()
         self.assertIn("llg::sim_n_z\tsim_counter\t1\t0\t0\t0", groups)

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -96,6 +97,11 @@ def tally(results, key):
     return counts
 
 
+def nextest_skipped(log_path):
+    found = re.findall(r"Summary \[.*\] \d+ tests? run: .*?(\d+) skipped", log_path.read_text(encoding="utf-8", errors="replace"))
+    return found[-1] if found else "0"
+
+
 def git_text(*args):
     completed = subprocess.run(["git", *args], cwd=REPO_ROOT, capture_output=True, text=True)
     return completed.stdout.strip() if completed.returncode == 0 else "unknown"
@@ -151,12 +157,13 @@ def run_cell(lane, mode, args, base_env, output_dir):
         "exit": status,
         "tests": len(results),
         "seconds": f"{seconds:.0f}",
+        "nextest_skipped": nextest_skipped(log_path),
         "problems": "; ".join(problems),
         **counts,
     }
 
 
-COLUMNS = ("cell", "selection", "scope", "status", "exit", "tests", "passed", "failed", "skipped", "flaky", "seconds", "problems")
+COLUMNS = ("cell", "selection", "scope", "status", "exit", "tests", "passed", "failed", "skipped", "flaky", "nextest_skipped", "seconds", "problems")
 
 
 def main(argv=None):

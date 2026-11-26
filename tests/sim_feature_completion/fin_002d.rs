@@ -520,10 +520,29 @@ fn allocation_fault_build_renames_every_runtime_allocation() {
             direct.push(member);
         }
     }
-    assert!(
-        wrapped.len() >= 8,
-        "few objects with renamed allocations ({wrapped:?}):\n{listing}"
-    );
+    // The runtime units that allocate on every value backend, then the value
+    // storage unit of the selected one.
+    let storage = match llg::sim::value_backend::ValueConfig::from_env()
+        .expect("value selection")
+        .backend
+    {
+        llg::sim::value_backend::ValueBackend::Legacy => "llg_value.c.o",
+        llg::sim::value_backend::ValueBackend::Compact => "storage.c.o",
+    };
+    for member in [
+        "llg_constraint.c.o",
+        "llg_vpi.c.o",
+        "llg_dpi_context.c.o",
+        "llg_container.c.o",
+        "llg_string.c.o",
+        "llg_wave.c.o",
+        storage,
+    ] {
+        assert!(
+            wrapped.contains(&member),
+            "{member} has no renamed allocation ({wrapped:?}):\n{listing}"
+        );
+    }
     // llg_rt.c holds the wrapper; memory.c is GMP's default allocator, which
     // a model replaces when it starts (compact values with GMP kernels only);
     // the rest writes FST dumps.
