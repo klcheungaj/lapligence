@@ -72,6 +72,14 @@ fn native_values_cross_ports_and_mixed_signatures_as_copies() {
 }
 
 #[test]
+fn input_string_ports_follow_element_and_expression_actuals() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_004/string_element_links.out");
+    sim_cli::run_case_backend_parity(SUITE, "string_element_links", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "string_element_links", expected);
+}
+
+#[test]
 fn continuous_assignments_drive_strings_and_string_records() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_004/native_continuous.out");
     sim_cli::run_case_backend_parity(SUITE, "native_continuous", expected, &[], &[]);

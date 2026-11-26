@@ -1050,8 +1050,7 @@ impl<'c, 'a> CodeTables<'c, 'a> {
             }
             let type_code = match cg.kind(target) {
                 NodeKind::Var { ty } | NodeKind::Net { ty, .. } | NodeKind::FuncArg { ty, .. } => {
-                    IrVpiVarKind::from_type_kind(&ty.kind, cg.vpi_packed_dimension_count(target))
-                        .c_type()
+                    IrVpiVarKind::from_type_kind(&ty.kind).c_type()
                 }
                 NodeKind::Array { .. } => "vpiRegArray",
                 NodeKind::NamedEvent => "vpiNamedEvent",

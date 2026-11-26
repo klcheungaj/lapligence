@@ -55,7 +55,8 @@ impl Codegen<'_> {
         }
         match self.kind(id) {
             NodeKind::Var { .. } => {
-                let index = *self.object_globals.get(&id)?;
+                // A `ref` port's formal names its actual's storage.
+                let index = self.reference_object(*self.object_globals.get(&id)?);
                 matches!(
                     model.objects.get(index)?.ty,
                     IrObjectType::String | IrObjectType::Chandle | IrObjectType::Semaphore
@@ -595,17 +596,13 @@ impl Codegen<'_> {
         two_state: bool,
     ) -> IrVpiShape {
         let typespec = self.vpi_typespec(typespecs, descriptor, None, 0);
-        let ranges = match &descriptor.shape {
-            TypeShape::PackedAtom { ranges } => ranges.len(),
-            _ => 0,
-        };
         let var_kind = match typespec {
-            Some(typespec) => typespec_var_kind(typespecs.entries[typespec].kind, ranges),
+            Some(typespec) => typespec_var_kind(typespecs.entries[typespec].kind),
             None => match descriptor.info.kind.as_str() {
                 "struct" => IrVpiVarKind::Struct,
                 "union" => IrVpiVarKind::Union,
                 "enum" => IrVpiVarKind::Enum,
-                _ => typespec_var_kind(builtin_integral(width, two_state), ranges),
+                _ => typespec_var_kind(builtin_integral(width, two_state)),
             },
         };
         IrVpiShape::Packed {

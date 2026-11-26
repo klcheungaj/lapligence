@@ -1487,6 +1487,19 @@ static int32_t is_packed_select(const llg_vpi_slot_t* slot) {
     return slot->kind == SLOT_SELECT && slot->aux > 0;
 }
 
+/* Whether `slot` names a whole variable, or an element of a variable array,
+ * of a logic or bit type with several packed dimensions. Its vpiType is
+ * vpiReg or vpiBitVar (decision A19-D95, 37.18 detail 1), and it keeps the
+ * packed array properties of decision A19-D28. */
+static int32_t is_multi_packed_variable(const llg_vpi_slot_t* slot) {
+    const llg_vpi_model_object_t* object = row_object(slot->object);
+    if (!object || object->is_net) return 0;
+    if (slot->kind == SLOT_OBJECT)
+        return packed_array_typespec(slot->object, LLG_VPI_NO_ELEMENT) != NULL;
+    if (slot->kind == SLOT_ELEMENT) return packed_array_typespec(slot->object, slot->element) != NULL;
+    return 0;
+}
+
 /* Whether a packed select names a bit (every packed index) rather than an
  * element (all but the last). */
 static int32_t packed_select_is_bit(const llg_vpi_slot_t* slot) {
@@ -1955,6 +1968,7 @@ static int32_t handle_type(const llg_vpi_slot_t* slot);
 static vpiHandle code_handle(uint32_t index);
 static int32_t code_is_unscoped_block(uint32_t index);
 static const llg_vpi_code_t* code_at(uint32_t index);
+static int32_t code_index(uint32_t index, int64_t* value, int32_t depth);
 static uint32_t code_visible(uint32_t index);
 static uint32_t code_child(const llg_vpi_code_t* node, int32_t relation);
 static const llg_fcov_fsm_t* slot_fsm(const llg_vpi_slot_t* slot);
@@ -2093,6 +2107,36 @@ static vpiHandle make_aux_slot(llg_vpi_slot_kind_t kind, uint32_t row, uint32_t 
 
 /* The handle of connection `index` of `row`: the catalog object, select or
  * element it names, else a constant or expression handle of its own. */
+/* 37.14 detail 3: a port connected to a constant element select of an array
+ * of strings or handles, or of a queue, dynamic or associative array (`arr[1]`,
+ * `q[0]`), has that element object as its high connection, the object its
+ * name finds (decision A19-D95). NULL for any other connection, and while the
+ * element does not exist. */
+static vpiHandle dynamic_element_conn(uint32_t index) {
+    const llg_vpi_code_t* node = code_at(code_visible(index));
+    if (!node || node->type != vpiVarSelect || !(node->flags & LLG_VPI_CODE_CONSTANT)) return NULL;
+    uint32_t parent = code_child(node, vpiParent);
+    const llg_vpi_code_t* array = parent == LLG_VPI_NONE ? NULL : code_at(parent);
+    if (!array || !(array->flags & LLG_VPI_CODE_ALIAS) || array->object < 0) return NULL;
+    const llg_vpi_model_object_t* object = row_object((uint32_t)array->object);
+    if (!object || !(object->flags & LLG_VPI_OBJ_DYNAMIC)) return NULL;
+    uint32_t selected = LLG_VPI_NONE;
+    for (uint32_t i = 0; i < node->count; ++i) {
+        if (g_vpi.code->nodes[node->first + i].role != vpiIndex) continue;
+        if (selected != LLG_VPI_NONE) return NULL;
+        selected = node->first + i;
+    }
+    int64_t value;
+    if (selected == LLG_VPI_NONE || !code_index(selected, &value, 0) || value < INT32_MIN ||
+        value > INT32_MAX)
+        return NULL;
+    vpiHandle element =
+        dyn_handle_by_index(decode_handle(object_handle((uint32_t)array->object)), (PLI_INT32)value);
+    /* A missing element leaves the expression object, without an error. */
+    if (!element) g_vpi.error_pending = 0;
+    return element;
+}
+
 static vpiHandle conn_handle(uint32_t row, uint32_t index) {
     const llg_vpi_conn_t* conn = row_conn(row, index);
     if (!conn) return NULL;
@@ -2116,8 +2160,10 @@ static vpiHandle conn_handle(uint32_t row, uint32_t index) {
     /* An expression or literal of a model generated for VPI applications
      * is an expression object (37.55). */
     if ((ref->ref_kind == LLG_VPI_ARG_EXPRESSION || ref->ref_kind == LLG_VPI_ARG_CONSTANT) &&
-        ref->code && g_vpi.code)
-        return code_handle(ref->code - 1u);
+        ref->code && g_vpi.code) {
+        vpiHandle element = dynamic_element_conn(ref->code - 1u);
+        return element ? element : code_handle(ref->code - 1u);
+    }
     return make_aux_slot(SLOT_CONN, row, index);
 }
 
@@ -2414,10 +2460,30 @@ static PLI_INT32 port_size(const llg_vpi_model_object_t* port, int32_t* string) 
         return array ? 64 : vpiUndefined;
     }
     if (is_aggregate_typespec(typespec) && (typespec->flags & LLG_VPI_TS_UNPACKED)) return 1;
+    if (typespec && typespec->type == vpiRealTypespec) return 64;
+    if (typespec && typespec->type == vpiShortRealTypespec) return 32;
     if (!array || !typespec) return (PLI_INT32)port->width;
-    if (typespec->type == vpiRealTypespec) return 64;
-    if (typespec->type == vpiShortRealTypespec) return 32;
     return (PLI_INT32)typespec->width;
+}
+
+/* Decision A19-D95: the low connection of a `ref` port is a reference object
+ * (37.15 detail 1) that stands for the formal it names: its value, size,
+ * typespec, bits and elements are the formal's, and its vpiActual is the
+ * port's high connection (detail 3). The formal's handle for such an object,
+ * else NULL (also for an interface or modport port's reference objects,
+ * which have no value). */
+static vpiHandle ref_port_formal(const llg_vpi_slot_t* slot) {
+    if (!slot || slot->kind != SLOT_REFOBJ || slot->aux) return NULL;
+    const llg_vpi_model_object_t* port = row_object(slot->object);
+    if (!port || port->detail || !port->target) return NULL;
+    return object_handle(row_of(port->target));
+}
+
+/* The handle a value, part or element query on `handle` answers for: the
+ * formal of a `ref` port's reference object, else `handle` itself. */
+static vpiHandle formal_or_self(vpiHandle handle) {
+    vpiHandle formal = ref_port_formal(decode_handle(handle));
+    return formal ? formal : handle;
 }
 
 static vpiHandle port_bit_by_indices(uint32_t row, const int64_t* indices, uint32_t count) {
@@ -2546,7 +2612,7 @@ static vpiHandle iterate_indices(const llg_vpi_slot_t* slot) {
     if (!dims && !packed_count) {
         int32_t type = bit ? 0 : handle_type(slot);
         if (is_net_type(type) || type == vpiNamedEvent || type == vpiPackedArrayVar ||
-            type == vpiRegArray)
+            type == vpiRegArray || (!bit && is_multi_packed_variable(slot)))
             return NULL;
         vpi_error("LLG_VPI_RELATION", bit ? "vpiIndex iteration of a bit outside an array"
                                           : "vpiIndex iteration of a variable outside an array");
@@ -4457,7 +4523,10 @@ static vpiHandle element_by_indices(uint32_t row, const int64_t* indices, int32_
 static vpiHandle bit_by_index(uint32_t row, uint64_t element, int64_t index, int32_t quiet) {
     llg_vpi_model_object_t* object = row_object(row);
     if (object->is_real || !has_values(object) ||
-        object->type == vpiPackedArrayVar || object->width < 1) {
+        object->type == vpiPackedArrayVar ||
+        (!object->is_net && element == LLG_VPI_NO_ELEMENT &&
+         packed_array_typespec(row, LLG_VPI_NO_ELEMENT)) ||
+        object->width < 1) {
         if (quiet != BIT_QUIET)
             vpi_error("LLG_VPI_INDEX", "object has no bit-selectable packed value");
         return NULL;
@@ -4532,7 +4601,18 @@ static vpiHandle declaration_relation(int32_t type, uint32_t row, int32_t* handl
             switch (type) {
                 case vpiExpr: {
                     /* The port's declaration, the task or function
-                     * argument, or the interface member of a modport port. */
+                     * argument, or the interface member of a modport port;
+                     * a `ref` port's is its reference object (37.13 detail
+                     * 2, decision A19-D95). */
+                    uint32_t owner;
+                    if (object->subtype == vpiRef && model_pointer_index(parent, &owner))
+                        for (uint32_t child = g_vpi.first_child[owner]; child;
+                             child = g_vpi.next_sibling[child - 1u]) {
+                            const llg_vpi_model_object_t* port = &g_vpi.objects[child - 1u];
+                            if (port->type == vpiPort && port->subtype == vpiRef &&
+                                port->port_index == object->port_index)
+                                return make_aux_slot(SLOT_REFOBJ, child - 1u, 0u);
+                        }
                     uint32_t target =
                         object->target ? row_of(object->target) : find_row(object->full_name);
                     return target == LLG_VPI_NONE ? NULL : object_handle(target);
@@ -4591,7 +4671,7 @@ static vpiHandle event_element(uint32_t row, const int64_t* values, uint32_t cou
 
 vpiHandle vpi_handle_by_index(vpiHandle object, PLI_INT32 index) {
     vpi_enter();
-    llg_vpi_slot_t* slot = checked_handle(object);
+    llg_vpi_slot_t* slot = checked_handle(formal_or_self(object));
     if (!slot) return NULL;
     if (dyn_slot(slot)) return dyn_handle_by_index(slot, index);
     if (slot->kind == SLOT_AUTO) return rts_auto_by_index(slot, index);
@@ -4648,6 +4728,7 @@ vpiHandle vpi_handle_by_index(vpiHandle object, PLI_INT32 index) {
 
 vpiHandle vpi_handle_by_multi_index(vpiHandle object, PLI_INT32 count, PLI_INT32* indices) {
     vpi_enter();
+    object = formal_or_self(object);
     llg_vpi_slot_t* slot = checked_handle(object);
     if (!slot) return NULL;
     if (count <= 0 || count > 16 || !indices) {
@@ -7829,6 +7910,14 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
     }
     llg_vpi_slot_t* slot = checked_handle(ref_handle);
     if (!slot) return NULL;
+    {
+        /* A `ref` port's reference object has no parent (37.15 detail 4
+         * gives one only to a sub-element); its other relations are its
+         * formal's (decision A19-D95). */
+        vpiHandle formal = ref_port_formal(slot);
+        if (formal && type == vpiParent) return NULL;
+        if (formal && type != vpiActual) return vpi_handle(type, formal);
+    }
     if (slot->kind == SLOT_ASSERTION) return assertion_relation(type, slot);
     if (slot->kind == SLOT_FSM || slot->kind == SLOT_FSMSTATE) return fsm_relation(type, slot);
     if (slot->kind == SLOT_STMT) return statement_relation(type, slot);
@@ -8144,6 +8233,9 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
                     uint32_t side = port_conn(slot->object, high);
                     return side == LLG_VPI_NONE ? NULL : conn_handle(slot->object, side);
                 }
+                /* 37.15 detail 1: the low connection of a `ref` port is a
+                 * reference object (decision A19-D95). */
+                if (object->subtype == vpiRef) return make_aux_slot(SLOT_REFOBJ, slot->object, 0u);
                 return object_handle(row_of(object->target));
             }
             if (slot->kind == SLOT_PORTBIT) return port_bit_conn(slot, high);
@@ -8261,7 +8353,15 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
             }
             break;
         case vpiActual:
-            if (slot->kind == SLOT_REFOBJ) return object_handle(row_of(object->target));
+            if (slot->kind == SLOT_REFOBJ) {
+                /* 37.15 detail 3: a `ref` port's formal stands for the
+                 * object its high connection names (decision A19-D95). */
+                if (ref_port_formal(slot)) {
+                    uint32_t side = port_conn(slot->object, 1);
+                    return side == LLG_VPI_NONE ? NULL : conn_handle(slot->object, side);
+                }
+                return object_handle(row_of(object->target));
+            }
             break;
         case vpiInstance:
             /* 37.10 detail 3: the immediate package, module, interface or
@@ -9654,6 +9754,9 @@ static vpiHandle iterate_typespec(const llg_vpi_slot_t* slot, int32_t type) {
 vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
     vpi_enter();
     if (!vpi_ready()) return NULL;
+    /* A `ref` port's reference object iterates its formal's parts
+     * (decision A19-D95). */
+    if (ref_handle) ref_handle = formal_or_self(ref_handle);
     g_vpi.iterate_ref = (uintptr_t)ref_handle;
     {
         int32_t handled;
@@ -10336,6 +10439,16 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
     }
     llg_vpi_slot_t* slot = checked_handle(handle);
     if (!slot) return vpiUndefined;
+    if (slot->kind == SLOT_REFOBJ && property != vpiType && property != vpiLineNo) {
+        /* Decision A19-D95: an interface or modport port's reference object
+         * has no bits (37.14 detail 11 gives a null port 0); a `ref` port's
+         * answers as its formal, but has no direction and is neither a
+         * virtual nor a generic interface (37.15 details 5 and 6). */
+        vpiHandle formal = ref_port_formal(slot);
+        if (property == vpiSize && !formal) return 0;
+        if (formal && (property == vpiVirtual || property == vpiGeneric)) return vpiUndefined;
+        if (formal && property != vpiDirection) return vpi_get(property, formal);
+    }
     if (slot->kind == SLOT_ASSERTION && property != vpiType) {
         uint64_t value;
         if (!assertion_property(slot, property, &value)) return unsupported_property();
@@ -10414,12 +10527,15 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
         if (object->type == vpiGenScopeArray && property == vpiSize)
             return (PLI_INT32)gen_scope_count(slot->object);
         if (object->type != vpiIODecl) return unsupported_property();
+        /* An io declaration sizes as its port does (decision A19-D95). */
+        int32_t string;
+        PLI_INT32 size = port_size(object, &string);
         switch (property) {
             case vpiDirection: return object->subtype ? object->subtype : vpiNoDirection;
-            case vpiSize: return (PLI_INT32)object->width;
+            case vpiSize: return size;
             case vpiSigned: return object->is_signed != 0;
-            case vpiScalar: return object->width == 1;
-            case vpiVector: return object->width > 1;
+            case vpiScalar: return !string && size == 1;
+            case vpiVector: return string || size > 1;
             default: return unsupported_property();
         }
     }
@@ -10527,7 +10643,7 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
             return unsupported_property();
         case vpiPacked:
             /* 37.18 detail 1: a packed array variable is packed. */
-            if (type == vpiPackedArrayVar) return 1;
+            if (type == vpiPackedArrayVar || is_multi_packed_variable(slot)) return 1;
             return packed_property(value_typespec(slot));
         case vpiPackedArrayMember:
             /* 37.18 detail 4: TRUE only for a struct, union, enum or packed
@@ -10537,7 +10653,7 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
             if (is_packed_select(slot)) return unsupported_property();
             if (type == vpiPackedArrayVar || type == vpiStructVar || type == vpiUnionVar ||
                 type == vpiEnumVar || type == vpiPackedArrayNet || type == vpiStructNet ||
-                type == vpiEnumNet)
+                type == vpiEnumNet || is_multi_packed_variable(slot))
                 return 0;
             return unsupported_property();
         case vpiConstantSelect:
@@ -10546,7 +10662,8 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
              * catalog net, bit and element is (decision A19-D28). */
             if (is_net_type(type) || type == vpiNetBit || type == vpiNetArray ||
                 type == vpiRegBit || type == vpiPackedArrayVar || type == vpiStructVar ||
-                type == vpiUnionVar || type == vpiEnumVar || is_packed_select(slot))
+                type == vpiUnionVar || type == vpiEnumVar || is_packed_select(slot) ||
+                is_multi_packed_variable(slot))
                 return 1;
             return unsupported_property();
         case vpiIsMemory:
@@ -11386,6 +11503,9 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
 
 void vpi_get_value(vpiHandle handle, p_vpi_value output) {
     vpi_enter();
+    /* A `ref` port's reference object has its formal's value (decision
+     * A19-D95). */
+    handle = formal_or_self(handle);
     if (!output) {
         vpi_error("LLG_VPI_ARGUMENT", "null vpi_get_value output");
         return;
@@ -11702,6 +11822,7 @@ static vpiHandle udp_put_value(const llg_vpi_model_object_t* object, p_vpi_value
 vpiHandle vpi_put_value(vpiHandle handle, p_vpi_value input, p_vpi_time time,
                         PLI_INT32 flags) {
     vpi_enter();
+    handle = formal_or_self(handle); /* decision A19-D95 */
     llg_vpi_slot_t* slot = checked_handle(handle);
     if (!slot) return NULL;
     int32_t mode = flags & ~(vpiReturnEvent | vpiUserAllocFlag | vpiOneValue | vpiPropagateOff);
@@ -11998,6 +12119,7 @@ static int32_t array_section(vpiHandle handle, const s_vpi_arrayvalue* values, c
 void vpi_get_value_array(vpiHandle handle, p_vpi_arrayvalue arrayvalue_p, PLI_INT32* index_p,
                          PLI_UINT32 num) {
     vpi_enter();
+    handle = formal_or_self(handle); /* decision A19-D95 */
     if (!arrayvalue_p) {
         vpi_error("LLG_VPI_ARGUMENT", "null vpi_get_value_array arrayvalue_p");
         return;
@@ -12193,6 +12315,7 @@ static int32_t array_element_datum(const llg_vpi_model_object_t* object, PLI_UIN
 void vpi_put_value_array(vpiHandle handle, p_vpi_arrayvalue arrayvalue_p, PLI_INT32* index_p,
                          PLI_UINT32 num) {
     vpi_enter();
+    handle = formal_or_self(handle); /* decision A19-D95 */
     if (!arrayvalue_p) {
         vpi_error("LLG_VPI_ARGUMENT", "null vpi_put_value_array arrayvalue_p");
         return;

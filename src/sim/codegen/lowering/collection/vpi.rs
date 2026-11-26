@@ -129,11 +129,11 @@ fn builtin_integral(width: u32, two_state: bool) -> IrVpiTypespecKind {
     }
 }
 
-/// The catalog variable kind of a value of typespec kind `kind`.
-fn typespec_var_kind(kind: IrVpiTypespecKind, ranges: usize) -> IrVpiVarKind {
+/// The catalog variable kind of a value of typespec kind `kind`: a logic or
+/// bit value with several packed dimensions is a logic or bit variable
+/// (decision A19-D95, 37.18 detail 1).
+fn typespec_var_kind(kind: IrVpiTypespecKind) -> IrVpiVarKind {
     match kind {
-        IrVpiTypespecKind::Logic if ranges > 1 => IrVpiVarKind::PackedArray,
-        IrVpiTypespecKind::Bit if ranges > 1 => IrVpiVarKind::PackedArray,
         IrVpiTypespecKind::Logic | IrVpiTypespecKind::Array => IrVpiVarKind::Logic,
         IrVpiTypespecKind::Bit => IrVpiVarKind::Bit,
         IrVpiTypespecKind::Int => IrVpiVarKind::Int,
@@ -854,7 +854,6 @@ impl Codegen<'_> {
                 Self::fixed_descriptor_width(&member.descriptor).unwrap_or(storage_width)
             };
             let kind = typespec.map(|typespec| table.entries[typespec].kind);
-            let ranges = typespec.map_or(0, |typespec| table.entries[typespec].ranges.len());
             rows.push(IrVpiObject {
                 kind: if real {
                     IrVpiObjectKind::RealVar
@@ -868,8 +867,8 @@ impl Codegen<'_> {
                 array: cell.map(|(array, _)| array),
                 fixed_cell: cell.is_some(),
                 var_kind: kind.map_or_else(
-                    || IrVpiVarKind::from_type_kind(&member.ty.kind, member.packed_ranges.len()),
-                    |kind| typespec_var_kind(kind, ranges),
+                    || IrVpiVarKind::from_type_kind(&member.ty.kind),
+                    typespec_var_kind,
                 ),
                 packed_range: (!real)
                     .then(|| {
@@ -987,13 +986,9 @@ impl Codegen<'_> {
             cells = slots.into_iter().collect::<Option<Vec<_>>>()?;
         }
         let element_typespec = self.vpi_typespec(table, element, None, depth + 1);
-        let ranges = match &element.shape {
-            TypeShape::PackedAtom { ranges } => ranges.len(),
-            _ => 0,
-        };
         let var_kind = element_typespec.map_or_else(
-            || IrVpiVarKind::from_type_kind(&element.info.kind, ranges),
-            |typespec| typespec_var_kind(table.entries[typespec].kind, ranges),
+            || IrVpiVarKind::from_type_kind(&element.info.kind),
+            |typespec| typespec_var_kind(table.entries[typespec].kind),
         );
         let packed_range = (!real)
             .then(|| {
@@ -1897,7 +1892,7 @@ impl Codegen<'_> {
                                 | IrVpiTypespecKind::Byte
                                 | IrVpiTypespecKind::Time
                         )
-                        .then(|| typespec_var_kind(kind, 0))
+                        .then(|| typespec_var_kind(kind))
                     });
                     insert(source(IrVpiObject {
                         full_name: self.vpi_full_name(id),
@@ -1915,12 +1910,7 @@ impl Codegen<'_> {
                         } else if net {
                             IrVpiVarKind::Logic
                         } else {
-                            typed_kind.unwrap_or_else(|| {
-                                IrVpiVarKind::from_type_kind(
-                                    &ty.kind,
-                                    self.vpi_packed_dimension_count(id),
-                                )
-                            })
+                            typed_kind.unwrap_or_else(|| IrVpiVarKind::from_type_kind(&ty.kind))
                         },
                         packed_range: (!real).then(|| self.vpi_packed_range(id, width)).flatten(),
                         net_type: net.then(|| net_type.unwrap_or("vpiWire")),
@@ -2024,10 +2014,7 @@ impl Codegen<'_> {
                         var_kind: if net {
                             vpi_net_kind(&typespecs, typespec)
                         } else {
-                            IrVpiVarKind::from_type_kind(
-                                &ty.kind,
-                                self.vpi_packed_dimension_count(id),
-                            )
+                            IrVpiVarKind::from_type_kind(&ty.kind)
                         },
                         packed_range: (!array.real)
                             .then(|| self.vpi_packed_range(id, array.elem_width))
@@ -2064,10 +2051,7 @@ impl Codegen<'_> {
                         width,
                         signed,
                         real,
-                        var_kind: IrVpiVarKind::from_type_kind(
-                            &ty.kind,
-                            self.vpi_packed_dimension_count(id),
-                        ),
+                        var_kind: IrVpiVarKind::from_type_kind(&ty.kind),
                         packed_range: (!real && matches!(value, Val::Bits(_)))
                             .then(|| self.vpi_packed_range(id, width))
                             .flatten(),
@@ -2462,11 +2446,16 @@ impl Codegen<'_> {
                         kind: IrVpiObjectKind::Port,
                         width,
                         signed: ty.signed,
-                        direction: match direction {
-                            Direction::Input => IrVpiDirection::Input,
-                            Direction::Output => IrVpiDirection::Output,
-                            Direction::Inout => IrVpiDirection::Inout,
-                            _ => IrVpiDirection::None,
+                        // Decision A19-D95: an interface or modport port is
+                        // `vpiInout`, a `ref` port `vpiRef` (37.13 detail 1)
+                        // and a port without an internal connection (`.e()`)
+                        // has no direction.
+                        direction: if interface.is_some() {
+                            IrVpiDirection::Inout
+                        } else if low.is_none() && low_conn.is_none() {
+                            IrVpiDirection::None
+                        } else {
+                            declarations::vpi_direction(*direction)
                         },
                         port_index: u32::try_from(port_index).unwrap_or(u32::MAX),
                         // The SDF interconnect loads of its bits carry its
@@ -2510,8 +2499,11 @@ impl Codegen<'_> {
                         ..port
                     });
                     // 37.13: a module port's io declaration; interface and
-                    // modport ports declare an interface, not a value.
+                    // modport ports declare an interface, not a value, and a
+                    // port without an internal connection (`.e()`) declares
+                    // nothing.
                     if interface.is_none()
+                        && (low.is_some() || low_conn.is_some())
                         && matches!(
                             self.kind(parent),
                             NodeKind::ModuleInst {

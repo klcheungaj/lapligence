@@ -175,14 +175,16 @@ pub enum IrVpiVarKind {
     Enum,
     Struct,
     Union,
-    /// A logic/bit variable with more than one packed dimension.
+    /// A packed array of structures, unions or enums (37.18 detail 1).
     PackedArray,
 }
 
 impl IrVpiVarKind {
-    pub fn from_type_kind(kind: &str, packed_dimensions: usize) -> Self {
+    /// The kind of a variable of data type kind `kind`; a logic or bit
+    /// variable with several packed dimensions stays a logic or bit
+    /// variable (decision A19-D95, 37.18 detail 1).
+    pub fn from_type_kind(kind: &str) -> Self {
         match kind {
-            "bit" if packed_dimensions > 1 => Self::PackedArray,
             "bit" => Self::Bit,
             "int" => Self::Int,
             "integer" => Self::Integer,
@@ -195,7 +197,6 @@ impl IrVpiVarKind {
             "enum" => Self::Enum,
             "struct" => Self::Struct,
             "union" => Self::Union,
-            _ if packed_dimensions > 1 => Self::PackedArray,
             _ => Self::Logic,
         }
     }

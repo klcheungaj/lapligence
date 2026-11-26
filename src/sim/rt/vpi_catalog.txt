@@ -767,18 +767,18 @@ node ref_obj 37.15 type=vpiRefObj
   str vpiName implemented walk
   str vpiFullName implemented walk
   get vpiVirtual implemented walk
-  get vpiGeneric n/a generic interface ports are unsupported by llg
+  get vpiGeneric n/a generic interface ports are unsupported by llg; a `ref` port's reference object answers vpiUndefined (37.15 detail 6, decision A19-D95)
   str vpiDefName implemented walk
-  iterate vpiPort error walk llg's reference objects stand only for interface and modport ports, whose ports, task or function and parent are not indexed; industry-standard behaviour refuses it for a modport port
-  iterate vpiPortInst error walk llg's reference objects stand only for interface and modport ports, whose ports, task or function and parent are not indexed; industry-standard behaviour refuses it for a modport port
+  iterate vpiPort error walk llg's reference objects stand for interface, modport and `ref` port connections, whose ports, task or function and parent are not indexed (a `ref` port's has no parent, decision A19-D95); industry-standard behaviour refuses it for a modport port
+  iterate vpiPortInst error walk llg's reference objects stand for interface, modport and `ref` port connections, whose ports, task or function and parent are not indexed (a `ref` port's has no parent, decision A19-D95); industry-standard behaviour refuses it for a modport port
   handle vpiInstance implemented walk
-  handle vpiTaskFunc error walk llg's reference objects stand only for interface and modport ports, whose ports, task or function and parent are not indexed; industry-standard behaviour refuses it for a modport port
-  handle vpiParent error walk llg's reference objects stand only for interface and modport ports, whose ports, task or function and parent are not indexed; industry-standard behaviour refuses it for a modport port
-  handle vpiTypespec error a19d90 a reference object stands for an interface or modport port connection or a virtual interface, and IEEE 1800-2009 37.23 defines no interface typespec; industry-standard behaviour serves a typespec of a type outside the standard (decision A19-D90)
+  handle vpiTaskFunc error walk llg's reference objects stand for interface, modport and `ref` port connections, whose ports, task or function and parent are not indexed (a `ref` port's has no parent, decision A19-D95); industry-standard behaviour refuses it for a modport port
+  handle vpiParent error walk llg's reference objects stand for interface, modport and `ref` port connections, whose ports, task or function and parent are not indexed (a `ref` port's has no parent, decision A19-D95); industry-standard behaviour refuses it for a modport port
+  handle vpiTypespec error a19d90 a reference object of an interface or modport port connection or a virtual interface has none, since IEEE 1800-2009 37.23 defines no interface typespec; industry-standard behaviour serves a typespec of a type outside the standard (decision A19-D90). A `ref` port's has its formal's (decision A19-D95)
   handle vpiActual implemented walk
   str vpiDecompile implemented walk
-  get vpiSize n/a llg reference objects stand only for interface and modport ports, which have no size
-  func vpi_get_value error walk an interface or modport port reference has no value; industry-standard behaviour refuses it
+  get vpiSize extension walk 0 for an interface or modport port connection, the formal's size for a `ref` port's, as in industry-standard behaviour (decision A19-D95)
+  func vpi_get_value error walk an interface or modport port reference has no value; industry-standard behaviour refuses it. A `ref` port's has its formal's (decision A19-D95)
   get vpiSigned extension walk the sign and width of the object's value
   handle vpiModule extension walk the enclosing scope, instance, module or parent
   handle vpiScope extension walk the enclosing scope, instance, module or parent
@@ -1033,6 +1033,9 @@ node logic_var 37.17 type=vpiReg
   handle vpiRightRange implemented walk
   iterate vpiRange implemented walk
   get vpiAllocScheme implemented walk
+  get vpiPacked extension walk a logic variable with several packed dimensions keeps the packed array properties of decision A19-D28 (decision A19-D95)
+  get vpiPackedArrayMember extension walk a logic variable with several packed dimensions keeps the packed array properties of decision A19-D28 (decision A19-D95)
+  get vpiConstantSelect extension walk a logic variable with several packed dimensions keeps the packed array properties of decision A19-D28 (decision A19-D95)
 
 # vpiMember lists every member of a structure variable, element or
 # structure property in declaration order; an unpacked array member of

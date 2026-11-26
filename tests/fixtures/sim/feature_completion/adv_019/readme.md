@@ -235,7 +235,8 @@ unnamed processes and assignments in source order, decision A19-D7).
   type vpiModport." `sk.b` (`bus_if.dst b`) is a modport port: both
   connections are reference objects whose `vpiActual` is the modport
   `tb.bi.dst`; detail 7 of 37.15 (L58288-L58289) gives the low one the
-  `vpiDefName` `dst`. Its `vpiDirection` is `vpiNoDirection` (5).
+  `vpiDefName` `dst`. Its `vpiDirection` is `vpiInout` (3, decision
+  A19-D95).
 - Modports. 37.7 lists modports under an interface; `tb.bi` has `dst` and
   `src` (by name) and each modport's `vpiParent` is the interface.
 - Named events. 37.25 (L59284-L59310) gives a named event a name and only

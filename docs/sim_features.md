@@ -3230,7 +3230,10 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   ports, the sizes of interface, unpacked and string ports (decision
   A19-D94), port bits (`vpiBit`, `vpiPortBit`, by index, decision A19-D93),
   interface and modport ports whose connections are `vpiRefObj` objects
-  with `vpiActual`, `vpiModport`,
+  with `vpiActual`, `vpiModport`, port directions and the `vpiRefObj` low
+  connection of a `ref` port, logic variables with several packed
+  dimensions as `vpiReg` and the element objects of string-array actuals
+  (decision A19-D95),
   instance arrays (`vpiModuleArray`, `vpiInterfaceArray`, `vpiGateArray`,
   `vpiSwitchArray`, `vpiUdpArray`) with `vpiRange`, element iteration,
   `vpi_handle_by_index` and the elements' `vpiIndex`, primitives (`vpiGate`,

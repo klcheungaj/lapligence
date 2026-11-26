@@ -1,0 +1,32 @@
+port name=pk dir=1 ptype=44 low=48 lowsize=6 bitdir=1
+port name=pb dir=2 ptype=44 low=620 lowsize=8 bitdir=2
+port name=m dir=3 ptype=2 low=608 lowsize=0
+port name=f dir=3 ptype=1 low=608 lowsize=0
+port name=rf dir=6 ptype=44 low=608 lowsize=32 bitdir=6
+    ref: type=608 name=rf full=tb.u.rf size=32 dir=-1 (error) virtual=-1 generic=-1 actual=612:tb.rf parent=NULL typespec=629 value=7
+port name=rl dir=6 ptype=44 low=608 lowsize=8 bitdir=6
+    ref: type=608 name=rl full=tb.u.rl size=8 dir=-1 (error) virtual=-1 generic=-1 actual=48:tb.rl parent=NULL typespec=641 value=33
+port name=rr dir=6 ptype=44 low=608 lowsize=64 bitdir=6
+    ref: type=608 name=rr full=tb.u.rr size=64 dir=-1 (error) virtual=-1 generic=-1 actual=47:tb.rr parent=NULL typespec=637 value=2.50
+port name=rs dir=6 ptype=44 low=608 lowsize=2
+    ref: type=608 name=rs full=tb.u.rs size=2 dir=-1 (error) virtual=-1 generic=-1 actual=616:tb.rs parent=NULL typespec=631 value=ab
+port name=w dir=3 ptype=44 low=36 lowsize=1
+io name=pk dir=1 size=6 expr=48
+io name=pb dir=2 size=8 expr=620
+io name=rf dir=6 size=32 expr=608
+io name=rl dir=6 size=8 expr=608
+io name=rr dir=6 size=64 expr=608
+io name=rs dir=6 size=-1 expr=608
+io name=w dir=3 size=1 expr=36
+port name=e dir=5 ptype=44 low=NULL
+port name=a dir=1 ptype=44 low=36 lowsize=1
+io name=a dir=1 size=1 expr=36
+tb.pk: type=48 size=6 packed=1 constsel=1
+tb.pb: type=620 size=8 packed=1 constsel=1
+tb.ua[1]: type=48 size=8 packed=1 constsel=1
+tb.sa: type=623 size=6 packed=1 constsel=1
+put rf
+put rl
+put rr
+put rs
+rf=42 rl=5a rr=1.25 rs=xyz

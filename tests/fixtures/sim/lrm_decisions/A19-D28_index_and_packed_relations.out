@@ -17,7 +17,7 @@ tb.sra[1] type=613 vpiIndex handle level=0 iteration 1 level=0
 tb.eva[1] type=617 vpiIndex handle level=0 iteration 1 level=0
 tb.psa[1] type=618 vpiIndex handle level=0 iteration 1 level=0
 tb.pua[1] type=619 vpiIndex handle level=0 iteration 1 level=0
-tb.paa[1] type=623 vpiIndex handle level=0 iteration 1 level=0
+tb.paa[1] type=48 vpiIndex handle level=0 iteration 1 level=0
 tb.mem vpiIndex NULL level=3 iteration NULL level=0
 tb.v ranges [7:0] level=0
 tb.sc ranges NULL level=0

@@ -1623,6 +1623,26 @@ impl<'a> Codegen<'a> {
         let actual_object = self.object_of(parent_path, actual);
         let (child_object, actual_object) = match (child_object, actual_object) {
             (None, None) => return Ok(false),
+            // An input string port takes any string-valued actual, such as
+            // an element of an array of strings (23.3.3.2: a continuous
+            // assignment from the actual).
+            (Some(child), None)
+                if direction == DbDirection::Input
+                    && self.model.objects[child].ty == IrObjectType::String =>
+            {
+                self.collect_static_hierarchical_port_actual(actual)?;
+                let value = self.lower_string(parent_path, actual)?;
+                let reads = self.collect_read_signals(parent_path, actual)?;
+                let target = self.reference_object(child);
+                self.emit_link_process(
+                    parent_path,
+                    child_path,
+                    port,
+                    reads,
+                    IrStmt::Object(Box::new(IrObjectStmt::StringAssign(target, value))),
+                );
+                return Ok(true);
+            }
             (Some(_), None) | (None, Some(_)) => {
                 return Err(format!(
                     "object port `{}` connects to a non-object actual in `{child_path}`",

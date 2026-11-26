@@ -3615,8 +3615,9 @@ with no error status, as for a name that denotes nothing (S42-D11):
   unpacked unions); `vpiElement` of a `vpiPackedArrayVar` (its elements
   and bits are reached by index or name, decision A19-D67);
 - typespecs (the served properties and relations are in the catalog):
-  a reference object (an interface or modport port connection, or a
-  virtual interface property of a class) has no typespec, as IEEE
+  a reference object of an interface or modport port connection, or a
+  virtual interface property of a class, has no typespec (a `ref` port's
+  has its formal's, decision A19-D95), as IEEE
   1800-2009 defines no interface typespec (decision A19-D90;
   industry-standard behaviour serves one of a vendor-specific type);
   class typespecs are reached from class variables and objects (VPI-O4);
@@ -3750,6 +3751,16 @@ their nets). A `vpiReleaseFlag` put on a variable that a continuous assignment
 drives leaves the forced value until that assignment's inputs change: the
 re-evaluation an HDL `release` triggers is generated for HDL release sites
 only.
+
+Ports differ from industry-standard behaviour in these forms (decision
+A19-D95): a `ref` port's formal found by name, and the low connection of
+one of its port bits, are the formal variable and its bit rather than
+reference objects; an unnamed port (`module m(a, , b)` or an unnamed
+port expression) is not listed by `vpi_iterate(vpiPort)`, so the later
+ports keep their own `vpiPortIndex` but the iteration skips that index; a
+port declared with a module-side concatenation (`.z({p, q})`) has an io
+declaration of its own (`z`) where that simulator lists the declarations it
+names (`p`, `q`).
 
 ### Cause
 

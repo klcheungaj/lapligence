@@ -3765,6 +3765,19 @@ fn a19_d11_decompile_format() {
     );
 }
 
+/// Port directions, the reference objects of `ref` ports and logic
+/// variables with several packed dimensions.
+#[test]
+fn a19_d95_port_directions_and_reference_objects() {
+    run_vpi_decision(
+        "A19-D95_port_directions_and_reference_objects",
+        &["task $d95()"],
+        include_str!(
+            "fixtures/sim/lrm_decisions/A19-D95_port_directions_and_reference_objects.out"
+        ),
+    );
+}
+
 #[test]
 fn a19_d12_expression_values() {
     run_vpi_decision(

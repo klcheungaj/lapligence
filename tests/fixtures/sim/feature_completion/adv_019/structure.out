@@ -56,7 +56,7 @@ vpiModule tb.single def=leaf top=0
     bits=4
   assign line=23 size=4 net_decl=0 lhs=vpiReg:tb.single.y=0101 rhs=vpiOperation:(null)=0101 value=0101
 vpiModule tb.sk def=sink top=0
-  port b index=0 dir=5 type=modport low=vpiRefObj:b def=dst high=vpiRefObj:dst actual=vpiModport:tb.bi.dst
+  port b index=0 dir=3 type=modport low=vpiRefObj:b def=dst high=vpiRefObj:dst actual=vpiModport:tb.bi.dst
   port seen index=1 dir=2 type=port size=8 scalar=0 low=vpiReg:tb.sk.seen=xxxxxxxx high=vpiNet:tb.s=xxxxxxxx
     bit0 vpiPortBit dir=2 size=1 low=vpiRegBit:tb.sk.seen[7]=x high=vpiNetBit:tb.s[7]=x
     bits=8
