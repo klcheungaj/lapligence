@@ -210,6 +210,11 @@ MSVC compiler:
   defect. build.rs adds `/EHsc /GR` (`build_support/native_cxx.rs`), and
   `slang_platform.hpp` stops a build without exceptions on every compiler
   (`native_cxx::component_the_wrapper_stops_a_build_without_exceptions`).
+- C11 5.2.4.1 guarantees 63 levels of nested structure or union definitions,
+  and MSVC refuses the 65th (C1046 "struct nested too deeply"; GCC and Clang
+  accept more). A coroutine frame nests a `union` and a `struct` per level of
+  sibling blocks, so the emitter names the overlaid structs past
+  `emit_c::MAX_NESTED_DEFINITIONS` (`fin_002e` counts them in `deep_nesting`).
 - Unsequenced operands (`f() | g()`, C11 6.5p3) run in another order than under
   GCC/Clang; sequence calls with side effects as separate statements.
 - `cl` writes diagnostics to stdout: print both streams on failure. Ninja stops

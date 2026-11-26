@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use crate::sim::execution::CallMechanism;
 
 use super::names::NameFilter;
+use super::MAX_NESTED_DEFINITIONS;
 use crate::work::{count, Work};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,6 +121,15 @@ struct FieldEntry {
     /// The path under the frame object, the field's own name before the
     /// paths are final. `None` for a field that became a C local.
     access: Option<String>,
+}
+
+/// The typedefs of the overlaid structs that a frame names instead of
+/// defining them in place ([`FrameLayout::render_typedef`]).
+struct Parts<'a> {
+    name: &'a dyn Fn(usize) -> String,
+    /// Each typedef follows those of the structs it names.
+    typedefs: String,
+    count: usize,
 }
 
 /// Builder for one generated function's stack or explicit coroutine storage.
@@ -528,16 +538,32 @@ impl FrameLayout {
         align_up(size, align)
     }
 
-    pub(super) fn render_typedef(&self, frame_type: &str) -> Result<String, String> {
+    /// The typedef of the frame named `frame_type`, preceded by the typedefs
+    /// of the overlaid structs that would nest deeper than
+    /// [`MAX_NESTED_DEFINITIONS`]. `part_type` names the `k`th of those in the
+    /// order they are rendered, so equal layouts render equal text. A member
+    /// keeps its path (`uN.bK.field`) whether its struct is defined in place
+    /// or named, and so does the layout.
+    pub(super) fn render_typedef(
+        &self,
+        frame_type: &str,
+        part_type: impl Fn(usize) -> String,
+    ) -> Result<String, String> {
         if self.storage != FrameStorage::CoFrame {
             return Ok(String::new());
         }
         self.finish_blocks()?;
         let storage = self.storage_map();
+        let mut parts = Parts {
+            name: &part_type,
+            typedefs: String::new(),
+            count: 0,
+        };
         let mut out = String::from("typedef struct {\n    llg_co_frame_t co;\n");
-        self.render_flat_contents(0, 1, &storage, &mut out);
+        self.render_flat_contents(0, 1, 1, &storage, &mut parts, &mut out);
         out.push_str(&format!("}} {frame_type};\n"));
-        Ok(out)
+        parts.typedefs.push_str(&out);
+        Ok(parts.typedefs)
     }
 
     fn path_to(&self, block: usize, suffix: &str) -> String {
@@ -657,11 +683,27 @@ impl FrameLayout {
         }
     }
 
+    /// Whether the struct of `block`'s chain defines a union of its own.
+    fn defines_unions(&self, block: usize, storage: &[bool]) -> bool {
+        let chain = self.flat_chain(block, storage);
+        chain
+            .iter()
+            .any(|item| self.embedded_calls(*item).next().is_some())
+            || chain
+                .last()
+                .is_some_and(|terminal| !self.storage_children(*terminal, storage).is_empty())
+    }
+
+    /// The members of `block`'s chain into `out`, inside a struct that is the
+    /// `depth`th definition counted from the outermost; overlaid structs that
+    /// would go past [`MAX_NESTED_DEFINITIONS`] go to `parts`.
     fn render_flat_contents(
         &self,
         block: usize,
         indent: usize,
+        depth: usize,
         storage: &[bool],
+        parts: &mut Parts<'_>,
         out: &mut String,
     ) {
         let pad = "    ".repeat(indent);
@@ -706,9 +748,22 @@ impl FrameLayout {
         if !children.is_empty() {
             out.push_str(&format!("{pad}union {{\n"));
             for child in children {
-                out.push_str(&format!("{pad}    struct {{\n"));
-                self.render_flat_contents(child, indent + 2, storage, out);
-                out.push_str(&format!("{pad}    }} b{child};\n"));
+                // The union is the next definition and the child's struct the
+                // one after; a struct that defines unions needs one more.
+                let levels = depth + 2 + usize::from(self.defines_unions(child, storage));
+                if levels <= MAX_NESTED_DEFINITIONS {
+                    out.push_str(&format!("{pad}    struct {{\n"));
+                    self.render_flat_contents(child, indent + 2, depth + 2, storage, parts, out);
+                    out.push_str(&format!("{pad}    }} b{child};\n"));
+                } else {
+                    let name = (parts.name)(parts.count);
+                    parts.count += 1;
+                    let mut part = String::from("typedef struct {\n");
+                    self.render_flat_contents(child, 1, 1, storage, parts, &mut part);
+                    part.push_str(&format!("}} {name};\n"));
+                    parts.typedefs.push_str(&part);
+                    out.push_str(&format!("{pad}    {name} b{child};\n"));
+                }
             }
             out.push_str(&format!("{pad}}} u{terminal};\n"));
         }
@@ -853,6 +908,48 @@ fn lp64_layout(
 mod tests {
     use super::*;
 
+    fn part_type(part: usize) -> String {
+        format!("part_{part}_t")
+    }
+
+    /// A frame whose block tree overlays two sibling blocks at each of
+    /// `levels` levels, the second holding the next level: the overlays nest
+    /// `2 * levels` definitions below the frame's own.
+    fn overlays(levels: usize) -> FrameLayout {
+        let mut layout = FrameLayout::new(FrameStorage::CoFrame);
+        for level in 0..levels {
+            layout.begin_block();
+            layout.declare("uint64_t", &format!("leaf{level}")).unwrap();
+            layout.mark_resume();
+            layout.end_block().unwrap();
+            layout.begin_block();
+            layout.declare("uint32_t", &format!("deep{level}")).unwrap();
+            layout.mark_resume();
+        }
+        for _ in 0..levels {
+            layout.end_block().unwrap();
+        }
+        layout.finalize_paths().unwrap();
+        layout
+    }
+
+    /// The deepest nesting of definitions in rendered typedefs, whose every
+    /// brace opens or closes one.
+    fn definition_depth(rendered: &str) -> usize {
+        let (mut depth, mut deepest) = (0usize, 0usize);
+        for line in rendered.lines() {
+            if line.trim_start().starts_with('}') {
+                depth -= 1;
+            }
+            if line.ends_with('{') {
+                depth += 1;
+                deepest = deepest.max(depth);
+            }
+        }
+        assert_eq!(depth, 0, "{rendered}");
+        deepest
+    }
+
     #[test]
     fn selected_descriptor_changes_frame_and_array_estimates() {
         use crate::sim::value_backend::ValueBackend;
@@ -906,7 +1003,7 @@ mod tests {
         assert_eq!(layout.declare("uint64_t", "ticks").unwrap(), "F->ticks");
         assert!(layout.declare("int", "ticks").is_err());
         layout.mark_resume();
-        let rendered = layout.render_typedef("p_frame_t").unwrap();
+        let rendered = layout.render_typedef("p_frame_t", part_type).unwrap();
         assert!(rendered.starts_with("typedef struct {\n    llg_co_frame_t co;\n"));
     }
 
@@ -989,7 +1086,7 @@ mod tests {
         layout.finalize_paths().unwrap();
 
         assert_eq!(
-            layout.render_typedef("leaf_frame_t").unwrap(),
+            layout.render_typedef("leaf_frame_t", part_type).unwrap(),
             "typedef struct {\n    llg_co_frame_t co;\n} leaf_frame_t;\n"
         );
         assert_eq!(layout.field_access("root_local"), None);
@@ -1046,7 +1143,7 @@ mod tests {
             .unwrap();
         layout.end_block().unwrap();
         layout.finalize_paths().unwrap();
-        let rendered = layout.render_typedef("caller_frame_t").unwrap();
+        let rendered = layout.render_typedef("caller_frame_t", part_type).unwrap();
         assert!(rendered.contains("union {\n        struct {\n            uint64_t left;"));
         assert!(rendered.contains("small_frame_t c0;"));
         assert!(rendered.contains("LLG_CO_ANCHORED(deep_frame_t) a1;"));
@@ -1068,7 +1165,7 @@ mod tests {
         layout.mark_resume();
         layout.end_block().unwrap();
         layout.finalize_paths().unwrap();
-        let rendered = layout.render_typedef("f_t").unwrap();
+        let rendered = layout.render_typedef("f_t", part_type).unwrap();
         assert!(!rendered.contains("union {"), "{rendered}");
         assert_eq!(layout.field_access("child"), Some("child"));
         assert_eq!(layout.upper_bound().unwrap(), 48);
@@ -1087,11 +1184,54 @@ mod tests {
             layout.end_block().unwrap();
         }
         layout.finalize_paths().unwrap();
-        let rendered = layout.render_typedef("deep_frame_t").unwrap();
+        let rendered = layout.render_typedef("deep_frame_t", part_type).unwrap();
         let definition_depth =
             rendered.matches("struct {").count() + rendered.matches("union {").count();
         assert_eq!(definition_depth, 1, "{rendered}");
         assert_eq!(layout.field_access("leaf"), Some("leaf"));
+    }
+
+    #[test]
+    fn overlays_up_to_the_definition_limit_are_defined_in_place() {
+        let levels = (MAX_NESTED_DEFINITIONS - 1) / 2;
+        let layout = overlays(levels);
+        let rendered = layout.render_typedef("f_t", part_type).unwrap();
+        assert!(rendered.starts_with("typedef struct {\n"), "{rendered}");
+        assert!(!rendered.contains("part_"), "{rendered}");
+        assert_eq!(definition_depth(&rendered), 1 + 2 * levels);
+    }
+
+    #[test]
+    fn overlays_past_the_definition_limit_name_their_structs() {
+        let levels = 3 * MAX_NESTED_DEFINITIONS;
+        let layout = overlays(levels);
+        let rendered = layout.render_typedef("f_t", part_type).unwrap();
+        assert!(definition_depth(&rendered) <= MAX_NESTED_DEFINITIONS);
+        // Every named struct is defined before a member uses it, and the
+        // frame's typedef comes last.
+        let parts = rendered.matches("typedef struct {").count() - 1;
+        assert!(parts >= 2, "{rendered}");
+        for part in 0..parts {
+            let name = part_type(part);
+            let defined = rendered.find(&format!("}} {name};")).expect("defined");
+            let used = rendered.find(&format!(" {name} b")).expect("used");
+            assert!(defined < used, "{name}");
+        }
+        assert!(rendered.ends_with("} f_t;\n"), "{rendered}");
+        // A named struct keeps the member name of the struct it replaces, so
+        // every path still names declared members.
+        let members = rendered
+            .lines()
+            .filter_map(|line| line.strip_suffix(';')?.rsplit(' ').next())
+            .collect::<BTreeSet<_>>();
+        for level in 0..levels {
+            for field in [format!("leaf{level}"), format!("deep{level}")] {
+                let path = layout.field_access(&field).unwrap();
+                for member in path.split('.') {
+                    assert!(members.contains(member), "{path}");
+                }
+            }
+        }
     }
 
     #[test]
@@ -1107,8 +1247,8 @@ mod tests {
         layout.mark_hot("hot0");
         layout.mark_hot("hot1");
         layout.finalize_paths().unwrap();
-        let first = layout.render_typedef("f_t").unwrap();
-        let second = layout.render_typedef("f_t").unwrap();
+        let first = layout.render_typedef("f_t", part_type).unwrap();
+        let second = layout.render_typedef("f_t", part_type).unwrap();
         assert_eq!(first, second);
         assert!(first.find("int hot0;").unwrap() < first.find("int hot1;").unwrap());
         assert!(first.find("int hot1;").unwrap() < first.find("int cold0;").unwrap());
@@ -1119,7 +1259,7 @@ mod tests {
     fn unbalanced_block_tree_is_an_error() {
         let mut layout = FrameLayout::new(FrameStorage::CoFrame);
         layout.begin_block();
-        assert!(layout.render_typedef("f_t").is_err());
+        assert!(layout.render_typedef("f_t", part_type).is_err());
         layout.end_block().unwrap();
         assert!(layout.end_block().is_err());
     }
