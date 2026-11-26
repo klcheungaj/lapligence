@@ -653,11 +653,10 @@ result (`f(...).inner`; scalar members such as `f(...).s` work); native outputs
 bound inside an expression (call them as a statement instead); record ports
 whose type has a built-in semaphore, mailbox or process member (those handles
 publish no change marker) or a chandle member (chandle ports themselves are
-illegal, SV 6.14, and value links carry no chandle leaf); an automatic record, string, chandle or class
-handle declared in a procedural block that a `join_any` or `join_none` fork
-can keep live while the block is entered again (declared in such a fork that
-runs again, such as the `for (...) fork automatic string s = ...; join_none`
-idiom, or in a block that runs again and starts such a fork reading it); a
+illegal, SV 6.14, and value links carry no chandle leaf); an automatic record declared in a procedural block that a `join_any` or
+`join_none` fork can keep live while the block is entered again (see
+[Automatic block records captured by a fork that runs
+again](#automatic-block-records-captured-by-a-fork-that-runs-again)); a
 member default whose value is itself a record with native members (its
 frontend constant is not captured). Tagged unions with real, string, record or
 class-handle members execute as module, static and subroutine values
@@ -719,7 +718,7 @@ roots for forked automatic block records, strings and handles.
 `sim_008/neg_record_ref_element_select_value.sv`,
 `sim_008/neg_record_ref_subroutine_slot_container.sv`,
 `sim_007/bad_block_record_*.sv`,
-`sim_007/bad_block_native_*.sv`, `sim_007/bad_record_member_default.sv`,
+`sim_007/bad_record_member_default.sv`,
 `sim_007/bad_record_element_*.sv`, `sim_007/bad_record_container_element.sv`,
 `sim_007/bad_module_record_element_queue.sv`,
 `sim_011/neg_record_container_property.sv`, `sim_007/bad_multidim_row_*.sv` and `sim_007/bad_tagged_*.sv`.
@@ -4350,31 +4349,35 @@ accept task `ref` actuals.
 `int q[2][$]; task automatic t(ref int x[$]); #1 x.push_back(1); endtask
 initial t(q[0]);`
 
-## Automatic block variables captured by a fork that runs again
+## Automatic block records captured by a fork that runs again
 
 **Status:** open; rejected with a located diagnostic (CODEGEN-001).
 
 ### Symptom
 
-An automatic string, class handle, virtual interface, event or record declared
-in a procedural block and read by a `join_none`/`join_any` fork in a loop that
-runs again ("can be live in two activations through a `join_any`/`join_none`
-fork that runs again") is refused, as is a queue, dynamic array or record of a
-subroutine activation that a fork branch reads ("capturing native subroutine
-storage in a fork is not supported (SIM-010)"). Integral and real automatics
-work.
+An automatic unpacked record with string, real, handle or container members
+declared in a procedural block and read by a `join_none`/`join_any` fork
+while the block runs again ("automatic record `r` ... can be live in two
+activations through a `join_any`/`join_none` fork that runs again") is
+refused. Automatic block strings, class handles, chandles, virtual
+interfaces and events in the same position are locals of each activation and
+work ([fixture](../tests/fixtures/sim/feature_completion/ki_block_activation_locals/readme.md)),
+as do integral, real and container automatics and records of a subroutine
+activation.
 
 ### Cause
 
-Block variables of these types are one model object per declaration, not one
-per activation, and fork frames copy only packed, real and handle slots.
+A block record is leaf model storage collected with its scope (one set of
+leaves per declaration, which the waveform table also names), not one per
+activation. The activation form of a native record (a native value in a
+shared fork frame) exists only for subroutine bodies.
 
 ### Intended direction
 
-Give such variables activation storage in the process frame and capture them
-into the fork frame like integral automatics.
+Give such a record the subroutine native-value activation storage in the
+process body, declared at block entry and shared through the fork frame like
+a subroutine record.
 
 ### Reproduce
 
-`foreach (q[k]) begin automatic virtual ifc z = q[k]; fork #1 z.n = 30;
-join_none end`
+`tests/fixtures/sim/feature_completion/sim_007/bad_block_record_fork.sv`.

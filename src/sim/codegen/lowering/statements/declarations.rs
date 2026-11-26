@@ -77,6 +77,20 @@ impl EmitCtx<'_, '_> {
             {
                 return Ok(statements);
             }
+            // A block event live in two activations is a local object.
+            if matches!(self.cg.kind(declaration), NodeKind::NamedEvent) {
+                if let Some(name) = self.cg.local_event_handles.get(&declaration).cloned() {
+                    let mut statements = vec![IrStmt::EventDeclare { name }];
+                    if let Some(initializer) = self.cg.db.var_initializer(declaration) {
+                        statements.push(self.cg.event_initializer(
+                            &self.path,
+                            declaration,
+                            initializer,
+                        )?);
+                    }
+                    return Ok(statements);
+                }
+            }
             // Block events own model storage; an automatic one takes its
             // initial value at each entry.
             if matches!(self.cg.kind(declaration), NodeKind::NamedEvent)

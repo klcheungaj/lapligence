@@ -67,19 +67,43 @@ impl<'a> Codegen<'a> {
                         two_state: true,
                         static_signal: None,
                     },
-                    initial: IrExpr::new(
-                        IrExprKind::ObjectQuery(Box::new(IrObjectQuery::HandleCapture(
-                            IrChandleExpr::LocalRead(name.to_owned()),
-                        ))),
-                        1,
-                        false,
-                        None,
-                    ),
+                    // A shared handle is aliased under its own local name.
+                    initial: if self.shared_locals.contains(&target) {
+                        IrExpr::new(IrExprKind::LocalRead(name.to_owned()), 0, false, None)
+                    } else {
+                        IrExpr::new(
+                            IrExprKind::ObjectQuery(Box::new(IrObjectQuery::HandleCapture(
+                                IrChandleExpr::LocalRead(name.to_owned()),
+                            ))),
+                            1,
+                            false,
+                            None,
+                        )
+                    },
                     lifetime: StorageLifetime::Automatic,
                     kind: StorageKind::Opaque,
                 });
             }
             return None;
+        }
+        // A block string live in two activations (see
+        // `collect_block_native`) is a process string local.
+        if let Some(name) = self
+            .proc_string_local_name(target)
+            .filter(|_| self.is_block_native(target))
+        {
+            return Some(CaptureSource {
+                info: ProcLocalInfo {
+                    c_name: name.to_owned(),
+                    width: 0,
+                    signed: false,
+                    two_state: true,
+                    static_signal: None,
+                },
+                initial: IrExpr::new(IrExprKind::LocalRead(name.to_owned()), 0, false, None),
+                lifetime: StorageLifetime::Automatic,
+                kind: StorageKind::String,
+            });
         }
         // An automatic subroutine event is captured by object identity.
         if let Some(name) = self.local_event_handles.get(&target) {
@@ -461,6 +485,15 @@ impl<'a> Codegen<'a> {
             })
             .filter(|target| !self.node_is_within(*target, branch))
             .chain(references.targets.iter().copied())
+            // A block string, handle or event live in two activations is
+            // collected before any body lowers; one whose declaration
+            // statement is in the branch is the branch's own.
+            .filter(|target| {
+                !self
+                    .block_activation_locals
+                    .get(target)
+                    .is_some_and(|statement| self.node_is_within(*statement, branch))
+            })
             .filter(|target| {
                 self.capture_source(*target)
                     .is_some_and(|source| source.info.static_signal.is_none())

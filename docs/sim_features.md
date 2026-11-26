@@ -536,8 +536,12 @@ Macros, includes and their edition-specific behavior are counted in §11.
   commits after its last event (SIM-014).
   Delayed continuous drivers, automatic monitors and broader aggregate
   combinations remain restricted; automatic
-  procedural-block strings and handles share the fork limit of block records
-  ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage));
+  procedural-block strings, handles, virtual interfaces and events that a
+  `join_none`/`join_any` fork keeps live while their block runs again are
+  locals of each activation, shared with its branches
+  ([ki_block_activation_locals](../tests/fixtures/sim/feature_completion/ki_block_activation_locals/readme.md)),
+  while block records there reject
+  ([known issue](known_issues.md#automatic-block-records-captured-by-a-fork-that-runs-again));
   class handles and records declared in a `join_none` branch of a function
   belong to the branch and its receiver's properties are reached through the
   captured receiver, while strings declared there stay limited

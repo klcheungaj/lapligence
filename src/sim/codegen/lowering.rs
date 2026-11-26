@@ -2213,9 +2213,13 @@ struct Codegen<'a> {
     /// pattern, lowered as record assignments into the static schedule
     /// after every body.
     record_statement_initializers: Vec<(NodeId, NodeId, String)>,
-    /// Procedural-block strings, chandles and class handles with a model
-    /// object → owning instance or generate-scope path.
+    /// Procedural-block strings, chandles and class handles (a model object,
+    /// or a local of each activation) → owning instance or generate-scope
+    /// path.
     block_natives: HashMap<NodeId, String>,
+    /// The declaration statement of each automatic block string, handle or
+    /// event that lives in its activation (`collect_block_native`).
+    block_activation_locals: HashMap<NodeId, NodeId>,
     /// `(declaration, initializer, path)` of static procedural-block
     /// strings and handles, lowered into the static schedule.
     block_native_initializers: Vec<(NodeId, NodeId, String)>,
@@ -2843,6 +2847,7 @@ impl<'a> Codegen<'a> {
             block_records: HashMap::new(),
             record_statement_initializers: Vec::new(),
             block_natives: HashMap::new(),
+            block_activation_locals: HashMap::new(),
             block_native_initializers: Vec::new(),
             event_initializers: Vec::new(),
             events: Vec::new(),

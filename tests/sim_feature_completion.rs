@@ -386,6 +386,9 @@ mod ki_event_initializers;
 #[path = "sim_feature_completion/ki_nested_event_containers.rs"]
 mod ki_nested_event_containers;
 
+#[path = "sim_feature_completion/ki_block_activation_locals.rs"]
+mod ki_block_activation_locals;
+
 #[path = "sim_feature_completion/ki_initializer_order.rs"]
 mod ki_initializer_order;
 
