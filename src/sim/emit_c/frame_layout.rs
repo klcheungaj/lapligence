@@ -749,9 +749,12 @@ impl FrameLayout {
             out.push_str(&format!("{pad}union {{\n"));
             for child in children {
                 // The union is the next definition and the child's struct the
-                // one after; a struct that defines unions needs one more.
-                let levels = depth + 2 + usize::from(self.defines_unions(child, storage));
-                if levels <= MAX_NESTED_DEFINITIONS {
+                // one after; a struct that defines unions needs one more, which
+                // only a frame near the limit asks about.
+                let in_place = depth + 3 <= MAX_NESTED_DEFINITIONS
+                    || depth + 2 + usize::from(self.defines_unions(child, storage))
+                        <= MAX_NESTED_DEFINITIONS;
+                if in_place {
                     out.push_str(&format!("{pad}    struct {{\n"));
                     self.render_flat_contents(child, indent + 2, depth + 2, storage, parts, out);
                     out.push_str(&format!("{pad}    }} b{child};\n"));
