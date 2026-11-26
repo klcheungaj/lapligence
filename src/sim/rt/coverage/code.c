@@ -241,7 +241,7 @@ int64_t llg_scov_at_code(uint32_t code_row) {
             for (size_t i = 0; i < llg_scov_n; ++i)
                 if (items[i].code)
                     llg_scov_by_code[at++] = ((uint64_t)(items[i].code - 1u) << 32) | i;
-            qsort(llg_scov_by_code, llg_scov_n_by_code, sizeof(*llg_scov_by_code),
+            llg_sort(llg_scov_by_code, llg_scov_n_by_code, sizeof(*llg_scov_by_code),
                   llg_scov_code_compare);
         }
     }
@@ -472,7 +472,7 @@ void llg_tcov_model(const llg_tcov_signal_t* signals, size_t n_signals, int32_t 
         llg_tcov_watches[i] = (llg_tcov_watch_t){signals[i].storage, (uint32_t)i};
     }
     llg_tcov_n_watches = llg_tcov_n;
-    qsort(llg_tcov_watches, llg_tcov_n_watches, sizeof(*llg_tcov_watches), llg_tcov_watch_compare);
+    llg_sort(llg_tcov_watches, llg_tcov_n_watches, sizeof(*llg_tcov_watches), llg_tcov_watch_compare);
     value_watch_toggle = 1;
     if (started)
         for (size_t i = 0; i < llg_tcov_n; ++i) llg_tcov_start(i);
@@ -575,7 +575,7 @@ int64_t llg_tcov_at_object(int32_t row) {
             for (size_t i = 0; i < llg_tcov_n; ++i)
                 if (llg_tcov_signals[i].object >= 0)
                     llg_tcov_by_object[at++] = ((uint64_t)llg_tcov_signals[i].object << 32) | i;
-            qsort(llg_tcov_by_object, llg_tcov_n_by_object, sizeof(*llg_tcov_by_object),
+            llg_sort(llg_tcov_by_object, llg_tcov_n_by_object, sizeof(*llg_tcov_by_object),
                   llg_scov_code_compare);
         }
     }

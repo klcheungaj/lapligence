@@ -611,7 +611,7 @@ static LLG_OUTLYING void redrive_index(void) {
             else redrives->order[--keyed] = row;
         }
     }
-    qsort(redrives->order, redrive_ranged, sizeof(*redrives->order), redrive_compare);
+    llg_sort(redrives->order, redrive_ranged, sizeof(*redrives->order), redrive_compare);
     memset(redrives->busy, 0, redrives->count);
     redrive_indexed = 1;
 }

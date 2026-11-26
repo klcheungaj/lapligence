@@ -201,7 +201,7 @@ void llg_fcov_model(llg_fcov_fsm_t* fsms, size_t n_fsms) {
                 (llg_fcov_watch_t){fsm->parts[p].storage, (uint32_t)i};
     }
     if (llg_fcov_n_watches > 1u)
-        qsort(llg_fcov_watches, llg_fcov_n_watches, sizeof(*llg_fcov_watches),
+        llg_sort(llg_fcov_watches, llg_fcov_n_watches, sizeof(*llg_fcov_watches),
               llg_fcov_watch_compare);
     value_watch_fsm = llg_fcov_n_fsms != 0;
     for (size_t i = 0; i < llg_fcov_n_fsms; ++i) llg_fcov_start(i);

@@ -3011,6 +3011,28 @@ fn s42_d12_iteration_order() {
     );
 }
 
+/// Ports in port order where it differs from declaration order (ANSI and
+/// non-ANSI, after another instance's ports), the bits of vector ports, and
+/// the io declarations of a task in argument order. The model is built with
+/// `LLG_CO_DEBUG`, whose `llg_sort` reverses its input: the catalog lists
+/// ports in port order, so a port sort that leaves ties to the C library
+/// passes with glibc's stable `qsort` and fails only elsewhere (CI: Windows)
+/// unless the input is reversed first.
+#[test]
+fn s42_d12_port_order() {
+    // Keep any sanitizer or debug flags of the surrounding run.
+    let flags = match std::env::var("LLG_CFLAGS") {
+        Ok(flags) if !flags.trim().is_empty() => format!("{flags} -DLLG_CO_DEBUG"),
+        _ => "-DLLG_CO_DEBUG".to_owned(),
+    };
+    run_vpi_decision_with_env(
+        "S42-D12_port_order",
+        &["task $port_order()"],
+        include_str!("fixtures/sim/lrm_decisions/S42-D12_port_order.out"),
+        &[("LLG_CFLAGS", flags.as_str())],
+    );
+}
+
 #[test]
 fn s42_d13_scalar_format_vector() {
     run_vpi_decision(

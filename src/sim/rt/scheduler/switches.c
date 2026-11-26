@@ -633,7 +633,8 @@ static int32_t switch_control_order(const void* left, const void* right) {
     uintptr_t sb = (uintptr_t)b->signal;
     if (sa != sb) return sa < sb ? -1 : 1;
     if (a->bit != b->bit) return a->bit < b->bit ? -1 : 1;
-    return a->sw < b->sw ? -1 : a->sw > b->sw;
+    if (a->sw != b->sw) return a->sw < b->sw ? -1 : 1;
+    return a->invert < b->invert ? -1 : a->invert > b->invert;
 }
 
 void llg_switch_controls_start(const llg_switch_control_t* controls, uint32_t count) {
@@ -643,7 +644,7 @@ void llg_switch_controls_start(const llg_switch_control_t* controls, uint32_t co
         count, sizeof(*g_sw.controls), "switch controls");
     memcpy(g_sw.controls, controls, (size_t)count * sizeof(*controls));
     g_sw.n_controls = count;
-    qsort(g_sw.controls, count, sizeof(*g_sw.controls), switch_control_order);
+    llg_sort(g_sw.controls, count, sizeof(*g_sw.controls), switch_control_order);
     uint32_t n_watches = 0;
     for (uint32_t i = 0; i < count; i++) {
         const llg_switch_control_t* control = &g_sw.controls[i];
@@ -691,7 +692,8 @@ void llg_switch_controls_start(const llg_switch_control_t* controls, uint32_t co
 static int32_t switch_member_order(const void* left, const void* right) {
     const llg_switch_member_t* a = (const llg_switch_member_t*)left;
     const llg_switch_member_t* b = (const llg_switch_member_t*)right;
-    return a->bit < b->bit ? -1 : a->bit > b->bit;
+    if (a->bit != b->bit) return a->bit < b->bit ? -1 : 1;
+    return a->node < b->node ? -1 : a->node > b->node;
 }
 
 void llg_switches_start(const llg_switch_node_t* nodes, uint32_t n_nodes,
@@ -789,7 +791,7 @@ void llg_switches_start(const llg_switch_node_t* nodes, uint32_t n_nodes,
         members->members[members->count++] = (llg_switch_member_t){nodes[n].bit, n};
     }
     for (uint32_t i = 0; i < n_nets; i++)
-        qsort(nets[i]->switch_net->members, nets[i]->switch_net->count,
+        llg_sort(nets[i]->switch_net->members, nets[i]->switch_net->count,
               sizeof(llg_switch_member_t), switch_member_order);
     g_sw.nets = nets;
     g_sw.n_nets = n_nets;

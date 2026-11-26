@@ -30,6 +30,34 @@
 #include "llg_alloc_fault.h"
 #endif
 
+// The runtime's one sort, here because every runtime unit includes this
+// header. C leaves the order of elements that compare equal to the library:
+// glibc's qsort is a stable merge sort, the Microsoft CRT's and musl's are
+// not, so a comparator under which two distinct elements tie gives a result
+// that differs per platform. Every comparator passed here is therefore a
+// total order: it ties only elements that are interchangeable (equal in
+// every field a reader uses). Under LLG_CO_DEBUG the input is reversed
+// first, so on a stable library tied distinct elements come out in the
+// opposite order and a result that depends on ties changes on Linux too.
+// Without it this is qsort itself.
+typedef int32_t (*llg_sort_compare_t)(const void* left, const void* right);
+
+static inline void llg_sort(void* base, size_t count, size_t size, llg_sort_compare_t compare) {
+#ifdef LLG_CO_DEBUG
+    if (count > 1u) {
+        uint8_t* low = (uint8_t*)base;
+        uint8_t* high = low + (count - 1u) * size;
+        for (; low < high; low += size, high -= size)
+            for (size_t i = 0; i < size; ++i) {
+                uint8_t byte = low[i];
+                low[i] = high[i];
+                high[i] = byte;
+            }
+    }
+#endif
+    qsort(base, count, size, compare);
+}
+
 enum {
     LLG_SEVERITY_INFO = 0,
     LLG_SEVERITY_WARNING = 1,

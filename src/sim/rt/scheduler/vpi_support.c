@@ -211,7 +211,7 @@ static size_t thread_list(const thread_filter_t* filter, int32_t** slots, uint64
     size_t used = 0;
     for (int32_t i = 0; i < g.n_procs && used < count; ++i)
         if (thread_selected(g.all_procs[i], filter)) procs[used++] = g.all_procs[i];
-    qsort(procs, used, sizeof(*procs), thread_identity_order);
+    llg_sort(procs, used, sizeof(*procs), thread_identity_order);
     for (size_t i = 0; i < used; ++i) {
         slot_out[i] = procs[i]->registry_slot;
         identity_out[i] = procs[i]->assertion_owner;
