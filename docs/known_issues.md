@@ -4267,3 +4267,34 @@ containers nest.
 ### Reproduce
 
 `task automatic t(); event te[2]; -> te[0]; endtask`
+
+## Fixed arrays of containers: element patterns, equality and concatenation
+
+**Status:** open; rejected with located diagnostics (CODEGEN-009).
+
+### Symptom
+
+For a fixed array of queues, dynamic or associative arrays (`int q[2][$]`), an
+assignment pattern written to an element or the whole array
+(`q[0] = '{'{1}, '{2}}` as a declaration initializer, `q[0] <= '{3}`), an
+equality of two elements (`q[0] == q[1]`), an element inside an unpacked
+concatenation (`t = {q[0], q[1]}`, `q[0] = {q[0], 6}`) and an element passed
+to a `ref` formal are refused. `q[0] = '{1, 2}`, copies, methods, `foreach`
+and `%p` work. A two-dimensional fixed array of queues prints `%p` without the
+space after its inner closing braces that another implementation prints (white
+space is implementation dependent, 21.2.1.7).
+
+### Cause
+
+Container element operands and nested patterns are lowered only for whole
+container variables.
+
+### Intended direction
+
+Stage an element into a temporary container, as `foreach` and methods select
+it, and lower these forms on the temporary.
+
+### Reproduce
+
+`int q[2][$]; initial begin q[0] = '{1}; q[1] = '{1}; $display(q[0] == q[1]);
+end`

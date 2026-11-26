@@ -30,3 +30,12 @@ simulator, which gives every line. Clause lines are from
 `int a[1:2][string]` (through an object): whole-element writes and copies,
 element writes, `push_back`, `insert`, `pop_front`, `size`, `num`, an element
 passed by value, one- and two-variable `foreach` and `%p` (left index first).
+
+`declarations.sv`: the same arrays declared in a module (`int q[1:0][$]`,
+`string d[1:2][]`, `int m[2:1][int]`) and in automatic and static subroutine
+storage, which were refused ("unsupported element type", "has no width"):
+each element is its own container (7.4.2 L8060).
+
+`real_elements.sv`: reading one real element of such an array (`x[1][0]`, a
+module, class, static class and package array) failed the model check
+("container expression must produce a packed value", without a position).
