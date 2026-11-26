@@ -401,6 +401,61 @@ impl<'a> Codegen<'a> {
         false
     }
 
+    /// Whether a fork branch that names automatic variable `target` shares
+    /// it with the parent; `detached` for a `join_none`/`join_any` fork.
+    fn fork_shares(&self, detached: bool, target: NodeId) -> bool {
+        // Strings, containers and native records are shared with branches
+        // of every fork; other variables only with detached ones, since a
+        // join branch borrows the suspended parent's cell.
+        detached
+            || matches!(
+                self.kind(target),
+                NodeKind::Var { ty } | NodeKind::FuncArg { ty, .. } if ty.kind == "string"
+            )
+            || self.subroutine_container_meta(target).is_some()
+            || self.native_value_type(target).is_some()
+            || matches!(
+                self.kind(target),
+                NodeKind::Var { ty } | NodeKind::FuncArg { ty, .. } if is_handle_kind(&ty.kind)
+            )
+    }
+
+    /// Whether `foreach` iterator `variable` is shared with a fork nested in
+    /// its loop (SV 12.7.3: the loop owns the variable), as `fork_shares`
+    /// decides for that fork. A loop that sits inside a fork branch is not
+    /// enough: its variable belongs to that branch's process alone.
+    pub(in super::super) fn foreach_fork_shared(&mut self, variable: NodeId) -> bool {
+        if !self.fork_shared(variable) {
+            return false;
+        }
+        let Some(statement) = self.foreach_statement(variable) else {
+            return false;
+        };
+        let mut pending = vec![statement];
+        while let Some(node) = pending.pop() {
+            if let NodeKind::Stmt(StmtKind::Fork {
+                join_kind,
+                branches,
+                ..
+            }) = self.kind(node)
+            {
+                let detached = matches!(join_kind, DbJoinKind::None | DbJoinKind::Any);
+                if self.fork_shares(detached, variable)
+                    && branches.iter().any(|branch| {
+                        !matches!(
+                            self.kind(*branch),
+                            NodeKind::Stmt(StmtKind::VariableDecl { .. })
+                        ) && self.branch_references(*branch).targets.contains(&variable)
+                    })
+                {
+                    return true;
+                }
+            }
+            pending.extend(self.node(node).children.iter().copied());
+        }
+        false
+    }
+
     /// The fork-shared and fork-visible automatic variables of the design.
     fn fork_sets(&mut self) -> &(HashSet<NodeId>, HashSet<NodeId>) {
         if self.fork_sets.is_none() {
@@ -415,10 +470,6 @@ impl<'a> Codegen<'a> {
                 else {
                     continue;
                 };
-                // Strings, containers and native records are shared with
-                // branches of every fork; other variables only with detached
-                // (join_none/join_any) ones, since a join branch borrows the
-                // suspended parent's cell.
                 let detached = matches!(join_kind, DbJoinKind::None | DbJoinKind::Any);
                 for branch in branches {
                     if matches!(
@@ -445,20 +496,7 @@ impl<'a> Codegen<'a> {
                             continue;
                         }
                         visible.insert(target);
-                        if detached
-                            || matches!(
-                                self.kind(target),
-                                NodeKind::Var { ty } | NodeKind::FuncArg { ty, .. }
-                                    if ty.kind == "string"
-                            )
-                            || self.subroutine_container_meta(target).is_some()
-                            || self.native_value_type(target).is_some()
-                            || matches!(
-                                self.kind(target),
-                                NodeKind::Var { ty } | NodeKind::FuncArg { ty, .. }
-                                    if is_handle_kind(&ty.kind)
-                            )
-                        {
+                        if self.fork_shares(detached, target) {
                             shared.insert(target);
                         }
                     }

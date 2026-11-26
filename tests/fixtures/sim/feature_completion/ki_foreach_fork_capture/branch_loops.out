@@ -1,0 +1,11 @@
+(A) q[0]=5
+(A) q[1]=6
+(T) loc 7 8
+(B) aa[x]=1
+(B) aa[y]=2
+(B) s[0]=a
+(B) s[1]=b
+(C) nested sees 20
+(C) nested sees 20
+(C) nested sees 20
+(D) fixed 0 10 20 m2 0 1 2 3

@@ -1310,13 +1310,14 @@ impl EmitCtx<'_, '_> {
 
     /// The declaration of the integral iterator `variable` of a `foreach`.
     /// A loop variable belongs to the loop, not to an iteration (SV 12.7.3),
-    /// so a `join_none`/`join_any` branch that names it shares the loop's
-    /// one cell (a shared frame cell) and sees the value the loop leaves.
+    /// so a `join_none`/`join_any` branch nested in the loop that names it
+    /// shares the loop's one cell (a shared frame cell) and sees the value
+    /// the loop leaves (see `foreach_fork_shared`).
     fn foreach_local_decl(&mut self, variable: NodeId, info: &ProcLocalInfo) -> IrStmt {
         let (name, width, signed, two_state) =
             (info.c_name.clone(), info.width, info.signed, info.two_state);
         let init = default_real_local_initializer(width);
-        if self.cg.fork_shared(variable) {
+        if self.cg.foreach_fork_shared(variable) {
             self.cg.shared_locals.insert(variable);
             return IrStmt::SharedLocal {
                 name,
@@ -1454,7 +1455,7 @@ impl EmitCtx<'_, '_> {
                     } else {
                         let name = self.cg.collect_loop_string_var(&self.path, variable)?;
                         // A fork branch shares the loop's one key (SV 12.7.3).
-                        declarations.push(if self.cg.fork_shared(variable) {
+                        declarations.push(if self.cg.foreach_fork_shared(variable) {
                             self.cg.shared_locals.insert(variable);
                             IrStmt::SharedString {
                                 name: name.clone(),

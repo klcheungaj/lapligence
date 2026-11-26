@@ -2459,9 +2459,10 @@ struct Codegen<'a> {
     /// member path, each member behind the hierarchy separator.
     wave_block_records: Vec<(NodeId, usize, String)>,
     wave_unnamed_blocks: std::cell::OnceCell<HashMap<NodeId, u32>>,
-    /// The iterator variables of every `foreach`, built on first use: local
-    /// collection asks for each node of every subroutine body.
-    foreach_iterators: std::cell::OnceCell<HashSet<NodeId>>,
+    /// The iterator variables of every `foreach`, each with its `foreach`
+    /// statement, built on first use: local collection asks for each node of
+    /// every subroutine body.
+    foreach_iterators: std::cell::OnceCell<HashMap<NodeId, NodeId>>,
     /// Which nodes hold which, built on first use.
     nesting: std::cell::OnceCell<nesting::Nesting>,
     /// The procedural declarations by name, built on first use.

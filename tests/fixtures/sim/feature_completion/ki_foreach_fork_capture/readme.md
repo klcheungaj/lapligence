@@ -9,8 +9,12 @@ they read the value the loop leaves (decision
 [S12-D3](../../../../../docs/lrm_decisions.md), whose portable case is
 `lrm_decisions/S12-D3_foreach_loop_variables_shared_with_forks.sv`).
 
+Only a fork nested in the loop's own body shares the variable. A loop that
+sits inside a fork branch, with no such fork in its body, belongs to that
+branch's process alone and keeps a local iterator.
+
 The task module (`sim_feature_completion/ki_foreach_fork_capture.rs`) runs the
-fixture through the public CLI in both HDL optimizer modes and on every value
+fixtures through the public CLI in both HDL optimizer modes and on every value
 backend. Expected output was checked against an independent
 industry-standard simulator, which gives every line. Clause lines are from
 `SystemVerilog-1800-2009.txt`.
@@ -46,3 +50,19 @@ industry-standard simulator, which gives every line. Clause lines are from
   index.
 - (E) Each activation of an `always` block that runs again has its own loop
   variable, which its branches share.
+
+`branch_loops.sv`:
+
+- Loops inside `join_none` branches over a fixed array, a 2-D array, a queue,
+  a string-keyed associative array and a string; a loop in a branch of a fork
+  in an automatic task; a loop whose body holds a detached fork that does not
+  name the variable. Each branch sees its own iteration values.
+- `loops_inside_fork_branches_keep_local_iterators` checks the generated
+  model in both optimizer modes: it allocates no frame.
+
+`branch_loop_forks.sv`:
+
+- A loop inside a `join_none` branch whose body holds a detached fork that
+  names the variable (an integral index and a string key): those forks share
+  the loop's one variable (`i=3`, `s=r`), and the model allocates a frame
+  for it.

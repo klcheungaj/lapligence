@@ -1060,9 +1060,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Illegal iterator writes reject. Nested traversal takes associative levels
   at any position (`foreach (ad[k, j])`, `foreach (aa[k, j])`), fixed inner
   dimensions, omitted slots (`foreach (w[, j])`), and a selected element
-  (`foreach (aa["k"][j])`). A `join_none`/`join_any` branch shares the
-  loop's one iterator, an integral index or a string key, and reads the value
-  the loop leaves (decision S12-D3,
+  (`foreach (aa["k"][j])`). A `join_none`/`join_any` branch nested in the
+  loop body shares the loop's one iterator, an integral index or a string
+  key, and reads the value the loop leaves; a loop inside a fork branch with
+  no such fork keeps a local iterator (decision S12-D3,
   [fixture](../tests/fixtures/sim/feature_completion/ki_foreach_fork_capture/readme.md)).
   Automatic strings, handles, events and records declared in a loop body
   that a `join_none` fork keeps live into the next iteration are locals of
