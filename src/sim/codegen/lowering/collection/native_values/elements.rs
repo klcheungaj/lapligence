@@ -144,6 +144,8 @@ struct StagedMember {
     element: NodeId,
     path: Vec<AggregatePathPart>,
     mutated: bool,
+    /// The first node naming the member.
+    node: NodeId,
 }
 
 /// One queue, dynamic or associative array nested in a container element
@@ -1844,6 +1846,7 @@ impl Codegen<'_> {
                     element,
                     path,
                     mutated,
+                    node,
                 });
             }
             // A select's indices are read before the member is written.
@@ -2088,9 +2091,7 @@ impl Codegen<'_> {
                 "nonblocking assignment to a queue or dynamic-array member of a container record element in `{path}` is not supported"
             ));
         }
-        let (mut before, mut after) = self.build_element_staging(path, members, nested)?;
-        self.stage_below_aliases(path, &mut before, &mut after, StageRoot::Statement(h))?;
-        Ok((before, after))
+        self.build_staging(path, members, nested, Some(h), StageRoot::Statement(h))
     }
 
     /// Collect what statement `h` stages.
@@ -2174,7 +2175,7 @@ impl Codegen<'_> {
         if !self.stage_whole_read(node, &mut members, &mut nested) {
             self.collect_staged_members(node, false, &mut members, &mut nested);
         }
-        let (mut before, mut after) = self.build_element_staging(path, members, nested)?;
+        let (mut before, mut after) = self.build_element_staging(path, members, nested, None)?;
         self.stage_below_aliases(path, &mut before, &mut after, StageRoot::Initializer(node))?;
         debug_assert!(after.is_empty(), "an initializer writes back nothing");
         Ok(before)
@@ -2285,8 +2286,9 @@ impl Codegen<'_> {
         }
         let outer: std::collections::HashSet<NodeId> =
             self.staged_nested_elements.keys().copied().collect();
-        let (mut before, mut after) = self.build_element_staging(path, members, nested)?;
-        self.stage_below_aliases(path, &mut before, &mut after, StageRoot::Expression(node))?;
+        let root = (!inner).then_some(node);
+        let (before, after) =
+            self.build_staging(path, members, nested, root, StageRoot::Expression(node))?;
         if inner {
             let added = self
                 .staged_nested_elements
@@ -2297,6 +2299,130 @@ impl Codegen<'_> {
             self.inner_stagings.push(added);
         }
         Ok(Some((before, after)))
+    }
+
+    /// The node a read of the member that `node` names starts at, when an
+    /// effect of statement `h` precedes that read: the outermost select,
+    /// method call or query of the member, or the call it is an actual of,
+    /// as the uses of class properties through computed handles are placed
+    /// (decision EO-D4). A whole member read in place (a concatenation item,
+    /// a formatted argument) has no such node and keeps the binding before
+    /// the statement.
+    fn member_use_start(&self, h: NodeId, node: NodeId) -> Option<NodeId> {
+        let path_of = |use_node: NodeId| {
+            let mut current = use_node;
+            loop {
+                if current == node {
+                    return Some(node);
+                }
+                current = match self.kind(current) {
+                    // A select of a member names the member's declaration
+                    // as its base and holds the path as its first operand.
+                    NodeKind::Expr(
+                        ExprKind::ArraySelect { base, .. }
+                        | ExprKind::BitSelect { base, .. }
+                        | ExprKind::PartSelect { base, .. }
+                        | ExprKind::IndexedPartSelect { base, .. },
+                    ) if !matches!(self.kind(*base), NodeKind::Expr(_)) => {
+                        *self.node(current).children.first()?
+                    }
+                    NodeKind::Expr(
+                        ExprKind::ArraySelect { base, .. }
+                        | ExprKind::BitSelect { base, .. }
+                        | ExprKind::PartSelect { base, .. }
+                        | ExprKind::IndexedPartSelect { base, .. },
+                    ) => *base,
+                    NodeKind::SysCall { name }
+                        if crate::sim::codegen::lowering::collection::data_query(name) =>
+                    {
+                        *self.node(current).children.first()?
+                    }
+                    NodeKind::MethodCall {
+                        receiver: Some(receiver),
+                        ..
+                    } => *receiver,
+                    _ => return None,
+                };
+            }
+        };
+        self.uses_after_effects_with(h, &[node], &path_of)
+            .into_iter()
+            .map(|(_, start)| start)
+            .find(|start| {
+                *start != h
+                    && self.lowers_packed_value(*start)
+                    && (*start != node
+                        || matches!(
+                            self.kind(*start),
+                            NodeKind::FuncCall { .. }
+                                | NodeKind::MethodCall { .. }
+                                | NodeKind::Expr(ExprKind::ArraySelect { .. })
+                        ))
+            })
+    }
+
+    /// Whether `node` is lowered as a packed or real value, the lowering
+    /// that runs the bindings placed at it (`lower_expr`).
+    fn lowers_packed_value(&self, node: NodeId) -> bool {
+        matches!(
+            self.query_descriptor(node).map(|descriptor| &descriptor.shape),
+            Some(TypeShape::PackedAtom { .. } | TypeShape::Real { .. })
+        )
+    }
+
+    /// Drop the member bindings placed at start nodes (`member_use_start`)
+    /// that their lowering did not run, noting the located error the
+    /// statement reports (`take_unplaced_member`): that use has no value
+    /// form taking a placed binding.
+    fn end_placed_members(&mut self) {
+        for start in std::mem::take(&mut self.placed_member_starts) {
+            if self.placed_interface_bindings.remove(&start).is_some()
+                && self.unplaced_member.is_none()
+            {
+                self.unplaced_member = Some(self.locate_error(
+                    start,
+                    "a queue or dynamic-array member of a record element of a queue or dynamic \
+                     array that a call or assignment operator of the statement precedes is \
+                     not supported in this operand; assign the member to a variable first"
+                        .to_owned(),
+                ));
+            }
+        }
+    }
+
+    /// The error [`Self::end_placed_members`] noted since the last call.
+    pub(in crate::sim::codegen) fn take_unplaced_member(&mut self) -> Option<String> {
+        self.unplaced_member.take()
+    }
+
+    /// End a staging that only tested whether an operand stages (nothing
+    /// was lowered under it).
+    pub(in crate::sim::codegen) fn discard_element_member_staging(&mut self) {
+        self.end_element_member_staging();
+        self.unplaced_member = None;
+    }
+
+    /// [`Self::build_element_staging`] and [`Self::stage_below_aliases`];
+    /// a failure drops the bindings it placed.
+    fn build_staging(
+        &mut self,
+        path: &str,
+        members: Vec<StagedMember>,
+        nested: Vec<(NodeId, ElementSelection, bool)>,
+        h: Option<NodeId>,
+        root: StageRoot,
+    ) -> Result<(Vec<IrStmt>, Vec<IrStmt>), String> {
+        let staged = self
+            .build_element_staging(path, members, nested, h)
+            .and_then(|(mut before, mut after)| {
+                self.stage_below_aliases(path, &mut before, &mut after, root)?;
+                Ok((before, after))
+            });
+        if staged.is_err() {
+            self.end_placed_members();
+            self.unplaced_member = None;
+        }
+        staged
     }
 
     fn lazily_evaluated_operands(&self, node: NodeId) -> bool {
@@ -2310,15 +2436,25 @@ impl Codegen<'_> {
     }
 
     /// The statements binding `members` and `nested` and the ones publishing
-    /// the changed ones.
+    /// the changed ones. A member that `h` (a statement, or an expression
+    /// staged outside one) only reads, and that an effect of `h` precedes in
+    /// evaluation order, is bound where its use starts instead, so its
+    /// element's selectors are evaluated after that effect (decision EO-D4).
     fn build_element_staging(
         &mut self,
         path: &str,
         members: Vec<StagedMember>,
         nested: Vec<(NodeId, ElementSelection, bool)>,
+        h: Option<NodeId>,
     ) -> Result<(Vec<IrStmt>, Vec<IrStmt>), String> {
         let (mut before, mut after) = (Vec::new(), Vec::new());
+        // Nested aliases resolve through the aliases above them, which
+        // therefore bind before the statement.
+        let h = h.filter(|h| nested.is_empty() && self.has_evaluation_effect(*h));
         for member in members {
+            let start = h
+                .filter(|_| !member.mutated)
+                .and_then(|h| self.member_use_start(h, member.node));
             let selection = self
                 .record_element_of(member.element)
                 .ok_or("staged element member has no element")?;
@@ -2359,12 +2495,22 @@ impl Codegen<'_> {
                 }))
             };
             // The member is used in place: the element is located once.
-            before.push(IrStmt::Container(Box::new(IrContainerStmt::BindElement {
+            let bind = IrStmt::Container(Box::new(IrContainerStmt::BindElement {
                 root: locator(self, member.mutated)?,
                 items: leaf.items.clone(),
                 container: ir,
                 live: false,
-            })));
+            }));
+            match start {
+                Some(start) => {
+                    self.placed_interface_bindings
+                        .entry(start)
+                        .or_default()
+                        .push(bind);
+                    self.placed_member_starts.push(start);
+                }
+                None => before.push(bind),
+            }
             if member.mutated {
                 after.push(IrStmt::Container(Box::new(IrContainerStmt::TouchContents(
                     selection.container,
@@ -2952,6 +3098,7 @@ impl Codegen<'_> {
         self.deferred_selectors.set(false);
         self.staged_element_members.clear();
         self.staged_nested_elements.clear();
+        self.end_placed_members();
     }
 
     /// A fresh access to one leaf of a selected record element.

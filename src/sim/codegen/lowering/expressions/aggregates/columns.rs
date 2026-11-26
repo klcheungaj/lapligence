@@ -1788,7 +1788,7 @@ impl Codegen<'_> {
         }
         if call.is_real() || call.width == 0 {
             return Err(format!(
-                "an output record argument in `{path}` must be record storage when the call's result is not packed"
+                "an output record argument that is no record storage, or an output or inout actual naming a queue, dynamic or associative array element, in `{path}` is supported only when the call's result is packed"
             ));
         }
         let name = self.new_fn_name(path, "record_call");

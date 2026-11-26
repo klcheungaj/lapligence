@@ -33,7 +33,7 @@ impl ExpandedConditional for NativeConditional<'_> {
         }
         // Elements an alternative stages are bound around all of it.
         if cg.stage_expression_members(path, arm)?.is_some() {
-            cg.end_element_member_staging();
+            cg.discard_element_member_staging();
             return Ok(None);
         }
         Ok(Some(source))

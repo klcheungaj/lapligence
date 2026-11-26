@@ -778,31 +778,39 @@ follow the industry-standard simulator.
 With `typedef struct { int q[$]; int v; } r_t; r_t rq[$];` and a function
 `bump()` that sets `k = 1`:
 
-- a queue or dynamic-array member of a record element read after a call in
-  the same statement names the element the statement selected when it
-  started: `x = bump() + rq[k].q.size()` reads `rq[0].q`, the reference
-  `rq[1].q`;
+- a queue or dynamic-array member of a record element read whole in place
+  after a call in the same statement (a concatenation item, a `%p`
+  argument, an actual after an effect of its own call), or read as a string
+  or unpacked value (`rq[k].tags[0]` of a string queue), names the element
+  the statement selected when it started: `t = {bumpq(), rq[k].q}` and
+  `x = total(bump(), rq[k].q)` read `rq[0].q`, the reference `rq[1].q`
+  (a packed or real method, query or select of the member, and a whole
+  actual of a call the effect precedes, follow EO-D4);
 - a nested assignment whose target is a string, a handle, an unpacked value,
   a container element or a class property select is rejected in an operand
   that `?:`, `&&`, `||`, `->`, `inside` or an array method's `with` clause may
   skip or repeat (`s2 = c ? (s = "a") : "b"`), with its location;
-- an output or inout actual of a function called in an expression that names
-  an element of a queue, dynamic or associative array, also of an unpacked
-  array property of a class, is rejected (it is supported where the call is a
-  statement).
+- an output or inout actual of a string-returning function called in an
+  expression that names an element of a queue, dynamic or associative array,
+  or of any function whose result is not packed, is rejected (it is supported
+  where the call is a statement, and for a function with a packed result).
 
 ### Cause
 
 A queue or dynamic-array member of a record element of a queue or dynamic
-array is staged into a copy of the member, through an access of the element
-that the statement evaluates once, before the statement runs. Nested assignments with such targets have only the statement form,
+array is bound in place, through an access of the element that the
+statement evaluates once, before the statement runs, or where its use starts
+when that use is a packed or real method, query, select or call an effect
+precedes, which `lower_expr` lowers; a whole member read in place and a
+string or unpacked read have no such lowering that binds it. An
+element actual's copy-out is a statement after the call, which a
+string-valued or unpacked call result has no sequence for. Nested assignments with such targets have only the statement form,
 which runs where the full expression runs its nested assignments first.
 
 ### Intended direction
 
-Stage a member that a use reads after an effect at that use, as the
-computed handles of class properties are evaluated where the use starts
-(EO-D4).
+Bind a whole member read in place where the container lowering of that
+read starts, as the select and method forms are (EO-D4).
 
 ### Reproduce
 

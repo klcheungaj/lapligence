@@ -380,6 +380,7 @@ impl Codegen<'_> {
                             *io,
                             callee_inst,
                             &bound[idx],
+                            None,
                         )?;
                         arg_irs[idx] = Some(formal_read);
                         out_args.push(argument);

@@ -1,0 +1,18 @@
+size k=1 x=13 q0='{1}  q1='{1, 2, 3} 
+select k=1 x=13 q0='{1}  q1='{1, 2, 3} 
+before k=1 x=11 q0='{1}  q1='{1, 2, 3} 
+dynamic k=1 x=14 q0='{1}  q1='{1, 2, 3} 
+twice k=1 x=19 q0='{1}  q1='{1, 2, 3} 
+display 10 3
+packed k=1 x=16 q0='{1}  q1='{1, 2, 3} 
+conditional k=1 x=13 q0='{1}  q1='{1, 2, 3} 
+actual k=1 x=1003 q0='{1}  q1='{1, 2, 3} 
+nested k=1 x=4 q0='{1}  q1='{1, 2, 3} 
+constant k=1 x=14 q0='{1}  q1='{1, 2, 3} 
+around k=1 x=14 q0='{1}  q1='{1, 2, 3} 
+if k=1 x=1 q0='{1}  q1='{1, 2, 3} 
+query k=1 x=13 q0='{1}  q1='{1, 2, 3} 
+last k=1 x=13 q0='{1}  q1='{1, 2, 3} 
+operand k=1 x=15 q0='{1}  q1='{1, 2, 3} 
+whole actual k=1 x=17 q0='{1}  q1='{1, 2, 3} 
+target k=1 x=17 q0='{1}  q1='{13, 2, 3} 

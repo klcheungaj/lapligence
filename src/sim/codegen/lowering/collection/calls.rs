@@ -14,6 +14,11 @@ impl<'a> Codegen<'a> {
     /// The caller-side temporary of a packed output or inout formal bound in
     /// an expression call `call` (copy-out at the return, decision S13-D1),
     /// with the read of the formal's storage that later defaults observe.
+    /// With `copies`, an actual naming a whole element of a queue, dynamic or
+    /// associative array copies out into a caller local that a statement of
+    /// `copies.after` stores into the element, located there again (SV
+    /// 13.5.2, decision EO-D3).
+    #[allow(clippy::too_many_arguments)]
     pub(in super::super) fn packed_output_temp(
         &mut self,
         scope_path: &str,
@@ -22,6 +27,7 @@ impl<'a> Codegen<'a> {
         io: NodeId,
         callee_inst: NodeId,
         bound_arg: &BoundArg,
+        copies: Option<&mut CallElementCopies>,
     ) -> Result<(IrCallArg, IrExpr), String> {
         let tname = format!("_t{}_{}", call.0, idx);
         let read_actual = matches!(
@@ -42,21 +48,60 @@ impl<'a> Codegen<'a> {
                 "streaming `with` copy-out target whose range is runtime-valued or outside the array bounds is not supported for a function call inside an expression in `{scope_path}`"
             ));
         }
-        if self.container_element_path(bound_arg.expr).is_some()
-            || self.associative_string_element(bound_arg.expr).is_some()
-        {
+        let tag = format!("{}_{idx}", call.0);
+        let element = self.container_element_path(bound_arg.expr).is_some()
+            || self.associative_string_element(bound_arg.expr).is_some();
+        let element_writeback = match copies {
+            Some(copies) if element => self
+                .container_element_writeback(
+                    scope_path,
+                    bound_arg.expr,
+                    &tag,
+                    read_actual,
+                    TargetSelectors::AtCopyOut,
+                )?
+                .map(|(writeback, read)| (writeback, read, copies)),
+            _ => None,
+        };
+        let (wb, actual_read, selector_inits) = match element_writeback {
+            Some((mut writeback, read, copies)) => {
+                let local = format!("_sco{tag}");
+                let (width, signed) = (bound_arg.width, bound_arg.signed);
+                copies.before.extend(writeback.take_prelude());
+                copies.before.push(IrStmt::DeclLocal {
+                    name: local.clone(),
+                    width,
+                    signed,
+                    two_state: bound_arg.two_state,
+                    init: super::super::statements::default_real_local_initializer(width),
+                });
+                copies.after.push(writeback.store(
+                    &self.model,
+                    IrExpr::new(IrExprKind::LocalRead(local.clone()), width, signed, None),
+                )?);
+                let lhs = IrLhs::WholeRef {
+                    addr: format!("&{local}"),
+                    width,
+                    signed,
+                    two_state: bound_arg.two_state,
+                    shortreal: false,
+                };
+                (lhs, read, Vec::new())
+            }
             // The element store needs a statement after the call.
-            return Err(format!(
-                "output or inout actual naming a queue, dynamic or associative array element is supported only when the call is a statement in `{scope_path}`"
-            ));
-        }
-        let (wb, actual_read, selector_inits) = self.lower_call_actual(
-            scope_path,
-            bound_arg.expr,
-            &format!("{}_{idx}", call.0),
-            read_actual,
-            TargetSelectors::AtCopyOut,
-        )?;
+            None if element => {
+                return Err(format!(
+                    "output or inout actual naming a queue, dynamic or associative array element is supported only when the call is a statement in `{scope_path}`"
+                ));
+            }
+            None => self.lower_call_actual(
+                scope_path,
+                bound_arg.expr,
+                &tag,
+                read_actual,
+                TargetSelectors::AtCopyOut,
+            )?,
+        };
         let init_ir = self.lower_call_temp_init_from_expr(io, bound_arg, actual_read)?;
         let storage = self.static_formals.get(&(callee_inst, io)).cloned();
         let (storage_addr, storage_lhs, storage_read) = if let Some(storage) = storage {
@@ -661,8 +706,15 @@ impl<'a> Codegen<'a> {
                     });
                     continue;
                 }
-                let (mut argument, formal_read) =
-                    self.packed_output_temp(scope_path, h, idx, *io, callee_inst, &bound[idx])?;
+                let (mut argument, formal_read) = self.packed_output_temp(
+                    scope_path,
+                    h,
+                    idx,
+                    *io,
+                    callee_inst,
+                    &bound[idx],
+                    Some(&mut *copies),
+                )?;
                 // Copied in at its place among the actuals (decision EO-D3).
                 if let (true, IrCallArg::OutTemp { init, .. }) =
                     (until.is_some_and(|until| idx < until), &mut argument)

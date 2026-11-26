@@ -763,7 +763,7 @@ impl Codegen<'_> {
     /// [`Self::uses_after_effects`] for the uses `path_of` maps a node to
     /// (the path a use starting at that node names), shared by the handles
     /// of class properties (decision EO-D4).
-    pub(super) fn uses_after_effects_with(
+    pub(in crate::sim::codegen) fn uses_after_effects_with(
         &self,
         root: NodeId,
         uses: &[NodeId],

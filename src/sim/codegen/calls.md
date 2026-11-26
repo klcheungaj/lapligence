@@ -11,7 +11,10 @@ actual is then evaluated at the actual's place (`Codegen::take_receiver_root`,
 decision EO-D4). Input/inout copy in per call, output/inout copy out at
 return as an assignment whose selectors, keys and handles are evaluated then
 (decision S13-D1, `TargetSelectors::AtCopyOut`; the emitter resolves the target
-after the callee returns). A whole class property, column-layout record
+after the callee returns). An element of a queue, dynamic or associative array
+bound to a function called in an expression copies out into a caller local
+that a statement after the call stores (`packed_output_temp` with
+`CallElementCopies`). A whole class property, column-layout record
 destinations and mailbox `ref` destinations still bind before invocation. Explicit local lifetimes
 apply individually (static-in-automatic and automatic-in-static). Static output
 formals are not implicitly reset/copied in. Static return storage is ordinary

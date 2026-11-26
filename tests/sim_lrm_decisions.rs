@@ -723,6 +723,16 @@ fn eo_d4_handle_actuals_staged_targets() {
     );
 }
 
+/// EO-D4 / IEEE 1800-2009 11.4.2: a queue or dynamic-array member of a
+/// record element read after a call names the element selected after it.
+#[test]
+fn eo_d4_record_element_members_after_calls() {
+    run_decision(
+        "EO-D4_record_element_members_after_calls",
+        include_str!("fixtures/sim/lrm_decisions/EO-D4_record_element_members_after_calls.out"),
+    );
+}
+
 /// VM-D2 / IEEE 1800-2009 10.4.2: an event-controlled nonblocking write
 /// through a virtual interface locates its target at issue.
 #[test]

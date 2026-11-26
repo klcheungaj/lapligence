@@ -267,10 +267,15 @@ lexical container without a copy (`stage_element_members`):
 element's own storage and pins it for the statement, so every container
 operation applies unchanged, each element is located once and two names of
 one element share its storage; `TouchContents` publishes a change to the
-owner after the statement. A queue or dynamic array an element holds whole,
-passed to a task's `ref` formal, is a `live` alias that also forwards each
+owner after the statement. A queue, dynamic or associative array an element
+holds whole, passed to a task's `ref` formal, is a `live` alias that also forwards each
 change to the owner's waiters while bound (`task_ref_actual`), since the
-task can suspend before the statement ends. Deeper levels resolve once the level above has
+task can suspend before the statement ends. A member that a method, query,
+select or call actual reads after a call or assignment operator of the
+statement is bound where that use starts instead when that use is a packed or
+real value (`member_use_start`, through
+`placed_interface_bindings`, decision EO-D4); a binding its start node did not
+run fails the statement with its location. Deeper levels resolve once the level above has
 its alias (`stage_below_aliases`). An expression outside such a
 statement (a condition, loop bound, `foreach` array, declaration initializer
 or timed assignment value) binds the member before each

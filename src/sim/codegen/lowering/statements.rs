@@ -28,7 +28,9 @@ mod system_tasks;
 
 pub(in crate::sim::codegen) use randsequence::RandseqState;
 
-fn default_real_local_initializer(width: u32) -> Option<Box<IrExpr>> {
+pub(in crate::sim::codegen::lowering) fn default_real_local_initializer(
+    width: u32,
+) -> Option<Box<IrExpr>> {
     (width == 0).then(|| {
         Box::new(IrExpr::new(
             IrExprKind::Const(IrConst::real(0.0)),

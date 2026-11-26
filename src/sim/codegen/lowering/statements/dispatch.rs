@@ -365,6 +365,12 @@ impl EmitCtx<'_, '_> {
             }
             None => (lowered, Default::default()),
         };
+        // A staged member placed at a use that did not bind it would read an
+        // unbound container.
+        let lowered = match (lowered, self.cg.take_unplaced_member()) {
+            (Ok(_), Some(error)) => Err(error),
+            (lowered, _) => lowered,
+        };
         self.cg.end_hoisted_source();
         let hoisted = hoisted?;
         let declarations =

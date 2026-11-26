@@ -2009,6 +2009,13 @@ struct Codegen<'a> {
     /// suffix → the lexical container staging each
     /// (`stage_element_members`).
     staged_element_members: HashMap<(NodeId, String), usize>,
+    /// The nodes whose lowering binds a staged member that an effect of the
+    /// statement precedes (decision EO-D4), through
+    /// `placed_interface_bindings`.
+    placed_member_starts: Vec<NodeId>,
+    /// The located error of a placed member binding that the lowering of its
+    /// start node did not run, reported by the statement being lowered.
+    unplaced_member: Option<String>,
     /// Nested container elements (`qq[i]`, `sq[k]`) named by the statement
     /// being lowered, by select node → the lexical container staging each
     /// (`stage_element_members`).
@@ -2801,6 +2808,8 @@ impl<'a> Codegen<'a> {
             container_call_prelude: None,
             mailbox_statement_prelude: None,
             staged_element_members: HashMap::new(),
+            placed_member_starts: Vec::new(),
+            unplaced_member: None,
             staged_nested_elements: HashMap::new(),
             inner_stagings: Vec::new(),
             deferred_selectors: std::cell::Cell::new(false),
