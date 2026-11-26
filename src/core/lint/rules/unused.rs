@@ -269,6 +269,23 @@ mod tests {
         assert!(got[0].message.contains("`unused_r`"), "{}", got[0].message);
     }
 
+    /// `objects[index].shared = 1` writes the static property and reads
+    /// `index`, although the property needs no object.
+    #[test]
+    fn index_of_the_object_in_front_of_a_static_property_is_used() {
+        let diags = lint_design(
+            "module top;\n\
+             \x20 class c; static int shared; static struct { int a; } rec; endclass\n\
+             \x20 c objects[2]; int i = 0, j = 0, unused_k = 0;\n\
+             \x20 initial begin objects[i].shared = 1; objects[j].rec.a = 2; end\n\
+             \x20 initial $display(\"%0d %0d\", objects[0].shared, c::rec.a);\nendmodule\n",
+            "top",
+        );
+        let got = rule_diags(&diags, "unused-signal");
+        assert_eq!(got.len(), 1, "{:?}", diags);
+        assert!(got[0].message.contains("`unused_k`"), "{}", got[0].message);
+    }
+
     #[test]
     fn flags_never_used_signal_only() {
         let diags = lint_design(

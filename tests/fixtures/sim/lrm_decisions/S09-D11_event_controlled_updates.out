@@ -1,0 +1,17 @@
+returns        bound=11111111111111 r=1.5 h=1 free=11111111
+kill           bound=00000000000000 r=0.0 h=0 free=11111111
+finished, kill bound=00000000000000 r=0.0 h=0 free=11111111
+disable fork   bound=00000000000000 r=0.0 h=0 free=11111111
+block          bound=00000000000000 r=0.0 h=0 free=11111111
+task           bound=00000000000000 r=0.0 h=0 free=11111111
+wait fork      5
+event, update  5
+update, event  5
+issuing turn   5
+->>            5
+two controls   6
+at #0          0 then 5
+same turn      0 then 5
+next turn      5
+condition      0 then 5
+after event    5

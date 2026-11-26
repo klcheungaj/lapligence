@@ -405,6 +405,12 @@ pub(super) fn member_path_from_slang(
         .target_id()
         .map(|id| canonical_reference_target(snapshot, ids, id))
         .transpose()?;
+    if let Some(property) = member.filter(|member| is_static_property(snapshot, *member)) {
+        if !base_has_effects(snapshot, base_semantic)? {
+            let name = snapshot.semantic_nodes[property.index()].name.to_string();
+            return Ok(Some((vec![name], vec![Some(property)])));
+        }
+    }
     let member_name = member
         .and_then(|id| snapshot.semantic_nodes.get(id.index()))
         .map(|member| member.name.to_string())
@@ -437,6 +443,84 @@ pub(super) fn member_path_from_slang(
     parts.push(member_name);
     refs.push(member);
     Ok(Some((parts, refs)))
+}
+
+/// Whether `node` declares a static class property: one variable that the
+/// class and every object of it share (IEEE 1800-2009 8.9).
+fn is_static_property(snapshot: &SlangSnapshot, node: NodeId) -> bool {
+    const STATIC_LIFETIME: u64 = 1;
+    snapshot
+        .semantic_nodes
+        .get(node.index())
+        .is_some_and(|semantic| {
+            semantic.detail == "ClassProperty"
+                && semantic.auxiliary & crate::ffi::slang::VARIABLE_LIFETIME_MASK == STATIC_LIFETIME
+        })
+}
+
+/// Built-in functions and methods beside [`CONSTANT_SYSTEM_FUNCTIONS`] whose
+/// calls change nothing.
+const READING_BUILTINS: &[&str] = &[
+    "$realtime",
+    "$sformatf",
+    "$stime",
+    "$time",
+    "exists",
+    "len",
+    "num",
+    "size",
+];
+
+/// Whether evaluating the base of a member access can change anything: it
+/// assigns, or calls a subroutine other than a built-in that only reads.
+fn base_has_effects(snapshot: &SlangSnapshot, base: &SemanticNode) -> Result<bool, DbError> {
+    let mut pending = vec![base];
+    let mut visited = 0;
+    while let Some(node) = pending.pop() {
+        visited += 1;
+        if visited > snapshot.semantic_nodes.len() {
+            return Err(DbError::InvalidSnapshot(
+                "member access base contains a cycle".into(),
+            ));
+        }
+        let edges = semantic_edges(snapshot, node)?;
+        match node.kind {
+            SemanticKind::Expression => {}
+            SemanticKind::SystemCall | SemanticKind::MethodCall
+                if !edges
+                    .iter()
+                    .any(|edge| edge.role == SemanticEdgeRole::Callee)
+                    && (CONSTANT_SYSTEM_FUNCTIONS.contains(&node.name.as_str())
+                        || READING_BUILTINS.contains(&node.name.as_str())) => {}
+            SemanticKind::FunctionCall | SemanticKind::MethodCall | SemanticKind::SystemCall => {
+                return Ok(true)
+            }
+            _ => continue,
+        }
+        if matches!(
+            node.operation,
+            SemanticOperation::PreIncrement
+                | SemanticOperation::PreDecrement
+                | SemanticOperation::PostIncrement
+                | SemanticOperation::PostDecrement
+                | SemanticOperation::Assign
+        ) {
+            return Ok(true);
+        }
+        pending.extend(
+            edges
+                .iter()
+                .filter(|edge| {
+                    !matches!(
+                        edge.role,
+                        SemanticEdgeRole::Reference | SemanticEdgeRole::SourceIdentity
+                    )
+                })
+                .filter_map(|edge| usize::try_from(edge.target_id).ok())
+                .filter_map(|index| snapshot.semantic_nodes.get(index)),
+        );
+    }
+    Ok(false)
 }
 
 pub(super) fn expression_reference_target(
@@ -488,6 +572,71 @@ pub(super) fn call_member_access(
 mod tests {
     use super::*;
     use crate::core::compile::{compile_sources_checked, CompileOpts, OwnedSource};
+
+    /// Every name of a static property gives the path that starts at the
+    /// property; one whose object expression has an effect keeps it.
+    #[test]
+    fn paths_into_static_properties_start_at_the_property() {
+        let output = compile_sources_checked(
+            &[OwnedSource::compilation_unit(
+                "statics.sv",
+                "module tb; \
+                 typedef struct { int a; } rec_t; \
+                 class c; static rec_t s; static int v; rec_t own; c next; \
+                 function c get(); return this; endfunction endclass \
+                 class d extends c; function int f(); return super.s.a + this.s.a; endfunction \
+                 endclass \
+                 c o, e[2], q[$]; int i; \
+                 initial begin i = c::s.a; i = o.s.a; i = e[i].s.a; i = o.next.s.a; \
+                 i = q[q.size() - 1].s.a; i = o.v; i = o.own.a; \
+                 i = o.get().v; i = e[i++].s.a; end \
+                 endmodule",
+            )],
+            &CompileOpts {
+                top: Some("tb".to_owned()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let db = Db::from_slang(&output.snapshot).unwrap();
+        let mut paths = Vec::new();
+        for id in db.node_ids() {
+            let NodeKind::Expr(ExprKind::HierPath { parts, refs }) = db.node_kind(id) else {
+                continue;
+            };
+            let from_property = matches!(
+                refs[0].map(|first| db.node_kind(first)),
+                Some(NodeKind::Var { .. })
+            );
+            if parts.last().is_some_and(|last| last == "a") && from_property {
+                paths.push(parts.join("."));
+            }
+        }
+        paths.sort();
+        assert_eq!(
+            paths,
+            ["o.own.a", "s.a", "s.a", "s.a", "s.a", "s.a", "s.a", "s.a"]
+        );
+        // `o.v` is the property; `o.get().v` and `e[i++].s.a` keep their object.
+        let property = db
+            .node_ids()
+            .find(|id| {
+                db.node(*id).name == "v" && matches!(db.node_kind(*id), NodeKind::Var { .. })
+            })
+            .expect("property");
+        let references = db
+            .node_ids()
+            .filter(|id| {
+                matches!(db.node_kind(*id), NodeKind::Expr(ExprKind::Ref { target })
+                    if *target == Some(property))
+            })
+            .count();
+        assert_eq!(references, 1);
+        assert!(db.node_ids().any(|id| {
+            matches!(db.node_kind(id), NodeKind::Expr(ExprKind::HierPath { parts, .. })
+                if parts.len() == 3 && parts[1..] == ["s", "a"])
+        }));
+    }
 
     /// A named block is found by its symbol in the map of the one walk over
     /// the nodes; a symbol that two statements own has no statement.

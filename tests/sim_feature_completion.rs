@@ -359,6 +359,21 @@ mod ki_record_shapes;
 #[path = "sim_feature_completion/ki_static_init_errors.rs"]
 mod ki_static_init_errors;
 
+#[path = "sim_feature_completion/ki_event_updates.rs"]
+mod ki_event_updates;
+
+#[path = "sim_feature_completion/ki_fork_order.rs"]
+mod ki_fork_order;
+
+#[path = "sim_feature_completion/ki_handle_updates.rs"]
+mod ki_handle_updates;
+
+#[path = "sim_feature_completion/ki_located_updates.rs"]
+mod ki_located_updates;
+
+#[path = "sim_feature_completion/ki_static_members.rs"]
+mod ki_static_members;
+
 #[path = "sim_feature_completion/ki_initializer_order.rs"]
 mod ki_initializer_order;
 

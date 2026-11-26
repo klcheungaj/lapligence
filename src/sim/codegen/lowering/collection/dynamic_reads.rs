@@ -186,7 +186,6 @@ impl Codegen<'_> {
         while let Some(node) = pending.pop() {
             if self.class_storage_field(node).is_some()
                 || self.class_container_property(node).is_some()
-                || self.static_class_property(node).is_some()
                 || self.dynamic_interface_member(node)
                 || self.class_method_call(node).is_some()
                 || self.synchronization_method_call(node)
@@ -201,6 +200,38 @@ impl Codegen<'_> {
                 {
                     return true;
                 }
+            }
+            pending.extend(self.node(node).children.iter().copied());
+        }
+        false
+    }
+
+    /// Whether a nonblocking assignment under event control `specs` ends with
+    /// its issuer (decision S09-D8): the control names an event, or reads
+    /// storage that is neither a net nor a declared variable (a class
+    /// property, also a static one, an element of a dynamically sized array,
+    /// a member of a virtual interface).
+    pub(in super::super) fn event_control_binds(&self, specs: &[EventSpec]) -> bool {
+        let mut pending = Vec::new();
+        for spec in specs {
+            self.event_spec_expressions(spec, &mut pending);
+        }
+        if pending
+            .iter()
+            .any(|root| self.event_target_of(*root).is_some() || self.reads_dynamic_storage(*root))
+        {
+            return true;
+        }
+        while let Some(node) = pending.pop() {
+            let target = match self.kind(node) {
+                NodeKind::Expr(ExprKind::Ref { target }) => *target,
+                NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs.first().copied().flatten(),
+                _ => None,
+            };
+            if target.is_some_and(|target| self.is_static_property(target))
+                || self.container_of(node).is_some()
+            {
+                return true;
             }
             pending.extend(self.node(node).children.iter().copied());
         }
@@ -333,12 +364,6 @@ impl Codegen<'_> {
                 .find(|target| is_field(target)),
             _ => None,
         }
-    }
-
-    /// The signal of the static class property `node` names.
-    fn static_class_property(&self, node: NodeId) -> Option<&SignalInfo> {
-        self.class_static_signals
-            .get(&self.class_field_target(node)?)
     }
 
     /// Whether `node` calls a method of a mailbox or semaphore: their state
@@ -1186,9 +1211,8 @@ impl Codegen<'_> {
             return self.property_handle(this, target);
         }
         let object = self
-            .class_static_objects
+            .object_globals
             .get(&target)
-            .or_else(|| self.object_globals.get(&target))
             .map(|object| self.reference_object(*object))?;
         (self.model.objects.get(object)?.ty == crate::sim::ir::IrObjectType::Chandle)
             .then_some(IrChandleExpr::Read(object))
@@ -1425,10 +1449,6 @@ impl Codegen<'_> {
         let mut pending = vec![body];
         while let Some(node) = pending.pop() {
             self.reject_unobservable_read(path, node)?;
-            if let Some(info) = self.static_class_property(node) {
-                out.push(self.signal_dependency(info));
-                continue;
-            }
             if self.mailbox_num_call(node) {
                 let handle = match self.kind(node) {
                     NodeKind::MethodCall {
@@ -1494,11 +1514,6 @@ impl Codegen<'_> {
         while let Some(node) = pending.pop() {
             pending.extend(self.node(node).children.iter().copied());
             self.reject_unobservable_read(path, node)?;
-            if let Some(info) = self.static_class_property(node) {
-                let dependency = self.signal_dependency(info);
-                self.dynamic_reads.insert(node, vec![dependency]);
-                continue;
-            }
             if self.mailbox_num_call(node) {
                 let NodeKind::MethodCall {
                     receiver: Some(receiver),

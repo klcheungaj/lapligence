@@ -311,32 +311,16 @@ pub struct IrVpiClassItem {
     pub(in crate::sim) mode_signal: Option<usize>,
 }
 
-/// The model storage of a static class property (8.9): one variable the
-/// class and all its objects share.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum IrVpiStaticStorage {
-    /// A packed or real property (index into [`IrModel::signals`]).
-    Signal(usize),
-    /// A string or handle property (index into [`IrModel::objects`]).
-    Object(usize),
-    /// A dynamic, queue, associative or fixed-size array of values (index
-    /// into [`IrModel::containers`]).
-    Container(usize),
-    /// An `event` property (index into [`IrModel::events`], never an
-    /// array): the storage is the event's handle slot, as for an object's
-    /// event field.
-    Event(usize),
-}
-
-/// A static property of a class (37.17 detail 25, 37.27 detail 4): listed
-/// with the properties of the class definition and of its objects.
+/// A static property of a class (8.9; 37.17 detail 25, 37.27 detail 4):
+/// listed with the properties of the class definition and of its objects.
+/// It is one variable, whose catalog row the model keeps like any other
+/// variable's.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IrVpiStatic {
-    /// Name, shape and qualifiers; `mode` is always `None`.
-    pub(in crate::sim) field: IrVpiField,
-    pub(in crate::sim) storage: IrVpiStaticStorage,
-    /// Declared ranges of a fixed-size array, leftmost first.
-    pub(in crate::sim) dims: Vec<(i64, i64)>,
+    /// Full name of its catalog row (an entry of [`IrModel::vpi_objects`]).
+    pub(in crate::sim) row: String,
+    pub(in crate::sim) rand: IrVpiRand,
+    pub(in crate::sim) visibility: IrVpiVisibility,
 }
 
 /// One class layout (index-aligned with [`IrModel::classes`]): every object
@@ -439,19 +423,6 @@ impl IrVpiDynamic {
                     field.shape >= self.shapes.len()
                         || field.name.contains('\0')
                         || field.mode.is_some_and(|mode| mode >= layout.fields.len())
-                })
-                || class.statics.iter().any(|entry| {
-                    entry.field.shape >= self.shapes.len()
-                        || entry.field.name.contains('\0')
-                        || entry.field.mode.is_some()
-                        || match entry.storage {
-                            IrVpiStaticStorage::Signal(index) => index >= model.signals.len(),
-                            IrVpiStaticStorage::Object(index) => index >= model.objects.len(),
-                            IrVpiStaticStorage::Container(index) => index >= model.containers.len(),
-                            IrVpiStaticStorage::Event(index) => {
-                                model.events.get(index).is_none_or(|event| event.is_array())
-                            }
-                        }
                 })
                 || class.items.iter().any(|item| {
                     item.name.contains('\0')

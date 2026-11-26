@@ -101,6 +101,38 @@ fn a_bound_write_stays_bound_in_an_outlined_run() {
     }
 }
 
+/// The marks enclose the call that queues the update and none of its operands:
+/// a function an operand calls may queue updates of its own.
+#[test]
+fn a_held_write_marks_its_own_update_alone() {
+    let mark = |operation| IrStmt::Container(Box::new(operation));
+    let IrStmt::Assign { lhs, rhs, .. } = sum(2) else {
+        unreachable!("a sum is an assignment");
+    };
+    let ticks = IrDelay::Runtime {
+        value: Box::new(rhs.clone()),
+        unit_ticks: 1,
+        precision_ticks: 1,
+    };
+    let source = render(vec![
+        mark(IrContainerStmt::NbaHoldOpen(IrChandleExpr::Null)),
+        sum(2),
+        IrStmt::DelayedAssign { lhs, rhs, ticks },
+        mark(IrContainerStmt::NbaHoldClose),
+        sum(2),
+    ]);
+    let (open, close) = ("llg_nba_hold_open(", "llg_nba_hold_close();");
+    assert_eq!(source.matches(open).count(), 2, "{source}");
+    for (begin, _) in source.match_indices(open) {
+        let end = source[begin..].find(close).unwrap() + begin;
+        let held = &source[begin..end];
+        assert_eq!(held.matches("llg_nba_after(").count(), 1, "{held}");
+        assert!(!held.contains("sv4_add"), "{held}");
+        assert!(!held.contains("sv4_delay_ticks"), "{held}");
+    }
+    assert_eq!(source.matches("llg_nba_after(").count(), 3);
+}
+
 /// A plain trigger stays pending when its process ends, a timed one does not:
 /// the runtime entries differ even for a zero delay.
 #[test]

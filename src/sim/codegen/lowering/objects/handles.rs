@@ -27,15 +27,6 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<Option<ChandleTarget>, String> {
-        // A static handle property is one model object (SV 8.9), named with
-        // or without a class scope or receiver.
-        if let Some(index) = self
-            .class_field_target(node)
-            .and_then(|field| self.class_static_objects.get(&field).copied())
-            .filter(|index| self.model.objects[*index].ty == IrObjectType::Chandle)
-        {
-            return Ok(Some(ChandleTarget::Object(index)));
-        }
         if let Some(address) = self.class_field_chandle_lvalue(path, node)? {
             return Ok(Some(ChandleTarget::Local(address)));
         }
@@ -563,15 +554,6 @@ impl Codegen<'_> {
                     self.node(target).full_name
                 ));
             }
-        }
-        // A static handle property is one model object (SV 8.9), named
-        // with or without a class scope or receiver.
-        if let Some(index) = self
-            .class_field_target(node)
-            .and_then(|field| self.class_static_objects.get(&field).copied())
-            .filter(|index| self.model.objects[*index].ty == IrObjectType::Chandle)
-        {
-            return Ok(IrChandleExpr::Read(index));
         }
         if let Some(address) = self.class_field_chandle_lvalue(path, node)? {
             return Ok(IrChandleExpr::LocalRead(address));

@@ -57,6 +57,8 @@ typedef struct llg_nba_locator {
     struct llg_bound_update* bound;
 } llg_nba_locator_t;
 
+enum { LLG_NBA_HANDLE = 1, LLG_NBA_PROCESS = 2 };
+
 typedef struct llg_nba {
     struct llg_nba* queue_next;
     struct llg_nba* queue_prev;
@@ -80,7 +82,7 @@ typedef struct llg_nba {
     double* real_target;
     double real_value;
     int32_t is_string;
-    int32_t is_chandle;
+    int32_t is_chandle; // LLG_NBA_HANDLE or LLG_NBA_PROCESS.
     int32_t is_values;
     int32_t is_container;
     // Persistent native destination and its owned issue-time value;
@@ -96,6 +98,12 @@ typedef struct llg_nba {
             // Change marker of handle storage, or NULL.
             sv4_t* dependency;
         } chandle;
+        // A process variable and a pinned handle.
+        struct {
+            llg_process_handle_t** target;
+            llg_process_handle_t* value;
+            sv4_t* dependency;
+        } process;
         // Descriptor-backed array write: the whole array (`whole`) or the
         // payload's elements from the storage position held in `value`.
         struct {
@@ -727,7 +735,7 @@ struct llg_proc {
     };
     llg_fork_group_t* fork_groups; // live groups spawned by this proc
     llg_fork_group_t* fork_groups_tail; // source-order O(1) append
-    llg_fork_group_t* pending_fork_groups; // first group not yet checked for start
+    llg_fork_group_t* pending_fork_groups; // first join_none group not yet started
     llg_fork_group_t* grp;         // group this proc belongs to (NULL top-level)
     llg_fork_child_t* fork_child;   // owning group node for O(1) cancellation
     llg_frame_t* frame;            // retained activation storage, when captured
@@ -827,6 +835,10 @@ static LLG_OUTLYING void bound_update_drop(llg_fork_group_t* grp);
 static void promote_delayed_nbas(void);
 static void deferred_trigger_source_change(sv4_t* sig, double* real);
 static void deferred_trigger_event(llg_event_object_t* ev);
+static inline int32_t changes_watched(void);
+static void add_region_callback(llg_region_t region,
+                                llg_region_callback_fn callback, void* data,
+                                uint64_t ticks, llg_region_callback_id_t* id);
 static void process_local_release_all(llg_proc_t* proc);
 static void start_pending_fork_children(llg_proc_t* parent);
 static void proc_complete(llg_proc_t* self);
@@ -941,7 +953,18 @@ void llg_frame_release(llg_frame_t* frame) {
     if (frame->refs != 0) return;
     *frame->all_prev_link = frame->all_next;
     if (frame->all_next) frame->all_next->all_prev_link = frame->all_prev_link;
-    for (size_t i = 0; i < frame->nslots; i++) frame_clear_alias(&frame->slots[i]);
+    // A write of this turn may still wait for its check.
+    int32_t watched = changes_watched();
+    for (size_t i = 0; i < frame->nslots; i++) {
+        llg_frame_slot_t* slot = &frame->slots[i];
+        if (watched && slot->alias_kind == LLG_FRAME_ALIAS_NONE) {
+            if (slot->kind == LLG_FRAME_PACKED)
+                llg_clocking_forget_signal(&slot->value.packed);
+            else if (slot->kind == LLG_FRAME_REAL)
+                llg_clocking_forget_signal((sv4_t*)&slot->value.real);
+        }
+        frame_clear_alias(slot);
+    }
     free(frame->slots);
     free(frame);
 }

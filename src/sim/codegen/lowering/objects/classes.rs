@@ -6,11 +6,9 @@ use crate::IdSet;
 impl Codegen<'_> {
     pub(in super::super) fn class_field_target(&self, node: NodeId) -> Option<NodeId> {
         match self.kind(node) {
-            NodeKind::Expr(ExprKind::Ref { target }) => target.filter(|target| {
-                self.class_fields.contains_key(target)
-                    || self.class_static_signals.contains_key(target)
-                    || self.class_static_objects.contains_key(target)
-            }),
+            NodeKind::Expr(ExprKind::Ref { target }) => {
+                target.filter(|target| self.class_fields.contains_key(target))
+            }
             // The last property on the path decides; a native record
             // property (`n.next.rec.s`) is not packed or object storage, and
             // a virtual-interface property followed by an interface member
@@ -23,8 +21,6 @@ impl Codegen<'_> {
                     .copied()
                     .find(|target| {
                         self.class_fields.contains_key(target)
-                            || self.class_static_signals.contains_key(target)
-                            || self.class_static_objects.contains_key(target)
                             || self.class_native_fields.contains_key(target)
                     })
                     .filter(|target| !self.class_native_fields.contains_key(target))
@@ -60,31 +56,43 @@ impl Codegen<'_> {
     /// part of one, named by its class or through an object. A member of an
     /// interface a static virtual interface property names is not one.
     pub(in super::super) fn writes_static_property(&self, destination: NodeId) -> bool {
-        let mut node = destination;
+        let root = self.selected_root(destination);
+        let NodeKind::Expr(ExprKind::HierPath { refs, .. }) = self.kind(root) else {
+            return self.is_static_property(root);
+        };
+        let mut from_last = refs
+            .iter()
+            .rev()
+            .flatten()
+            .map(|target| self.selected_root(*target))
+            .peekable();
+        let last = from_last.peek().copied();
+        let property = from_last.find(|target| self.is_class_property(*target));
+        property.is_some_and(|property| {
+            let last = last == Some(property);
+            self.is_static_property(property)
+                && (last
+                    || !matches!(self.kind(property), NodeKind::Var { ty } if ty.kind == "virtual_interface"))
+        })
+    }
+
+    /// The declaration, or the member path, that the selects of `node` start
+    /// from.
+    fn selected_root(&self, node: NodeId) -> NodeId {
+        let mut root = node;
         loop {
-            match self.kind(node) {
+            root = match self.kind(root) {
                 NodeKind::Expr(
                     ExprKind::BitSelect { base, .. }
                     | ExprKind::PartSelect { base, .. }
                     | ExprKind::IndexedPartSelect { base, .. }
                     | ExprKind::ArraySelect { base, .. }
                     | ExprKind::MemberSelect { base, .. },
-                ) => node = *base,
-                NodeKind::Expr(ExprKind::Ref { target }) => {
-                    return target.is_some_and(|target| self.is_static_property(target))
-                }
-                NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
-                    let mut from_last = refs.iter().rev().flatten().copied().peekable();
-                    let last = from_last.peek().copied();
-                    let property = from_last.find(|target| self.is_class_property(*target));
-                    return property.is_some_and(|property| {
-                        let last = last == Some(property);
-                        self.is_static_property(property)
-                            && (last
-                                || !matches!(self.kind(property), NodeKind::Var { ty } if ty.kind == "virtual_interface"))
-                    });
-                }
-                _ => return false,
+                ) => *base,
+                NodeKind::Expr(ExprKind::Ref {
+                    target: Some(target),
+                }) => *target,
+                _ => return root,
             }
         }
     }
@@ -97,6 +105,31 @@ impl Codegen<'_> {
 
     pub(in super::super) fn is_static_property(&self, node: NodeId) -> bool {
         self.is_class_property(node) && self.db.variable_lifetime(node) == VariableLifetime::Static
+    }
+
+    /// The rejection of a nonblocking write of `lhs` to instance property
+    /// `field`.
+    pub(in super::super) fn class_property_nba_error(
+        &self,
+        path: &str,
+        lhs: NodeId,
+        field: NodeId,
+    ) -> String {
+        self.locate_error(
+            lhs,
+            format!(
+                "nonblocking assignment to class property `{}` in `{path}` is illegal \
+             (IEEE 1800-2009 6.21: class properties shall not be written with nonblocking assignments)",
+                self.node(field).name,
+            ),
+        )
+    }
+
+    /// The class of static property `node`; `None` for any other node.
+    pub(in super::super) fn static_property_class(&self, node: NodeId) -> Option<NodeId> {
+        self.node(node)
+            .parent
+            .filter(|_| self.is_static_property(node))
     }
 
     /// The instance record property with string, real or handle members
@@ -113,8 +146,6 @@ impl Codegen<'_> {
             .copied()
             .find(|target| {
                 self.class_fields.contains_key(target)
-                    || self.class_static_signals.contains_key(target)
-                    || self.class_static_objects.contains_key(target)
                     || self.class_native_fields.contains_key(target)
             })
             .filter(|target| self.class_native_fields.contains_key(target))
@@ -949,14 +980,22 @@ impl Codegen<'_> {
                 .iter()
                 .rposition(|reference| *reference == Some(field))
                 .unwrap_or(refs.len());
+            // An object that a virtual interface's member refers to: the
+            // interface has no slot for such a member.
+            if refs[..end]
+                .iter()
+                .flatten()
+                .any(|target| self.virtual_interface_spelling(*target).is_some())
+            {
+                self.virtual_interface_access(path, node, false)?;
+            }
             // A property selected through a handle property (`n.next.val`,
             // SV 8.4) has that property's value as its receiver, not the
             // first handle variable of the path. The frontend keeps the
             // selected handle expression as the access's base child.
             if end > 0
                 && refs[end - 1].is_some_and(|previous| {
-                    (self.class_fields.contains_key(&previous)
-                        || self.class_static_objects.contains_key(&previous))
+                    (self.class_fields.contains_key(&previous) || self.is_static_property(previous))
                         && matches!(
                             self.kind(previous),
                             // Covergroup handle arguments are fields too.
@@ -1266,15 +1305,6 @@ impl Codegen<'_> {
         let Some(field) = self.class_field_target(node) else {
             return self.native_leaf_expr(path, node);
         };
-        if let Some(info) = self.class_static_signals.get(&field).cloned() {
-            return Ok(Some(self.signal_read_expr(&info)?));
-        }
-        if self.class_static_objects.contains_key(&field) {
-            return Err(format!(
-                "string/class object static property `{}` is not a packed expression",
-                self.node(field).name
-            ));
-        }
         if matches!(self.kind(field), NodeKind::Var { ty } if is_handle_kind(&ty.kind) || ty.kind == "string")
         {
             return Ok(None);
@@ -1307,12 +1337,6 @@ impl Codegen<'_> {
         let Some(field) = self.class_field_target(node) else {
             return self.native_leaf_target(path, node);
         };
-        if let Some(info) = self.class_static_signals.get(&field).cloned() {
-            return Ok(Some(IrLhs::Whole(info.ir)));
-        }
-        if self.class_static_objects.contains_key(&field) {
-            return Ok(None);
-        }
         if matches!(self.kind(field), NodeKind::Var { ty } if is_handle_kind(&ty.kind) || ty.kind == "string")
         {
             return Ok(None);
@@ -1388,11 +1412,6 @@ impl Codegen<'_> {
             NodeKind::Var { ty } | NodeKind::FuncArg { ty, .. } if ty.kind == "string"
         ) {
             return Ok(None);
-        }
-        // A static string property is one model object shared by every
-        // instance and the class scope (SV 8.9).
-        if let Some(object) = self.class_static_objects.get(&field) {
-            return Ok(Some(self.model.objects[*object].c_name.clone()));
         }
         let Some((class, index, _)) = self.class_field_layout(field) else {
             return Ok(None);

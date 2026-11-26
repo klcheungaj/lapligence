@@ -7,8 +7,9 @@ impl<'a> Codegen<'a> {
         let initializers = std::mem::take(&mut self.array_initializers);
         let mut descriptor_processes = Vec::new();
         for (declaration, initializer) in initializers {
-            // Package and `$unit` declarations own their storage directly.
-            let inst = self.owner_instance(declaration).ok_or_else(|| {
+            // Package, `$unit` and class declarations own their storage
+            // directly.
+            let inst = self.initializer_environment(declaration).ok_or_else(|| {
                 format!(
                     "fixed initializer for `{}` has no owning instance",
                     self.node(declaration).name
@@ -91,7 +92,7 @@ impl<'a> Codegen<'a> {
         for (declaration, initializer) in initializers {
             let name = self.node(declaration).name.clone();
             let inst = self
-                .owner_instance(declaration)
+                .initializer_environment(declaration)
                 .ok_or_else(|| format!("record initializer for `{name}` has no owning instance"))?;
             self.inst = inst;
             self.depth_arg = "0".into();

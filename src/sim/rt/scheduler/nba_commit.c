@@ -22,6 +22,14 @@ static int32_t nba_tag_commit_valid(const llg_ref_view_t* view, const sv4_t* tar
     return 0;
 }
 
+static LLG_OUTLYING void nba_apply_process(const llg_nba_t* next) {
+    llg_process_handle_t** target = next->native.process.target;
+    llg_process_handle_t* previous = *target;
+    if (previous == next->native.process.value) return;
+    llg_process_assign(target, next->native.process.value);
+    llg_handle_changed(next->native.process.dependency, (void* const*)target, previous);
+}
+
 static void apply_nba_target(llg_nba_t* next) {
     if (next->fixed_target) {
         fixed_array_apply(next->fixed_target, next->fixed_value);
@@ -54,6 +62,10 @@ static void apply_nba_target(llg_nba_t* next) {
         default: llg_assoc_value_copy(target, payload); break;
         }
     } else if (next->is_chandle) {
+        if (next->is_chandle == LLG_NBA_PROCESS) {
+            nba_apply_process(next);
+            return;
+        }
         // Handle storage publishes its change marker on a changed value,
         // matching a blocking handle write.
         void** target = next->native.chandle.target;

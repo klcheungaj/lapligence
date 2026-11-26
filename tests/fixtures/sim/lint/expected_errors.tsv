@@ -20,6 +20,12 @@ feature_completion/fin_002f/cancel_vpi_statements.sv	mixed-assignments	12:3
 feature_completion/g1_05/owner_publication_snapshot.sv	mixed-assignments	9:5
 feature_completion/g1_19/nba_issue_capture.sv	mixed-assignments	10:5
 feature_completion/g1_19/nba_ordered_updates.sv	mixed-assignments	20:5
+feature_completion/ki_event_updates/clocking.sv	mixed-assignments	33:3
+feature_completion/ki_event_updates/event_objects.sv	mixed-assignments	44:3
+feature_completion/ki_handle_updates/delays.sv	mixed-assignments	17:3
+feature_completion/ki_handle_updates/elements.sv	mixed-assignments	43:3
+feature_completion/ki_handle_updates/kinds.sv	mixed-assignments	28:3
+feature_completion/ki_handle_updates/strings.sv	mixed-assignments	14:3
 feature_completion/ki_packed_range/procedural_selects.sv	mixed-assignments	17:3
 feature_completion/ki_pattern_rows/dense_rows.sv	mixed-assignments	33:3
 feature_completion/ki_pattern_rows/descriptor_rows.sv	mixed-assignments	22:3
@@ -38,6 +44,9 @@ feature_completion/ki_record_shapes/shapes_st_nba.sv	mixed-assignments	46:3
 feature_completion/ki_record_shapes/shapes_str_nba.sv	mixed-assignments	18:3
 feature_completion/ki_record_shapes/shapes_str_nba.sv	mixed-assignments	46:3
 feature_completion/ki_select_bugs/element_members.sv	mixed-assignments	38:3
+feature_completion/ki_static_members/implicit.sv	mixed-assignments	28:3
+feature_completion/ki_static_members/scopes.sv	mixed-assignments	74:3
+feature_completion/ki_static_members/uses.sv	mixed-assignments	70:3
 feature_completion/rtl_002/capacity_copy.sv	mixed-assignments	8:5
 feature_completion/rtl_002/default_pattern.sv	mixed-assignments	5:5
 feature_completion/rtl_002/integration_views.sv	mixed-assignments	3:5
@@ -169,4 +178,5 @@ syn038_pairwise/typed_continuous_matrix.sv	combinational-loop	58:15
 type_conformance/state-boundaries.sv	mixed-assignments	18:5
 type_conformance/state-storage.sv	mixed-assignments	19:5
 lrm_decisions/S07-D6_record_event_nba.sv	mixed-assignments	15:3
+lrm_decisions/S09-D11_event_controlled_updates.sv	mixed-assignments	102:3
 lrm_decisions/S14-D7_event_nba_order.sv	mixed-assignments	17:3

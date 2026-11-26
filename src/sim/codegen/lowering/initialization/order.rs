@@ -22,56 +22,7 @@
 //! among the scope's declarations; a call does not move it.
 
 use super::*;
-
-/// Elaboration-time system functions (IEEE 1800-2009 11.2.1, 20.5-20.9) that
-/// keep a call-free initializer constant: conversions, data and array
-/// queries, math and bit-vector functions.
-const CONSTANT_SYSTEM_FUNCTIONS: &[&str] = &[
-    "$signed",
-    "$unsigned",
-    "$rtoi",
-    "$itor",
-    "$realtobits",
-    "$bitstoreal",
-    "$shortrealtobits",
-    "$bitstoshortreal",
-    "$bits",
-    "$clog2",
-    "$ln",
-    "$log10",
-    "$exp",
-    "$sqrt",
-    "$pow",
-    "$floor",
-    "$ceil",
-    "$sin",
-    "$cos",
-    "$tan",
-    "$asin",
-    "$acos",
-    "$atan",
-    "$atan2",
-    "$hypot",
-    "$sinh",
-    "$cosh",
-    "$tanh",
-    "$asinh",
-    "$acosh",
-    "$atanh",
-    "$dimensions",
-    "$unpacked_dimensions",
-    "$left",
-    "$right",
-    "$low",
-    "$high",
-    "$increment",
-    "$size",
-    "$countbits",
-    "$countones",
-    "$onehot",
-    "$onehot0",
-    "$isunknown",
-];
+use crate::core::db::CONSTANT_SYSTEM_FUNCTIONS;
 
 /// Data and array queries (IEEE 1800-2009 20.6.2, 20.7) whose first operand
 /// may name a variable: they read its type or current extent, not its value,

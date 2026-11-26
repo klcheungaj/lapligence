@@ -14,6 +14,7 @@ and payloads; escaping or unproven cells retain stable heap owners. Feature guar
 | `expressions.rs`, `control.rs`, `system.rs` | Expressions, branches and system operations. |
 | `repeated_values.rs` | Typed repeated concatenation appends with per-iteration evaluation and cleanup. |
 | `stores.rs`, `statements.rs` | Captured lvalues/masks, writes and lexical/loop cleanup. |
+| `updates.rs` | The brackets around the one call that queues a nonblocking update. |
 | `scopes.rs` | Names bound in nested lexical scopes; a lookup does not depend on the depth. |
 | `outline.rs` | Long statement runs of a body moved into helper functions (C compile time). |
 | `calls.rs`, `pure_calls.rs`, `events.rs`, `formatting.rs` | Call/result/address ownership, callback inlining, events and output. |

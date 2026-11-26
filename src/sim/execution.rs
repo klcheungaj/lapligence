@@ -2730,7 +2730,7 @@ fn collect_object_query_effects(
                 }
             }
         }
-        IrObjectQuery::HandleCapture(handle) => {
+        IrObjectQuery::HandleCapture(handle) | IrObjectQuery::EventTriggerCount(handle) => {
             collect_chandle_effects(ir, handle, effects, visited_calls)
         }
         IrObjectQuery::EventCapture(event) => {
@@ -3093,6 +3093,10 @@ fn collect_chandle_effects(
             collect_mailbox_expr_effects(ir, mailbox, effects, visited_calls)
         }
         IrChandleExpr::EventObject(event) => {
+            collect_event_effects(ir, event, effects, visited_calls)
+        }
+        IrChandleExpr::WaitedEvent(event) => {
+            visited_calls.push_checked_exit(effects);
             collect_event_effects(ir, event, effects, visited_calls)
         }
         IrChandleExpr::Call {

@@ -453,9 +453,12 @@ pub enum IrChandleExpr {
         otherwise: Box<IrChandleExpr>,
     },
     /// The synchronization object an event handle refers to (null for a null
-    /// handle). Only container element writes consume it: an event element
-    /// stores this identity, never a copy of the object.
+    /// handle). An event element of a container stores this identity, never
+    /// a copy of the object.
     EventObject(Box<IrEventRef>),
+    /// The synchronization object of an event that a wait starts on: a null
+    /// event ends the simulation (decision S14-D8).
+    WaitedEvent(Box<IrEventRef>),
     /// Borrowed address of native value `0`, used only as the root of an
     /// [`Self::ItemElement`] locator.
     NativeRoot(usize),
@@ -679,6 +682,11 @@ pub enum IrObjectQuery {
     /// A string value copied into an owned string capture slot (deferred
     /// assertion action arguments, SV 16.4). Legal only in such slots.
     StringCapture(IrStringExpr),
+    /// Number of triggers of a synchronization object in this run (64-bit
+    /// unsigned two-state; 0 of null). A process that evaluates an event
+    /// control itself compares counts to learn whether the event fired while
+    /// it was suspended on a list that also names value sources.
+    EventTriggerCount(IrChandleExpr),
     StringLen(IrStringExpr),
     StringGetc(IrStringExpr, Box<IrExpr>),
     StringCompare(IrStringExpr, IrStringExpr, bool),
@@ -1620,7 +1628,9 @@ impl IrObjectQuery {
         string_return: Option<bool>,
     ) -> Result<(), super::IrValidationError> {
         match self {
-            Self::HandleCapture(handle) => handle.validate(model, formals, chandle_return),
+            Self::HandleCapture(handle) | Self::EventTriggerCount(handle) => {
+                handle.validate(model, formals, chandle_return)
+            }
             Self::EventCapture(_) => Ok(()),
             Self::StringAtoi(_, base) if !matches!(base, 2 | 8 | 10 | 16) => Err(
                 super::IrValidationError::new("string", "invalid numeric base"),
@@ -1736,7 +1746,9 @@ impl IrObjectQuery {
     }
     pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
         match self {
-            Self::HandleCapture(handle) => handle.expressions(visit),
+            Self::HandleCapture(handle) | Self::EventTriggerCount(handle) => {
+                handle.expressions(visit)
+            }
             Self::EventCapture(IrEventRef::Array { indices, .. }) => {
                 for index in indices {
                     visit(index);
@@ -1809,7 +1821,9 @@ impl IrObjectQuery {
     }
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
         match self {
-            Self::HandleCapture(handle) => handle.expressions_mut(visit),
+            Self::HandleCapture(handle) | Self::EventTriggerCount(handle) => {
+                handle.expressions_mut(visit)
+            }
             Self::EventCapture(IrEventRef::Array { indices, .. }) => {
                 for index in indices {
                     visit(index);
@@ -2559,7 +2573,7 @@ impl IrChandleExpr {
                 }
                 Ok(())
             }
-            Self::EventObject(event) => match event.as_ref() {
+            Self::EventObject(event) | Self::WaitedEvent(event) => match event.as_ref() {
                 IrEventRef::Static(index) | IrEventRef::Array { array: index, .. }
                     if *index >= model.events.len() =>
                 {
@@ -2861,7 +2875,7 @@ impl IrChandleExpr {
                     arg.expressions(visit);
                 }
             }
-            Self::EventObject(event) => event.expressions(visit),
+            Self::EventObject(event) | Self::WaitedEvent(event) => event.expressions(visit),
             Self::ClassFromKey(key) => visit(key),
             Self::Required { handle, .. }
             | Self::RequiredSynchronization { handle, .. }
@@ -2924,7 +2938,7 @@ impl IrChandleExpr {
                     arg.expressions_mut(visit);
                 }
             }
-            Self::EventObject(event) => event.expressions_mut(visit),
+            Self::EventObject(event) | Self::WaitedEvent(event) => event.expressions_mut(visit),
             Self::ClassFromKey(key) => visit(key),
             Self::Required { handle, .. }
             | Self::RequiredSynchronization { handle, .. }

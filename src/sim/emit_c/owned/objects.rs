@@ -169,6 +169,12 @@ impl Frame<'_, '_> {
                     format!("{pointer} ? (void*){pointer}->object : NULL"),
                 ));
             }
+            IrChandleExpr::WaitedEvent(event) => {
+                let address = self.event_address(event)?;
+                let object = self.scalar("void*", format!("llg_event_waited_object({address})"));
+                self.exit_on_failed_access(&format!("!{object}"));
+                return Ok(object);
+            }
             IrChandleExpr::Read(index) => self.ctx.model.objects[*index].c_name.clone(),
             IrChandleExpr::LocalRead(name) => format!(
                 "*({})",
@@ -533,6 +539,16 @@ impl Frame<'_, '_> {
                 self.value(format!("sv4_from_u64((uint64_t){status}, 32, 1)"), 32, true)
             }
             ArrayQuery(query) => self.array_query(query, expression)?,
+            EventTriggerCount(object) => {
+                let object = self.chandle(object)?;
+                self.value(
+                    format!(
+                        "sv4_from_u64(llg_event_trigger_count((const llg_event_object_t*)({object})), 64, 0)"
+                    ),
+                    64,
+                    false,
+                )
+            }
             HandleCapture(_) | EventCapture(_) | StringCapture(_) => {
                 return Err("opaque capture cannot be used as a packed expression".to_owned())
             }

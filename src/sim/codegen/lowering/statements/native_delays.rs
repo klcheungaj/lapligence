@@ -26,6 +26,23 @@ impl EmitCtx<'_, '_> {
             || self.cg.persistent_native_target(member)
             || (self.cg.native_record_target(member) && !self.native_nba_target(lhs))
             || self.whole_unpacked_record(member)
+            || self.fixed_view_target(member)
+    }
+
+    /// An element of a fixed array of strings or handles, a slice of one or
+    /// the whole array.
+    fn fixed_view_target(&self, member: NodeId) -> bool {
+        let element = self.native_nba_target(member)
+            && matches!(
+                self.cg.kind(member),
+                NodeKind::Expr(ExprKind::ArraySelect { .. } | ExprKind::BitSelect { .. })
+            );
+        element
+            || self.cg.is_fixed_view_slice(member)
+            || self
+                .cg
+                .container_of(member)
+                .is_some_and(|container| self.cg.is_fixed_view(container.ir))
     }
 
     /// A record with no packed image: its leaves are written one by one.
@@ -47,8 +64,8 @@ impl EmitCtx<'_, '_> {
     /// `target <= @(e) value` over a located target. The untimed write is
     /// lowered with its selectors as locals and split: everything a queued
     /// write needs is evaluated at issue, in selector, value, repeat count
-    /// order, and copied into the frame of a detached process that waits for
-    /// the control and then issues the same writes (SV 9.4.5, 10.4.2).
+    /// order, and copied into the frame of a process that waits for the
+    /// control and then issues the same writes (SV 9.4.5, 10.4.2).
     pub(super) fn lower_located_event_nba(
         &mut self,
         h: NodeId,
@@ -96,7 +113,7 @@ impl EmitCtx<'_, '_> {
             captures,
             action,
             "event_native_nba",
-            IrJoinKind::Detached,
+            self.event_nba_process(specs),
         )?);
         Ok(vec![IrStmt::Block(before)])
     }
@@ -296,18 +313,8 @@ impl EventNbaSplit<'_, '_, '_> {
 
     fn capture_handle(&mut self, name: &str) {
         self.captured.insert(name.to_owned());
-        let capture = IrCapture::new(
-            self.storage(StorageKind::Opaque),
-            IrExpr::new(
-                IrExprKind::ObjectQuery(Box::new(IrObjectQuery::HandleCapture(
-                    IrChandleExpr::LocalRead(name.to_owned()),
-                ))),
-                1,
-                false,
-                None,
-            ),
-        );
-        self.captures.push(capture);
+        self.ctx
+            .capture_handle_local(self.frame, &mut self.captures, name);
     }
 
     /// `value` as a read of a local evaluated at issue.
@@ -518,7 +525,7 @@ impl EventNbaSplit<'_, '_, '_> {
 
 /// Evaluate a runtime delay once into a local so several queued leaves
 /// share it.
-fn capture_delay(ticks: IrDelay, name: &str, before: &mut Vec<IrStmt>) -> IrDelay {
+pub(super) fn capture_delay(ticks: IrDelay, name: &str, before: &mut Vec<IrStmt>) -> IrDelay {
     match ticks {
         IrDelay::Runtime {
             value,

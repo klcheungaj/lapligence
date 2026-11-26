@@ -59,8 +59,8 @@ unproved static results, descriptor-array formals/results, DPI imports, user
 system functions named by `CodegenOptions::user_system_functions`): a blocking event
 control with such a helper becomes a process-evaluated loop (evaluate at arm,
 `WaitAny` on the union of read sets, re-evaluate every source, LSB edge tests,
-qualifier on detection; declared named events by trigger count, reals by IEEE
-bits). Its sensitivity (`collect_evaluator_sensitivity`) excludes storage
+qualifier on detection; named events by the trigger count of the object held at
+arm, reals by IEEE bits). Its sensitivity (`collect_evaluator_sensitivity`) excludes storage
 declared in or written by the helpers (SV 9.2.2.2.1), so waits sharing a static
 helper cannot wake each other forever. `ProcessEventPlan` splits arming from
 waiting: intra-assignment NBA and `->>` controls arm at issue and wait in a

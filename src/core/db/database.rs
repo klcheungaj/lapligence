@@ -88,7 +88,7 @@ pub use predicates::{
 mod expressions;
 pub use expressions::{
     ConstantSource, DistItem, ExprKind, StreamOperand, StreamingDirection, TimeLiteralScale,
-    TimeUnit, VariableLifetime, VariableLifetimeQualifier,
+    TimeUnit, VariableLifetime, VariableLifetimeQualifier, CONSTANT_SYSTEM_FUNCTIONS,
 };
 mod references;
 use references::{

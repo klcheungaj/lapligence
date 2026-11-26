@@ -74,6 +74,7 @@ mod streaming;
 mod strings;
 mod system;
 pub(super) mod udp;
+mod updates;
 
 #[must_use]
 struct Value {
@@ -226,8 +227,7 @@ pub(super) struct Frame<'a, 'm> {
     return_publishes: bool,
     allow_calls: bool,
     read_only_callback: bool,
-    /// Between `IrContainerStmt::NbaBindOpen` and `NbaBindClose`.
-    nba_bound: bool,
+    updates: updates::UpdateMarks,
     /// A `$strobe`/`$monitor` evaluator, run only in the read-only Postponed
     /// region. A user VPI function may run there: the runtime rejects its
     /// design-state writes (vpi_put_value in a read-only region), so it can
@@ -590,7 +590,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             return_publishes: false,
             allow_calls: true,
             read_only_callback: false,
-            nba_bound: false,
+            updates: updates::UpdateMarks::default(),
             branch_formals: None,
             postponed_reader: false,
             deferred_action: false,

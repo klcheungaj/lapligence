@@ -51,6 +51,9 @@ extern "C" {
  * real array), row-major; `packed` and `real` are NULL; element n is the
  * cell the table's entry n names. */
 #define LLG_VPI_OBJ_CELLS 0x4000000u
+/* The variable of a static class property (8.9): `parent` is the scope that
+ * declares its class, which lists no such row among its own variables. */
+#define LLG_VPI_OBJ_CLASS_STATIC 0x8000000u
 
 /* Typespecs (IEEE 1800-2009 37.23). The generated model emits interned
  * tables; fields naming an optional entry hold its index + 1 (0: none),
@@ -505,14 +508,12 @@ typedef struct {
 } llg_vpi_class_t;
 
 /* A static property of a class (8.9): the one variable the class and all
- * its objects share. `field` names and types it (its `mode` is 0). */
+ * its objects share, a catalog row (LLG_VPI_OBJ_CLASS_STATIC). */
 typedef struct {
-    llg_vpi_class_field_t field;
-    void* storage;            /* the value storage of `field.shape` */
-    sv4_t* dependency;        /* a handle's change marker, or NULL */
-    const int64_t* dims;      /* a fixed-size array's (left, right) ranges, leftmost first */
-    uint32_t dim_count;
+    uint32_t row;
     uint32_t class_index;     /* the declaring class layout */
+    uint8_t rand;             /* vpiRandType */
+    uint8_t visibility;       /* vpiVisibility */
 } llg_vpi_class_static_t;
 
 /* Field kinds the generated object accessor reports, matching the model's

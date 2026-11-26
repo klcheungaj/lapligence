@@ -375,6 +375,11 @@ impl EmitCtx<'_, '_> {
         // `fork … join_none` must not be wrapped as a comb process (its
         // branches are child coroutines, not combinational re-evaluation).
         self.saw_wait = true;
+        // Nothing starts and nothing ends: a group with no child would stay
+        // in its parent and keep `wait fork` from returning (9.6.1).
+        if names.is_empty() {
+            return Ok(Vec::new());
+        }
         if has_captures {
             Ok(vec![IrStmt::CapturedFork {
                 join_kind: join,

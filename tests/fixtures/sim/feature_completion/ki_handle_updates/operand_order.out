@@ -1,0 +1,5 @@
+packed source target | delay source target | target source | target source count
+handle source target | delay source target | target source | target source count
+string source target | delay source target | target source | target source count
+rows   delay source | target source
+'{1, 1, 1, 1}  1 '{"", "", "s", "s"} 

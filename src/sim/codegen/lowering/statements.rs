@@ -337,6 +337,16 @@ fn loop_index_expr(value: i32) -> IrExpr {
     )
 }
 
+/// How a message names `array`; a static class property has no hierarchical
+/// name.
+fn array_phrase(array: &crate::sim::ir::IrArray) -> String {
+    if array.hdl_name.is_empty() {
+        "a static class property".to_owned()
+    } else {
+        format!("`{}`", array.hdl_name.replace('\u{1f}', "."))
+    }
+}
+
 fn force_constant_index(expr: &IrExpr) -> bool {
     let IrExprKind::Const(value) = expr.kind() else {
         return false;
@@ -633,8 +643,8 @@ fn validate_force_lhs(model: &IrModel, lhs: &IrLhs, path: &str) -> Result<bool, 
             })?;
             if array.is_net() || array.activation {
                 return Err(format!(
-                    "force/release of an element of `{}` in `{path}` is not supported: only elements of static unpacked array variables are force targets",
-                    array.hdl_name
+                    "force/release of an element of {} in `{path}` is not supported: only elements of static unpacked array variables are force targets",
+                    array_phrase(array)
                 ));
             }
             match elem_sel {
@@ -643,8 +653,8 @@ fn validate_force_lhs(model: &IrModel, lhs: &IrLhs, path: &str) -> Result<bool, 
                 // unpacked structure of integral members).
                 IrElemSel::PackedChain(_) if !array.real => Ok(false),
                 _ => Err(format!(
-                    "force/release of a bit- or part-select of an element of `{}` in `{path}` is not supported: it is a select of a variable (IEEE 1800-2009 10.6.2)",
-                    array.hdl_name
+                    "force/release of a bit- or part-select of an element of {} in `{path}` is not supported: it is a select of a variable (IEEE 1800-2009 10.6.2)",
+                    array_phrase(array)
                 )),
             }
         }

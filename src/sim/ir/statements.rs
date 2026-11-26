@@ -811,7 +811,8 @@ pub enum IrStmt {
     /// Capture an assignment's RHS and destination selectors at issue time,
     /// then commit it as an independent NBA after an event/repeat control
     /// matches. The callback frame is owned by the runtime until match or
-    /// scheduler teardown, so the issuing process may finish immediately.
+    /// scheduler teardown, so the issuing process may finish immediately;
+    /// `bound` ends it with that process (decision S09-D8).
     NonblockingEventAssignWhen {
         lhs: IrLhs,
         rhs: Box<IrExpr>,
@@ -820,6 +821,7 @@ pub enum IrStmt {
         action: String,
         frame: FrameId,
         captures: Vec<IrCapture>,
+        bound: bool,
     },
     /// Combinational-style suspension: ONE atomic `llg_wait_any` on the
     /// precomputed read set (an empty set waits indefinitely).

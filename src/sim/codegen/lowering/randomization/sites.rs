@@ -579,7 +579,7 @@ impl Codegen<'_> {
             return Ok(None);
         }
         let (width, signed, two_state, current, lhs, direct) =
-            if let Some(info) = self.class_static_signals.get(&child).cloned() {
+            if let Some(info) = self.signal_of(child).cloned() {
                 if info.real {
                     return Ok(None);
                 }
@@ -913,7 +913,7 @@ impl Codegen<'_> {
         }
         self.template_forms(path, builder, left)?;
         let value = self
-            .lower_expr(path, left)
+            .lower_constraint_value(path, left)
             .map_err(|error| self.rand_error(left, path, &format!("in a constraint: {error}")))?;
         self.check_template_uses(path, expr, &value, builder)?;
         self.check_direct_reads(path, left, &value, vars, object)?;
@@ -990,7 +990,7 @@ impl Codegen<'_> {
         }
         self.template_forms(path, builder, expr)?;
         let lowered = self
-            .lower_expr(path, expr)
+            .lower_constraint_value(path, expr)
             .map_err(|error| self.rand_error(expr, path, &format!("in a constraint: {error}")))?;
         self.check_template_uses(path, expr, &lowered, builder)?;
         self.check_direct_reads(path, expr, &lowered, vars, object)?;
@@ -1000,6 +1000,45 @@ impl Codegen<'_> {
         builder
             .expr(&lowered)
             .map_err(|error| self.rand_error(expr, path, &error))
+    }
+
+    /// The value of constraint expression `node`. The read of a random
+    /// variable that a member or select of it starts from is the variable's
+    /// placeholder; a `local::` name reads the caller's variable (18.7.1) and
+    /// is left for `check_direct_reads`.
+    pub(super) fn lower_constraint_value(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<IrExpr, String> {
+        let mut lowered = self.lower_expr(path, node)?;
+        let Some(lowering) = self.rand_lowering.as_ref() else {
+            return Ok(lowered);
+        };
+        let mut pending = vec![node];
+        while let Some(current) = pending.pop() {
+            if self.names_caller(current) {
+                return Ok(lowered);
+            }
+            pending.extend(self.node(current).children.iter().copied());
+        }
+        let random = lowering
+            .placeholders
+            .iter()
+            .filter_map(|(declaration, placeholder)| {
+                Some((self.signal_of(*declaration)?.ir, placeholder))
+            })
+            .collect::<HashMap<_, _>>();
+        if !random.is_empty() {
+            crate::sim::opt::walk_expr_mut(&mut lowered, &mut |expr| {
+                if let IrExprKind::SigRead(signal) = &expr.kind {
+                    if let Some(placeholder) = random.get(signal) {
+                        *expr = (*placeholder).clone();
+                    }
+                }
+            });
+        }
+        Ok(lowered)
     }
 
     /// A constraint form that read a random variable's storage instead of

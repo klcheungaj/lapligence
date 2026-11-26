@@ -658,6 +658,10 @@ fn walk_lhs_select_reads(db: &Db, lhs: NodeId, seen: &mut IdSet<NodeId>, out: &m
                     walk_lhs_select_reads(db, *root, seen, out);
                 }
             }
+            walk_static_property_object(db, lhs, seen, out);
+        }
+        NodeKind::Expr(ExprKind::Ref { .. }) => {
+            walk_static_property_object(db, lhs, seen, out);
         }
         NodeKind::Expr(ExprKind::Operation {
             op: Operation::Concat | Operation::AssignmentPattern,
@@ -677,6 +681,19 @@ fn walk_lhs_select_reads(db: &Db, lhs: NodeId, seen: &mut IdSet<NodeId>, out: &m
             }
         }
         _ => {}
+    }
+}
+
+/// A path into a static class property starts at the property; the object
+/// it was named through (`objects[i].count = 1`) stays a child of the node.
+fn walk_static_property_object(
+    db: &Db,
+    lhs: NodeId,
+    seen: &mut IdSet<NodeId>,
+    out: &mut Vec<NodeId>,
+) {
+    for object in db.walk_children(lhs) {
+        walk_lhs_select_reads(db, object, seen, out);
     }
 }
 

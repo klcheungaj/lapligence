@@ -59,7 +59,7 @@ static void gc_trace_nba(llg_gc_tracer_t* tracer, const llg_nba_t* nba) {
     llg_gc_visit_interior(tracer, nba->target);
     llg_gc_visit_interior(tracer, nba->real_target);
     if (nba->is_string) llg_gc_visit_interior(tracer, nba->native.string.target);
-    if (nba->is_chandle) {
+    if (nba->is_chandle == LLG_NBA_HANDLE) {
         llg_gc_visit_interior(tracer, nba->native.chandle.target);
         llg_gc_visit(tracer, nba->native.chandle.value);
     }

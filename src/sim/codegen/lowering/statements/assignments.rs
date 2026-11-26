@@ -820,15 +820,7 @@ impl EmitCtx<'_, '_> {
         else {
             return Ok(());
         };
-        Err(self.cg.locate_error(
-            lhs,
-            format!(
-                "nonblocking assignment to class property `{}` in `{}` is illegal \
-             (IEEE 1800-2009 6.21: class properties shall not be written with nonblocking assignments)",
-                self.cg.node(field).name,
-                self.path
-            ),
-        ))
+        Err(self.cg.class_property_nba_error(&self.path, lhs, field))
     }
 
     pub(super) fn lower_delayed_assignment(
@@ -869,11 +861,18 @@ impl EmitCtx<'_, '_> {
             );
         }
         self.reject_class_property_nba(lhs)?;
-        if let Some(statement) =
-            self.cg
-                .lower_fixed_view_nba(&self.path, lhs, rhs, Some(scaled_ticks.clone()))?
+        let mut timed = Vec::new();
+        let ticks = super::native_delays::capture_delay(
+            scaled_ticks.clone(),
+            &format!("_nd{}", h.0),
+            &mut timed,
+        );
+        if let Some(statement) = self
+            .cg
+            .lower_fixed_view_nba(&self.path, lhs, rhs, Some(ticks))?
         {
-            return Ok(vec![statement]);
+            timed.push(statement);
+            return Ok(vec![IrStmt::Block(timed)]);
         }
         // A run-time member select queues one branch's write, as a record
         // queues one write per leaf.
@@ -883,9 +882,7 @@ impl EmitCtx<'_, '_> {
         {
             return self.lower_delayed_native_record(h, lhs, rhs, false, scaled_ticks);
         }
-        let string_target = self.cg.is_string_expr(&self.path, lhs);
-        let chandle_target = !string_target && self.cg.is_chandle_expr(&self.path, lhs);
-        if string_target || chandle_target {
+        if self.native_nba_target(lhs) {
             return Ok(vec![self.cg.lower_native_nba(
                 &self.path,
                 lhs,
@@ -1389,6 +1386,9 @@ impl EmitCtx<'_, '_> {
                 .transpose()?;
             return self.lower_native_event_nba(h, lhs, rhs, &specs, count);
         }
+        let bound = self
+            .intra_event_specs(timing)
+            .is_ok_and(|(specs, _)| self.cg.event_control_binds(&specs));
         let (specs, repeat) = self.lower_intra_event_timing(timing)?;
         let lh = self.cg.lower_lhs(&self.path, lhs)?;
         let rhs_ir = self.lower_assignment_rhs(lhs, rhs, op, &lh)?;
@@ -1423,6 +1423,7 @@ impl EmitCtx<'_, '_> {
             action,
             frame,
             captures,
+            bound,
         }])
     }
 
@@ -1454,10 +1455,9 @@ impl EmitCtx<'_, '_> {
     /// RHS (and an NBA's destination selectors) are evaluated first, then the
     /// control is armed (SV 9.4.5). A blocking assignment waits in its own
     /// process. A nonblocking assignment must not block its issuer, so its
-    /// captured values and armed event state move to a detached process that
-    /// waits, then issues the NBA (SV 9.4.5, 10.4.2). That process is not a
-    /// child of the issuer, so `wait fork`/`disable fork` never observe it,
-    /// just as they never observe a runtime-owned pending NBA.
+    /// captured values and armed event state move to a process that waits,
+    /// then issues the NBA (SV 9.4.5, 10.4.2). `wait fork` does not wait for
+    /// it; [`Self::event_nba_process`] tells whether it ends with the issuer.
     #[allow(clippy::too_many_arguments)]
     fn lower_process_event_assignment(
         &mut self,
@@ -1473,7 +1473,7 @@ impl EmitCtx<'_, '_> {
             .map(|count| self.lower_repeat_count(count))
             .transpose()?;
         if blocking {
-            let wait = self.process_event_plan(h, specs)?.blocking();
+            let wait = self.process_event_plan(h, specs)?.blocking()?;
             let wait = match count {
                 Some(count) => IrStmt::Repeat {
                     count,
@@ -1515,8 +1515,18 @@ impl EmitCtx<'_, '_> {
             captures,
             action,
             "event_nba",
-            IrJoinKind::Detached,
+            self.event_nba_process(specs),
         )?])
+    }
+
+    /// How the process that waits for the event control of a nonblocking
+    /// assignment belongs to the issuer (decision S09-D8).
+    pub(super) fn event_nba_process(&self, specs: &[EventSpec]) -> IrJoinKind {
+        if self.cg.event_control_binds(specs) {
+            IrJoinKind::Bound
+        } else {
+            IrJoinKind::Detached
+        }
     }
 
     /// Arm a process-evaluated event control in the issuing process and
@@ -1538,19 +1548,9 @@ impl EmitCtx<'_, '_> {
         kind: &str,
         join_kind: IrJoinKind,
     ) -> Result<IrStmt, String> {
-        fn expressions(spec: &EventSpec, out: &mut Vec<NodeId>) {
-            match spec {
-                EventSpec::Qualified { event, condition } => {
-                    out.push(*condition);
-                    expressions(event, out);
-                }
-                EventSpec::Named(event) => out.push(*event),
-                EventSpec::AnyChange { sig } | EventSpec::Edge { sig, .. } => out.push(*sig),
-            }
-        }
         let mut nodes = Vec::new();
         for spec in specs {
-            expressions(spec, &mut nodes);
+            self.cg.event_spec_expressions(spec, &mut nodes);
         }
         for node in nodes {
             if let Some(target) = self
@@ -1566,8 +1566,6 @@ impl EmitCtx<'_, '_> {
                 ));
             }
         }
-        let count =
-            count.map(|count| self.capture_event_assignment_expr(frame, &mut captures, count));
         let plan = self.process_event_plan(h, specs)?;
         if plan.arm.iter().any(|arm| arm.native.is_some()) {
             return Err(format!(
@@ -1575,6 +1573,30 @@ impl EmitCtx<'_, '_> {
                 self.cg.source_path(&self.path)
             ));
         }
+        let mut hold = Vec::new();
+        let mut count = count;
+        if let (Some(value), false) = (&mut count, plan.events.is_empty()) {
+            let name = format!("_llg_evc{}", h.0);
+            let read = IrExpr::new(
+                IrExprKind::LocalRead(name.clone()),
+                value.width,
+                value.signed,
+                None,
+            );
+            hold.push(IrStmt::DeclLocal {
+                name,
+                width: value.width,
+                signed: value.signed,
+                init: Some(Box::new(std::mem::replace(value, read))),
+                two_state: false,
+            });
+        }
+        for event in &plan.events {
+            hold.extend(event.hold(count.as_ref())?);
+            self.capture_handle_local(frame, &mut captures, &event.local);
+        }
+        let count =
+            count.map(|count| self.capture_event_assignment_expr(frame, &mut captures, count));
         let armed = plan
             .arm
             .iter()
@@ -1593,17 +1615,26 @@ impl EmitCtx<'_, '_> {
             captures: captures.clone(),
             body,
         });
-        Ok(IrStmt::CapturedFork {
+        let spawn = IrStmt::CapturedFork {
             join_kind,
             branches: vec![IrCapturedBranch::new(name, label, frame, captures)],
             target: None,
+        };
+        Ok(if hold.is_empty() {
+            spawn
+        } else {
+            hold.push(spawn);
+            IrStmt::Block(hold)
         })
     }
 
     /// Whether a nonblocking destination is a string or handle object,
     /// which queues an owned native value rather than a packed one.
     pub(super) fn native_nba_target(&self, lhs: NodeId) -> bool {
-        self.cg.is_string_expr(&self.path, lhs) || self.cg.is_chandle_expr(&self.path, lhs)
+        self.cg.is_string_expr(&self.path, lhs)
+            || self.cg.is_chandle_expr(&self.path, lhs)
+            || self.cg.is_mailbox_expr(&self.path, lhs)
+            || self.cg.is_process_value(&self.path, lhs)
     }
 
     /// The explicit event list and optional repeat count of an
@@ -1709,7 +1740,7 @@ impl EmitCtx<'_, '_> {
             vec![IrCapture::new(storage, initial)],
             vec![write],
             "event_native_nba",
-            IrJoinKind::Detached,
+            self.event_nba_process(specs),
         )?;
         Ok(vec![IrStmt::Block(vec![declare, spawn])])
     }
@@ -1760,6 +1791,28 @@ impl EmitCtx<'_, '_> {
                 format!("unsupported intra-assignment timing in `{}`", self.path),
             )),
         }
+    }
+
+    /// Capture the handle in `local`. A process on `frame` reads it under the
+    /// same name.
+    pub(super) fn capture_handle_local(
+        &self,
+        frame: FrameId,
+        captures: &mut Vec<IrCapture>,
+        local: &str,
+    ) {
+        let storage = StorageRef::new(
+            frame,
+            captures.len() as u32,
+            StorageLifetime::Automatic,
+            StorageOwnership::Owned,
+        )
+        .with_kind(StorageKind::Opaque);
+        let handle = IrObjectQuery::HandleCapture(IrChandleExpr::LocalRead(local.to_owned()));
+        captures.push(IrCapture::new(
+            storage,
+            IrExpr::new(IrExprKind::ObjectQuery(Box::new(handle)), 1, false, None),
+        ));
     }
 
     pub(super) fn capture_event_assignment_expr(

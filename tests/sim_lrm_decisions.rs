@@ -1257,6 +1257,14 @@ fn s32_d2_bind_program_into_interface() {
 }
 
 #[test]
+fn s32_d3_program_end_ends_threads() {
+    run_decision(
+        "S32-D3_program_end_ends_threads",
+        include_str!("fixtures/sim/lrm_decisions/S32-D3_program_end_ends_threads.out"),
+    );
+}
+
+#[test]
 fn s25_d1_monitor_flag_persists() {
     run_decision(
         "S25-D1_monitor_flag_persists",
@@ -1947,6 +1955,22 @@ fn s09_d9_disable_ends_processes_of_left_blocks() {
     run_decision(
         "S09-D9_disable_ends_processes_of_left_blocks",
         include_str!("fixtures/sim/lrm_decisions/S09-D9_disable_ends_processes_of_left_blocks.out"),
+    );
+}
+
+#[test]
+fn s09_d10_pending_processes_start_first() {
+    run_decision(
+        "S09-D10_pending_processes_start_first",
+        include_str!("fixtures/sim/lrm_decisions/S09-D10_pending_processes_start_first.out"),
+    );
+}
+
+#[test]
+fn s09_d11_event_controlled_updates() {
+    run_decision(
+        "S09-D11_event_controlled_updates",
+        include_str!("fixtures/sim/lrm_decisions/S09-D11_event_controlled_updates.out"),
     );
 }
 

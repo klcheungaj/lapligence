@@ -195,14 +195,13 @@ pub(super) fn render_vpi_dynamic(
     let mut classes = Vec::new();
     let mut items = Vec::new();
     let mut statics = Vec::new();
-    let mut static_dims = Vec::new();
     for (class_index, class) in dynamic.classes.iter().enumerate() {
         // Static properties whose storage the model keeps; the first and
         // count trail the class row only when it has some, so other rows
         // keep their text.
         let first_static = statics.len();
         for entry in &class.statics {
-            if let Some(row) = render_static(model, entry, class_index, &mut static_dims) {
+            if let Some(row) = render_static(entry, class_index, indices) {
                 statics.push(row);
             }
         }
@@ -259,16 +258,6 @@ pub(super) fn render_vpi_dynamic(
         for item in &class.items {
             items.push(render_class_item(model, item));
         }
-    }
-    if !static_dims.is_empty() {
-        out.push_str(&format!(
-            "static const int64_t llg_vpi_static_dims[] = {{ {} }};\n",
-            static_dims
-                .iter()
-                .map(|bound: &i64| format!("INT64_C({bound})"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
     }
     let static_table = if statics.is_empty() {
         None
@@ -399,66 +388,17 @@ static void* llg_class_vpi_field(void* handle, uint32_t index, unsigned* kind) {
 }
 
 /// One `llg_vpi_class_static_t` initializer of a static property of class
-/// layout `class_index`, appending a fixed-size array's ranges to `dims`;
-/// `None` when the model keeps no storage for it.
+/// layout `class_index`; `None` when its variable has no catalog row.
 fn render_static(
-    model: &IrModel,
     entry: &crate::sim::ir::IrVpiStatic,
     class_index: usize,
-    dims: &mut Vec<i64>,
+    indices: &std::collections::HashMap<&str, usize>,
 ) -> Option<String> {
-    use crate::sim::ir::IrVpiStaticStorage;
-    let (storage, dependency) = match entry.storage {
-        IrVpiStaticStorage::Signal(index) => {
-            let (packed, real, _) = super::signal_storage(model, index)?;
-            (
-                if packed == "NULL" { real } else { packed },
-                "NULL".to_owned(),
-            )
-        }
-        IrVpiStaticStorage::Object(index) => {
-            let object = model.objects.get(index)?;
-            // A handle store publishes the variable's marker; a string
-            // publishes its own.
-            let dependency = if object.ty == crate::sim::ir::IrObjectType::String {
-                "NULL".to_owned()
-            } else {
-                format!("&{}_llg_dep", object.c_name)
-            };
-            (format!("&{}", object.c_name), dependency)
-        }
-        IrVpiStaticStorage::Container(index) => (
-            format!("&{}", model.containers.get(index)?.c_name),
-            "NULL".to_owned(),
-        ),
-        // The handle slot inside the llg_event_t, the same storage an
-        // object's event field has.
-        IrVpiStaticStorage::Event(index) => {
-            let event = model.events.get(index).filter(|event| !event.is_array())?;
-            (format!("&{}.object", event.c_name), "NULL".to_owned())
-        }
-    };
-    let ranges = if entry.dims.is_empty() {
-        "NULL".to_owned()
-    } else {
-        let first = dims.len();
-        dims.extend(entry.dims.iter().flat_map(|(left, right)| [*left, *right]));
-        format!("&llg_vpi_static_dims[{first}]")
-    };
-    let field = &entry.field;
+    let row = indices.get(entry.row.as_str())?;
     Some(format!(
-        "    {{ {{ {}, {}u, {}, {}, 0u, {}u, {}u, {} }}, (void*){storage}, {dependency}, {ranges}, {}u, {class_index}u }}",
-        c_string_literal(&field.name),
-        field.shape,
-        field.rand.c_code(),
-        field.visibility.c_code(),
-        u8::from(field.is_const),
-        field.line,
-        field
-            .file
-            .as_deref()
-            .map_or_else(|| "NULL".to_owned(), c_string_literal),
-        entry.dims.len()
+        "    {{ {row}u, {class_index}u, {}, {} }}",
+        entry.rand.c_code(),
+        entry.visibility.c_code()
     ))
 }
 

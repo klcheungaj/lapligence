@@ -442,8 +442,8 @@ generated MSVC targets reserve at least the 1 MiB Windows default, while the
   drains value/reference scopes and activations, releases the chain arena, and
   defers the current record's free until `llg_co_run` returns.
 - `start_pending_fork_children` runs immediately before every arm returns
-  SUSPEND and during natural completion. It never runs for READY, CALL, or a
-  child return.
+  SUSPEND, when the group of a blocking fork is made and during natural
+  completion. It never runs for READY, CALL, or a child return.
 - The scheduler sets `g.current` immediately around each `llg_co_run` and each
   final call. `llg_current()` returns that pointer and is otherwise NULL. It
   is a single-thread runtime field, not TLS or `llg_co` state.

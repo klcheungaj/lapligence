@@ -4,6 +4,62 @@ use super::super::collection::EventEvaluation;
 use super::*;
 use crate::sim::ir::IrRuntimeQuery;
 
+/// A named event of a process-evaluated event control. An assignment to the
+/// event variable does not change what a started wait waits for (SV
+/// 15.5.5.1), so the control holds the synchronization object it names when
+/// it is armed.
+pub(super) struct ProcessNamedEvent {
+    /// Handle local that holds the object.
+    pub(super) local: String,
+    event: IrEventRef,
+}
+
+impl ProcessNamedEvent {
+    /// Hold the object from here on; a null event ends the run (S14-D8). With
+    /// `count` only when a wait follows, which is when it is positive.
+    pub(super) fn hold(&self, count: Option<&IrExpr>) -> Result<Vec<IrStmt>, String> {
+        let object = IrChandleExpr::WaitedEvent(Box::new(self.event.clone()));
+        let declare = |value| {
+            IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
+                self.local.clone(),
+                value,
+            )))
+        };
+        let Some(count) = count else {
+            return Ok(vec![declare(Some(object))]);
+        };
+        let zero = IrConst::packed(vec![0], vec![], vec![], count.width, count.signed, None)
+            .map_err(|error| error.to_string())?;
+        let waits = IrExpr::new(
+            IrExprKind::Bin {
+                op: IrBinOp::Gt,
+                a: Box::new(count.clone()),
+                b: Box::new(IrExpr::new(
+                    IrExprKind::Const(zero),
+                    count.width,
+                    count.signed,
+                    None,
+                )),
+            },
+            1,
+            false,
+            None,
+        );
+        Ok(vec![
+            declare(None),
+            IrStmt::If {
+                cond: waits,
+                then_: vec![IrStmt::Object(Box::new(IrObjectStmt::ChandleAssignLocal(
+                    self.local.clone(),
+                    object,
+                )))],
+                els: None,
+                check: IrUniquePriorityCheck::None,
+            },
+        ])
+    }
+}
+
 /// One value evaluated when a process-evaluated event control is armed.
 pub(super) struct ProcessEventArm {
     /// Local that holds the armed value while the process waits.
@@ -59,6 +115,8 @@ impl ProcessEventArm {
 /// [`EventEvaluation`]). Arming and waiting are separate so a nonblocking
 /// assignment can arm in its issuing process and wait in a detached one.
 pub(super) struct ProcessEventPlan {
+    /// The named events, held before the values of `arm` are taken.
+    pub(super) events: Vec<ProcessNamedEvent>,
     /// Values of every source when the control is armed, in source order.
     pub(super) arm: Vec<ProcessEventArm>,
     /// Two-state flag set once a source detects its event.
@@ -104,15 +162,15 @@ impl ProcessEventPlan {
     }
 
     /// Arm and wait in the current process.
-    pub(super) fn blocking(self) -> IrStmt {
-        let mut block = self
-            .arm
-            .iter()
-            .map(ProcessEventArm::declare)
-            .collect::<Vec<_>>();
+    pub(super) fn blocking(self) -> Result<IrStmt, String> {
+        let mut block = Vec::new();
+        for event in &self.events {
+            block.extend(event.hold(None)?);
+        }
+        block.extend(self.arm.iter().map(ProcessEventArm::declare));
         block.push(self.hit_declaration());
         block.push(self.wait_loop());
-        IrStmt::Block(block)
+        Ok(IrStmt::Block(block))
     }
 
     /// Wait in a process that did not arm the control. `armed` reads each
@@ -501,7 +559,7 @@ impl EmitCtx<'_, '_> {
         h: NodeId,
         specs: &[EventSpec],
     ) -> Result<Vec<IrStmt>, String> {
-        Ok(vec![self.process_event_plan(h, specs)?.blocking()])
+        Ok(vec![self.process_event_plan(h, specs)?.blocking()?])
     }
 
     /// Plan an event control that the waiting process evaluates itself. Every
@@ -602,6 +660,7 @@ impl EmitCtx<'_, '_> {
         };
         let hit = format!("_llg_evh{}", h.0);
         let mut sens = Vec::new();
+        let mut named = Vec::new();
         let mut events = Vec::new();
         let mut arm = Vec::new();
         let mut current = Vec::new();
@@ -682,15 +741,18 @@ impl EmitCtx<'_, '_> {
                     let target = self.cg.event_target_of(event).ok_or_else(|| {
                         format!("event control has an unresolved named event in `{path}`")
                     })?;
-                    let IrEventRef::Static(event) = self.cg.event_ref_of(&target, &self.path)?
-                    else {
-                        return Err(format!(
-                            "an event handle other than a declared named event cannot share an event control with a process-evaluated helper expression in `{path}`"
-                        ));
+                    let event = ProcessNamedEvent {
+                        local: format!("_llg_evo{}_{index}", h.0),
+                        event: self.cg.event_ref_of(&target, &self.path)?,
                     };
-                    events.push((IrWaitSrc::Event(IrEventRef::Static(event)), IrEdge::Any));
+                    let object = IrChandleExpr::LocalRead(event.local.clone());
+                    named.push(event);
+                    events.push((
+                        IrWaitSrc::Event(IrEventRef::Handle(Box::new(object.clone()))),
+                        IrEdge::Any,
+                    ));
                     let count = IrExpr::new(
-                        IrExprKind::RuntimeQuery(IrRuntimeQuery::EventTriggerCount(event)),
+                        IrExprKind::ObjectQuery(Box::new(IrObjectQuery::EventTriggerCount(object))),
                         64,
                         false,
                         None,
@@ -913,6 +975,7 @@ impl EmitCtx<'_, '_> {
         });
         iteration.extend(advance);
         Ok(ProcessEventPlan {
+            events: named,
             arm,
             hit,
             iteration,
@@ -1158,27 +1221,33 @@ impl EmitCtx<'_, '_> {
         specs: &[EventSpec],
         repeat: Option<IrExpr>,
     ) -> Result<Vec<IrStmt>, String> {
-        if !matches!(event, IrEventRef::Static(_)) {
-            return Err(format!(
-                "a nonblocking trigger of an event handle cannot use a process-evaluated event control in `{}`",
-                self.cg.source_path(&self.path)
-            ));
-        }
         let frame = self.cg.new_frame_id()?;
+        // The trigger is that of the object the target names now.
+        let target = format!("_llg_evt{}", statement.0);
+        let object = IrChandleExpr::LocalRead(target.clone());
+        let mut captures = Vec::new();
+        self.capture_handle_local(frame, &mut captures, &target);
         let action = vec![IrStmt::NonblockingEventTrigger {
-            ev: event,
+            ev: IrEventRef::Handle(Box::new(object)),
             ticks: Some(IrDelay::Constant(0)),
         }];
-        Ok(vec![self.spawn_process_evaluated_action(
+        let spawn = self.spawn_process_evaluated_action(
             statement,
             specs,
             repeat,
             frame,
-            Vec::new(),
+            captures,
             action,
             "event_trigger",
             IrJoinKind::Bound,
-        )?])
+        )?;
+        Ok(vec![IrStmt::Block(vec![
+            IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
+                target,
+                Some(IrChandleExpr::EventObject(Box::new(event))),
+            ))),
+            spawn,
+        ])])
     }
 
     /// Resolve the captured event specs into atomic wait sources: signal

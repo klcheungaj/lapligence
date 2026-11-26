@@ -166,6 +166,9 @@ pub(super) fn expression_from_slang(
             right: required(SemanticEdgeRole::Right, "range select right bound")?,
         },
         75 => match member_path_from_slang(snapshot, type_projector, ids, node, 0)? {
+            // A static class property is the variable itself, whatever
+            // object the access names it through.
+            Some((_, refs)) if refs.len() == 1 => ExprKind::Ref { target: refs[0] },
             Some((parts, refs)) => ExprKind::HierPath { parts, refs },
             // A member of a call result has no declaration path; keep the
             // call as the base so consumers can evaluate it once.
