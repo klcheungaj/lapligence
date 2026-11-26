@@ -395,6 +395,8 @@ fn component_gmp_header_library_and_limb_mismatches_fail_configure() {
     }
 }
 
+#[path = "sim_value_backends/matrix.rs"]
+mod matrix;
 #[path = "sim_value_backends/parity.rs"]
 mod parity;
 #[path = "sim_value_backends/qualification.rs"]

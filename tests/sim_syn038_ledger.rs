@@ -1172,8 +1172,13 @@ fn computed_context_oracle_matches(row_id: &str, expected: &str, test_source: &s
 fn assert_sim_cli_oracle_contract(root: &Path) {
     let helper = fs::read_to_string(root.join("tests/support/sim_cli.rs"))
         .expect("read public-CLI case helper");
+    // Outside a FIN-002 matrix cell, which runs one of them, the helper runs
+    // both optimizer modes.
+    let harness = fs::read_to_string(root.join("tests/support/sim.rs"))
+        .expect("read shared simulator harness");
     assert!(
-        helper.contains("for optimized in [false, true]"),
+        helper.contains("for &optimized in sim_harness::optimizer_modes()")
+            && harness.contains("None => &[false, true],"),
         "public-CLI case helper must run optimized and --no-opt modes"
     );
     assert!(
@@ -1188,7 +1193,7 @@ fn assert_sim_cli_oracle_contract(root: &Path) {
     assert_public_cli_fixture_contract(&helper, "public-CLI oracle");
     let rejection_helper = named_function_body(&helper, "reject_case_with_args");
     for required in [
-        "for optimized in [false, true]",
+        "for &optimized in sim_harness::optimizer_modes()",
         "assert_eq!(output.status.code(), Some(1)",
         "assert!(output.stdout.is_empty()",
         "sim_harness::mentions(&stderr, diagnostic)",

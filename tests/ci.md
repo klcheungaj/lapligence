@@ -101,7 +101,9 @@ the rules a change must keep. Platform pitfalls are in
 - Every test lane runs models with compact values and GMP kernels (the only user
   configuration), compiling the bundled `vendor/gmp` subset; no GMP is installed.
   Legacy and portable backends are development references for the parity lanes
-  (`LLG_DEV_VALUE_BACKEND`/`LLG_DEV_COMPACT_KERNELS`).
+  (`LLG_DEV_VALUE_BACKEND`/`LLG_DEV_COMPACT_KERNELS`). The whole-corpus
+  backend x optimizer-mode qualification is a local run, not a CI job
+  ([value/optimizer matrix](readme.md#valueoptimizer-matrix)).
 - The lint job runs `scripts/gmp_tables.py --check` and the `scripts/test_*.py`
   unit tests it lists on Ubuntu 22.04's Python 3.10; scripts stay importable
   there and on Rocky Linux 9's 3.9
