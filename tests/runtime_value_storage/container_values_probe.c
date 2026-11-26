@@ -362,6 +362,54 @@ static const llg_value_desc_t int_queue2_desc = {
 static const llg_value_desc_t text_queue_desc = {
     LLG_VALUE_CONTAINER, 12, 0, 0, 0, 0, LLG_VALUE_CONTAINER_QUEUE, &text_desc, NULL, 0};
 
+/* `int [int]` nested in a value: 32-bit signed integral keys. */
+static const llg_value_desc_t int_assoc_desc = {
+    LLG_VALUE_ASSOC, 13, 32, 1, 0, 0, 0, &int_desc, NULL, 0};
+
+/* A live alias of a nested associative array forwards each change to the
+ * owner's dependency while any live alias holds it, as a nested sequence's
+ * does; its count shares the word of the pins. */
+static void check_nested_assoc_live(void) {
+    CHECK(llg_value_desc_valid(&int_assoc_desc));
+    CHECK(sizeof(((llg_nested_assoc_t*)0)->pins) == sizeof(uint32_t));
+    llg_value_t element = {0};
+    llg_native_value_init(&element, &int_assoc_desc);
+    sv4_t key = sv4_from_u64(5, 32, 1);
+    sv4_t value = sv4_from_u64(7, 32, 1);
+    sv4_t owner_marker = SV4_EMPTY;
+    llg_nested_assoc_t* live_a = NULL;
+    llg_nested_assoc_t* live_b = NULL;
+    llg_assoc_t* la =
+        llg_nested_assoc_bind_live(&element, &live_a, &owner_marker, count_change);
+    llg_assoc_t* lb =
+        llg_nested_assoc_bind_live(&element, &live_b, &owner_marker, count_change);
+    CHECK(la == lb && live_a == live_b && live_a->publishers == 2 && live_a->pins == 3);
+    CHECK(la->notify == count_change && la->contents_dependency == &owner_marker &&
+          la->shape_dependency == &owner_marker);
+    live_changes = 0;
+    CHECK(llg_assoc_set_integral(la, key, value));
+    CHECK(live_changes != 0);
+    llg_nested_assoc_unpin_live(&live_a);
+    CHECK(la->notify == count_change && live_b->publishers == 1);
+    live_changes = 0;
+    CHECK(llg_assoc_delete_integral(lb, key));
+    CHECK(live_changes != 0);
+    llg_nested_assoc_t* nested = live_b;
+    llg_nested_assoc_unpin_live(&live_b);
+    CHECK(live_b == NULL && nested->publishers == 0 && nested->pins == 1);
+    CHECK(la->notify == NULL && la->contents_dependency == NULL);
+    /* A plain alias after the last live one publishes nothing. */
+    llg_nested_assoc_t* pin = NULL;
+    llg_assoc_t* plain = llg_nested_assoc_bind(&element, &pin);
+    live_changes = 0;
+    CHECK(llg_assoc_set_integral(plain, key, value));
+    CHECK(live_changes == 0);
+    llg_nested_assoc_unpin(&pin);
+    sv4_destroy(&key);
+    sv4_destroy(&value);
+    llg_native_value_destroy(&element);
+}
+
 static int64_t queue_item(const llg_queue_t* queue, uint64_t index) {
     sv4_t position = sv4_from_u64(index, 32, 0);
     sv4_t item = llg_queue_get(queue, position);
@@ -580,6 +628,7 @@ int main(void) {
     check_identity_handles();
     check_record_container_members();
     check_nested_sequences();
+    check_nested_assoc_live();
     check_released_leaves();
     puts("container value probe passed");
     return 0;

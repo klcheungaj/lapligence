@@ -50,6 +50,17 @@ fn elements_are_compared_concatenated_and_passed_by_reference_whole() {
 }
 
 #[test]
+fn associative_elements_passed_to_task_references_publish_as_they_change() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "task_ref_assocs",
+        include_str!("../fixtures/sim/feature_completion/ki_fixed_view_ranges/task_ref_assocs.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
 fn elements_passed_to_task_references_publish_as_they_change() {
     sim_cli::run_case_backend_parity(
         SUITE,

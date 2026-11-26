@@ -752,8 +752,9 @@ Container operations name their storage by a container index. A property
 selected through a plain handle read is an alias that re-reads the handle at
 each use (SIM-011). A nested queue, dynamic or associative array is bound in
 place to a lexical alias that pins it for one statement, so a report
-formatted later has no alias. A `ref` formal takes a nested associative
-array; for a nested queue or dynamic array the binding of a reference that
+formatted later has no alias. A `ref` formal of a task takes a nested queue,
+dynamic or associative array an element of fixed-array storage holds whole
+as a live alias; for the forms listed above the binding of a reference that
 outlives the statement (a task that suspends, a change of the element through
 another name) is not decided, and the actual rejects.
 

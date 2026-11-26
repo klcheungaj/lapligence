@@ -2454,15 +2454,11 @@ impl Codegen<'_> {
                     write,
                 }))
             };
-            // A queue or dynamic array a task's `ref` formal takes is changed
-            // while the task can suspend: its changes reach the container's
-            // waiters as they happen, not only after the statement.
-            let live = group.mutated
-                && !matches!(
-                    self.model.containers[ir].kind,
-                    IrContainerKind::Associative { .. }
-                )
-                && group.nodes.iter().any(|node| self.task_ref_actual(*node));
+            // A queue, dynamic or associative array a task's `ref` formal
+            // takes is changed while the task can suspend: its changes reach
+            // the container's waiters as they happen, not only after the
+            // statement.
+            let live = group.mutated && group.nodes.iter().any(|node| self.task_ref_actual(*node));
             // The array is used in place: a copy would cost its size at
             // every statement and lose a change made through another name.
             before.push(IrStmt::Container(Box::new(IrContainerStmt::BindElement {

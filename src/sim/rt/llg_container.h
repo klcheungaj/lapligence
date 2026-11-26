@@ -1264,7 +1264,10 @@ void llg_assoc_merge(llg_assoc_t* dst, const llg_assoc_t* a,
  * while a statement uses it stays valid until the statement ends. A null
  * value is the empty array. */
 struct llg_nested_assoc_t {
-    size_t pins;
+    uint32_t pins;
+    /* Live aliases (llg_nested_assoc_bind_live) that forward its changes to
+     * its owner while they hold it; it shares the word of `pins`. */
+    uint32_t publishers;
     const llg_value_desc_t* desc;
     union {
         llg_assoc_t packed;
@@ -1298,6 +1301,13 @@ void llg_nested_assoc_trace(const llg_nested_assoc_t* nested,
  * the address of the pin). */
 void* llg_nested_assoc_bind(llg_value_t* value, llg_nested_assoc_t** pin);
 void llg_nested_assoc_unpin(void* pin);
+/* llg_nested_assoc_bind for an alias whose changes must reach the owner's
+ * waiters as they happen (a task `ref` formal that can suspend), as
+ * llg_nested_seq_bind_live does for a nested queue or dynamic array. The
+ * lexical owner gives the pin back through llg_nested_assoc_unpin_live. */
+void* llg_nested_assoc_bind_live(llg_value_t* value, llg_nested_assoc_t** pin,
+                                 sv4_t* contents, llg_container_notify_fn notify);
+void llg_nested_assoc_unpin_live(void* pin);
 /* A queue or dynamic array nested in a value: an element of a container or
  * a member of a record element. It keeps the storage a variable of its type
  * has (`llg_dyn_array_t` or `llg_queue_t` for packed elements, else

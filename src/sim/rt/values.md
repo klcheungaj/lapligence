@@ -98,7 +98,10 @@ otherwise, and the formal's waiters follow its `double`.
 An associative array nested in a value (`LLG_VALUE_ASSOC`) keeps the storage a
 variable of its type has, in one counted allocation (`llg_nested_assoc_t`), so
 generated code addresses it in place. A lexical alias holds a pin: a deleted
-element stays valid until the statement ends, and its writes go nowhere.
+element stays valid until the statement ends, and its writes go nowhere. A
+live alias (`llg_nested_assoc_bind_live`, `llg_nested_assoc_unpin_live`)
+forwards its changes to the owner as a nested sequence's does (below); its
+count (`publishers`) shares the word of the 32-bit `pins`.
 A queue or dynamic array nested in a value (`LLG_VALUE_CONTAINER`: an element
 of a container, or a member of a record element) is the same
 (`llg_nested_seq_t`, `container/nested_sequences.c`): `llg_dyn_array_t` or

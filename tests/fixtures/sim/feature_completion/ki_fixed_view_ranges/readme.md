@@ -73,6 +73,14 @@ the alias, each change reaches the waiters of the array as it happens: a
 `wait` on the element in another process wakes at the task's write (`1 woke
 size=1`, `4 first of two`), not when the task returns.
 
+`task_ref_assocs.sv`: the same for an associative array that an element
+holds (integral keys in a module array, string keys of strings, an array of a
+class property through its handle and of an automatic subroutine; two tasks
+holding one element at once; a delete through the formal), which published
+its changes only when the call returned: `1 woke num=2`, `2 woke num=1` after
+the task deletes key 5, `4 first of two`, `6 local woke`. The output equals
+the industry-standard simulator's.
+
 - 9.4.3 L12032-12033: "The wait statement shall evaluate a condition; and, if
   it is false, the procedural statements following the wait statement shall
   remain blocked until that condition becomes true before continuing."

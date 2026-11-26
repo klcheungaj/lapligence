@@ -194,11 +194,45 @@ void* llg_nested_assoc_bind(llg_value_t* value, llg_nested_assoc_t** pin) {
     if (!value->value.assoc)
         value->value.assoc = llg_nested_assoc_new(value->desc);
     llg_nested_assoc_t* nested = value->value.assoc;
+    if (nested->pins == UINT32_MAX)
+        llg_container_fatal("nested associative array pin overflow");
     ++nested->pins;
     *pin = nested;
     return nested->desc->element->kind == LLG_VALUE_PACKED
         ? (void*)&nested->array.packed
         : (void*)&nested->array.values;
+}
+
+/* Point the change notification of `nested`'s storage at `contents` through
+ * `notify` (NULL, NULL: none, the default of a nested array). */
+static void llg_nested_assoc_link(llg_nested_assoc_t* nested, sv4_t* contents,
+                                  llg_container_notify_fn notify) {
+    if (nested->desc->element->kind == LLG_VALUE_PACKED) {
+        nested->array.packed.contents_dependency = contents;
+        nested->array.packed.shape_dependency = contents;
+        nested->array.packed.notify = notify;
+    } else {
+        nested->array.values.contents_dependency = contents;
+        nested->array.values.shape_dependency = contents;
+        nested->array.values.notify = notify;
+    }
+}
+
+void* llg_nested_assoc_bind_live(llg_value_t* value, llg_nested_assoc_t** pin,
+                                 sv4_t* contents, llg_container_notify_fn notify) {
+    void* storage = llg_nested_assoc_bind(value, pin);
+    llg_nested_assoc_t* nested = *pin;
+    if (nested->publishers == UINT32_MAX)
+        llg_container_fatal("nested associative array alias overflow");
+    if (nested->publishers++ == 0) llg_nested_assoc_link(nested, contents, notify);
+    return storage;
+}
+
+void llg_nested_assoc_unpin_live(void* pin) {
+    llg_nested_assoc_t** owner = pin;
+    if (!*owner) return;
+    if (--(*owner)->publishers == 0) llg_nested_assoc_link(*owner, NULL, NULL);
+    llg_nested_assoc_unpin(pin);
 }
 
 void llg_nested_assoc_unpin(void* pin) {
