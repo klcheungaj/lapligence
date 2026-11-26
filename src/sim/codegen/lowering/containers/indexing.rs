@@ -859,9 +859,20 @@ impl<'a> Codegen<'a> {
         &mut self,
         call: NodeId,
     ) -> Result<Option<usize>, String> {
+        let Some(callee) = self.container_result_callee(call)? else {
+            return Ok(None);
+        };
+        let result = self.container_formal_type(callee)?;
+        Ok(Some(self.container_temporary_like(result)))
+    }
+
+    /// The subroutine `call` calls, when that call yields a container.
+    pub(in super::super) fn container_result_callee(
+        &self,
+        call: NodeId,
+    ) -> Result<Option<NodeId>, String> {
         let callee = match self.kind(call) {
             NodeKind::FuncCall { name, callee, .. } => {
-                let (name, callee) = (name.clone(), *callee);
                 // A built-in, such as `process::self()`, has no captured
                 // subroutine body and no container result. Any other callee
                 // must resolve.
@@ -870,7 +881,7 @@ impl<'a> Codegen<'a> {
                 {
                     return Ok(None);
                 }
-                self.resolve_callee_env(self.inst, &name, false, callee)?.0
+                self.resolve_callee_env(self.inst, name, false, *callee)?.0
             }
             NodeKind::MethodCall {
                 callee: Some(callee),
@@ -878,11 +889,7 @@ impl<'a> Codegen<'a> {
             } => *callee,
             _ => return Ok(None),
         };
-        if !self.container_return(callee) {
-            return Ok(None);
-        }
-        let result = self.container_formal_type(callee)?;
-        Ok(Some(self.container_temporary_like(result)))
+        Ok(self.container_return(callee).then_some(callee))
     }
 
     /// The name of a per-object container property selected through an

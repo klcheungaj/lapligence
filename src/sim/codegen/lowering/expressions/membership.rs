@@ -118,6 +118,17 @@ impl<'a> Codegen<'a> {
             .ok_or_else(|| format!("inside set is empty in `{path}`"))
     }
 
+    /// Whether set member `item` has an effect that runs at its place in
+    /// the scan, which then compares member by member (decision EO-D2). A
+    /// call with a container result fills its temporary before the set is
+    /// scanned, so its effect precedes the value and every member in either
+    /// lowering.
+    pub(in super::super) fn in_place_member_effect(&self, item: NodeId) -> bool {
+        let node = self.p30_unwrap_cast(item);
+        !matches!(self.container_result_callee(node), Ok(Some(_)))
+            && self.contains_evaluation_effect(item)
+    }
+
     /// Whether evaluating `value` runs statements (a view binding, a
     /// staged copy), which a copy of it would repeat.
     fn runs_statements(value: &IrExpr) -> bool {

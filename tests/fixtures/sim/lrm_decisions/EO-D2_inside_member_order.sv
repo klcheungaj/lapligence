@@ -4,8 +4,9 @@
 // first match, and a range `[lo:hi]` is `value >= lo && value <= hi`, so its
 // high bound is evaluated only when the value is not below the low one. Each
 // comparison reads the value again, before its member; a value with an
-// effect of its own is evaluated once, first. A `case inside` compares its
-// selector, evaluated once, the same way.
+// effect of its own is evaluated once, first. A member that calls a function
+// returning a queue is evaluated before the value and the other members. A
+// `case inside` compares its selector, evaluated once, the same way.
 //
 // IEEE 1800-2009 11.4.13 (SystemVerilog-1800-2009.txt L15367-15369): "The
 //   members of the set are scanned until a match is found and the operation
@@ -14,6 +15,7 @@
 // IEEE 1800-2009 12.5 (L17489): "The case_expression shall be evaluated
 //   exactly once and before any of the case_item_expressions."
 module tb;
+  typedef int iq_t[$];
   int arr[4];
   int q[$];
   int k, x, n;
@@ -32,6 +34,14 @@ module tb;
   function automatic int g(int v);
     log_q.push_back(v);
     return v;
+  endfunction
+  function automatic iq_t gq();
+    log_q.push_back(8);
+    return '{11 + k};
+  endfunction
+  function automatic iq_t gk();
+    k = 1;
+    return '{30};
   endfunction
   function automatic int popq();
     void'(q.pop_front());
@@ -92,6 +102,12 @@ module tb;
     $display("S %0d", x);
     reset(); x = arr[k] inside {arr[k + 1], 10};
     $display("T %0d", x);
+    reset(); x = g(1) inside {g(2), gq()};
+    $display("U %0d %p", x, log_q);
+    reset(); x = (k + 11) inside {bump(), gq()};
+    $display("V %0d", x);
+    reset(); x = arr[k] inside {10, gk()};
+    $display("W %0d", x);
     $finish;
   end
 endmodule

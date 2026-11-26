@@ -783,12 +783,12 @@ impl EmitCtx<'_, '_> {
             let path = &self.path;
             let condition = self.cg.with_set_arrays(|cg| {
                 let items = cg.lower_inside_items(path, &item.exprs)?;
-                // An item with an effect compares in member order (decision
-                // EO-D2).
+                // An item with an effect at its place compares in member
+                // order (decision EO-D2).
                 if item
                     .exprs
                     .iter()
-                    .any(|expression| cg.contains_evaluation_effect(*expression))
+                    .any(|expression| cg.in_place_member_effect(*expression))
                 {
                     return Codegen::inside_in_order(path, &selector_read, items);
                 }

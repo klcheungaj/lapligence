@@ -607,10 +607,11 @@ impl<'a> Codegen<'a> {
                 this.lower_handle_inside(scope_path, *value_node, item_nodes)
             });
         }
-        // A member with an effect: compare in member order (decision EO-D2).
+        // A member with an effect at its place: compare in member order
+        // (decision EO-D2).
         if item_nodes
             .iter()
-            .any(|item| self.contains_evaluation_effect(*item))
+            .any(|item| self.in_place_member_effect(*item))
         {
             return self.lower_inside_in_order(scope_path, *value_node, item_nodes);
         }

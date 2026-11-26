@@ -19,8 +19,8 @@
 //! place. Where nothing else of the expression reads storage or calls a
 //! subroutine, the assignments run in place, which is the same order.
 //!
-//! A set with a member that has an effect is scanned member by member
-//! (EO-D2, `Codegen::lower_inside_in_order`). An input actual with an effect
+//! A set with a member whose effect runs at its place is scanned member by
+//! member (EO-D2, `Codegen::lower_inside_in_order`). An input actual with an effect
 //! before an inout or `ref` actual is evaluated before that actual is copied
 //! in or bound (EO-D3, [`Codegen::early_actuals_until`]). A computed handle a
 //! class property is selected through is evaluated where its use starts, an
