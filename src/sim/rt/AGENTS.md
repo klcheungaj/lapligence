@@ -48,6 +48,9 @@ it is never linked into Rust binaries. Module overview and component map:
   or their unsigned forms, whose widths differ by platform (`long` is 32-bit
   on Windows). Exceptions only where a C library, OS or standard
   foreign-interface API fixes the type; `runtime_strict_sources` lists them.
+- Sort only with `llg_sort` and a comparator that is a total order; never
+  `qsort`, whose order of ties differs by C library
+  ([cross-platform](../../../docs/cross_platform.md#windows-msvc)).
 - Keep `llg_co` free of globals and TLS.
 - `llg_arm_*` copy contract: `llg_rt.h`; an arm that must retain a pointer
   says so there, and the emitter keeps it in a frame field or registered cell.

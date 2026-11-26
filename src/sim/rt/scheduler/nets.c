@@ -498,7 +498,7 @@ static void llg_net_alias_spans_build(llg_net_t* net) {
             span->high = net->width ? net->width - 1u : 0u;
         }
     }
-    qsort(net->alias_spans, (size_t)net->n_aliases, sizeof(llg_net_alias_span_t),
+    llg_sort(net->alias_spans, (size_t)net->n_aliases, sizeof(llg_net_alias_span_t),
           llg_net_alias_span_order);
     llg_net_alias_span_reach(net->alias_spans, 0, net->n_aliases);
     net->alias_spans_valid = 1;

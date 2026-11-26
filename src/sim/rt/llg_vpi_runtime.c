@@ -351,7 +351,7 @@ static vpiHandle rts_uses(const llg_vpi_slot_t* slot) {
         }
     }
     if (items.count > 1) {
-        qsort(items.items, items.count, sizeof(*items.items), compare_link_items);
+        llg_sort(items.items, items.count, sizeof(*items.items), compare_link_items);
         size_t kept = 1;
         for (size_t i = 1; i < items.count; ++i)
             if (compare_link_items(&items.items[kept - 1u], &items.items[i]) != 0)

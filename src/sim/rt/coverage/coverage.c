@@ -388,7 +388,7 @@ static int32_t llg_cov_span_order(const void* a, const void* b) {
 // Sort and merge overlapping or adjacent spans in place; returns the count.
 static size_t llg_cov_spans_merge(llg_cov_span_t* spans, size_t n) {
     if (n == 0) return 0;
-    qsort(spans, n, sizeof(*spans), llg_cov_span_order);
+    llg_sort(spans, n, sizeof(*spans), llg_cov_span_order);
     size_t out = 0;
     for (size_t i = 1; i < n; ++i) {
         if (spans[out].hi == UINT64_MAX || spans[i].lo <= spans[out].hi + 1u) {
@@ -413,10 +413,16 @@ typedef struct {
     uint8_t role;  // LLG_COV_BIN_BINS, _IGNORE or _ILLEGAL
 } llg_cov_piece_t;
 
+// By first value, then declaration and position in it: no two pieces share
+// all three (a declaration's merged spans are disjoint, and a count-shaped
+// one advances `pos` past each span), so the segments list their entries in
+// declaration order whatever the sort.
 static int32_t llg_cov_piece_order(const void* a, const void* b) {
     const llg_cov_piece_t* x = (const llg_cov_piece_t*)a;
     const llg_cov_piece_t* y = (const llg_cov_piece_t*)b;
-    return x->lo < y->lo ? -1 : x->lo > y->lo;
+    if (x->lo != y->lo) return x->lo < y->lo ? -1 : 1;
+    if (x->entry.decl != y->entry.decl) return x->entry.decl < y->entry.decl ? -1 : 1;
+    return x->entry.pos < y->entry.pos ? -1 : x->entry.pos > y->entry.pos;
 }
 
 static int32_t llg_cov_u64_order(const void* a, const void* b) {
@@ -587,7 +593,7 @@ static llg_cov_layout_t* llg_cov_build_layout(const llg_cov_inst_t* inst, uint32
 
     // Cut the pieces into maximal segments with one set of entries.
     if (n_pieces) {
-        qsort(pieces, n_pieces, sizeof(*pieces), llg_cov_piece_order);
+        llg_sort(pieces, n_pieces, sizeof(*pieces), llg_cov_piece_order);
         uint64_t* bounds = (uint64_t*)llg_checked_malloc(n_pieces * 2u, sizeof(uint64_t),
                                                          "coverage segments");
         size_t n_bounds = 0;
@@ -595,7 +601,7 @@ static llg_cov_layout_t* llg_cov_build_layout(const llg_cov_inst_t* inst, uint32
             bounds[n_bounds++] = pieces[i].lo;
             if (pieces[i].hi != UINT64_MAX) bounds[n_bounds++] = pieces[i].hi + 1u;
         }
-        qsort(bounds, n_bounds, sizeof(uint64_t), llg_cov_u64_order);
+        llg_sort(bounds, n_bounds, sizeof(uint64_t), llg_cov_u64_order);
         size_t unique = 0;
         for (size_t i = 0; i < n_bounds; ++i)
             if (!unique || bounds[unique - 1u] != bounds[i]) bounds[unique++] = bounds[i];
@@ -965,7 +971,12 @@ static uint32_t llg_cov_sort_words;
 static int32_t llg_cov_xclass_order(const void* a, const void* b) {
     const llg_cov_xclass_t* x = (const llg_cov_xclass_t*)a;
     const llg_cov_xclass_t* y = (const llg_cov_xclass_t*)b;
-    return memcmp(x->sig, y->sig, llg_cov_sort_words * sizeof(uint64_t));
+    int32_t order = memcmp(x->sig, y->sig, llg_cov_sort_words * sizeof(uint64_t));
+    if (order) return order;
+    // Runs of one signature merge into the first; `sig` points into the
+    // run-ordered signature table, so this keeps run order.
+    uintptr_t xs = (uintptr_t)x->sig, ys = (uintptr_t)y->sig;
+    return xs < ys ? -1 : xs > ys;
 }
 
 // Bb, Bc and Bu of 19.11.2: products are enumerated per class of runs with
@@ -987,7 +998,7 @@ static void llg_cov_xlayout_count(const llg_cov_inst_t* inst, const llg_cov_cros
             list[r] = (llg_cov_xclass_t){xl->sigs[d] + r * words,
                                          xl->runs[d][r].hi - xl->runs[d][r].lo + 1u};
         llg_cov_sort_words = words;
-        qsort(list, runs, sizeof(*list), llg_cov_xclass_order);
+        llg_sort(list, runs, sizeof(*list), llg_cov_xclass_order);
         size_t unique = 0;
         for (size_t r = 0; r < runs; ++r) {
             if (unique && memcmp(list[unique - 1u].sig, list[r].sig, words * sizeof(uint64_t)) == 0)
@@ -1125,7 +1136,7 @@ static llg_cov_xlayout_t* llg_cov_build_xlayout(const llg_cov_inst_t* inst, uint
         }
         if (size) {
             LLG_COV_PUSH(bounds, n_bounds, bounds_cap, UINT64_C(0), "coverage cross");
-            qsort(bounds, n_bounds, sizeof(uint64_t), llg_cov_u64_order);
+            llg_sort(bounds, n_bounds, sizeof(uint64_t), llg_cov_u64_order);
             size_t unique = 0;
             for (size_t i = 0; i < n_bounds; ++i)
                 if (!unique || bounds[unique - 1u] != bounds[i]) bounds[unique++] = bounds[i];
@@ -1737,7 +1748,7 @@ static void llg_cov_report_overlaps(const llg_cov_inst_t* inst, uint32_t index) 
             }
     }
     // `pairs` is NULL when no bins overlap; qsort needs a valid pointer.
-    if (n_pairs > 1u) qsort(pairs, n_pairs, sizeof(*pairs), llg_cov_pair_order);
+    if (n_pairs > 1u) llg_sort(pairs, n_pairs, sizeof(*pairs), llg_cov_pair_order);
     for (size_t i = 0; i < n_pairs; ++i) {
         if (i && pairs[i][0] == pairs[i - 1u][0] && pairs[i][1] == pairs[i - 1u][1]) continue;
         llg_cov_overlap_warning(inst, point, point->bins[pairs[i][0]].name,
@@ -2024,7 +2035,7 @@ LLG_COLD LLG_OUTLYING static void llg_cov_history_resolve(const llg_cov_inst_t* 
             if (spans[i].hi < max_key) bounds[n_bounds++] = spans[i].hi + 1u;
         }
     }
-    qsort(bounds, n_bounds, sizeof(uint64_t), llg_cov_u64_order);
+    llg_sort(bounds, n_bounds, sizeof(uint64_t), llg_cov_u64_order);
     size_t classes = 0;
     for (size_t b = 0; b < n_bounds; ++b)
         if (!classes || bounds[b] != bounds[classes - 1u]) bounds[classes++] = bounds[b];

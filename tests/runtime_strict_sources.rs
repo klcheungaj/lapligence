@@ -188,6 +188,11 @@ const RUNTIME_CONFIGURATIONS: &[&[&str]] = &[
 const COMPACT_VALUES: &str = "-DLLG_SV4_USE_GMP=1";
 
 fn c_sources_under(directory: &Path) -> Vec<PathBuf> {
+    files_under(directory, &["c"])
+}
+
+/// The files under `directory` (recursively) with one of `extensions`, sorted.
+fn files_under(directory: &Path, extensions: &[&str]) -> Vec<PathBuf> {
     let mut pending = vec![directory.to_path_buf()];
     let mut sources = Vec::new();
     while let Some(directory) = pending.pop() {
@@ -197,7 +202,11 @@ fn c_sources_under(directory: &Path) -> Vec<PathBuf> {
             let path = entry.expect("read directory entry").path();
             if path.is_dir() {
                 pending.push(path);
-            } else if path.extension().is_some_and(|e| e == "c") {
+            } else if path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| extensions.contains(&e))
+            {
                 sources.push(path);
             }
         }
@@ -1326,50 +1335,31 @@ fn runtime_sources_use_fixed_width_integer_types() {
         standard.contains("svSize") && standard.contains("vpi_get"),
         "standard routines not found in {STANDARD_INTERFACE_HEADERS:?}"
     );
-    let mut pending = vec![rt.clone()];
     let mut used = vec![false; PLATFORM_INTEGER_TYPE_EXCEPTIONS.len()];
     let mut findings = Vec::new();
-    let mut scanned = 0usize;
-    while let Some(directory) = pending.pop() {
-        let entries = std::fs::read_dir(&directory)
-            .unwrap_or_else(|error| panic!("read {}: {error}", directory.display()));
-        for entry in entries {
-            let path = entry.expect("read directory entry").path();
-            if path.is_dir() {
-                pending.push(path);
-                continue;
-            }
-            if !matches!(path.extension().and_then(|e| e.to_str()), Some("c" | "h")) {
-                continue;
-            }
-            scanned += 1;
-            let relative = path
-                .strip_prefix(&rt)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .replace('\\', "/");
-            let text = std::fs::read_to_string(&path)
-                .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
-            let code = c_code_only(&text);
-            let scan_int = !STANDARD_INTERFACE_HEADERS.contains(&relative.as_str());
-            let lines: Vec<&str> = code.lines().collect();
-            for number in platform_integer_type_lines(&code, scan_int, &standard) {
-                let line = lines[number];
-                let exception = PLATFORM_INTEGER_TYPE_EXCEPTIONS
+    let sources = runtime_c_code(&rt);
+    assert!(!sources.is_empty(), "no runtime C sources found");
+    for (relative, code) in &sources {
+        let scan_int = !STANDARD_INTERFACE_HEADERS.contains(&relative.as_str());
+        let lines: Vec<&str> = code.lines().collect();
+        for number in platform_integer_type_lines(code, scan_int, &standard) {
+            let line = lines[number];
+            let exception =
+                PLATFORM_INTEGER_TYPE_EXCEPTIONS
                     .iter()
-                    .position(|(file, fragment, _)| *file == relative && line.contains(fragment));
-                match exception {
-                    Some(index) => used[index] = true,
-                    None => findings.push(format!(
-                        "src/sim/rt/{relative}:{}: {}",
-                        number + 1,
-                        line.trim()
-                    )),
-                }
+                    .position(|(file, fragment, _)| {
+                        *file == relative.as_str() && line.contains(fragment)
+                    });
+            match exception {
+                Some(index) => used[index] = true,
+                None => findings.push(format!(
+                    "src/sim/rt/{relative}:{}: {}",
+                    number + 1,
+                    line.trim()
+                )),
             }
         }
     }
-    assert!(scanned > 0, "no runtime C sources found");
     assert!(
         findings.is_empty(),
         "use fixed-width integer types (int32_t, uint32_t, int64_t, uint8_t, ...; \
@@ -1388,5 +1378,55 @@ fn runtime_sources_use_fixed_width_integer_types() {
         stale.is_empty(),
         "remove exceptions that no longer match a line:\n{}",
         stale.join("\n")
+    );
+}
+
+/// Every runtime C source and header under `rt` as (path relative to `rt`
+/// with `/` separators, code with comments and literals removed by
+/// [`c_code_only`]).
+fn runtime_c_code(rt: &Path) -> Vec<(String, String)> {
+    files_under(rt, &["c", "h"])
+        .into_iter()
+        .map(|path| {
+            let relative = path
+                .strip_prefix(rt)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+            (relative, c_code_only(&text))
+        })
+        .collect()
+}
+
+/// The runtime sorts only through `llg_sort` (`llg_msg.h`): the C library
+/// decides the order of elements that compare equal (glibc's `qsort` is
+/// stable, the Microsoft CRT's is not; CI: VPI port iteration reordered on
+/// Windows), and `llg_sort` reverses its input under `LLG_CO_DEBUG` so a
+/// comparator that ties distinct elements changes results on Linux too.
+#[test]
+fn runtime_sorts_go_through_llg_sort() {
+    let rt = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/sim/rt");
+    let mut findings = Vec::new();
+    let mut wrapper_calls = 0usize;
+    for (relative, code) in runtime_c_code(&rt) {
+        let tokens = c_tokens(&code);
+        for (index, (token, line)) in tokens.iter().enumerate() {
+            if *token != "qsort" || tokens.get(index + 1).map(|(next, _)| *next) != Some("(") {
+                continue;
+            }
+            if relative == "llg_msg.h" {
+                wrapper_calls += 1;
+            } else {
+                findings.push(format!("src/sim/rt/{relative}:{}", line + 1));
+            }
+        }
+    }
+    assert_eq!(wrapper_calls, 1, "llg_sort in llg_msg.h calls qsort once");
+    assert!(
+        findings.is_empty(),
+        "sort with llg_sort and a comparator that is a total order, not qsort:\n{}",
+        findings.join("\n")
     );
 }

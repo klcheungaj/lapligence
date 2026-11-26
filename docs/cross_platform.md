@@ -195,6 +195,16 @@ MSVC compiler:
   (`tests/support/c_compiler.rs`, `runtime_value_storage` CMake) defines
   `_CRT_SECURE_NO_WARNINGS`; a new `/W4 /WX` build site needs it too. Fixtures
   still prefer bounded calls (`snprintf`).
+- The UCRT's (and musl's) `qsort` is not stable; glibc's is a merge sort that
+  keeps ties in input order, so a comparator that ties distinct elements gives
+  Linux-only results (CI: VPI ports came out in another order on Windows). The
+  runtime sorts only through `llg_sort` (`src/sim/rt/llg_msg.h`) with total-order
+  comparators; under `-DLLG_CO_DEBUG` it reverses its input first, which makes
+  a tie-dependent result change on Linux too
+  (`runtime_strict_sources::runtime_sorts_go_through_llg_sort`).
+- `%p` prints `0x`-prefixed lowercase hex with glibc and macOS and 16 uppercase
+  digits without a prefix with the UCRT; runtime diagnostics that print a
+  pointer (`svSetScope`, invalid coroutine state) differ in that text only.
 - Third-party headers (`gmp.h`) enter strict targets through `SYSTEM` include
   directories: CMake maps them to `/external:I` with `/external:W0` for MSVC
   19.29.30036.3 or newer, and the target's own sources keep `/W4 /WX`.
