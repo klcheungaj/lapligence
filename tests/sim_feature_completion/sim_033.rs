@@ -374,8 +374,8 @@ fn vif_clocking_event_through_null_handle_stops() {
         assert!(
             sim_harness::mentions(
                 &String::from_utf8_lossy(&output.stderr),
-                "virtual interface access failed: virtual interface clocking block event at \
-                 tb:18:7"
+                "vif_clocking_event_null.sv:18:7 virtual interface access failed: virtual interface \
+                 clocking block event"
             ),
             "{label}: {output:?}"
         );

@@ -1,7 +1,25 @@
 //! Events.
 
 use super::*;
-use crate::sim::codegen::lowering::containers::fixed_arrays::P30PatternSource;
+
+/// The dimensions of a fixed event array.
+type EventArrayDims = Vec<(i32, i32)>;
+
+fn is_event_shape(shape: &TypeShape) -> bool {
+    matches!(shape, TypeShape::Opaque { kind } if kind == "Event")
+}
+
+fn event_extents(dims: &[(i32, i32)]) -> Vec<u32> {
+    dims.iter()
+        .map(|(left, right)| left.abs_diff(*right))
+        .collect()
+}
+
+fn event_dims_total(dims: &[(i32, i32)]) -> usize {
+    dims.iter()
+        .map(|(left, right)| left.abs_diff(*right) as usize + 1)
+        .product()
+}
 
 impl<'a> Codegen<'a> {
     // ── Signal resolution ──────────────────────────────────────────────────
@@ -117,85 +135,26 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
-    /// The assignment of its initializer to a scalar event variable (SV 6.17),
-    /// or to each element of a static event array.
+    /// The assignment of its initializer to an event variable or a fixed
+    /// array of events (SV 6.17).
     pub(in super::super) fn event_initializer(
         &mut self,
         path: &str,
         declaration: NodeId,
         initializer: NodeId,
     ) -> Result<IrStmt, String> {
-        if self.event_arrays.contains_key(&declaration) {
-            return self
-                .event_array_initializer(path, declaration, initializer)
-                .map_err(|error| self.locate_error(initializer, error));
-        }
         let target = EventTarget {
             declaration,
             indices: Vec::new(),
             access: None,
-            via: None,
         };
+        if self.event_arrays.contains_key(&declaration) {
+            return self.event_array_assignment(path, &target, initializer);
+        }
         Ok(IrStmt::EventAssign {
             target: self.event_ref_of(&target, path)?,
             source: self.lower_event_source(path, initializer)?,
         })
-    }
-
-    /// The element assignments of the initializer of static event array
-    /// `declaration` (SV 6.17, 10.9): an assignment pattern of events, or a
-    /// whole static event array, in declaration (left-to-right) order.
-    fn event_array_initializer(
-        &mut self,
-        path: &str,
-        declaration: NodeId,
-        initializer: NodeId,
-    ) -> Result<IrStmt, String> {
-        let dims = self
-            .db
-            .event_array_meta(declaration)
-            .and_then(|metadata| {
-                metadata
-                    .dimensions()
-                    .iter()
-                    .copied()
-                    .collect::<Option<Vec<_>>>()
-            })
-            .ok_or_else(|| format!("event array initializer in `{path}` has unresolved bounds"))?;
-        let mut statements = Vec::new();
-        for (linear, source) in self
-            .p30_pattern_values(path, initializer, &dims)?
-            .into_iter()
-            .enumerate()
-        {
-            let element = |codegen: &Self, owner: NodeId, linear: u64| {
-                codegen
-                    .event_elements
-                    .get(&(owner, linear))
-                    .map(|info| IrEventRef::Static(info.ir))
-            };
-            let linear = u64::try_from(linear).map_err(|_| "event array is too large")?;
-            let target = element(self, declaration, linear)
-                .ok_or_else(|| format!("event array initializer in `{path}` has too many items"))?;
-            let source = match source {
-                P30PatternSource::Leaf(leaf) => self.lower_event_source(path, leaf)?,
-                P30PatternSource::Element { node, index, .. } => {
-                    let array = self
-                        .event_target_of(node)
-                        .filter(|source| source.indices.is_empty() && source.via.is_none())
-                        .map(|source| source.declaration)
-                        .filter(|source| self.event_arrays.contains_key(source));
-                    let index = u64::try_from(index).map_err(|_| "event array is too large")?;
-                    Some(array.and_then(|array| element(self, array, index)).ok_or_else(|| {
-                        format!(
-                            "this event array initializer item in `{path}` is not supported: use an assignment pattern of events or a whole static event array"
-                        )
-                    })?)
-                }
-            };
-            statements.push(IrStmt::EventAssign { target, source });
-        }
-        Ok(IrStmt::Block(statements))
     }
 
     /// The event whose synchronization object `node` names as a value;
@@ -222,6 +181,220 @@ impl<'a> Codegen<'a> {
         Err(format!(
             "named event assignment in `{path}` requires another event handle or null"
         ))
+    }
+
+    /// The position, among the rows of as many dimensions as `target` has
+    /// constant indices, of the one they select in an array of `dims`.
+    fn event_array_offset(
+        &self,
+        path: &str,
+        target: &EventTarget,
+        dims: &[(i32, i32)],
+    ) -> Result<u64, String> {
+        let name = &self.node(target.declaration).name;
+        let mut linear = 0u64;
+        for ((left, right), index) in dims.iter().zip(&target.indices) {
+            let value = self.eval_bound_i128(*index).map_err(|_| {
+                format!("named event array index for `{name}` in `{path}` must be a known constant")
+            })?;
+            let (left, right) = (i128::from(*left), i128::from(*right));
+            if value < left.min(right) || value > left.max(right) {
+                return Err(format!(
+                    "named event array index for `{name}` in `{path}` is out of range"
+                ));
+            }
+            linear = u64::try_from(left.abs_diff(right) + 1)
+                .ok()
+                .and_then(|extent| linear.checked_mul(extent))
+                .and_then(|row| row.checked_add(u64::try_from(left.abs_diff(value)).ok()?))
+                .ok_or_else(|| {
+                    format!("named event array index for `{name}` in `{path}` is too large")
+                })?;
+        }
+        Ok(linear)
+    }
+
+    /// The elements, in storage order, of the fixed event array or row of one
+    /// that `target` names, with the dimensions below its indices.
+    pub(in super::super) fn event_array_elements(
+        &self,
+        path: &str,
+        target: &EventTarget,
+    ) -> Result<Option<(Vec<usize>, EventArrayDims)>, String> {
+        if target.access.is_some() || !self.event_arrays.contains_key(&target.declaration) {
+            return Ok(None);
+        }
+        let Some(array) = self
+            .event_arrays
+            .get(&target.declaration)
+            .map(|array| &self.model.events[*array])
+        else {
+            return Ok(None);
+        };
+        let dims = array.array_dims().unwrap_or_default();
+        if target.indices.len() >= dims.len() {
+            return Ok(None);
+        }
+        let first = self.event_array_offset(path, target, dims)?;
+        let first = usize::try_from(first).map_err(|error| error.to_string())?;
+        let dims = dims[target.indices.len()..].to_vec();
+        let count = event_dims_total(&dims);
+        let elements = array.array_elements();
+        Ok(elements
+            .get(first * count..(first + 1) * count)
+            .map(|row| (row.to_vec(), dims)))
+    }
+
+    /// The sources of the `dims` events the fixed event array value `node`
+    /// holds, in storage order.
+    fn event_array_sources(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        dims: &[(i32, i32)],
+        sources: &mut Vec<Option<IrEventRef>>,
+    ) -> Result<(), String> {
+        if let Some(operands) = self.assignment_pattern_operands(path, node)? {
+            let element = self.event_element_descriptor(node);
+            let mut cells = Vec::new();
+            self.flatten_multidimensional_pattern(
+                path,
+                dims,
+                operands,
+                element.as_ref(),
+                &mut cells,
+            )
+            .map_err(|error| self.locate_error(node, error))?;
+            for cell in cells {
+                let source = self.lower_event_source(path, cell)?;
+                sources.push(source);
+            }
+            return Ok(());
+        }
+        let array = match self.event_target_of(node) {
+            Some(target) => self.event_array_elements(path, &target)?,
+            None => None,
+        };
+        match array {
+            Some((elements, source)) if event_extents(&source) == event_extents(dims) => {
+                sources.extend(elements.into_iter().map(|e| Some(IrEventRef::Static(e))));
+                Ok(())
+            }
+            _ => Err(self.locate_error(
+                node,
+                format!(
+                    "a fixed event array in `{path}` is assigned from an assignment pattern or a fixed event array of the same size"
+                ),
+            )),
+        }
+    }
+
+    /// The element type of the (multidimensional) fixed array `node` holds.
+    fn event_element_descriptor(&self, node: NodeId) -> Option<TypeDescriptor> {
+        let mut descriptor = self.query_descriptor(node)?;
+        while let TypeShape::FixedArray { element, .. } = &descriptor.shape {
+            descriptor = element;
+        }
+        Some(descriptor.clone())
+    }
+
+    /// The assignment of `value` to the fixed event array (or row of one)
+    /// `target`: every source handle is read before the first element is
+    /// written, so a value may name the target's own elements (SV 10.4.1).
+    pub(in super::super) fn event_array_assignment(
+        &mut self,
+        path: &str,
+        target: &EventTarget,
+        value: NodeId,
+    ) -> Result<IrStmt, String> {
+        let (elements, dims) = self.event_array_elements(path, target)?.ok_or_else(|| {
+            format!(
+                "named event array `{}` in `{path}` requires {} indices",
+                self.node(target.declaration).name,
+                self.event_rank(target.declaration)
+            )
+        })?;
+        let mut sources = Vec::with_capacity(elements.len());
+        self.event_array_sources(path, value, &dims, &mut sources)?;
+        let mut statements = Vec::new();
+        for (position, source) in sources.iter_mut().enumerate() {
+            if let Some(read) = source.take() {
+                let name = format!("_llg_ev{}_{position}", value.0);
+                statements.push(IrStmt::EventCapture {
+                    name: name.clone(),
+                    source: read,
+                });
+                *source = Some(IrEventRef::Captured(name));
+            }
+        }
+        for (element, source) in elements.into_iter().zip(sources) {
+            statements.push(IrStmt::EventAssign {
+                target: IrEventRef::Static(element),
+                source,
+            });
+        }
+        Ok(IrStmt::Block(statements))
+    }
+
+    /// Whether the fixed event arrays `a` and `b` (or rows of them) hold the
+    /// same events; `None` when neither is one.
+    pub(in super::super) fn event_array_equality(
+        &mut self,
+        path: &str,
+        a: NodeId,
+        b: NodeId,
+    ) -> Result<Option<IrExpr>, String> {
+        let mut dims = None;
+        for node in [a, b] {
+            if let Some(target) = self.event_target_of(node) {
+                if let Some((_, array)) = self.event_array_elements(path, &target)? {
+                    dims = Some(array);
+                }
+            }
+        }
+        let Some(dims) = dims else {
+            return Ok(None);
+        };
+        let (mut left, mut right) = (Vec::new(), Vec::new());
+        self.event_array_sources(path, a, &dims, &mut left)?;
+        self.event_array_sources(path, b, &dims, &mut right)?;
+        let object = |event: Option<IrEventRef>| {
+            event.map_or(IrChandleExpr::Null, |event| {
+                IrChandleExpr::EventObject(Box::new(event))
+            })
+        };
+        let mut equal: Option<IrExpr> = None;
+        for (a, b) in left.into_iter().zip(right) {
+            let pair = IrExpr::new(
+                IrExprKind::ObjectQuery(Box::new(crate::sim::ir::IrObjectQuery::ChandleEq(
+                    object(a),
+                    object(b),
+                ))),
+                1,
+                false,
+                None,
+            );
+            equal = Some(match equal {
+                None => pair,
+                Some(so_far) => IrExpr::new(
+                    IrExprKind::Bin {
+                        op: IrBinOp::LogAnd,
+                        a: Box::new(so_far),
+                        b: Box::new(pair),
+                    },
+                    1,
+                    false,
+                    None,
+                ),
+            });
+        }
+        Ok(equal)
+    }
+
+    fn event_rank(&self, declaration: NodeId) -> usize {
+        self.db
+            .event_array_meta(declaration)
+            .map_or(0, |metadata| metadata.dimensions().len())
     }
 
     pub(in super::super) fn new_event_info(&mut self, global: String) -> EventInfo {
@@ -257,18 +430,16 @@ impl<'a> Codegen<'a> {
                 declaration: block,
                 indices: Vec::new(),
                 access: None,
-                via: None,
             });
         }
         // A clocking block or named event through a virtual interface
         // (`@(vif.cb)`, `-> vif.e`): the bound instance's event, read from
         // the handle when the operation is issued.
-        if self.virtual_event_member(node).is_some() {
+        if self.is_virtual_event(node) {
             return Some(EventTarget {
                 declaration: node,
                 indices: Vec::new(),
                 access: Some(node),
-                via: None,
             });
         }
         if let Some(field) = self
@@ -279,7 +450,6 @@ impl<'a> Codegen<'a> {
                 declaration: field,
                 indices: Vec::new(),
                 access: Some(node),
-                via: None,
             });
         }
         // A call of a function returning an event is a handle value: the
@@ -289,7 +459,13 @@ impl<'a> Codegen<'a> {
                 declaration: node,
                 indices: Vec::new(),
                 access: None,
-                via: None,
+            });
+        }
+        if self.is_native_conditional(node, is_event_shape) {
+            return Some(EventTarget {
+                declaration: node,
+                indices: Vec::new(),
+                access: None,
             });
         }
         match self.kind(node) {
@@ -297,7 +473,6 @@ impl<'a> Codegen<'a> {
                 declaration: node,
                 indices: Vec::new(),
                 access: None,
-                via: None,
             }),
             // Inside a function returning an event, its name is the result
             // variable (SV 13.4.1).
@@ -307,7 +482,6 @@ impl<'a> Codegen<'a> {
                 declaration: *target,
                 indices: Vec::new(),
                 access: None,
-                via: None,
             }),
             NodeKind::Var { .. }
                 if self.event_globals.contains_key(&node)
@@ -318,7 +492,6 @@ impl<'a> Codegen<'a> {
                     declaration: node,
                     indices: Vec::new(),
                     access: None,
-                    via: None,
                 })
             }
             // A sequence instance whose endpoint exists names its event
@@ -330,21 +503,18 @@ impl<'a> Codegen<'a> {
                     declaration: node,
                     indices: Vec::new(),
                     access: None,
-                    via: None,
                 })
             }
             NodeKind::FuncArg { ty, .. } if ty.kind == "event" => Some(EventTarget {
                 declaration: node,
                 indices: Vec::new(),
                 access: None,
-                via: None,
             }),
             NodeKind::FuncArg { .. } | NodeKind::Array { .. } if self.is_event_container(node) => {
                 Some(EventTarget {
                     declaration: node,
                     indices: Vec::new(),
                     access: None,
-                    via: None,
                 })
             }
             NodeKind::Expr(ExprKind::Ref {
@@ -361,13 +531,22 @@ impl<'a> Codegen<'a> {
                     declaration: *target,
                     indices: Vec::new(),
                     access: None,
-                    via: None,
                 })
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
                 let mut target = self.event_target_of(*base)?;
                 target.indices.extend(indices.iter().copied());
-                target.via.get_or_insert(node);
+                // The path below the select names the object that holds a
+                // class container property.
+                if self
+                    .container_globals
+                    .get(&target.declaration)
+                    .is_some_and(|container| {
+                        self.model.containers[container.ir].class_field.is_some()
+                    })
+                {
+                    target.access = Some(node);
+                }
                 Some(target)
             }
             NodeKind::Expr(ExprKind::ScopeRef { target }) => self.event_target_of(*target),
@@ -388,10 +567,17 @@ impl<'a> Codegen<'a> {
                     declaration,
                     indices: Vec::new(),
                     access: None,
-                    via: Some(node),
                 }),
             _ => None,
         }
+    }
+
+    /// Whether an operand `node` is an event or a fixed event array, as
+    /// opposed to a whole container of events.
+    pub(in super::super) fn event_operand(&self, node: NodeId) -> bool {
+        self.event_target_of(node).is_some_and(|target| {
+            !target.indices.is_empty() || !self.container_globals.contains_key(&target.declaration)
+        })
     }
 
     /// Whether `node` calls a function that returns an event.
@@ -463,6 +649,30 @@ impl<'a> Codegen<'a> {
         ))
     }
 
+    /// The handle storage of the event that `target` reaches through
+    /// `access`: a class property's slot in its object, or the event of the
+    /// interface instance a virtual interface binds.
+    pub(in super::super) fn event_access_slot(
+        &mut self,
+        path: &str,
+        access: NodeId,
+        target: &EventTarget,
+    ) -> Result<String, String> {
+        if let Some(slot) = self.virtual_event_slot(path, access)? {
+            return Ok(slot);
+        }
+        if self.container_globals.contains_key(&target.declaration) || self.is_virtual_event(access)
+        {
+            return Err(self.locate_error(
+                access,
+                format!(
+                    "an element of an event array of a class object or a virtual interface cannot be an output, inout or ref event actual in `{path}`"
+                ),
+            ));
+        }
+        self.class_event_slot(path, access, target.declaration)
+    }
+
     /// The call operand binding an output, inout or `ref` event formal to
     /// the caller's handle storage. A class property's handle lives in its
     /// object's slot, which a `ref` formal addresses and an output or inout
@@ -474,7 +684,7 @@ impl<'a> Codegen<'a> {
         target: &EventTarget,
     ) -> Result<IrCallArg, String> {
         if let Some(access) = target.access {
-            let slot = self.class_event_slot(path, access, target.declaration)?;
+            let slot = self.event_access_slot(path, access, target)?;
             self.class_event_ref_bound |= self.is_ref_formal(formal);
             return Ok(IrCallArg::EventSlot(format!("&{slot}")));
         }
@@ -564,44 +774,19 @@ impl<'a> Codegen<'a> {
                     metadata.dimensions().len()
                 ));
             }
-            let mut linear = 0u64;
-            for (bounds, index) in metadata.dimensions().iter().zip(&target.indices) {
-                let Some((left, right)) = *bounds else {
-                    return Err(format!(
-                        "named event array `{}` in `{scope_path}` has unresolved bounds",
-                        self.node(target.declaration).name
-                    ));
-                };
-                let value = self.eval_bound_i128(*index).map_err(|_| {
-                    format!(
-                        "named event array index for `{}` in `{scope_path}` must be a known constant",
-                        self.node(target.declaration).name
-                    )
-                })?;
-                let lo = i128::from(left.min(right));
-                let hi = i128::from(left.max(right));
-                if value < lo || value > hi {
-                    return Err(format!(
-                        "named event array index for `{}` in `{scope_path}` is out of range",
-                        self.node(target.declaration).name
-                    ));
-                }
-                let offset = if left >= right {
-                    i128::from(left) - value
-                } else {
-                    value - i128::from(left)
-                } as u64;
-                let extent = (i64::from(left) - i64::from(right)).unsigned_abs() + 1;
-                linear = linear
-                    .checked_mul(extent)
-                    .and_then(|value| value.checked_add(offset))
-                    .ok_or_else(|| {
+            let dims = metadata
+                .dimensions()
+                .iter()
+                .map(|bounds| {
+                    bounds.ok_or_else(|| {
                         format!(
-                            "named event array index for `{}` in `{scope_path}` is too large",
+                            "named event array `{}` in `{scope_path}` has unresolved bounds",
                             self.node(target.declaration).name
                         )
-                    })?;
-            }
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let linear = self.event_array_offset(scope_path, target, &dims)?;
             return self
                 .event_elements
                 .get(&(target.declaration, linear))
@@ -674,6 +859,19 @@ impl<'a> Codegen<'a> {
         target: &EventTarget,
         scope_path: &str,
     ) -> Result<IrEventRef, String> {
+        if let Some((predicate, then, otherwise)) =
+            self.lower_native_conditional_parts(scope_path, target.declaration, is_event_shape)?
+        {
+            // An ambiguous predicate yields the common event of the operands
+            // or null (11.4.11, decision SD10-D3).
+            let then = self.lower_event_identity(scope_path, then)?;
+            let otherwise = self.lower_event_identity(scope_path, otherwise)?;
+            return Ok(IrEventRef::Handle(Box::new(IrChandleExpr::Conditional {
+                predicate: Box::new(predicate),
+                then: Box::new(then),
+                otherwise: Box::new(otherwise),
+            })));
+        }
         if self.event_function_call(target.declaration) {
             if !target.indices.is_empty() {
                 return Err(format!(
@@ -705,6 +903,13 @@ impl<'a> Codegen<'a> {
         if let Some(access) = target.access {
             if let Some(event) = self.virtual_event_ref(scope_path, access)? {
                 return Ok(event);
+            }
+            if let Some(container) = self.container_of_select(access, target.declaration) {
+                return Ok(IrEventRef::Handle(Box::new(self.container_event_handle(
+                    scope_path,
+                    container.ir,
+                    &target.indices,
+                )?)));
             }
             if !target.indices.is_empty() {
                 return Err(format!(
@@ -744,16 +949,7 @@ impl<'a> Codegen<'a> {
             }
             return Ok(event.clone());
         }
-        let container = target
-            .via
-            .and_then(|via| match self.kind(via) {
-                NodeKind::Expr(ExprKind::ArraySelect { base, .. }) => {
-                    self.container_of_select(via, *base)
-                }
-                _ => self.container_of(via),
-            })
-            .or_else(|| self.container_globals.get(&target.declaration).cloned());
-        if let Some(container) = container {
+        if let Some(container) = self.container_globals.get(&target.declaration).cloned() {
             return Ok(IrEventRef::Handle(Box::new(self.container_event_handle(
                 scope_path,
                 container.ir,

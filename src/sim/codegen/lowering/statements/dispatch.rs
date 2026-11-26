@@ -14,7 +14,6 @@ struct StatementEntry {
     /// The enclosing statement's preludes.
     saved: Option<Vec<IrStmt>>,
     saved_mailbox: Option<(NodeId, Vec<IrStmt>)>,
-    saved_rand: Option<(NodeId, Vec<IrStmt>)>,
     outer: Option<Vec<IrStmt>>,
     hoisted: Result<Vec<IrStmt>, String>,
     /// Copies of staged element members, in and out.
@@ -86,21 +85,6 @@ impl EmitCtx<'_, '_> {
             &mut self.cg.mailbox_statement_prelude,
             mailbox_hoist.then(|| (h, Vec::new())),
         );
-        // A value-form randomize call runs before a statement that evaluates
-        // it exactly once (IEEE 1800-2009 18.6.1).
-        let rand_hoist = match self.cg.kind(h) {
-            NodeKind::Stmt(StmtKind::Assign { .. })
-            | NodeKind::Stmt(StmtKind::IfElse { .. })
-            | NodeKind::Stmt(StmtKind::Return { .. })
-            | NodeKind::Stmt(StmtKind::VariableDecl { .. })
-            | NodeKind::SysCall { .. } => true,
-            NodeKind::Stmt(StmtKind::ImmediateAssertion { deferred, .. }) => !deferred,
-            _ => false,
-        };
-        let saved_rand = std::mem::replace(
-            &mut self.cg.rand_prelude,
-            rand_hoist.then(|| (h, Vec::new())),
-        );
         let outer = self.cg.record_binding_declarations.replace(Vec::new());
         // Queue and dynamic-array members of container record elements are
         // staged around statements that evaluate their operands once.
@@ -130,7 +114,6 @@ impl EmitCtx<'_, '_> {
             receiver_roots,
             saved,
             saved_mailbox,
-            saved_rand,
             outer,
             hoisted,
             staged,
@@ -150,7 +133,6 @@ impl EmitCtx<'_, '_> {
             receiver_roots,
             saved,
             saved_mailbox,
-            saved_rand,
             outer,
             hoisted,
             staged,
@@ -170,7 +152,6 @@ impl EmitCtx<'_, '_> {
         let prelude = std::mem::replace(&mut self.cg.container_call_prelude, saved);
         let mailbox_prelude =
             std::mem::replace(&mut self.cg.mailbox_statement_prelude, saved_mailbox);
-        let rand_prelude = std::mem::replace(&mut self.cg.rand_prelude, saved_rand);
         let mut statements = lowered?;
         // An operand reached by another path than the expression lowering
         // would read a handle local that was never set.
@@ -182,10 +163,6 @@ impl EmitCtx<'_, '_> {
                     self.path
                 )));
             }
-        }
-        if let Some((_, mut prelude)) = rand_prelude.filter(|(_, prelude)| !prelude.is_empty()) {
-            prelude.append(&mut statements);
-            statements = prelude;
         }
         if let Some(mut prelude) = prelude.filter(|prelude| !prelude.is_empty()) {
             prelude.append(&mut statements);

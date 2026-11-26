@@ -768,6 +768,8 @@ typedef struct {
     // Set from init until llg_rt_run starts: the static schedule, where no
     // process exists, so a fork there has no parent (SV 13.4.4).
     int32_t static_init_phase;
+    // A $finish or $fatal a static initializer executed.
+    int32_t init_finish_called;
     int32_t static_spawn_reported;
     // simulator.index_checks (LLG_INDEX_CHECKS), on unless set to `off`.
     int32_t index_checks;

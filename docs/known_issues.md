@@ -599,8 +599,8 @@ Queue, dynamic and associative members of records
 (`struct { string s; int q[$]; }`) are their own containers in module and
 static records and travel as companion containers of subroutine record values
 (formals, results, automatic and static locals): methods, selects, `foreach`,
-whole-record copies, ports, conditionals, equality (except associative
-members) and assignment patterns work. As elements of queues, dynamic,
+whole-record copies, ports, conditionals, equality and assignment patterns
+work. As elements of queues, dynamic,
 associative and fixed arrays such records keep queue and dynamic-array
 members inside each element value: whole-element copies, calls and
 equality work, and assignment, call and system-task statements that name an
@@ -619,8 +619,7 @@ evaluation); instance class properties of a record type with container
 members (instance properties of records with string, real or handle members
 are one value per object, records of integral leaves are fixed-width
 properties, SIM-011, and static record properties are stored like package
-records); equality of records with an associative member (and conditionals
-with an ambiguous predicate on such records);
+records);
 a run-time selection among more than 4,096 leaves of a module record
 (`NATIVE_MEMBER_SELECT_LIMIT`), and among more than 256 whole records of any
 record (`NATIVE_RECORD_SELECT_LIMIT`); a task waiting on a `ref` formal bound
@@ -2572,31 +2571,109 @@ reads per bound instance.
 
 `tests/fixtures/sim/feature_completion/sim_099/neg_vif_sensitivity_*.sv`.
 
-## Event forms through virtual interfaces
+## Arrays of interface instances of several dimensions as values
 
-**Status:** open. Both forms reject with a located diagnostic.
+**Status:** open. Each form rejects with a located diagnostic.
 
 ### Symptom
 
-An element of an event array of the interface (`-> v.ea[1]`, "cannot resolve
-named event expression") and an assignment to an event of the interface
-(`v.ie = e`, "event property `ie` has no class layout"). An event of an
-interface type without an instance, which no handle can bind, rejects like the
-former.
+An array of interface instances with two or more dimensions, or a port of such a
+type, as a value (`v = i` with `virtual ifc v[2][2]`), and a row of one
+(`v[0] = i[1]`). A pattern of the elements works.
 
 ### Cause
 
-A descriptor has one event slot per named event and clocking block; the slots
-are read only and have no index.
+The owned database lists the instances of every dimension as one list, without
+the ranges of the inner dimensions.
 
 ### Intended direction
 
-Give event arrays indexed slots and event assignments the slot's address.
+Keep one node per dimension with its range and its rows.
 
 ### Reproduce
 
-`tests/fixtures/sim/virtual_interfaces/neg_event_array_trigger.sv` and
-`neg_event_assignment.sv`.
+`tests/fixtures/sim/virtual_interfaces/neg_interface_array_2d.sv`.
+
+## Event forms through virtual interfaces
+
+**Status:** open. Each form rejects with a located diagnostic.
+
+### Symptom
+
+An element of an event array of the interface as an output, inout or `ref`
+actual (`t(v.ea[1])`), a resizable event container of the interface, and an
+event of an interface type without an instance, which no handle can bind. An
+element of an event container property as such an actual (`t(h.ea[1])`) rejects
+too.
+
+### Cause
+
+An element is selected where an operation is issued, per bound instance; such an
+actual needs the address of a handle.
+
+### Intended direction
+
+Give event arrays indexed slots in the descriptor.
+
+### Reproduce
+
+`tests/fixtures/sim/virtual_interfaces/neg_event_array_actual.sv`.
+
+## String and handle members through virtual interfaces
+
+**Status:** open. Each use rejects with a located diagnostic.
+
+### Symptom
+
+A string variable or a class handle of an interface used through a virtual
+interface (`v.name = "x"`) rejects with "member `name` of virtual interface
+`bus_if` is a string or a handle". The interface's other members stay
+reachable through the virtual interface, and the member through the instance
+works.
+
+### Cause
+
+The virtual interface descriptor holds packed and real signal slots; such a
+member has no signal.
+
+### Intended direction
+
+Native slots in the descriptor, as unpacked members get (the follow-up of
+sim-defects-10 item 3).
+
+### Reproduce
+
+`tests/fixtures/sim/virtual_interfaces/neg_string_member.sv`.
+
+## Remaining items of unpacked array concatenations
+
+**Status:** open. Each form rejects with a located diagnostic.
+
+### Symptom
+
+As an item of an unpacked array concatenation (SV 10.10): a dense fixed array
+of reals, events or rows (an item of a queue of fixed arrays); a queue or
+dynamic array that is an element of a container (`{qq[1], 0}`, also as one
+element of a queue of queues); an array of rows into a queue of queues
+(`qq = {m, q}` with `int m[2][2]`); an unpacked member through a virtual
+interface; an item of a run-time size into a fixed target of two dimensions,
+a real fixed target or an associative-array element. A whole assignment of
+such an array to a queue (`rq = r2`) rejects too.
+
+### Cause
+
+An array item is copied into a temporary queue through the whole-array
+assignment of its kind; these kinds have none yet.
+
+### Intended direction
+
+Element-wise copies for real and row arrays; the in-place alias of a nested
+container element as a queue source.
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_006/array_concatenation.sv` holds
+the supported forms; the forms above reject at the item.
 
 ## Modport expression ports through virtual interfaces
 
@@ -3272,10 +3349,8 @@ these forms remain outside them.
   Every object a randomize call reaches evaluates its own functions, also
   objects of the randomized class and the randomized object reached again
   through a ring, and a scalar handle receiver (`next.f(x)`) works.
-- A `randomize()` call used as a value works in assignments, `if` conditions,
-  `return`, declarations, system-task arguments, immediate assertions, loop
-  headers and short-circuit or conditional operands of those. Elsewhere (a
-  `wait` condition, an event control) it rejects.
+- A `randomize()` call in a `wait` condition, an event control or outside
+  procedural code rejects.
 - When the exact model and rejection sampling both exceed their budgets, the
   CDCL search returns a legal solution that is not uniformly distributed
   (S29-D10), against 18.5.9 L30013-30014; the fallbacks also ignore dist
@@ -4237,36 +4312,28 @@ was compared, and leave those whose place is gone where they were.
 Save a file with an error whose analysis takes a second, insert a line above the
 error within that second and read `textDocument/publishDiagnostics`.
 
-## Event arrays declared in subroutines and fixed event arrays in blocks
+## Queues and arrays of event queues
 
-**Status:** open; rejected with located diagnostics (CODEGEN-001, CODEGEN-009).
+**Status:** open; rejected with a located diagnostic (CODEGEN-009).
 
 ### Symptom
 
-`task automatic t(); event te[2] = '{a, b}; ... endtask` (any event array of a
-subroutine) reports "subroutine event `te` ... with unpacked dimensions is not
-supported"; a fixed event array declared in a procedural block reports
-"unsupported procedural loop declaration ... (node kind NamedEvent)"; and a
-queue or array whose elements are event queues (`event w[$][$]`) reports
-"event container element ... requires an event handle or null" wherever it is
-declared. Event arrays of modules and classes, with or without an initializer,
-and queues and dynamic arrays of events in procedural blocks work.
+A queue, dynamic or associative array whose elements are themselves event
+queues or arrays (`event w[$][$]`, `event d[2][$]`) reports "event container
+element ... requires an event handle or null" wherever it is declared.
+Event arrays of one container level, and fixed event arrays, work.
 
 ### Cause
 
-Subroutine declarations lower every named event as a scalar event; block
-fixed event arrays have no storage of their own; event containers hold only
-handles, not nested containers.
+Event containers hold only event handles, not nested containers.
 
 ### Intended direction
 
-Give subroutine and block event arrays container storage declared and
-initialized at entry like other procedural containers, and let event
-containers nest.
+Let an event container nest like containers of other element types.
 
 ### Reproduce
 
-`task automatic t(); event te[2]; -> te[0]; endtask`
+`event a; event w[$][$]; initial w.push_back({a});`
 
 ## Fixed arrays of containers: element patterns, equality and concatenation
 
@@ -4298,32 +4365,6 @@ it, and lower these forms on the temporary.
 
 `int q[2][$]; initial begin q[0] = '{1}; q[1] = '{1}; $display(q[0] == q[1]);
 end`
-
-## Ports that are arrays of interfaces
-
-**Status:** open; rejected with a located diagnostic (CODEGEN-001).
-
-### Symptom
-
-A module port declared as an array of interface instances (`module sub(ifc
-p[2])`) connected to an interface array reports "unsupported executable node
-`owned node kind Other` in `tb.s.p`" at the port, whatever the module does with
-it. Single interface ports and virtual interface arrays work.
-
-### Cause
-
-The import connects such a port to a placeholder without a parent for the
-interface array, and nothing lowers it.
-
-### Intended direction
-
-Connect the port to the elements of the actual interface array, as a
-connection of each element to an interface port is.
-
-### Reproduce
-
-`interface ifc; int d; endinterface module sub(ifc p[2]); initial #1
-$display("%0d", p[1].d); endmodule module tb; ifc i[2](); sub s(i); endmodule`
 
 ## Automatic block variables captured by a fork that runs again
 

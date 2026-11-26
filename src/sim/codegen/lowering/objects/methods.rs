@@ -127,7 +127,7 @@ impl Codegen<'_> {
                     "process method `{name}` inside a function body in `{path}` is not supported"
                 ));
             }
-            let target = self.lower_process(path, receiver)?;
+            let target = self.process_receiver(path, node, receiver, &name)?;
             return match name.as_str() {
                 "kill" => Ok(IrStmt::Object(Box::new(IrObjectStmt::ProcessControl {
                     op: IrProcessControl::Kill,
@@ -182,7 +182,7 @@ impl Codegen<'_> {
             } else {
                 IrProcessRandom::SetState(self.lower_string(path, *argument)?)
             };
-            let target = self.lower_process(path, receiver)?;
+            let target = self.process_receiver(path, node, receiver, &name)?;
             return Ok(IrStmt::Object(Box::new(IrObjectStmt::ProcessRandom {
                 target,
                 op,
@@ -199,7 +199,13 @@ impl Codegen<'_> {
                     ))
                 }
             };
-            let receiver = self.lower_chandle(path, receiver)?;
+            let receiver = self.synchronization_receiver(
+                path,
+                node,
+                receiver,
+                IrSynchronization::Semaphore,
+                &name,
+            )?;
             return match name.as_str() {
                 "put" => Ok(IrStmt::Object(Box::new(IrObjectStmt::SemaphorePut(
                     receiver, keys,

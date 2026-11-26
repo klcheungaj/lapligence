@@ -74,7 +74,7 @@ A failed null class or virtual-interface access is fatal at once (S99-D8; a
 virtual-interface failure skips the final procedures, a class one runs them,
 S99-D11):
 inside a statement, the owned emitter checks the access result and leaves the
-process (`LLG_CO_EXIT_CHECK`, or `goto _llg_return` in plain functions) before
+process (a coroutine exit, or `goto _llg_return` in plain functions) before
 the rest of the statement, and checks the exit flag after a plain or dispatched
 call whose effects include `Terminate`. The checks sit on the failure branch, so
 code without such accesses or calls is unchanged.

@@ -239,7 +239,7 @@ impl Codegen<'_> {
     ) -> IrChandleExpr {
         for (interface, slot) in nested {
             let name = &self.model.virtual_interfaces[*interface].nested[*slot].name;
-            let site = self.source_site(
+            let site = self.required_site(
                 &format!("virtual interface nested instance `{name}`"),
                 path,
                 node,
@@ -318,6 +318,13 @@ impl Codegen<'_> {
                              whole-array or slice use, or a use in an event control or wait, \
                              is not supported in `{path}`"
                         ),
+                    )
+                } else if self
+                    .virtual_interface_unvalued
+                    .contains(&(descriptor, member.clone()))
+                {
+                    format!(
+                        "member `{member}` of virtual interface `{spelling}` is a string or a handle, which is not supported through a virtual interface in `{path}`"
                     )
                 } else if view_port {
                     // A view port without interface storage of its own is a
@@ -410,7 +417,7 @@ impl Codegen<'_> {
         else {
             return Ok(None);
         };
-        let site = self.source_site("virtual interface member access", path, node);
+        let site = self.required_site("virtual interface member access", path, node);
         let name = self.native_access_symbol_at(
             handle,
             crate::sim::ir::IrNativeAccessKind::InterfaceMember {
@@ -437,7 +444,7 @@ impl Codegen<'_> {
         else {
             return Ok(None);
         };
-        let site = self.source_site("virtual interface member access", path, node);
+        let site = self.required_site("virtual interface member access", path, node);
         let name = self.native_access_symbol_at(
             handle,
             crate::sim::ir::IrNativeAccessKind::InterfaceMember {
@@ -475,6 +482,16 @@ pub(in super::super) struct VirtualInterfaceMemberPath {
     view_port: bool,
 }
 
+/// A fixed event array, or an element or row of one, reached through a
+/// virtual-interface handle.
+struct VirtualEventArray {
+    member_path: NodeId,
+    target: VirtualInterfaceMemberPath,
+    /// The array's declaration in each instance, by instance index.
+    arrays: Vec<NodeId>,
+    indices: Vec<NodeId>,
+}
+
 /// An element of an unpacked array member reached through a
 /// virtual-interface handle (`v.mem[i]`; SV 25.9). The member's array in
 /// every instance the descriptor can bind is listed by instance index, so an
@@ -501,14 +518,15 @@ pub(in super::super) struct VirtualInterfaceArrayElement {
 }
 
 impl Codegen<'_> {
-    /// The array of unpacked member `member` in every instance bound to
-    /// descriptor `descriptor`, by instance index, or `None` when the member
-    /// is not an unpacked array of the bound instances.
-    fn virtual_interface_array_members(
+    /// What `declared` gives for member `member` in every instance bound to
+    /// descriptor `descriptor`, by instance index, or `None` when it gives
+    /// nothing for one of them.
+    fn virtual_interface_declarations<T>(
         &self,
         descriptor: usize,
         member: &str,
-    ) -> Option<Vec<ArrayInfo>> {
+        declared: impl Fn(NodeId) -> Option<T>,
+    ) -> Option<Vec<T>> {
         let mut bound = self
             .virtual_interface_instances
             .iter()
@@ -532,9 +550,47 @@ impl Codegen<'_> {
                     .iter()
                     .copied()
                     .filter(|child| self.node(*child).name == member)
-                    .find_map(|child| self.array_globals.get(&child).cloned())
+                    .find_map(&declared)
             })
             .collect()
+    }
+
+    /// The array of unpacked member `member` in every instance bound to
+    /// descriptor `descriptor`, by instance index, or `None` when the member
+    /// is not an unpacked array of the bound instances.
+    fn virtual_interface_array_members(
+        &self,
+        descriptor: usize,
+        member: &str,
+    ) -> Option<Vec<ArrayInfo>> {
+        self.virtual_interface_declarations(descriptor, member, |child| {
+            self.array_globals.get(&child).cloned()
+        })
+    }
+
+    /// The member path (`v.mem`) below an element select whose base the
+    /// frontend names as `base`: the path itself, or the structural operand
+    /// of the innermost select when `base` is the member declaration.
+    fn select_member_path(&self, node: NodeId, base: NodeId) -> Option<NodeId> {
+        if matches!(self.kind(base), NodeKind::Expr(ExprKind::HierPath { .. })) {
+            return Some(base);
+        }
+        let mut current = node;
+        loop {
+            let next = self.node(current).children.iter().copied().find(|child| {
+                match self.kind(*child) {
+                    NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+                        refs.last().copied().flatten() == Some(base)
+                    }
+                    NodeKind::Expr(ExprKind::ArraySelect { base: inner, .. }) => *inner == base,
+                    _ => false,
+                }
+            })?;
+            if matches!(self.kind(next), NodeKind::Expr(ExprKind::HierPath { .. })) {
+                return Some(next);
+            }
+            current = next;
+        }
     }
 
     /// Resolve `v.mem[i]` or `v.mem[i][b]`: an element (or a packed select
@@ -574,37 +630,8 @@ impl Codegen<'_> {
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => (*base, indices.clone()),
             _ => return Ok(None),
         };
-        let base = declaration;
-        // The select names the member declaration as its base; the path
-        // through the handle is its structural operand, below the inner
-        // selects of a multidimensional element select.
-        let base = if matches!(self.kind(base), NodeKind::Expr(ExprKind::HierPath { .. })) {
-            base
-        } else {
-            let mut current = node;
-            loop {
-                let next = self.node(current).children.iter().copied().find(|child| {
-                    match self.kind(*child) {
-                        NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
-                            refs.last().copied().flatten() == Some(base)
-                        }
-                        NodeKind::Expr(ExprKind::ArraySelect { base: inner, .. }) => *inner == base,
-                        _ => false,
-                    }
-                });
-                match next {
-                    Some(child)
-                        if matches!(
-                            self.kind(child),
-                            NodeKind::Expr(ExprKind::HierPath { .. })
-                        ) =>
-                    {
-                        break child;
-                    }
-                    Some(child) => current = child,
-                    None => return Ok(None),
-                }
-            }
+        let Some(base) = self.select_member_path(node, declaration) else {
+            return Ok(None);
         };
         let Some(target) = self.virtual_interface_member_path(path, base, write)? else {
             return Ok(None);
@@ -661,7 +688,7 @@ impl Codegen<'_> {
             ));
         }
         let handle = self.virtual_interface_handle(path, base, &target)?;
-        let site = self.source_site("virtual interface member access", path, node);
+        let site = self.required_site("virtual interface member access", path, node);
         let key = (target.handle, self.virtual_interface_key_member(&target));
         Ok(Some(VirtualInterfaceArrayElement {
             handle,
@@ -821,6 +848,144 @@ impl Codegen<'_> {
         })
     }
 
+    /// The fixed event array `node` names or selects from through a
+    /// virtual-interface handle (`v.ea`, `v.ea[i]`).
+    fn virtual_event_array(&self, node: NodeId) -> Option<VirtualEventArray> {
+        let (member_path, indices) = match self.kind(node) {
+            NodeKind::Expr(ExprKind::HierPath { .. }) => (node, Vec::new()),
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+                (self.select_member_path(node, *base)?, indices.clone())
+            }
+            NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
+                (self.select_member_path(node, *base)?, vec![*index])
+            }
+            _ => return None,
+        };
+        let target = self
+            .virtual_interface_member_path("", member_path, false)
+            .ok()
+            .flatten()?;
+        let arrays =
+            self.virtual_interface_declarations(target.descriptor, &target.member, |child| {
+                self.event_arrays.contains_key(&child).then_some(child)
+            })?;
+        Some(VirtualEventArray {
+            member_path,
+            target,
+            arrays,
+            indices,
+        })
+    }
+
+    /// Whether `node` names an event, or a fixed event array or an element
+    /// of one, through a virtual-interface handle.
+    pub(in super::super) fn is_virtual_event(&self, node: NodeId) -> bool {
+        self.virtual_event_member(node).is_some() || self.virtual_event_array(node).is_some()
+    }
+
+    /// For each instance that the handle of `array` can bind: whether it is
+    /// the bound one, and the event or events `array` names there.
+    fn virtual_event_arms(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        array: &VirtualEventArray,
+    ) -> Result<Vec<(IrExpr, EventTarget)>, String> {
+        let handle = self.virtual_interface_handle(path, array.member_path, &array.target)?;
+        let site = self.required_site("virtual interface event", path, node);
+        Ok(array
+            .arrays
+            .iter()
+            .enumerate()
+            .map(|(instance, declaration)| {
+                let bound = IrExpr::new(
+                    IrExprKind::ObjectQuery(Box::new(IrObjectQuery::VirtualInterfaceInstance {
+                        handle: handle.clone(),
+                        interface: array.target.descriptor,
+                        site: site.clone(),
+                    })),
+                    32,
+                    false,
+                    None,
+                );
+                let selected = IrExpr::new(
+                    IrExprKind::Bin {
+                        op: IrBinOp::Eq,
+                        a: Box::new(bound),
+                        b: Box::new(lhs_integer_expr(instance as i128)),
+                    },
+                    1,
+                    false,
+                    None,
+                );
+                let target = EventTarget {
+                    declaration: *declaration,
+                    indices: array.indices.clone(),
+                    access: None,
+                };
+                (selected, target)
+            })
+            .collect())
+    }
+
+    /// The assignment of `source` to the fixed event array, or element or
+    /// row of one, that `node` names through a virtual interface, in the
+    /// instance bound when it executes; `None` when `node` names none.
+    pub(in super::super) fn virtual_event_assignment(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        source: NodeId,
+    ) -> Result<Option<IrStmt>, String> {
+        if let Some(array) = self.virtual_event_array(node) {
+            self.virtual_interface_member_path(path, array.member_path, true)?;
+            let mut statement = IrStmt::Nop;
+            for (selected, target) in self
+                .virtual_event_arms(path, node, &array)?
+                .into_iter()
+                .rev()
+            {
+                let assignment = if self.event_array_elements(path, &target)?.is_some() {
+                    self.event_array_assignment(path, &target, source)?
+                } else {
+                    IrStmt::EventAssign {
+                        target: self.event_ref_of(&target, path)?,
+                        source: self.lower_event_source(path, source)?,
+                    }
+                };
+                statement = IrStmt::If {
+                    cond: selected,
+                    then_: vec![assignment],
+                    els: Some(vec![statement]),
+                    check: crate::sim::ir::IrUniquePriorityCheck::None,
+                };
+            }
+            return Ok(Some(statement));
+        }
+        Ok(None)
+    }
+
+    /// The handle storage of the event `node` names through a virtual
+    /// interface, for an assignment or an output, inout or `ref` actual;
+    /// `None` when `node` names none or an event array.
+    pub(in super::super) fn virtual_event_slot(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<String>, String> {
+        if self.virtual_event_array(node).is_some() {
+            return Ok(None);
+        }
+        let Some(IrEventRef::Handle(handle)) = self.virtual_event_ref(path, node)? else {
+            return Ok(None);
+        };
+        self.virtual_interface_member_path(path, node, true)?;
+        match *handle {
+            IrChandleExpr::LocalRead(slot) => Ok(Some(slot)),
+            _ => Ok(None),
+        }
+    }
+
     /// The event `node` names through a virtual interface: the handle selects
     /// the descriptor's event slot of the bound instance where the operation
     /// is issued.
@@ -829,6 +994,22 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<Option<IrEventRef>, String> {
+        if let Some(array) = self.virtual_event_array(node) {
+            let mut event = IrChandleExpr::Null;
+            for (selected, target) in self
+                .virtual_event_arms(path, node, &array)?
+                .into_iter()
+                .rev()
+            {
+                let element = self.event_ref_of(&target, path)?;
+                event = IrChandleExpr::Conditional {
+                    predicate: Box::new(selected),
+                    then: Box::new(IrChandleExpr::EventObject(Box::new(element))),
+                    otherwise: Box::new(event),
+                };
+            }
+            return Ok(Some(IrEventRef::Handle(Box::new(event))));
+        }
         let Some((target, event)) = self.virtual_event_member(node) else {
             return Ok(None);
         };
@@ -839,7 +1020,7 @@ impl Codegen<'_> {
         } else {
             "virtual interface event"
         };
-        let site = self.source_site(kind, path, node);
+        let site = self.required_site(kind, path, node);
         let name = self.native_access_symbol_at(
             handle,
             crate::sim::ir::IrNativeAccessKind::InterfaceEvent {
@@ -1006,7 +1187,7 @@ impl Codegen<'_> {
                 })?;
             instances.push(concrete);
         }
-        let site = self.source_site("virtual interface clocking drive", path, lhs);
+        let site = self.required_site("virtual interface clocking drive", path, lhs);
         Ok(Some(VirtualClockingTarget {
             handle,
             descriptor,

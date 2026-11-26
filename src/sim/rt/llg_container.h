@@ -1272,6 +1272,13 @@ struct llg_nested_assoc_t {
     } array;
 };
 
+/* As llg_dyn_equal; the arrays hold the same keys with equal elements. */
+sv4_t llg_assoc_equal(const llg_assoc_t* a, const llg_assoc_t* b,
+                      int32_t case_equality, int32_t negate);
+sv4_t llg_assoc_value_equal(const llg_assoc_value_t* a,
+                            const llg_assoc_value_t* b, int32_t case_equality,
+                            int32_t negate);
+
 llg_nested_assoc_t* llg_nested_assoc_new(const llg_value_desc_t* desc);
 llg_nested_assoc_t* llg_nested_assoc_clone(const llg_nested_assoc_t* source);
 void llg_nested_assoc_release(llg_nested_assoc_t* nested);
@@ -1279,6 +1286,10 @@ size_t llg_nested_assoc_size(const llg_nested_assoc_t* nested);
 /* Whether two arrays hold equal keys and elements; null is empty. */
 int32_t llg_nested_assoc_equal(const llg_nested_assoc_t* a,
                            const llg_nested_assoc_t* b);
+/* SystemVerilog equality (LLG_VALUE_EQUAL and friends); null is empty. */
+int32_t llg_nested_assoc_equality(const llg_nested_assoc_t* a,
+                                  const llg_nested_assoc_t* b,
+                                  int32_t case_equality);
 void llg_nested_assoc_trace(const llg_nested_assoc_t* nested,
                             llg_value_visit_fn visit, void* context);
 /* Pin the array of the initialized element `value`, allocating a null one,

@@ -10,6 +10,19 @@ struct Message {
     native: Vec<NativeValue>,
 }
 
+/// The receiver of a method of a synchronization object.
+struct Receiver {
+    code: String,
+    /// What a null receiver fails, and the site, as C literals.
+    failure: Option<(&'static str, String)>,
+}
+
+impl std::fmt::Display for Receiver {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.code)
+    }
+}
+
 impl Frame<'_, '_> {
     pub(super) fn mailbox_handle(&mut self, expression: &IrMailboxExpr) -> Result<String, String> {
         Ok(match expression {
@@ -207,7 +220,8 @@ impl Frame<'_, '_> {
             SemaphoreTryGet(handle, keys) => {
                 let handle = self.receiver(handle)?;
                 let keys = self.expression(keys)?;
-                let status = self.scalar(
+                let status = self.method_value(
+                    &handle,
                     "int",
                     format!(
                         "llg_semaphore_try_get((llg_semaphore_t*){handle}, {})",
@@ -215,16 +229,15 @@ impl Frame<'_, '_> {
                     ),
                 );
                 self.discard(keys);
-                self.leave_after_null(&handle);
                 status
             }
             MailboxNum(handle) => {
                 let handle = self.receiver(handle)?;
-                let length = self.scalar(
+                let length = self.method_value(
+                    &handle,
                     "uint64_t",
                     format!("llg_mailbox_num((llg_mailbox_t*){handle})"),
                 );
-                self.leave_after_null(&handle);
                 length
             }
             MailboxEq(left, right) => {
@@ -235,7 +248,8 @@ impl Frame<'_, '_> {
             MailboxTryPut { mailbox, value } => {
                 let handle = self.receiver(mailbox)?;
                 let message = self.mailbox_message(value)?;
-                let status = self.scalar(
+                let status = self.method_value(
+                    &handle,
                     "int",
                     format!(
                         "llg_mailbox_try_put_value((llg_mailbox_t*){handle}, {})",
@@ -243,7 +257,6 @@ impl Frame<'_, '_> {
                     ),
                 );
                 self.release_message_operands(message);
-                self.leave_after_null(&handle);
                 status
             }
             MailboxTryGet {
@@ -253,14 +266,14 @@ impl Frame<'_, '_> {
             } => {
                 let handle = self.receiver(mailbox)?;
                 let target = self.mailbox_destination(target)?;
-                let status = self.scalar(
+                let status = self.method_value(
+                    &handle,
                     "int",
                     format!(
                         "llg_mailbox_try_get_value((llg_mailbox_t*){handle}, {target}, {})",
                         u8::from(*peek)
                     ),
                 );
-                self.leave_after_null(&handle);
                 status
             }
             _ => return Err(pending("object query ownership contract")),
@@ -278,15 +291,80 @@ impl Frame<'_, '_> {
     }
 
     /// The receiver of a method of a synchronization object, evaluated once.
-    fn receiver(&mut self, handle: &IrChandleExpr) -> Result<String, String> {
+    fn receiver(&mut self, handle: &IrChandleExpr) -> Result<Receiver, String> {
+        let (handle, failure) = match handle {
+            IrChandleExpr::RequiredSynchronization {
+                handle,
+                object,
+                site,
+            } => {
+                let failure = match object {
+                    IrSynchronization::Mailbox => "null mailbox handle access",
+                    IrSynchronization::Semaphore => "null semaphore handle access",
+                };
+                (handle.as_ref(), Some((failure, c_string_literal(site))))
+            }
+            handle => (handle, None),
+        };
         let handle = self.chandle(handle)?;
-        Ok(self.scalar("void*", handle))
+        Ok(Receiver {
+            code: self.scalar("void*", handle),
+            failure,
+        })
     }
 
-    /// Leave after a method call whose null receiver the runtime reported
-    /// (SV 8.4).
-    fn leave_after_null(&mut self, receiver: &str) {
-        self.exit_on_failed_access(&format!("!{receiver}"));
+    /// Report a null receiver (SV 8.4) and leave; where code cannot leave,
+    /// the C expression that stands for the method of one.
+    fn test_receiver(&mut self, receiver: &Receiver) -> Option<String> {
+        let report = receiver
+            .failure
+            .as_ref()
+            .filter(|_| !self.quiet_receivers)
+            .map(|(failure, site)| format!("llg_rt_failed_access(\"{failure}\", {site})"));
+        match (self.failed_access_exit(), report) {
+            (Some(exit), Some(report)) => {
+                self.line(format!(
+                    "if (LLG_CO_UNLIKELY(!{receiver})) {{ {report}; {} }}",
+                    exit.leave()
+                ));
+                None
+            }
+            (_, Some(report)) => Some(format!("({report}, 0)")),
+            (_, None) => Some("0".to_owned()),
+        }
+    }
+
+    /// The value of `call`, a method of `receiver`.
+    fn method_value(&mut self, receiver: &Receiver, ty: &str, call: String) -> String {
+        let code = match self.test_receiver(receiver) {
+            Some(otherwise) => format!("LLG_CO_LIKELY({receiver}) ? {call} : {otherwise}"),
+            None => call,
+        };
+        self.scalar(ty, code)
+    }
+
+    /// The statement `call`, a method of `receiver`.
+    fn method_statement(&mut self, receiver: &Receiver, call: &str) {
+        let code = match self.test_receiver(receiver) {
+            Some(otherwise) => {
+                format!("if (LLG_CO_LIKELY({receiver})) {call}; else (void){otherwise};")
+            }
+            None => format!("{call};"),
+        };
+        self.line(code);
+    }
+
+    /// The blocking method `arm` of `receiver`.
+    fn await_method(
+        &mut self,
+        operation: SuspensionOperation,
+        receiver: &Receiver,
+        arm: String,
+    ) -> Result<(), String> {
+        match &receiver.failure {
+            Some((failure, site)) => self.await_handle_arm(operation, &arm, failure, site),
+            None => self.await_arm(operation, arm),
+        }
     }
 
     pub(super) fn mailbox_statement(&mut self, statement: &IrObjectStmt) -> Result<(), String> {
@@ -300,14 +378,15 @@ impl Frame<'_, '_> {
                 let receiver = self.receiver(receiver)?;
                 let keys = self.expression(keys)?;
                 if matches!(statement, SemaphorePut(..)) {
-                    self.line(format!(
-                        "llg_semaphore_put((llg_semaphore_t*){receiver}, {});",
+                    let call = format!(
+                        "llg_semaphore_put((llg_semaphore_t*){receiver}, {})",
                         keys.code
-                    ));
-                    self.leave_after_null(&receiver);
+                    );
+                    self.method_statement(&receiver, &call);
                 } else {
-                    self.await_arm(
+                    self.await_method(
                         SuspensionOperation::SemaphoreGet,
+                        &receiver,
                         format!(
                             "llg_arm_semaphore_get(self, (llg_semaphore_t*){receiver}, {})",
                             keys.code
@@ -371,19 +450,16 @@ impl Frame<'_, '_> {
                 let target_ir = target;
                 let target = self.mailbox_destination(target)?;
                 if matches!(statement, MailboxTryGet(..) | MailboxTryGetLocal(..)) {
-                    self.line(format!(
-                        "(void)llg_mailbox_try_get_value((llg_mailbox_t*){mailbox}, {target}, {});",
+                    let call = format!(
+                        "(void)llg_mailbox_try_get_value((llg_mailbox_t*){mailbox}, {target}, {})",
                         u8::from(*peek)
-                    ));
-                    self.leave_after_null(&mailbox);
+                    );
+                    self.method_statement(&mailbox, &call);
                 } else {
-                    self.await_arm(
-                        SuspensionOperation::MailboxGet,
-                        format!(
+                    self.await_method(SuspensionOperation::MailboxGet, &mailbox, format!(
                             "llg_arm_mailbox_get_value(self, (llg_mailbox_t*){mailbox}, {target}, {})",
                             u8::from(*peek)
-                        ),
-                    )?;
+                        ))?;
                     // A destination that is not written at delivery is
                     // written on resume, so the write lands in live storage
                     // (SIM-017).
@@ -406,14 +482,15 @@ impl Frame<'_, '_> {
         let mailbox = self.receiver(mailbox)?;
         let message = self.mailbox_message(value)?;
         if attempt {
-            self.line(format!(
-                "(void)llg_mailbox_try_put_value((llg_mailbox_t*){mailbox}, {});",
+            let call = format!(
+                "(void)llg_mailbox_try_put_value((llg_mailbox_t*){mailbox}, {})",
                 message.code
-            ));
-            self.leave_after_null(&mailbox);
+            );
+            self.method_statement(&mailbox, &call);
         } else {
-            self.await_arm(
+            self.await_method(
                 SuspensionOperation::MailboxPut,
+                &mailbox,
                 format!(
                     "llg_arm_mailbox_put_value(self, (llg_mailbox_t*){mailbox}, {})",
                     message.code

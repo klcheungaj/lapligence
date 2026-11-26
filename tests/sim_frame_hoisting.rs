@@ -474,8 +474,10 @@ endmodule
     ] {
         assert!(emitted.contains(arm), "missing generated arm {arm}");
     }
+    // An arm that can fail reports on its exit branch (`LLG_CO_AWAIT_OR`).
     assert_eq!(
-        emitted.matches("LLG_CO_AWAIT(co, ch,").count(),
+        emitted.matches("LLG_CO_AWAIT(co, ch,").count()
+            + emitted.matches("LLG_CO_AWAIT_OR(co, ch,").count(),
         emitted.matches("llg_arm_").count(),
         "every emitted arm must have exactly one numbered await"
     );

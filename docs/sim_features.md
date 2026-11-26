@@ -349,7 +349,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   run-time error, `$finish` or `$fatal` under a static initializer is the
   same event as in a process: one that ends the run stops initialization at
   once, no procedure starts, and the run ends as from a process (final
-  procedures included, S22-D9); any other reports and the run goes on
+  procedures included after a `$finish` or `$fatal`, S22-D9, and not after an
+  error, SD10-D4); any other reports and the run goes on
   ([ki_static_init_errors](../tests/fixtures/sim/feature_completion/ki_static_init_errors/readme.md)). Modifying built-in methods on `const`
   variables and properties are located errors (S22-D4); an initialized block
   variable without `static`/`automatic` is accepted with a warning as static
@@ -425,7 +426,7 @@ Macros, includes and their edition-specific behavior are counted in §11.
   members. Queue, dynamic and associative members of records are their own
   containers in module/static records and companion containers of subroutine
   record values (methods, selects, `foreach`, deep whole-record copies, calls,
-  ports, member-wise equality except associative members, patterns).
+  ports, member-wise equality, patterns).
   Records with queue and dynamic-array members are also container and
   fixed-array elements (an element keeps them inside its value; statements
   naming an element's member stage it). Scalar members of a native record
@@ -558,9 +559,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
   containers through `this`, handle variables, handle formals and handle
   property chains, with per-object initializers; static ones anywhere); calls copy
   them in and out and pattern actuals build at the call. Unpacked array
-  concatenations (§10.10) assign element values to queues and dynamic
-  arrays, and queues also combine queues and queue slices
-  (`q = {q[1:$], x}`); array items assigned to a dynamic array reject. A
+  concatenations (§10.10) assign element values and arrays of any kind
+  (fixed, dynamic, queue, slices, rows, call results, members) to queues,
+  dynamic arrays and fixed arrays (`q = {q[1:$], fa, x}`); an item of a
+  run-time size into a fixed target is checked at run time. A
   whole fixed array of strings, handles or records assigned to a dynamic
   array copies element by element (SV §7.6, [ki_uvm_run](../tests/fixtures/sim/feature_completion/ki_uvm_run/readme.md)).
   Declaration initializers accept any whole-container source (`new[n]`,
@@ -1233,10 +1235,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   null and comparison execute. Nonblocking triggers name their event at issue
   and do not suspend the issuer; `.triggered` holds for the time step and is
   false for null (S14-D9); waiting on a null event ends the run (S14-D8);
-  scalar declaration initializers (an event or `null`) execute in every scope,
-  and initializers of module, package and class event arrays assign their
-  elements; event arrays declared in subroutines, and fixed ones in procedural
-  blocks, are located errors (known issue);
+  declaration initializers (an event, `null`, an event array) execute in every
+  scope, whole fixed event arrays assign and compare, and a conditional
+  operator selects an event (SD10-D3);
   events test false only when null; `wait_order` lets its
   first event use the triggered state, and a failure without an `else` is a
   run-time error that ends the run at once, without final procedures
@@ -2698,9 +2699,11 @@ These are bounded implementations, not full verification-infrastructure support.
   position that ends the run before the rest of the statement runs, without
   the final procedures (S99-D8)
   ([sim_012](../tests/fixtures/sim/feature_completion/sim_012/readme.md)).
-  An array of interface instances assigns and passes as an array of handles.
-  Named events of the bound instance trigger, wait and read `.triggered`
-  through a handle
+  An array of interface instances, an interface-array port or a slice of one
+  assigns and passes as an array of handles, leftmost element first (one
+  dimension; [known issue](known_issues.md#arrays-of-interface-instances-of-several-dimensions-as-values)).
+  Named events of the bound instance and elements of its event arrays trigger,
+  wait, read `.triggered` and are assigned through a handle
   ([virtual_interfaces](../tests/fixtures/sim/virtual_interfaces/readme.md),
   [known issue](known_issues.md#event-forms-through-virtual-interfaces)).
   Synchronous drives through handles, views, class properties and array

@@ -304,15 +304,7 @@ pub(super) fn render(
             negate,
         } => {
             let container = &ctx.model.containers[*left];
-            let function = match (&container.kind, container.element.is_packed()) {
-                (IrContainerKind::Dynamic, true) => "llg_dyn_equal",
-                (IrContainerKind::Dynamic, false) => "llg_dyn_value_equal",
-                (IrContainerKind::Queue { .. }, true) => "llg_queue_equal",
-                (IrContainerKind::Queue { .. }, false) => "llg_queue_value_equal",
-                (IrContainerKind::Associative { .. }, _) => {
-                    return Err("associative arrays have no whole-array equality".into())
-                }
-            };
+            let function = crate::sim::emit_c::containers::equality_function(container);
             format!(
                 "{function}(&{}, &{}, {}, {})",
                 name(frame, *left)?,

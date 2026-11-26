@@ -191,7 +191,8 @@ endmodule
     assert_eq!(
         model
             .lines()
-            .filter(|line| line.contains("llg_arm_mixed(") && line.trim_end().ends_with(", 2));"))
+            .filter(|line| line.contains("llg_arm_mixed(")
+                && line.contains(", 2), llg_rt_failed_access("))
             .count(),
         2,
         "each of the two @(a or ev) statements must lower to EXACTLY ONE \

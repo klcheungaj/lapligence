@@ -24,7 +24,7 @@ impl Codegen<'_> {
                 }
             }
             NodeKind::Var { .. } | NodeKind::Array { .. } => self.db.array_meta(node)?,
-            NodeKind::NamedEvent => self.db.event_array_meta(node)?,
+            NodeKind::NamedEvent => return self.db.event_array_meta(node).cloned(),
             _ => return None,
         };
         if matches!(meta.kind(), ArrayKind::Static) {
@@ -164,11 +164,6 @@ impl Codegen<'_> {
         };
         let name = self.node(node).name.clone();
         let element = if matches!(self.kind(node), NodeKind::NamedEvent) {
-            if meta.dimensions().len() > 1 {
-                return Err(format!(
-                    "multidimensional event array `{name}` in subroutine storage is not supported"
-                ));
-            }
             IrContainerElement::Event
         } else {
             let descriptor = self

@@ -252,8 +252,9 @@ impl Frame<'_, '_> {
             IrStmt::WaitEventTriggered { event, body } => {
                 let event = self.event_address(event)?;
                 let await_mark = self.cancellation_mark();
-                self.await_arm(
+                self.await_event_arm(
                     SuspensionOperation::EventTriggeredWait,
+                    "event wait",
                     format!("llg_arm_event_triggered(self, {event})"),
                 )?;
                 self.cancellation_check_covering(await_mark)?;
@@ -551,6 +552,8 @@ impl Frame<'_, '_> {
                     "event_local",
                     "{ llg_event_object_new() }".to_owned(),
                 );
+                // A declared event need not be used.
+                self.line(format!("(void){local};"));
                 self.event_bindings.insert(name, format!("&{local}"));
             }
             IrStmt::DeclLocal {
@@ -1355,8 +1358,9 @@ impl Frame<'_, '_> {
         };
         let success_flag = self.scalar("int", "0".to_owned());
         let await_mark = self.cancellation_mark();
-        self.await_arm(
+        self.await_event_arm(
             SuspensionOperation::WaitOrder,
+            "wait_order",
             format!(
                 "llg_arm_order(self, {list}, {}, &{success_flag})",
                 events.len()

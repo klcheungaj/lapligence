@@ -91,27 +91,33 @@ void llg_rt_fatal_typed(int32_t finish_number, const char* fmt,
     llg_fmt_args_destroy(args, n);
     llg_fatal_severity_ran = 1;
     llg_rt_finish_with_level(finish_number, location);
+    // A report without a scope is a run-time error's, not a $fatal's.
+    if (g.static_init_phase && (!scope || !scope[0])) g.init_finish_called = 0;
 }
 
-void llg_rt_null_handle(const char* site) {
-    const char* framed = strchr(site, LLG_RT_SITE_SEPARATOR);
-    if (!framed) {
-        llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "null class handle access: %s", site);
-        llg_rt_mark_failed();
-        llg_rt_fatal_typed(0, "null class handle access", NULL, 0, "", site);
-        return;
-    }
+static void failed_access(const char* failure, const char* access, size_t access_len,
+                          const char* site, const char* scope) {
     llg_report_t text;
     llg_report_t out;
     llg_report_init(&text);
     llg_report_init(&out);
-    llg_report_printf(&text, "null class handle access: %.*s", (int32_t)(framed - site), site);
+    llg_report_printf(&text, "%s: ", failure);
+    llg_report_bytes(&text, access, access_len);
     llg_rt_framed(&out, LLG_MSG_RUNTIME_ERROR, llg_msg_default_severity(LLG_MSG_RUNTIME_ERROR),
-                  framed + 1, NULL, text.data, text.len, NULL);
+                  site, scope, text.data, text.len, NULL);
     llg_report_free(&text);
     llg_report_emit(&out, stderr);
     llg_rt_mark_failed();
-    llg_rt_fatal_typed(0, "null class handle access", NULL, 0, "", framed + 1);
+    llg_rt_fatal_typed(0, failure, NULL, 0, scope, site);
+}
+
+void llg_rt_failed_access(const char* failure, const char* site) {
+    if (llg_rt_exiting()) return;
+    const char* framed = strchr(site, LLG_RT_SITE_SEPARATOR);
+    if (framed)
+        failed_access(failure, site, (size_t)(framed - site), framed + 1, "");
+    else
+        failed_access(failure, site, strlen(site), "", "");
 }
 
 uint64_t llg_rt_severity_count(int32_t severity) {

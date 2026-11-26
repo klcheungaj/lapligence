@@ -665,13 +665,34 @@ fn null_handle_accesses_stop_at_once() {
     let vif = "virtual interface access failed: virtual interface";
     let class = "null class handle access: property access";
     let cases = [
-        ("0", format!("{vif} member access at tb:33:14")),
-        ("1", format!("{vif} member access at tb:34:33")),
-        ("2", format!("{vif} member access at tb:35:14")),
-        ("3", format!("{vif} member access at tb:36:10")),
-        ("4", format!("{vif} member access at tb:37:10")),
-        ("5", format!("{vif} method call at tb:38:14")),
-        ("6", format!("{vif} member access at tb:27:12")),
+        (
+            "0",
+            format!("null_handle_access.sv:33:14 {vif} member access"),
+        ),
+        (
+            "1",
+            format!("null_handle_access.sv:34:33 {vif} member access"),
+        ),
+        (
+            "2",
+            format!("null_handle_access.sv:35:14 {vif} member access"),
+        ),
+        (
+            "3",
+            format!("null_handle_access.sv:36:10 {vif} member access"),
+        ),
+        (
+            "4",
+            format!("null_handle_access.sv:37:10 {vif} member access"),
+        ),
+        (
+            "5",
+            format!("null_handle_access.sv:38:14 {vif} method call"),
+        ),
+        (
+            "6",
+            format!("null_handle_access.sv:27:12 {vif} member access"),
+        ),
         ("7", format!("null_handle_access.sv:40:14 {class}")),
         ("8", format!("null_handle_access.sv:41:40 {class}")),
     ];

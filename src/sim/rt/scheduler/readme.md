@@ -136,7 +136,12 @@ coroutine storage: counted storage (process variables, by-value formals,
 container elements) retains and releases; plain handle storage (class
 properties, record leaves, non-input formals, results, fork-shared slots)
 holds `llg_process_pin`ned handles, whose pin `llg_rt_cleanup` drops. Process
-methods through a null handle and `await` on the caller are fatal. Normal process completion returns `LLG_CO_DONE`; terminating
+methods through a null handle and `await` on the caller are fatal.
+A null handle of a built-in class is reported once, where it is used, at the
+framed site generated code passes: generated code tests the receiver of a
+process, mailbox or semaphore method before the call; a blocking operation and
+an event wait test it and exit their arm, whose exit branch in the statement
+reports it (`LLG_CO_AWAIT_OR`). Normal process completion returns `LLG_CO_DONE`; terminating
 services set `chain.exiting` and the generated continuation returns
 `LLG_CO_EXIT` after unwinding its lexical scopes.
 

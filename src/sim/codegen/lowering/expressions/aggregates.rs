@@ -1298,15 +1298,6 @@ impl<'a> Codegen<'a> {
                         aggregate_path_suffix(&left.path)
                     ));
                 };
-                if matches!(
-                    self.model.containers[left_container.ir].kind,
-                    IrContainerKind::Associative { .. }
-                ) {
-                    return Err(format!(
-                        "equality of records with associative array member `{}` is not supported in `{path}` (associative array equality is not supported)",
-                        aggregate_path_suffix(&left.path)
-                    ));
-                }
                 // SV 7.2.2, 7.10: members compare element-wise.
                 IrExpr::new(
                     IrExprKind::Container(Box::new(IrContainerExpr::Equal {

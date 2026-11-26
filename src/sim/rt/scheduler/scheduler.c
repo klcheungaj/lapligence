@@ -483,6 +483,9 @@ void llg_rt_run(void) {
     // coroutine untouched when an embedding probes the runtime again.
     if (g.suspended) return;
     g.static_init_phase = 0;
+    // Final procedures follow a $finish (SV 9.2.3), $fatal's included (20.9);
+    // a run-time error that ended static initialization calls none (SD10-D4).
+    if (g.finish && llg_last_failure && !g.init_finish_called) llg_rt_skip_finals();
     llg_init_processes_finish();
     if (g.held_stop) {
         // A static initializer's `$stop`, already reported. The RESUME policy

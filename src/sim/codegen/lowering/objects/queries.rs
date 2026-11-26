@@ -91,7 +91,16 @@ impl Codegen<'_> {
                     }
                 };
                 (
-                    IrObjectQuery::SemaphoreTryGet(self.lower_chandle(path, receiver)?, keys),
+                    IrObjectQuery::SemaphoreTryGet(
+                        self.synchronization_receiver(
+                            path,
+                            node,
+                            receiver,
+                            IrSynchronization::Semaphore,
+                            "try_get",
+                        )?,
+                        keys,
+                    ),
                     32,
                     true,
                 )
@@ -108,7 +117,9 @@ impl Codegen<'_> {
                 }
                 return Ok(Some(object_query(
                     // `process::state` has the default `int` base (Annex G.6).
-                    IrObjectQuery::ProcessStatus(self.lower_process(path, receiver)?),
+                    IrObjectQuery::ProcessStatus(
+                        self.process_receiver(path, node, receiver, "status")?,
+                    ),
                     32,
                     true,
                 )));
@@ -121,7 +132,13 @@ impl Codegen<'_> {
                 let name = name.clone();
                 let receiver = *receiver;
                 let args = self.node(node).children.get(1..).unwrap_or_default();
-                let mailbox = self.lower_chandle(path, receiver)?;
+                let mailbox = self.synchronization_receiver(
+                    path,
+                    node,
+                    receiver,
+                    IrSynchronization::Mailbox,
+                    &name,
+                )?;
                 match (name.as_str(), args) {
                     ("num", []) => {
                         return Ok(Some(object_query(
@@ -348,9 +365,7 @@ impl Codegen<'_> {
                         },
                     ));
                 }
-                if [a, b]
-                    .iter()
-                    .any(|node| self.event_target_of(*node).is_some())
+                if [a, b].iter().any(|node| self.event_operand(*node))
                     && matches!(
                         op,
                         Operation::Equal
@@ -362,14 +377,17 @@ impl Codegen<'_> {
                     // Event handles compare by synchronization-object
                     // identity; null compares equal to a null handle
                     // (SV 6.17, 11.4.5).
-                    let value = object_query(
-                        IrObjectQuery::ChandleEq(
-                            self.lower_event_identity(path, a)?,
-                            self.lower_event_identity(path, b)?,
+                    let value = match self.event_array_equality(path, a, b)? {
+                        Some(value) => value,
+                        None => object_query(
+                            IrObjectQuery::ChandleEq(
+                                self.lower_event_identity(path, a)?,
+                                self.lower_event_identity(path, b)?,
+                            ),
+                            1,
+                            false,
                         ),
-                        1,
-                        false,
-                    );
+                    };
                     return Ok(Some(
                         if matches!(op, Operation::NotEqual | Operation::CaseNotEqual) {
                             IrExpr::new(

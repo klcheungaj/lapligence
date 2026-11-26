@@ -24,6 +24,7 @@
 //! (`with_interface_reads`, decision S99-D7); a read it cannot follow is a
 //! located error.
 
+use super::dependencies::DeclaredStorage;
 use super::*;
 use crate::sim::ir::{IrElementRefKind, IrElementRoot, IrNativeAccessKind};
 use crate::{IdMap, IdSet};
@@ -1436,10 +1437,13 @@ impl Codegen<'_> {
         let cuts = walk.cuts;
         walk.stack.push(callee);
         if self.class_method_owner(callee).is_some() {
-            for dependency in self.collect_read_signals(path, body)? {
-                if !self.activation_dependency(&dependency) {
-                    out.push(dependency);
-                }
+            let reads = self.collect_read_signals(path, body)?;
+            if !reads.is_empty() {
+                let mut declared = DeclaredStorage::default();
+                self.add_declared_storage(callee, &mut declared);
+                out.extend(reads.into_iter().filter(|dependency| {
+                    !self.activation_dependency(dependency) && !declared.holds(dependency)
+                }));
             }
         }
         let mut pending = vec![body];

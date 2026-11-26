@@ -318,15 +318,7 @@ pub(super) fn expression(ctx: &RCtx<'_>, operation: &IrContainerExpr) -> Result<
             negate,
         } => {
             let container = &ctx.model.containers[*left];
-            let function = match (&container.kind, container.element.is_packed()) {
-                (IrContainerKind::Dynamic, true) => "llg_dyn_equal",
-                (IrContainerKind::Dynamic, false) => "llg_dyn_value_equal",
-                (IrContainerKind::Queue { .. }, true) => "llg_queue_equal",
-                (IrContainerKind::Queue { .. }, false) => "llg_queue_value_equal",
-                (IrContainerKind::Associative { .. }, _) => {
-                    return Err("associative arrays have no whole-array equality".into())
-                }
-            };
+            let function = equality_function(container);
             format!(
                 "{function}(&{}, &{}, {}, {})",
                 name(ctx, *left),
@@ -1718,5 +1710,17 @@ fn c_type(kind: &IrContainerKind) -> &'static str {
         IrContainerKind::Dynamic => "llg_dyn_array_t",
         IrContainerKind::Queue { .. } => "llg_queue_t",
         IrContainerKind::Associative { .. } => "llg_assoc_t",
+    }
+}
+
+/// The runtime comparison of two whole containers of `container`'s type.
+pub(super) fn equality_function(container: &crate::sim::ir::IrContainer) -> &'static str {
+    match (&container.kind, container.element.is_packed()) {
+        (IrContainerKind::Dynamic, true) => "llg_dyn_equal",
+        (IrContainerKind::Dynamic, false) => "llg_dyn_value_equal",
+        (IrContainerKind::Queue { .. }, true) => "llg_queue_equal",
+        (IrContainerKind::Queue { .. }, false) => "llg_queue_value_equal",
+        (IrContainerKind::Associative { .. }, true) => "llg_assoc_equal",
+        (IrContainerKind::Associative { .. }, false) => "llg_assoc_value_equal",
     }
 }

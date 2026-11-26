@@ -54,7 +54,8 @@ static llg_co_arm_t arm_invalid_waiter(llg_proc_t* self) {
 
 LLG_PROBE_SIMPLE_PROCESS(invalid_waiter, 1) {
     LLG_PROBE_SIMPLE_BEGIN(1);
-    LLG_PROBE_AWAIT(1, arm_invalid_waiter(self));
+    LLG_CO_AWAIT_OR(co, ch, 1, arm_invalid_waiter(self),
+                    llg_rt_failed_access("null event handle access", "event wait"));
     ++invalid_wakes;
     LLG_PROBE_DONE();
 }

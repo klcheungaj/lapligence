@@ -46,7 +46,7 @@ use metadata::{RawMetadataRequest, RawMetadataSink};
 
 use crate::cancel::{CancelToken, Cancelled};
 
-const ABI_VERSION: u32 = 87;
+const ABI_VERSION: u32 = 88;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;

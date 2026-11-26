@@ -53,7 +53,7 @@ pub use objects::{
     IrClassField, IrClassFieldType, IrDisplayArg, IrMailboxElement, IrMailboxExpr, IrMailboxTarget,
     IrMailboxValue, IrObject, IrObjectQuery, IrObjectStmt, IrObjectType, IrProcessControl,
     IrProcessExpr, IrProcessRandom, IrRunTimeFormat, IrStringExpr, IrStringInsideItem,
-    IrVirtualInterface, IrVirtualInterfaceInstance, IrVirtualInterfaceMember,
+    IrSynchronization, IrVirtualInterface, IrVirtualInterfaceInstance, IrVirtualInterfaceMember,
     IrVirtualInterfaceMethod, IrVirtualInterfaceNested,
 };
 

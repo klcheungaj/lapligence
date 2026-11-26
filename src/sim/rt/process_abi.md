@@ -156,7 +156,9 @@ registered waiter:
   and `start_pending_fork_children` has run. `LLG_CO_AWAIT` records the resume
   state and returns `LLG_CO_PENDING`.
 - `LLG_CO_ARM_EXIT`: termination bookkeeping and `chain.exiting` are already
-  complete. `LLG_CO_AWAIT` returns `LLG_CO_EXIT`.
+  complete, or the arm was given nothing to operate on, such as a null mailbox.
+  `LLG_CO_AWAIT` returns `LLG_CO_EXIT`; `LLG_CO_AWAIT_OR`, used for an arm of
+  the second kind, reports that first.
 
 All ABI 3 runtime arms are one-shot and use `LLG_CO_AWAIT`. Semaphore keys,
 mailbox values, process completion, and `wait_order` results are delivered by

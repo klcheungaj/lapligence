@@ -600,14 +600,6 @@ static int32_t semaphore_key_count(sv4_t value, uint64_t* result) {
     return 1;
 }
 
-static int32_t semaphore_valid(llg_semaphore_t* semaphore, const char* action) {
-    if (LLG_CO_LIKELY(semaphore)) return 1;
-    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "semaphore %s requires a live semaphore handle", action);
-    llg_last_failure = 1;
-    llg_rt_request_finish();
-    return 0;
-}
-
 // Remove a blocked get without changing the semaphore's available keys.  This
 // is used by process cancellation and teardown before the process storage is
 // reclaimed, so a killed waiter can never consume a later put. Removing a
@@ -710,31 +702,22 @@ static void wait_payload_release(llg_wait_t* wait) {
             break;
         case W_EVENTS:
             free(wait->payload.expression.specs);
-            sv4_destroy_array(wait->payload.expression.last,
-                              wait->payload.expression.last
-                                  ? (size_t)wait->payload.expression.n
-                                  : 0);
-            free(wait->payload.expression.last);
-            break;
+            goto snapshots;
         case W_DEPS:
             if (wait_retained_of(wait)) break;
             free(wait->payload.expression.dependencies);
-            sv4_destroy_array(wait->payload.expression.last,
-                              wait->payload.expression.last
-                                  ? (size_t)wait->payload.expression.n
-                                  : 0);
-            free(wait->payload.expression.last);
-            break;
+            goto snapshots;
         case W_EXPR:
             free_expression_wait(wait);
-            sv4_destroy_array(wait->payload.expression.last,
-                              wait->payload.expression.last
-                                  ? (size_t)wait->payload.expression.n
-                                  : 0);
-            free(wait->payload.expression.last);
             free(wait->payload.expression.real_last);
             free(wait->payload.expression.gate_open);
             free(wait->payload.expression.evs);
+        snapshots:
+            sv4_destroy_array(wait->payload.expression.last,
+                              wait->payload.expression.last
+                                  ? (size_t)wait->payload.expression.n
+                                  : 0);
+            free(wait->payload.expression.last);
             break;
         case W_EVENT:
             if (wait->payload.event.evs != &wait->payload.event.inline_ev)

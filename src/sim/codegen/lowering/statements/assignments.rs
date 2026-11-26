@@ -242,16 +242,22 @@ impl EmitCtx<'_, '_> {
                     self.path
                 ));
             }
-            // An event property of a class object is a handle slot of the
-            // object, and the result variable of a function returning an
+            if self.cg.event_array_elements(&self.path, &target)?.is_some() {
+                return self.cg.event_array_assignment(&self.path, &target, rhs);
+            }
+            // An event property of a class object or an event of a bound
+            // interface instance is a handle slot of the object, and the result variable of a function returning an
             // event is its native return slot: the assignment stores the
             // source's synchronization object identity there (SV 15.5.5).
             let class_slot = match target.access {
-                Some(access) => Some(self.cg.class_event_slot(
-                    &self.path,
-                    access,
-                    target.declaration,
-                )?),
+                Some(access) => {
+                    if let Some(statement) =
+                        self.cg.virtual_event_assignment(&self.path, access, rhs)?
+                    {
+                        return Ok(statement);
+                    }
+                    Some(self.cg.event_access_slot(&self.path, access, &target)?)
+                }
                 None if self.cg.is_event_return(target.declaration) => {
                     self.cg.event_ref_of(&target, &self.path)?;
                     Some("_ret".to_owned())

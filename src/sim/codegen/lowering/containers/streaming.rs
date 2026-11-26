@@ -10,7 +10,6 @@ impl<'a> Codegen<'a> {
     pub(super) fn lower_bitstream_cast_container_assignment(
         &mut self,
         path: &str,
-        lhs: NodeId,
         rhs: NodeId,
         dst: &ContainerInfo,
     ) -> Result<Option<IrStmt>, String> {
@@ -23,6 +22,18 @@ impl<'a> Codegen<'a> {
         if !matches!(descriptor.shape, TypeShape::Container { .. }) {
             return Ok(None);
         }
+        self.lower_bitstream_into_container(path, *operand, dst)
+            .map(Some)
+    }
+
+    /// The bits of `operand` into container `dst`, element after element
+    /// (SV 6.24.3).
+    pub(super) fn lower_bitstream_into_container(
+        &mut self,
+        path: &str,
+        operand: NodeId,
+        dst: &ContainerInfo,
+    ) -> Result<IrStmt, String> {
         let target = self.model.containers.get(dst.ir).cloned().ok_or_else(|| {
             format!("bit-stream cast target container is out of bounds in `{path}`")
         })?;
@@ -42,18 +53,17 @@ impl<'a> Codegen<'a> {
                 "bit-stream cast destination has an empty packed element in `{path}`"
             ));
         }
-        let operand = *operand;
         // A dynamically sized source must fill whole destination elements
         // (SV 6.24.3); its size is known only at run time.
         if self.is_runtime_stream_source(path, operand) {
             let stream = self.lower_bit_stream_source(path, operand)?;
-            return Ok(Some(IrStmt::Container(Box::new(
+            return Ok(IrStmt::Container(Box::new(
                 IrContainerStmt::BitStreamAssign {
                     container: dst.ir,
                     stream,
                     exact: true,
                 },
-            ))));
+            )));
         }
         if self
             .query_descriptor(operand)
@@ -96,7 +106,7 @@ impl<'a> Codegen<'a> {
                 ));
             }
         }
-        let source_name = format!("_bitstream_container_{}_{}", lhs.0, rhs.0);
+        let source_name = format!("_bitstream_container_{}_{}", operand.0, dst.ir);
         let source_width = source.width;
         let source_signed = source.signed;
         let captured = IrExpr::new(
@@ -135,7 +145,7 @@ impl<'a> Codegen<'a> {
             container: dst.ir,
             values,
         })));
-        Ok(Some(IrStmt::Block(statements)))
+        Ok(IrStmt::Block(statements))
     }
 
     /// The string of a streaming target that is exactly one string, with the

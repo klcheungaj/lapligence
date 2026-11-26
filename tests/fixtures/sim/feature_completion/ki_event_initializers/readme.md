@@ -28,6 +28,3 @@ initialized elements.
 `blocks.sv`: a queue and a dynamic array of events declared in a procedural
 block were refused ("multidimensional event array ... in subroutine storage",
 without a position).
-
-An event array declared in a subroutine, and a fixed event array declared in a
-procedural block, stay located errors (known issue).

@@ -62,10 +62,8 @@ pub(super) fn render_virtual_interface_runtime(model: &IrModel, out: &mut String
           * procedures (decision S99-D8; a null class handle runs them). */\n\
          static void llg_vif_fail(const char *site) {{\n\
              if (llg_rt_exiting()) return;\n\
-             llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, \"virtual interface access failed: %s\", site);\n\
-             llg_rt_mark_failed();\n\
              llg_rt_skip_finals();\n\
-             llg_rt_fatal_typed(0, \"virtual interface access failed\", NULL, 0, \"\", site);\n\
+             llg_rt_failed_access(\"virtual interface access failed\", site);\n\
          }}\n\n\
          static void *llg_vif_require(void *raw, const char *site) {{\n\
              if (!raw) llg_vif_fail(site);\n\

@@ -1,0 +1,27 @@
+1 1 1 0
+1 1 1 1
+1
+1 1
+1
+1 1
+1 0 0
+1
+local 0 1 1 1
+local 1 1
+local 0 1 1 1
+local 1 1
+block 1 0 0
+block 0 1 0
+1 1 1
+1 1
+ea0 1
+ec0 1
+eq0 1
+ea1 2
+em01 2
+ed1 2
+esy 2
+eb0 4
+of1 5
+m2 6
+1

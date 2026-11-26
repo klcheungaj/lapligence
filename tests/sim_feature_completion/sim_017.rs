@@ -201,3 +201,41 @@ fn record_try_get_in_a_case_expression_is_an_explicit_rejection() {
         "neg_case_expression.sv:13:11: [CODEGEN-004] mailbox `try_get` with an aggregate or selected operand in `tb` is supported only as a statement, in an assignment, a system-task argument, an if condition or a loop condition or step (SIM-017)",
     );
 }
+
+#[test]
+fn null_handles_of_built_in_classes_report_their_statement() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_017/null_handles.out");
+    let cases = [
+        ("23:10", "mailbox", "put"),
+        ("13:5", "mailbox", "get"),
+        ("25:10", "mailbox", "peek"),
+        ("26:14", "mailbox", "num"),
+        ("16:12", "mailbox", "num"),
+        ("28:14", "mailbox", "try_put"),
+        ("29:14", "mailbox", "try_get"),
+        ("30:14", "mailbox", "try_peek"),
+        ("31:10", "semaphore", "put"),
+        ("32:10", "semaphore", "get"),
+        ("33:15", "semaphore", "try_get"),
+        ("34:11", "process", "process::kill"),
+        ("35:11", "process", "process::suspend"),
+        ("36:11", "process", "process::resume"),
+        ("37:11", "process", "process::await"),
+        ("38:15", "process", "process::status"),
+        ("39:11", "event", "event wait"),
+        ("40:11", "event", "event wait"),
+        ("41:11", "event", "wait_order"),
+        ("42:11", "event", "event wait"),
+        ("43:11", "event", "event wait"),
+        ("45:9", "event", "event wait"),
+    ];
+    for (case, (position, object, access)) in cases.into_iter().enumerate() {
+        sim_cli::run_case_failing_at_runtime(
+            SUITE,
+            "null_handles",
+            &[&format!("+case={case}")],
+            expected,
+            &format!("null_handles.sv:{position} null {object} handle access: {access}"),
+        );
+    }
+}

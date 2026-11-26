@@ -1562,10 +1562,6 @@ pub(super) struct EventTarget {
     /// object (`h.e`, or `e` inside a method); the handle is read from the
     /// object when the operation is issued.
     pub(super) access: Option<NodeId>,
-    /// The select or path naming an event array (`o.ea[i]`, `o.ea`): the
-    /// receiver-qualified container alias of an instance property, which
-    /// the statement registered, holds the elements.
-    pub(super) via: Option<NodeId>,
 }
 
 /// An element-level select applied after the array index of a
@@ -1685,6 +1681,9 @@ struct Codegen<'a> {
     /// ([`crate::sim::ir::IrNativeValue::marker`], set when the model is finished). Read
     /// walks borrow the lowering state, hence the cell.
     native_value_markers: std::cell::RefCell<std::collections::BTreeSet<usize>>,
+    /// Declarations of the subroutines walked so far; every process that
+    /// calls one asks.
+    subroutine_declarations: std::cell::RefCell<IdMap<NodeId, std::rc::Rc<[NodeId]>>>,
     /// The shapes [`Self::call_shape`] found: a function of the database.
     call_shapes: std::cell::RefCell<IdMap<(NodeId, NodeId), std::rc::Rc<collection::CallShape>>>,
     /// CODEGEN-010 warnings, framed like errors (`error::located`) when
@@ -2568,6 +2567,9 @@ struct Codegen<'a> {
     virtual_interface_instances: HashMap<NodeId, (usize, usize)>,
     /// `(descriptor, member path)` → member slot.
     virtual_interface_members: HashMap<(usize, String), usize>,
+    /// `(descriptor, member)` of a member with no packed or real value (a
+    /// string, a handle): a virtual interface reaches no such member.
+    virtual_interface_unvalued: HashSet<(usize, String)>,
     /// `(descriptor, method name)` → method slot.
     virtual_interface_methods: HashMap<(usize, String), usize>,
     /// Modport view restrictions keyed by descriptor and view name. Each
@@ -2596,10 +2598,6 @@ struct Codegen<'a> {
     constraint_mode_bits: HashMap<NodeId, randomization::ModeBit>,
     /// Set while lowering the constraints of one randomize problem.
     rand_lowering: Option<randomization::RandLowering>,
-    /// Statements running value-form randomize calls before the statement
-    /// being lowered (its node), open only for statements that evaluate the
-    /// call exactly once.
-    rand_prelude: Option<(NodeId, Vec<IrStmt>)>,
 }
 
 /// Runtime-visible bindings for one array-method `with` expression. A zero
@@ -2646,6 +2644,7 @@ impl<'a> Codegen<'a> {
             user_system_functions: HashSet::new(),
             comb_excludes_class_references: std::cell::Cell::new(false),
             native_value_markers: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            subroutine_declarations: std::cell::RefCell::default(),
             call_shapes: std::cell::RefCell::default(),
             warnings: Vec::new(),
             model: IrModel::new(String::new(), default_timescale.precision_fs)
@@ -2946,6 +2945,7 @@ impl<'a> Codegen<'a> {
             virtual_interface_types: HashMap::new(),
             virtual_interface_instances: HashMap::new(),
             virtual_interface_members: HashMap::new(),
+            virtual_interface_unvalued: HashSet::new(),
             virtual_interface_methods: HashMap::new(),
             virtual_interface_views: HashMap::new(),
             virtual_interface_view_methods: HashMap::new(),
@@ -2956,7 +2956,6 @@ impl<'a> Codegen<'a> {
             randc_states: HashMap::new(),
             constraint_mode_bits: HashMap::new(),
             rand_lowering: None,
-            rand_prelude: None,
         }
     }
 

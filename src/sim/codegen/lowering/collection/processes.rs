@@ -1194,6 +1194,7 @@ impl<'a> Codegen<'a> {
     /// generated model with different scheduling semantics.
     pub(in super::super) fn validate_process_semantics(&mut self) -> Result<(), String> {
         let nodes = self.design_nodes();
+        let mut declared = super::dependencies::DeclaredStorage::default();
         let process_ids: Vec<NodeId> = nodes
             .iter()
             .copied()
@@ -1225,7 +1226,7 @@ impl<'a> Codegen<'a> {
             })?;
             let path = self.scope_path_of(inst);
             self.validate_process_contract(&path, stmt, always_type)?;
-            let writes = self.collect_ownership_writes(stmt)?;
+            let writes = self.collect_ownership_writes(stmt, &mut declared)?;
             let label = self.process_kind_label(always_type);
             writers.push(ProcessWriter {
                 node: process,
@@ -1255,7 +1256,7 @@ impl<'a> Codegen<'a> {
             writers.push(ProcessWriter {
                 node: id,
                 label: format!("{}.continuous", self.source_path(&self.scope_path_of(inst))),
-                writes: self.collect_process_writes(id)?,
+                writes: self.collect_ownership_writes(id, &mut declared)?,
             });
         }
 

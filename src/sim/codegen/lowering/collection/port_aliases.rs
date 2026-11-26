@@ -390,6 +390,7 @@ impl Codegen<'_> {
         let previous_inst = self.inst;
         let mut written = HashSet::new();
         let mut failed = false;
+        let mut declared = super::dependencies::DeclaredStorage::default();
         for id in nodes {
             let Some(inst) = self.owning_inst(*id) else {
                 continue;
@@ -397,7 +398,7 @@ impl Codegen<'_> {
             self.inst = inst;
             let writes = match self.kind(*id) {
                 NodeKind::Process { .. } => match self.node(*id).children.first().copied() {
-                    Some(statement) => self.collect_ownership_writes(statement),
+                    Some(statement) => self.collect_ownership_writes(statement, &mut declared),
                     None => Ok(HashSet::new()),
                 },
                 NodeKind::ContAssign { .. } => self.collect_process_writes(*id),

@@ -330,10 +330,10 @@ impl IrContainer {
         !self.activation && self.class_field.is_none()
     }
 
-    /// Whether `other` uses the same runtime storage type: the same container
-    /// kind (queue bounds aside), associative key and element shape.
-    pub fn same_storage_type(&self, other: &Self) -> bool {
-        let kind = match (&self.kind, &other.kind) {
+    /// Whether `other` is the same container kind (queue bounds aside) with
+    /// the same associative key.
+    fn same_kind(&self, other: &Self) -> bool {
+        match (&self.kind, &other.kind) {
             (IrContainerKind::Dynamic, IrContainerKind::Dynamic)
             | (IrContainerKind::Queue { .. }, IrContainerKind::Queue { .. }) => true,
             (
@@ -341,8 +341,20 @@ impl IrContainer {
                 IrContainerKind::Associative { key: right },
             ) => left == right,
             _ => false,
-        };
-        kind && self.element == other.element
+        }
+    }
+
+    /// Whether `other` uses the same runtime storage type: the same container
+    /// kind (queue bounds aside), associative key and element shape.
+    pub fn same_storage_type(&self, other: &Self) -> bool {
+        self.same_kind(other) && self.element == other.element
+    }
+
+    /// Whether `==` compares the two whole containers (SV 7.6, 11.4.5).
+    pub(in crate::sim) fn comparable_with(&self, other: &Self) -> bool {
+        self.same_kind(other)
+            && self.element.is_packed() == other.element.is_packed()
+            && self.element.compatible_with(&other.element)
     }
 }
 
@@ -1777,18 +1789,10 @@ impl IrContainerExpr {
             Self::Equal { left, right, .. } => {
                 let left = container_kind(model, *left, None)?;
                 let right = container_kind(model, *right, None)?;
-                let same_kind = matches!(
-                    (&left.kind, &right.kind),
-                    (IrContainerKind::Dynamic, IrContainerKind::Dynamic)
-                        | (IrContainerKind::Queue { .. }, IrContainerKind::Queue { .. })
-                );
-                if !same_kind
-                    || left.element.is_packed() != right.element.is_packed()
-                    || !left.element.compatible_with(&right.element)
-                {
+                if !left.comparable_with(right) {
                     return Err(IrValidationError::new(
                         "container",
-                        "container equality requires two dynamic arrays or two queues of one element type",
+                        "container equality requires two containers of one kind, key and element type",
                     ));
                 }
                 return Ok(());

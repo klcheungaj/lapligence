@@ -686,7 +686,8 @@ impl Codegen<'_> {
                 "blocking mailbox method `{name}` inside a function body in `{path}` is not supported"
             ));
         }
-        let mailbox = self.lower_chandle(path, receiver)?;
+        let mailbox =
+            self.synchronization_receiver(path, node, receiver, IrSynchronization::Mailbox, &name)?;
         let index = self.object_of(path, receiver);
         if let Some(index) = index {
             if self.model.objects[index].ty != IrObjectType::Chandle {

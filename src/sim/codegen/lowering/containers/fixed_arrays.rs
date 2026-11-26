@@ -1603,29 +1603,52 @@ impl<'a> Codegen<'a> {
             }
         }
         let source_node = self.p30_unwrap_cast(rhs);
-        let concat = match self.kind(source_node) {
-            NodeKind::Expr(ExprKind::Operation {
-                op,
-                operands,
-                reordered,
-                ..
-            }) if *op == Operation::Concat => Some((operands.clone(), *reordered)),
-            _ => None,
-        };
-        if let Some((mut operands, reordered)) = concat {
-            if reordered {
-                operands.reverse();
-            }
+        if let Some(items) = self.unpacked_concat_items(source_node) {
+            // An element of a multidimensional target is a row.
+            let rows = target_dims.get(1..).unwrap_or(&[]).to_vec();
             let mut values = Vec::new();
-            for operand in operands {
-                values.extend(self.p30_lower_source_values(
-                    path,
-                    lhs,
-                    operand,
-                    target_dims,
-                    captures,
-                    captured_indices,
-                )?);
+            for item in items {
+                if item.array || !rows.is_empty() {
+                    let dims = match self.query_descriptor(item.node).map(|d| &d.shape) {
+                        Some(TypeShape::FixedArray { dimensions, .. }) if item.array => {
+                            dimensions.clone()
+                        }
+                        _ if item.array => target_dims.to_vec(),
+                        _ => rows.clone(),
+                    };
+                    let signed = item.array
+                        && self.query_descriptor(item.node).is_some_and(|descriptor| {
+                            matches!(
+                                &descriptor.shape,
+                                TypeShape::FixedArray { element, .. } if element.info.signed
+                            )
+                        });
+                    let item_values = self.p30_lower_source_values(
+                        path,
+                        lhs,
+                        item.node,
+                        &dims,
+                        captures,
+                        captured_indices,
+                    )?;
+                    // Each element converts as a value of the item's element
+                    // type (SV 10.10).
+                    values.extend(item_values.into_iter().map(|value| {
+                        if signed && !value.signed && !value.is_real() {
+                            let width = value.width;
+                            IrExpr::convert_to(value, width, true)
+                        } else {
+                            value
+                        }
+                    }));
+                    continue;
+                }
+                let value = self.lower_expr(path, item.node)?;
+                values.push(if matches!(value.kind, IrExprKind::Const(_)) {
+                    value
+                } else {
+                    self.p30_capture_value(lhs, item.node, 0, value, captures)
+                });
             }
             return Ok(values);
         }
@@ -1723,6 +1746,46 @@ impl<'a> Codegen<'a> {
         Err(format!(
             "fixed unpacked-array assignment in `{path}` requires a compatible fixed-array expression, slice, concatenation, or assignment pattern"
         ))
+    }
+
+    /// A queue holding `rhs`, an unpacked array concatenation with an item
+    /// of a run-time size or of an array a fixed view stores, for a target
+    /// of one dimension of packed cells.
+    fn p30_concat_queue(
+        &mut self,
+        path: &str,
+        target: &P30ArrayView,
+        rhs: NodeId,
+        captures: &mut Vec<IrStmt>,
+    ) -> Result<Option<usize>, String> {
+        let Some(items) = self.unpacked_concat_items(rhs) else {
+            return Ok(None);
+        };
+        let stored = |this: &Self, node: NodeId| {
+            this.query_descriptor(node)
+                .is_some_and(|descriptor| matches!(descriptor.shape, TypeShape::Container { .. }))
+                || this.container_of(this.p30_unwrap_cast(node)).is_some()
+                || this.is_fixed_view_slice(node)
+        };
+        if target.array.real
+            || self.model.arrays[target.array.ir].dims.len() != 1
+            || !items
+                .iter()
+                .any(|item| item.array && stored(self, item.node))
+        {
+            return Ok(None);
+        }
+        let element = IrContainerElement::Packed {
+            width: target.array.elem_width,
+            signed: target.array.signed,
+            two_state: self.model.arrays[target.array.ir].two_state,
+        };
+        let queue = self.concat_queue_of(element, captures);
+        let Some(fill) = self.lower_container_concat_into(path, queue, rhs)? else {
+            return Ok(None);
+        };
+        captures.push(fill);
+        Ok(Some(queue))
     }
 
     fn p30_target_pattern_dims(&self, node: NodeId, array: &ArrayInfo) -> Vec<(i32, i32)> {
@@ -2360,6 +2423,17 @@ impl<'a> Codegen<'a> {
         if let Some(source) = self.p30_container_source(rhs) {
             return Ok(Some(self.lower_p30_container_to_fixed(
                 path, lhs, rhs, blocking, target, source, captures,
+            )?));
+        }
+        if let Some(queue) = self.p30_concat_queue(path, &target, rhs, &mut captures)? {
+            return Ok(Some(self.lower_p30_container_to_fixed(
+                path,
+                lhs,
+                rhs,
+                blocking,
+                target,
+                ContainerInfo { ir: queue },
+                captures,
             )?));
         }
         let target_dims = self.p30_target_pattern_dims(lhs, &target.array);

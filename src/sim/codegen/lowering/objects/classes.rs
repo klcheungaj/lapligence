@@ -384,7 +384,7 @@ impl Codegen<'_> {
 
     /// The site of a null-handle check ([`IrChandleExpr::Required`]): `what`
     /// the check guards, the unit separator, then the framed site the
-    /// run-time error reports at (`llg_rt_null_handle` in the runtime): the
+    /// run-time error reports at (`llg_rt_failed_access` in the runtime): the
     /// scope, the separator and `node`'s `source_location`. A node without
     /// a position gives the scope alone.
     pub(in super::super) fn required_site(&self, what: &str, path: &str, node: NodeId) -> String {
@@ -393,6 +393,41 @@ impl Codegen<'_> {
         } else {
             format!("{what}\u{1f}{path}\u{1f}{}", self.source_location(node))
         }
+    }
+
+    /// The mailbox or semaphore `receiver` of method call `node`, checked
+    /// against null.
+    pub(in super::super) fn synchronization_receiver(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        receiver: NodeId,
+        object: IrSynchronization,
+        method: &str,
+    ) -> Result<IrChandleExpr, String> {
+        Ok(IrChandleExpr::RequiredSynchronization {
+            handle: Box::new(self.lower_chandle(path, receiver)?),
+            object,
+            site: self.required_site(method, path, node),
+        })
+    }
+
+    /// The process `receiver` of method call `node`, checked against null.
+    pub(in super::super) fn process_receiver(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        receiver: NodeId,
+        method: &str,
+    ) -> Result<IrProcessExpr, String> {
+        let handle = self.lower_process(path, receiver)?;
+        Ok(match handle {
+            IrProcessExpr::SelfHandle => handle,
+            handle => IrProcessExpr::Required {
+                handle: Box::new(handle),
+                site: self.required_site(&format!("process::{method}"), path, node),
+            },
+        })
     }
 
     /// `handle` checked against null where `node` uses it (SV 8.4), with

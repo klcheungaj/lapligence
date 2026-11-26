@@ -22,7 +22,8 @@ functions it calls leave at the exit checks a process takes, and no later
 initializer runs. Model start then goes on whatever the initializers
 reported; `llg_rt_run` returns before any process runs when the run is
 finishing, and the run ends through `llg_rt_run_finals` and the exit status
-as from a process (S22-D9). A failure an initializer marks without finishing
+as from a process (S22-D9), except that a run-time error, unlike a `$finish`
+or `$fatal`, runs no final procedure (SD10-D4). A failure an initializer marks without finishing
 the run (a coverage option error) leaves start and the run going.
 
 End of a run with final procedures (CS-D6): `llg_rt_run` leaves the runtime

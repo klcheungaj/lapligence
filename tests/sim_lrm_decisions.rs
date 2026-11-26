@@ -596,6 +596,58 @@ fn s14_d9_triggered_of_null_event() {
 }
 
 #[test]
+fn sd10_d1_static_local_has_no_owner() {
+    run_decision(
+        "SD10-D1_static_local_has_no_owner",
+        include_str!("fixtures/sim/lrm_decisions/SD10-D1_static_local_has_no_owner.out"),
+    );
+}
+
+#[test]
+fn sd10_d2_subroutine_storage_wakes_nobody() {
+    run_decision(
+        "SD10-D2_subroutine_storage_wakes_nobody",
+        include_str!("fixtures/sim/lrm_decisions/SD10-D2_subroutine_storage_wakes_nobody.out"),
+    );
+}
+
+#[test]
+fn sd10_d3_ambiguous_event_conditional() {
+    run_decision(
+        "SD10-D3_ambiguous_event_conditional",
+        include_str!("fixtures/sim/lrm_decisions/SD10-D3_ambiguous_event_conditional.out"),
+    );
+}
+
+#[test]
+fn sd10_d4_initializer_error_runs_no_finals() {
+    let expected =
+        include_str!("fixtures/sim/lrm_decisions/SD10-D4_initializer_error_runs_no_finals.out");
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "SD10-D4_initializer_error_runs_no_finals",
+        &[],
+        &|label, output| {
+            runtime_error(
+                label,
+                output,
+                expected,
+                "SD10-D4_initializer_error_runs_no_finals.sv:18:12 null class handle access: property access",
+            );
+        },
+    );
+}
+
+#[test]
+fn sd10_d5_concatenation_item_conversions() {
+    sim_cli::run_case_backend_parity_ending_in_fatal(
+        SUITE,
+        "SD10-D5_concatenation_item_conversions",
+        include_str!("fixtures/sim/lrm_decisions/SD10-D5_concatenation_item_conversions.out"),
+    );
+}
+
+#[test]
 fn s28_d10_state_methods_on_null() {
     run_decision(
         "S28-D10_state_methods_on_null",
@@ -5484,7 +5536,7 @@ fn s99_d8_null_access_stops() {
             label,
             output,
             expected,
-            "virtual interface access failed: virtual interface member access at tb:28:45",
+            "S99-D8_null_access_stops.sv:28:45 virtual interface access failed: virtual interface member access",
         );
     });
 }

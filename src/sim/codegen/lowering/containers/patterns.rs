@@ -48,7 +48,7 @@ impl<'a> Codegen<'a> {
     /// positional (one item per index) or keyed: index keys name declared
     /// indices of that dimension, and a `default:` or type-key value that
     /// is not itself a pattern fills every cell below the index it covers.
-    fn flatten_multidimensional_pattern(
+    pub(in super::super) fn flatten_multidimensional_pattern(
         &mut self,
         path: &str,
         dimensions: &[(i32, i32)],
@@ -910,10 +910,47 @@ impl<'a> Codegen<'a> {
             | IrContainerElement::FixedArray { .. } => {
                 self.lower_container_record_values(path, container, source_values)
             }
+            IrContainerElement::Container { .. } => {
+                self.lower_nested_container_values(path, container, source_values)
+            }
             _ => Err(format!(
                 "resizable container assignment pattern in `{path}` requires a directly represented scalar element"
             )),
         }
+    }
+
+    /// Elements that are containers, in order: each is built before the
+    /// target changes.
+    fn lower_nested_container_values(
+        &mut self,
+        path: &str,
+        container: usize,
+        values: Vec<NodeId>,
+    ) -> Result<IrStmt, String> {
+        let mut statements = Vec::new();
+        let queue = self.concat_queue(container, &mut statements);
+        for value in values {
+            let source = self.nested_container_source(path, queue, 1, value, &mut statements)?;
+            statements.push(IrStmt::Container(Box::new(
+                IrContainerStmt::QueuePushBackContainer {
+                    container: queue,
+                    source,
+                },
+            )));
+        }
+        statements.push(IrStmt::Container(Box::new(
+            match self.model.containers[container].kind {
+                IrContainerKind::Queue { .. } => IrContainerStmt::QueueAssign {
+                    container,
+                    sources: vec![IrQueueSource::Whole(queue)],
+                },
+                _ => IrContainerStmt::Copy {
+                    dst: container,
+                    src: queue,
+                },
+            },
+        )));
+        Ok(IrStmt::Block(statements))
     }
 
     fn lower_container_source_packed_values(
@@ -1027,25 +1064,7 @@ impl<'a> Codegen<'a> {
             })));
             return Ok(temporary);
         }
-        let source = self.p30_unwrap_cast(value);
-        let concat = match self.kind(source) {
-            NodeKind::Expr(ExprKind::Operation {
-                op: Operation::Concat,
-                operands,
-                ..
-            }) if operands
-                .iter()
-                .all(|operand| self.container_of(*operand).is_none()) =>
-            {
-                Some(operands.clone())
-            }
-            _ => None,
-        };
-        prelude.push(match concat {
-            // `{a, b}` lists the new elements in order (SV 10.10).
-            Some(operands) => self.lower_container_source_values(path, temporary, operands)?,
-            None => self.lower_container_into(path, value, temporary, value)?,
-        });
+        prelude.push(self.lower_container_into(path, value, temporary, value)?);
         Ok(temporary)
     }
 }

@@ -136,18 +136,9 @@ void llg_event_watch_remove(llg_event_object_t* ev) {
 // The outcome of waiting on a null event is undefined (SV 15.5.5.2); like an
 // access through a null class handle (8.4) it ends the simulation (S14-D8).
 // `.triggered` of one is false (15.5.3).
-LLG_COLD LLG_NOINLINE static void event_handle_null(const char* access) {
-    if (llg_rt_exiting()) return;
-    llg_msg(LLG_MSG_RUNTIME_ERROR, NULL, "null event handle access: %s", access);
-    llg_rt_mark_failed();
-    llg_rt_fatal_typed(0, "null event handle access", NULL, 0, "", access);
-}
-
-// Whether a wait names a null event, which ends the simulation.
+// The wait's statement reports it, on the arm's exit.
 static inline int32_t event_control_null(const llg_event_t* ev) {
-    if (LLG_CO_LIKELY(ev && ev->object)) return 0;
-    event_handle_null("event wait");
-    return 1;
+    return LLG_CO_UNLIKELY(!ev || !ev->object) ? 1 : 0;
 }
 
 int32_t llg_event_triggered(const llg_event_t* ev) {
@@ -162,8 +153,11 @@ int32_t llg_event_triggered(const llg_event_t* ev) {
     return 1;
 }
 
+// No arm follows to report a null event here, so the access reports it.
 llg_event_object_t* llg_event_waited_object(const llg_event_t* ev) {
-    return event_control_null(ev) ? NULL : ev->object;
+    if (LLG_CO_LIKELY(!event_control_null(ev))) return ev->object;
+    llg_rt_failed_access("null event handle access", "event wait");
+    return NULL;
 }
 
 uint64_t llg_event_trigger_count(const llg_event_object_t* object) {
@@ -277,9 +271,7 @@ llg_co_arm_t llg_arm_order(llg_proc_t* self,
     if (n <= 0 || !result || !self || !region_can_mutate("wait scheduling"))
         return LLG_CO_ARM_READY;
     for (int32_t i = 0; i < n; i++) {
-        if (LLG_CO_LIKELY(evs[i] && evs[i]->object)) continue;
-        event_handle_null("wait_order");
-        return LLG_CO_ARM_EXIT;
+        if (event_control_null(evs[i])) return LLG_CO_ARM_EXIT;
     }
     // SV 15.5.4: "Only the first event in the list can wait for the
     // persistent triggered property." A first event already triggered in
@@ -436,10 +428,11 @@ llg_co_arm_t llg_arm_expressions(llg_proc_t* self,
     // Adopt every descriptor/context before invoking user code. An evaluator
     // can finish the process on its first call; teardown must also discover
     // contexts belonging to later entries which have not been evaluated yet.
-    for (int32_t i = 0; i < n; i++) {
-        if (specs[i].event) {
-            if (event_control_null(specs[i].event)) break;
-            llg_event_object_t* object = specs[i].event->object;
+    int32_t armed = 0;
+    for (; armed < n; armed++) {
+        if (specs[armed].event) {
+            if (event_control_null(specs[armed].event)) break;
+            llg_event_object_t* object = specs[armed].event->object;
             int32_t seen = 0;
             for (int32_t j = 0; j < expression->n_evs; j++)
                 if (expression->evs[j] == object) seen = 1;
@@ -448,22 +441,22 @@ llg_co_arm_t llg_arm_expressions(llg_proc_t* self,
                 event_list_add(object, self,
                                &expression->event_slots[expression->n_evs++]);
             }
-        } else if (specs[i].real || specs[i].real_eval || specs[i].real_sig) {
-            if (specs[i].real_eval)
-                specs[i].real_eval(&expression->real_last[i], specs[i].eval_context);
-            else if (specs[i].real_sig)
-                expression->real_last[i] = *specs[i].real_sig;
+        } else if (specs[armed].real || specs[armed].real_eval || specs[armed].real_sig) {
+            if (specs[armed].real_eval)
+                specs[armed].real_eval(&expression->real_last[armed], specs[armed].eval_context);
+            else if (specs[armed].real_sig)
+                expression->real_last[armed] = *specs[armed].real_sig;
             else abort();
-        } else if (specs[i].eval) {
-            specs[i].eval(&expression->last[i], specs[i].eval_context);
-        } else if (specs[i].sig) {
-            expression->last[i] = sv4_clone(specs[i].sig);
+        } else if (specs[armed].eval) {
+            specs[armed].eval(&expression->last[armed], specs[armed].eval_context);
+        } else if (specs[armed].sig) {
+            expression->last[armed] = sv4_clone(specs[armed].sig);
         } else {
             abort();
         }
         if (self->chain.exiting) break;
     }
-    if (self->chain.exiting) {
+    if (LLG_CO_UNLIKELY(armed < n)) {
         event_unlink(w);
         wait_payload_release(w);
         return LLG_CO_ARM_EXIT;
@@ -487,7 +480,10 @@ uint64_t llg_repeat_count(sv4_t value) {
 
 static int32_t event_specs_null(const llg_expr_event_spec_t* specs, int32_t n) {
     for (int32_t i = 0; i < n; i++)
-        if (specs[i].event && event_control_null(specs[i].event)) return 1;
+        if (specs[i].event && event_control_null(specs[i].event)) {
+            llg_rt_failed_access("null event handle access", "event wait");
+            return 1;
+        }
     return 0;
 }
 

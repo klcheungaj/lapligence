@@ -7,10 +7,11 @@
 //! array, queue or associative array and a structure member have the width of
 //! their declared packed type, so reading one into a narrower target warns.
 //! Widths that cannot be computed (unsized literals, unknown types, unpacked
-//! slices and rows, function calls, …) are skipped, and so is an assignment
-//! whose target is no signal or packed select of one (an element or a member).
+//! slices and rows, unpacked array concatenations, function calls, …) are
+//! skipped, and so is an assignment whose target is no signal or packed
+//! select of one (an element or a member).
 
-use crate::core::db::{Db, Direction, NodeId, NodeKind, StmtKind};
+use crate::core::db::{Db, Direction, NodeId, NodeKind, StmtKind, TypeShape};
 use crate::core::lint::rules::analysis::{expr_width, object_width, signal_of_ref, ElementWidths};
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
@@ -38,6 +39,16 @@ impl LintRule for WidthMismatchRule {
                         else {
                             continue; // concat/other non-signal LHS: not named
                         };
+                        // An unpacked array value, such as an unpacked array
+                        // concatenation (SV 10.10), has elements, not a width.
+                        if db.type_descriptor(*rhs).is_some_and(|descriptor| {
+                            matches!(
+                                descriptor.shape,
+                                TypeShape::FixedArray { .. } | TypeShape::Container { .. }
+                            )
+                        }) {
+                            continue;
+                        }
                         if let Some(diag) = width_diag(
                             db,
                             id,
@@ -379,6 +390,10 @@ mod tests {
             "q = q[1:$];",
             "m2[0] = '{default: 0};",
             "m[0:1] = m[2:3];",
+            // Unpacked array concatenations have elements (SV 10.10).
+            "m = {b, b, m[0:1]};",
+            "q = {q, 1, s};",
+            "m2[1] = {b, s, 1};",
             // Reals and strings have no width.
             "s = ra[0];",
             "s = sa[0].r;",
@@ -386,6 +401,15 @@ mod tests {
         ] {
             assert_eq!(element_findings(statement), [], "{statement}");
         }
+    }
+
+    #[test]
+    fn an_unpacked_concatenation_into_an_int_array_is_quiet() {
+        let diags = lint_design(
+            "module ua;\n  int a3[1:3], a9[1:9];\n  initial a9 = {a3, 4, 5, a3, 6};\nendmodule\n",
+            "ua",
+        );
+        assert!(rule_diags(&diags, "width-mismatch").is_empty(), "{diags:?}");
     }
 
     #[test]

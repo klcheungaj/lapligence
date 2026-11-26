@@ -136,7 +136,7 @@ static void single_and_heap_paths(void) {
     ready_again(proc);
     sv4_destroy(&padded);
     CHECK(llg_arm_event(proc, NULL) == LLG_CO_ARM_EXIT);
-    CHECK(proc->wait.kind == W_NONE && g.finish);
+    CHECK(proc->wait.kind == W_NONE);
     g.current = NULL;
     llg_rt_cleanup();
     llg_event_object_reset(&first_object);

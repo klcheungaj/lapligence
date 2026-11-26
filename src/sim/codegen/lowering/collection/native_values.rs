@@ -3857,14 +3857,6 @@ impl Codegen<'_> {
     ) -> Result<IrExpr, String> {
         Ok(match (left, right) {
             (LeafValue::Container(a), LeafValue::Container(b)) => {
-                if matches!(
-                    self.model.containers[a].kind,
-                    crate::sim::ir::IrContainerKind::Associative { .. }
-                ) {
-                    return Err(format!(
-                        "equality of records with an associative array member is not supported in `{path}` (associative array equality is not supported)"
-                    ));
-                }
                 // SV 7.2.2, 7.10: members compare element-wise.
                 IrExpr::new(
                     IrExprKind::Container(Box::new(IrContainerExpr::Equal {

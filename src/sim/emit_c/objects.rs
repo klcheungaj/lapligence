@@ -299,6 +299,7 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
         | IrChandleExpr::ItemElement { .. }
         | IrChandleExpr::RandInstance { .. }
         | IrChandleExpr::Required { .. }
+        | IrChandleExpr::RequiredSynchronization { .. }
         | IrChandleExpr::ClassFromKey(_)
         | IrChandleExpr::InterfaceInstance { .. }
         | IrChandleExpr::VirtualInterfaceNested { .. } => {
@@ -522,7 +523,7 @@ pub(super) fn process(ctx: &RCtx<'_>, value: &IrProcessExpr) -> Result<String, S
     Ok(match value {
         IrProcessExpr::Null => "NULL".to_owned(),
         IrProcessExpr::SelfHandle => "llg_process_self()".to_owned(),
-        IrProcessExpr::Handle(_) => {
+        IrProcessExpr::Handle(_) | IrProcessExpr::Required { .. } => {
             return Err("container process handles require the ownership emitter".to_owned())
         }
         IrProcessExpr::Read(index) => ctx.model.objects[*index].c_name.clone(),

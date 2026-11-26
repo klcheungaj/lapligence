@@ -338,14 +338,6 @@ impl Codegen<'_> {
         let (LeafValue::Container(left), LeafValue::Container(right)) = (&left, &right) else {
             return known_leaf_match(path, left, right);
         };
-        if matches!(
-            self.model.containers[*left].kind,
-            crate::sim::ir::IrContainerKind::Associative { .. }
-        ) {
-            return Err(format!(
-                "conditional operator with an ambiguous predicate on records with an associative array member is not supported in `{path}` (associative array equality is not supported)"
-            ));
-        }
         Ok(IrExpr::new(
             IrExprKind::Container(Box::new(IrContainerExpr::Equal {
                 left: *left,

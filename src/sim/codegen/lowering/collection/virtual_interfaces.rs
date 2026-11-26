@@ -1066,10 +1066,20 @@ impl<'a> Codegen<'a> {
             }
         }
         // A member of another type (a class handle, a string) has no slot: an
-        // access through the interface finds none and reports it there.
+        // access through the interface finds none and reports it there. A
+        // string or handle member is recorded so that report names its type.
         let has_slot = |signal: &SignalInfo| {
             signal.real || (signal.width != 0 && signal.width <= LLG_MAX_WIDTH)
         };
+        for name in &member_names {
+            if member_info
+                .get(name)
+                .is_some_and(|signal| !signal.real && signal.width == 0)
+            {
+                self.virtual_interface_unvalued
+                    .insert((descriptor_index, name.clone()));
+            }
+        }
         let members = member_names
             .iter()
             .filter(|name| member_info.get(*name).is_none_or(has_slot))
