@@ -2935,6 +2935,28 @@ impl Codegen<'_> {
         Ok(name)
     }
 
+    /// The index selectors, outermost first, of the record element of
+    /// container storage whose packed or real member `lhs` names whole
+    /// (`rq[k].v`, not an element of a member array): the selectors a
+    /// whole-member target evaluates.
+    pub(in crate::sim::codegen) fn member_target_selectors(
+        &self,
+        lhs: NodeId,
+    ) -> Option<Vec<NodeId>> {
+        let (selection, path) = self.element_member_path(lhs)?;
+        let ElementSelector::Indices(indices) = &selection.selector else {
+            return None;
+        };
+        let (_, _, leaves) = self
+            .element_leaves(selection.container, selection.depth())
+            .ok()?;
+        leaves
+            .scalars
+            .iter()
+            .any(|leaf| leaf.path == path)
+            .then(|| indices.clone())
+    }
+
     /// Typed read of the element leaf named by `node`.
     pub(in crate::sim::codegen) fn element_leaf_read(
         &mut self,

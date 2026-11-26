@@ -312,38 +312,30 @@ impl Codegen<'_> {
         }
         let target = *operands.first()?;
         let simple = *op == Operation::Assignment;
-        match self
+        let shape = self
             .query_descriptor(target)
-            .map(|descriptor| &descriptor.shape)
-        {
-            None | Some(TypeShape::PackedAtom { .. } | TypeShape::Real { .. }) => Some(
-                self.packed_nested_assignment(target, simple.then(|| operands.get(1)).flatten()),
+            .map(|descriptor| &descriptor.shape);
+        let packed = match shape {
+            None | Some(TypeShape::PackedAtom { .. } | TypeShape::Real { .. }) => true,
+            Some(TypeShape::Aggregate(layout)) => matches!(
+                layout.kind,
+                AggregateKind::PackedStruct | AggregateKind::PackedUnion
             ),
-            Some(TypeShape::Aggregate(layout))
-                if matches!(
-                    layout.kind,
-                    AggregateKind::PackedStruct | AggregateKind::PackedUnion
-                ) =>
-            {
-                Some(
-                    self.packed_nested_assignment(
-                        target,
-                        simple.then(|| operands.get(1)).flatten(),
-                    ),
-                )
-            }
-            Some(TypeShape::String) => {
-                simple.then_some(NestedAssignment::Store(StoredValue::String))
-            }
-            Some(TypeShape::Opaque { kind }) if kind == "Class" || kind == "Chandle" => {
+            Some(_) => false,
+        };
+        if packed {
+            let value = simple.then(|| operands.get(1)).flatten();
+            return Some(self.packed_nested_assignment(target, value));
+        }
+        match shape? {
+            TypeShape::String => simple.then_some(NestedAssignment::Store(StoredValue::String)),
+            TypeShape::Opaque { kind } if kind == "Class" || kind == "Chandle" => {
                 simple.then_some(NestedAssignment::Store(StoredValue::Handle))
             }
-            Some(
-                TypeShape::Aggregate(_)
-                | TypeShape::FixedArray { .. }
-                | TypeShape::Container { .. },
-            ) => simple.then_some(NestedAssignment::Whole),
-            Some(TypeShape::Opaque { .. }) => None,
+            TypeShape::Aggregate(_)
+            | TypeShape::FixedArray { .. }
+            | TypeShape::Container { .. } => simple.then_some(NestedAssignment::Whole),
+            _ => None,
         }
     }
 
@@ -1046,6 +1038,100 @@ impl Codegen<'_> {
             Some(TypeShape::Opaque { kind }) if kind == "Class"
         );
         (node != *lhs && computed && class && self.contains_evaluation_effect(*rhs)).then_some(node)
+    }
+
+    /// The selectors of the record element of a queue, dynamic or
+    /// associative array whose packed or real member the blocking
+    /// assignment `h` writes whole (`rq[k].v = f()`, `rq[k].v += f()`), when
+    /// its right-hand side has an [effect](Self::evaluation_effect): such a
+    /// target is located before the right-hand side (decision EO-D4), so
+    /// they are evaluated first. A selector with `$` is evaluated with the
+    /// target.
+    pub(in crate::sim::codegen) fn member_target_selectors_first(
+        &self,
+        h: NodeId,
+    ) -> Option<Vec<NodeId>> {
+        let NodeKind::Stmt(StmtKind::Assign {
+            blocking: true,
+            delay: None,
+            ..
+        }) = self.kind(h)
+        else {
+            return None;
+        };
+        let [lhs, rhs] = self.node(h).children.as_slice() else {
+            return None;
+        };
+        if !matches!(
+            self.kind(*lhs),
+            NodeKind::Expr(ExprKind::MemberSelect { .. } | ExprKind::HierPath { .. })
+        ) {
+            return None;
+        }
+        let selectors = self.member_target_selectors(*lhs)?;
+        if !self.contains_evaluation_effect(*rhs) {
+            return None;
+        }
+        let unbounded = |root: NodeId| {
+            let mut pending = vec![root];
+            while let Some(node) = pending.pop() {
+                if matches!(self.kind(node), NodeKind::Expr(ExprKind::Unbounded)) {
+                    return true;
+                }
+                pending.extend(self.node(node).children.iter().copied());
+            }
+            false
+        };
+        (!selectors.iter().any(|selector| unbounded(*selector))).then_some(selectors)
+    }
+
+    /// Evaluate the selectors `nodes` ([`Self::member_target_selectors_first`])
+    /// into temporaries that every lowering of them reads until
+    /// [`Self::end_target_selectors`].
+    pub(in crate::sim::codegen) fn hoist_target_selectors(
+        &mut self,
+        path: &str,
+        nodes: &[NodeId],
+    ) -> Result<Vec<IrStmt>, String> {
+        let mut statements = Vec::with_capacity(nodes.len());
+        for node in nodes {
+            let value = self.lower_expr(path, *node)?;
+            let (width, signed) = (value.width, value.signed);
+            let name = format!("_llg_ts{}", node.0);
+            statements.push(IrStmt::DeclLocal {
+                name: name.clone(),
+                width,
+                signed,
+                two_state: false,
+                init: Some(Box::new(value)),
+            });
+            self.hoisted_values
+                .insert(*node, HoistedValue::Packed(name, width, signed));
+            self.hoisted_assignments.insert(*node, false);
+        }
+        Ok(statements)
+    }
+
+    /// Forget the selectors [`Self::hoist_target_selectors`] evaluated. One
+    /// that no lowering read would have been evaluated twice.
+    pub(in crate::sim::codegen) fn end_target_selectors(
+        &mut self,
+        nodes: &[NodeId],
+    ) -> Result<(), String> {
+        let mut unread = None;
+        for node in nodes {
+            self.hoisted_values.remove(node);
+            if self.hoisted_assignments.remove(node) != Some(true) && unread.is_none() {
+                unread = Some(*node);
+            }
+        }
+        match unread {
+            Some(node) => Err(self.locate_error(
+                node,
+                "a selector of the record element this assignment writes is not supported here; assign the element's index to a variable first",
+            )),
+            None => Ok(()),
+        }
     }
 
     /// Evaluate handle `node` ([`Self::target_handle_first`]) into a
