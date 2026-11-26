@@ -25,6 +25,11 @@ impl Codegen<'_> {
             "xor" => IrContainerReduction::BitXor,
             _ => return Ok(None),
         };
+        // A fixed array stored as a container view (a class property) is
+        // reduced by the container runtime.
+        if self.container_of(receiver).is_some() {
+            return Ok(None);
+        }
         let Some(descriptor) = self.query_descriptor(receiver).cloned() else {
             return Ok(None);
         };

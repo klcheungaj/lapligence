@@ -118,6 +118,38 @@ impl Codegen<'_> {
                  expressions support at most {REAL_ARRAY_ELEMENTWISE_LIMIT}"
             ));
         }
+        // A whole real class property is a fixed view of the container
+        // runtime; its storage positions run in declaration order.
+        if let Some(view) = self
+            .container_of(self.p30_unwrap_cast(node))
+            .filter(|view| {
+                self.is_fixed_view(view.ir) && self.model.containers[view.ir].element.is_real()
+            })
+        {
+            if self.model.containers[view.ir].initial_size != Some(count) {
+                return Err(format!(
+                    "real-array operand in `{path}` disagrees with its target in size"
+                ));
+            }
+            return Ok((0..count)
+                .map(|position| {
+                    IrExpr::new(
+                        IrExprKind::Container(Box::new(IrContainerExpr::GetReal {
+                            container: view.ir,
+                            index: Box::new(pattern_key_expr(
+                                i128::from(position),
+                                64,
+                                true,
+                                false,
+                            )),
+                        })),
+                        0,
+                        false,
+                        None,
+                    )
+                })
+                .collect());
+        }
         let mut captures = Vec::new();
         let mut captured = HashMap::new();
         if let Some(view) = self.p30_array_view(path, node, &mut captures, &mut captured)? {

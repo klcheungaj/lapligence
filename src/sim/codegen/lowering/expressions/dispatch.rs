@@ -415,6 +415,7 @@ impl<'a> Codegen<'a> {
         try_form!(self.class_field_expr(scope_path, h));
         try_form!(self.lower_enum_method(scope_path, h));
         try_form!(self.lower_method_value(scope_path, h));
+        try_form!(self.fixed_view_value(scope_path, h));
         match self.kind(h) {
             NodeKind::Expr(ExprKind::TaggedUnion { member, value }) => {
                 self.lower_tagged_union_constructor(scope_path, h, member, *value)

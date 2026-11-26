@@ -20,19 +20,22 @@ impl<'a> Codegen<'a> {
             } => (name.clone(), *receiver),
             _ => return Ok(None),
         };
-        if matches!(name.as_str(), "sort" | "rsort" | "reverse") {
+        // A fixed array stored as a container view (a class property) is
+        // ordered by the container runtime, not as fixed storage.
+        let fixed = self.container_of(receiver).is_none();
+        if fixed && matches!(name.as_str(), "sort" | "rsort" | "reverse") {
             if let Some(statement) = self.lower_real_array_order(path, node, receiver, &name)? {
                 return Ok(Some(statement));
             }
         }
-        if matches!(name.as_str(), "sort" | "rsort") {
+        if fixed && matches!(name.as_str(), "sort" | "rsort") {
             if let Some(statement) =
                 self.lower_fixed_array_sort(path, node, receiver, name == "rsort")?
             {
                 return Ok(Some(statement));
             }
         }
-        if name == "reverse" {
+        if fixed && name == "reverse" {
             if let Some(statement) = self.lower_fixed_array_reverse(path, node, receiver)? {
                 return Ok(Some(statement));
             }
@@ -41,7 +44,7 @@ impl<'a> Codegen<'a> {
             // Shuffle draws from the calling thread's stream (SV 18.14).
             self.model.random.threads = true;
         }
-        if name == "shuffle" && !self.db.method_call_has_with_clause(node) {
+        if fixed && name == "shuffle" && !self.db.method_call_has_with_clause(node) {
             // Shuffle a stored packed or real fixed array through a queue copy
             // and store the permutation back in declared order.
             if let Some(copy) = self.fixed_method_copy(path, receiver)? {

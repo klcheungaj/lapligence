@@ -1562,6 +1562,10 @@ pub(super) struct EventTarget {
     /// object (`h.e`, or `e` inside a method); the handle is read from the
     /// object when the operation is issued.
     pub(super) access: Option<NodeId>,
+    /// The select or path naming an event array (`o.ea[i]`, `o.ea`): the
+    /// receiver-qualified container alias of an instance property, which
+    /// the statement registered, holds the elements.
+    pub(super) via: Option<NodeId>,
 }
 
 /// An element-level select applied after the array index of a

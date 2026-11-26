@@ -122,6 +122,7 @@ impl<'a> Codegen<'a> {
             declaration,
             indices: Vec::new(),
             access: None,
+            via: None,
         };
         Ok(IrStmt::EventAssign {
             target: self.event_ref_of(&target, path)?,
@@ -188,6 +189,7 @@ impl<'a> Codegen<'a> {
                 declaration: block,
                 indices: Vec::new(),
                 access: None,
+                via: None,
             });
         }
         // A clocking block or named event through a virtual interface
@@ -198,6 +200,7 @@ impl<'a> Codegen<'a> {
                 declaration: node,
                 indices: Vec::new(),
                 access: Some(node),
+                via: None,
             });
         }
         if let Some(field) = self
@@ -208,6 +211,7 @@ impl<'a> Codegen<'a> {
                 declaration: field,
                 indices: Vec::new(),
                 access: Some(node),
+                via: None,
             });
         }
         // A call of a function returning an event is a handle value: the
@@ -217,6 +221,7 @@ impl<'a> Codegen<'a> {
                 declaration: node,
                 indices: Vec::new(),
                 access: None,
+                via: None,
             });
         }
         match self.kind(node) {
@@ -224,6 +229,7 @@ impl<'a> Codegen<'a> {
                 declaration: node,
                 indices: Vec::new(),
                 access: None,
+                via: None,
             }),
             // Inside a function returning an event, its name is the result
             // variable (SV 13.4.1).
@@ -233,6 +239,7 @@ impl<'a> Codegen<'a> {
                 declaration: *target,
                 indices: Vec::new(),
                 access: None,
+                via: None,
             }),
             NodeKind::Var { .. }
                 if self.event_globals.contains_key(&node)
@@ -243,6 +250,7 @@ impl<'a> Codegen<'a> {
                     declaration: node,
                     indices: Vec::new(),
                     access: None,
+                    via: None,
                 })
             }
             // A sequence instance whose endpoint exists names its event
@@ -254,18 +262,21 @@ impl<'a> Codegen<'a> {
                     declaration: node,
                     indices: Vec::new(),
                     access: None,
+                    via: None,
                 })
             }
             NodeKind::FuncArg { ty, .. } if ty.kind == "event" => Some(EventTarget {
                 declaration: node,
                 indices: Vec::new(),
                 access: None,
+                via: None,
             }),
             NodeKind::FuncArg { .. } | NodeKind::Array { .. } if self.is_event_container(node) => {
                 Some(EventTarget {
                     declaration: node,
                     indices: Vec::new(),
                     access: None,
+                    via: None,
                 })
             }
             NodeKind::Expr(ExprKind::Ref {
@@ -282,11 +293,13 @@ impl<'a> Codegen<'a> {
                     declaration: *target,
                     indices: Vec::new(),
                     access: None,
+                    via: None,
                 })
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
                 let mut target = self.event_target_of(*base)?;
                 target.indices.extend(indices.iter().copied());
+                target.via.get_or_insert(node);
                 Some(target)
             }
             NodeKind::Expr(ExprKind::ScopeRef { target }) => self.event_target_of(*target),
@@ -307,6 +320,7 @@ impl<'a> Codegen<'a> {
                     declaration,
                     indices: Vec::new(),
                     access: None,
+                    via: Some(node),
                 }),
             _ => None,
         }
@@ -662,7 +676,16 @@ impl<'a> Codegen<'a> {
             }
             return Ok(event.clone());
         }
-        if let Some(container) = self.container_globals.get(&target.declaration).cloned() {
+        let container = target
+            .via
+            .and_then(|via| match self.kind(via) {
+                NodeKind::Expr(ExprKind::ArraySelect { base, .. }) => {
+                    self.container_of_select(via, *base)
+                }
+                _ => self.container_of(via),
+            })
+            .or_else(|| self.container_globals.get(&target.declaration).cloned());
+        if let Some(container) = container {
             return Ok(IrEventRef::Handle(Box::new(self.container_event_handle(
                 scope_path,
                 container.ir,

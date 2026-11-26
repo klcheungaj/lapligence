@@ -1799,7 +1799,9 @@ impl<'a> Codegen<'a> {
         }
         let source_type = &self.model.containers[source.ir].element;
         let (source_width, source_signed) = (source_type.width(), source_type.signed());
-        if source_width == 0 {
+        // A real container fills a real array element by element.
+        let real_source = source_type.is_real();
+        if source_width == 0 && !(real_source && target.array.real) {
             return Err(format!(
                 "real dynamic or queue array to fixed unpacked-array assignment in `{path}` is not supported"
             ));
@@ -1834,17 +1836,27 @@ impl<'a> Codegen<'a> {
                 true,
                 false,
             );
-            let value = IrExpr::new(
-                IrExprKind::Container(Box::new(IrContainerExpr::Get {
+            let read = if real_source {
+                IrContainerExpr::GetReal {
                     container: source.ir,
                     index: Box::new(index),
-                })),
+                }
+            } else {
+                IrContainerExpr::Get {
+                    container: source.ir,
+                    index: Box::new(index),
+                }
+            };
+            let value = IrExpr::new(
+                IrExprKind::Container(Box::new(read)),
                 source_width,
                 source_signed,
                 None,
             );
             let value = self.p30_capture_value(lhs, rhs, ordinal, value, &mut then_body);
-            let value = if target_array.real {
+            let value = if real_source {
+                value
+            } else if target_array.real {
                 IrExpr::new(
                     IrExprKind::CastToReal {
                         a: Box::new(value),

@@ -377,6 +377,9 @@ mod ki_static_members;
 #[path = "sim_feature_completion/ki_fixed_view_ranges.rs"]
 mod ki_fixed_view_ranges;
 
+#[path = "sim_feature_completion/ki_class_array_values.rs"]
+mod ki_class_array_values;
+
 #[path = "sim_feature_completion/ki_initializer_order.rs"]
 mod ki_initializer_order;
 
