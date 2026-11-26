@@ -1045,8 +1045,8 @@ impl Codegen<'_> {
     /// assignment `h` writes whole (`rq[k].v = f()`, `rq[k].v += f()`), when
     /// its right-hand side has an [effect](Self::evaluation_effect): such a
     /// target is located before the right-hand side (decision EO-D4), so
-    /// they are evaluated first. A selector with `$` is evaluated with the
-    /// target.
+    /// the selectors that are not literals are evaluated first. A selector
+    /// with `$` is evaluated with the target.
     pub(in crate::sim::codegen) fn member_target_selectors_first(
         &self,
         h: NodeId,
@@ -1082,7 +1082,19 @@ impl Codegen<'_> {
             }
             false
         };
-        (!selectors.iter().any(|selector| unbounded(*selector))).then_some(selectors)
+        if selectors.iter().any(|selector| unbounded(*selector)) {
+            return None;
+        }
+        let computed: Vec<NodeId> = selectors
+            .into_iter()
+            .filter(|selector| {
+                !matches!(
+                    self.kind(*selector),
+                    NodeKind::Expr(ExprKind::Constant { .. })
+                )
+            })
+            .collect();
+        (!computed.is_empty()).then_some(computed)
     }
 
     /// Evaluate the selectors `nodes` ([`Self::member_target_selectors_first`])
