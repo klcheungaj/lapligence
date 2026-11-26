@@ -660,6 +660,59 @@ impl<'a> Codegen<'a> {
         self.convert_fixed_payload(cast, value).map(Some)
     }
 
+    /// A whole fixed array of packed words stored as a container view (a
+    /// class property, `t = la`, `return la`, `f(o.la)`) as one packed value:
+    /// the bit stream of its cells, which has the array's own size, left
+    /// index first as in the array's packed form (SV 6.24.3, 7.4.6).
+    pub(in super::super) fn fixed_view_value(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrExpr>, String> {
+        // Every expression passes here: a design without containers stops
+        // before any lookup.
+        if self.model.containers.is_empty()
+            || !matches!(
+                self.kind(node),
+                NodeKind::Expr(ExprKind::Ref { .. } | ExprKind::HierPath { .. })
+            )
+        {
+            return Ok(None);
+        }
+        let Some(container) = self.container_of(node).map(|info| info.ir) else {
+            return Ok(None);
+        };
+        if !self.is_fixed_view(container) || !self.model.containers[container].element.is_packed() {
+            return Ok(None);
+        }
+        let Some(descriptor) = self.query_descriptor(node).cloned() else {
+            return Ok(None);
+        };
+        if !matches!(descriptor.shape, TypeShape::FixedArray { .. }) {
+            return Ok(None);
+        }
+        let width = self
+            .fixed_value_width(node)
+            .filter(|width| *width > 0 && *width < LLG_MAX_WIDTH)
+            .ok_or_else(|| format!("fixed array value in `{path}` has no supported packed size"))?;
+        let stream = self.lower_bit_stream_source(path, node)?;
+        let value = IrExpr::new(
+            IrExprKind::StreamToFixed {
+                a: Box::new(Self::bit_stream_value(stream)),
+                exact: true,
+            },
+            width,
+            false,
+            None,
+        );
+        let value = if descriptor.two_state {
+            IrExpr::to_two_state(value)
+        } else {
+            value
+        };
+        self.convert_fixed_payload(node, value).map(Some)
+    }
+
     /// A runtime-sized bit stream as one packed value of runtime width.
     fn bit_stream_value(stream: IrBitStream) -> IrExpr {
         IrExpr::new(

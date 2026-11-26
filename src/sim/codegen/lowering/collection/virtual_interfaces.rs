@@ -327,6 +327,7 @@ impl<'a> Codegen<'a> {
             self.add_virtual_interface_descriptor(identity, &interfaces)?;
         }
         self.collect_virtual_interface_nesting(&interfaces)?;
+        self.note_interface_views();
         Ok(())
     }
 
@@ -662,7 +663,7 @@ impl<'a> Codegen<'a> {
     /// assignment, increment or decrement operation (the frontend wraps an
     /// output or inout actual in an assignment whose first operand is the
     /// actual); and the actuals of a call's non-`const` `ref` formals.
-    pub(super) fn written_targets(&self, id: NodeId, out: &mut Vec<NodeId>) {
+    pub(in super::super) fn written_targets(&self, id: NodeId, out: &mut Vec<NodeId>) {
         match self.kind(id) {
             NodeKind::Stmt(StmtKind::Assign { .. }) | NodeKind::ContAssign { .. } => {
                 out.extend(self.node(id).children.first().copied());
@@ -741,7 +742,7 @@ impl<'a> Codegen<'a> {
     /// assignment target `target` writes: the path itself, the base of a
     /// select of it, and each member of a concatenation, assignment pattern
     /// or streaming target. Selector expressions are reads, not followed.
-    pub(super) fn handle_member_writes(&self, target: NodeId, out: &mut Vec<NodeId>) {
+    pub(in super::super) fn handle_member_writes(&self, target: NodeId, out: &mut Vec<NodeId>) {
         match self.kind(target) {
             NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
                 if refs
@@ -1144,6 +1145,7 @@ impl<'a> Codegen<'a> {
                 methods: method_slots,
                 events: Vec::new(),
                 nested: Vec::new(),
+                storage: Vec::new(),
             });
             self.virtual_interface_instances
                 .insert(interface, (descriptor_index, instance_index));
@@ -1162,6 +1164,7 @@ impl<'a> Codegen<'a> {
             methods,
             events: Vec::new(),
             nested: Vec::new(),
+            storage: Vec::new(),
         });
         for (view, members) in view_members {
             self.virtual_interface_views

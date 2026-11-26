@@ -1245,6 +1245,7 @@ impl<'a> Codegen<'a> {
             dims: dims.clone(),
             total,
             sampled_image: false,
+            bound: false,
         });
         Ok(ArrayInfo {
             global: self.global_name(path, name),
@@ -1269,8 +1270,12 @@ impl<'a> Codegen<'a> {
     /// storage: their elements are owned recursive values (SIM-007), so a
     /// runtime select reads or writes one element in place instead of
     /// flattening leaves per cell.
+    ///
+    /// Queues, dynamic and associative arrays (`int q[2][$]`) are elements
+    /// of the same storage: each element is its own container (SV 7.4.2).
     pub(super) fn is_fixed_handle_element(element: &TypeDescriptor) -> bool {
         match &element.shape {
+            TypeShape::Container { .. } => true,
             TypeShape::Opaque { kind } => {
                 matches!(kind.as_str(), "Chandle" | "VirtualInterface" | "Class")
             }

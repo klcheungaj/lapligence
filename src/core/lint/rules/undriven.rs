@@ -391,6 +391,23 @@ mod tests {
     }
 
     #[test]
+    fn member_write_of_a_record_element_drives_the_array() {
+        // `mr[1].k = 4` writes the record array (IEEE 1800-2009 7.2, 7.4):
+        // automatic and static module arrays alike; an array no process
+        // writes stays undriven.
+        assert_eq!(
+            undriven_names(
+                "module top;\n  typedef struct { int k; string s; } r_t;\n  r_t mr[2];\n  \
+                 static r_t smr[2];\n  r_t unwritten[2];\n  initial begin\n    mr[1].k = 4;\n    \
+                 smr[0].s = \"x\";\n    $display(\"%0d %s %0d\", mr[1].k, smr[0].s, unwritten[0].k);\n  \
+                 end\nendmodule\n",
+                "top",
+            ),
+            vec!["unwritten".to_string()]
+        );
+    }
+
+    #[test]
     fn identical_instance_findings_collapse_to_one() {
         let diags = run_rule(
             "module child;\n  logic floating;\n  logic sink;\n  assign sink = floating;\nendmodule\n\

@@ -162,7 +162,7 @@ impl Frame<'_, '_> {
         } else {
             (
                 "llg_dense_cells",
-                info.cell_address(&format!("{}ULL", first.offset)),
+                self.cell_address(first.array, &format!("{}ULL", first.offset))?,
             )
         })
     }

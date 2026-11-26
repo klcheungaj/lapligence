@@ -373,7 +373,7 @@ impl<'a> Codegen<'a> {
         h: NodeId,
     ) -> Result<IrExpr, String> {
         self.check_stack(h)?;
-        self.lower_expr_node(scope_path, h)
+        self.with_interface_select(h, |this| this.lower_expr_node(scope_path, h))
             .map(|value| self.settle_two_state_select(h, value))
             .map_err(|error| self.locate_error(h, error))
     }
@@ -388,6 +388,7 @@ impl<'a> Codegen<'a> {
         try_form!(self.substituted_read(scope_path, h));
         try_form!(self.lower_with_call_operands(scope_path, h));
         try_form!(self.lower_with_receiver_root(scope_path, h));
+        try_form!(self.lower_with_interface_views(scope_path, h));
         try_form!(self.lower_with_staged_members(scope_path, h));
         // The iterator declaration of a generated method loop stands for its
         // current element index or key (see `inline_element_path`).
@@ -401,7 +402,6 @@ impl<'a> Codegen<'a> {
         try_form!(self.lower_native_member_read(scope_path, h));
         try_form!(self.lower_record_call_select(scope_path, h));
         try_form!(self.lower_native_call_select(scope_path, h));
-        try_form!(self.virtual_interface_array_element_expr(scope_path, h));
         try_form!(self.lower_packed_element_member(scope_path, h));
         try_form!(self.lower_parameter_elements(scope_path, h));
         try_form!(self.fixed_activation_read(scope_path, h));
@@ -415,6 +415,7 @@ impl<'a> Codegen<'a> {
         try_form!(self.class_field_expr(scope_path, h));
         try_form!(self.lower_enum_method(scope_path, h));
         try_form!(self.lower_method_value(scope_path, h));
+        try_form!(self.fixed_view_value(scope_path, h));
         match self.kind(h) {
             NodeKind::Expr(ExprKind::TaggedUnion { member, value }) => {
                 self.lower_tagged_union_constructor(scope_path, h, member, *value)

@@ -489,19 +489,11 @@ impl<'a> Codegen<'a> {
         if let Some(target) = self.virtual_interface_select_lhs(path, lhs)? {
             return Ok(Some(Lhs::Canonical(target)));
         }
-        // Only `=` and `<=` statements dispatch an element of a
-        // virtual-interface array member on the bound instance.
-        if self
-            .virtual_interface_array_element(path, lhs, true)?
-            .is_some()
-        {
-            return Err(self.locate_error(
-                lhs,
-                format!(
-                    "this write to an element of an unpacked array member through a \
-                 virtual interface is not supported in `{path}`; assign it with `=` or `<=`"
-                ),
-            ));
+        // A write of an unpacked member through a handle names its view,
+        // which the statement binds; a write no statement binds one for is
+        // located here.
+        if let Some(error) = self.unbound_interface_member(path, lhs) {
+            return Err(error);
         }
         if let Some(select) = self.packed_element_member_select(lhs) {
             if self.class_packed_select(select) {

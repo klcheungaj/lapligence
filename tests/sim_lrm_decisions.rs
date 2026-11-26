@@ -638,6 +638,26 @@ fn sd10_d4_initializer_error_runs_no_finals() {
     );
 }
 
+/// VM-D1 / IEEE 1800-2009 10.4.1, 13.5: a use of an unpacked member through a
+/// virtual interface reads the handle where it is evaluated.
+#[test]
+fn vm_d1_handle_read_at_use() {
+    run_decision(
+        "VM-D1_handle_read_at_use",
+        include_str!("fixtures/sim/lrm_decisions/VM-D1_handle_read_at_use.out"),
+    );
+}
+
+/// VM-D2 / IEEE 1800-2009 10.4.2: an event-controlled nonblocking write
+/// through a virtual interface locates its target at issue.
+#[test]
+fn vm_d2_event_nba_target_at_issue() {
+    run_decision(
+        "VM-D2_event_nba_target_at_issue",
+        include_str!("fixtures/sim/lrm_decisions/VM-D2_event_nba_target_at_issue.out"),
+    );
+}
+
 #[test]
 fn sd10_d5_concatenation_item_conversions() {
     sim_cli::run_case_backend_parity_ending_in_fatal(

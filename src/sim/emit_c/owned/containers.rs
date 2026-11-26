@@ -50,6 +50,7 @@ impl Frame<'_, '_> {
         if !container.activation {
             return Ok(container.c_name.clone());
         }
+        self.use_interface_view(crate::sim::ir::IrInterfaceStorage::Container(index));
         self.containers
             .get(&index)
             .cloned()

@@ -37,3 +37,15 @@ such a list with a null event report; it agrees on the rest.
 
 `null_event.sv`: decision S14-D8 for the same controls. The run ends at the
 statement; `repeat (0)` does not wait and is no access.
+
+## Real arrays and `.triggered`
+
+`real_arrays.sv`: event-controlled and delayed nonblocking writes of a whole
+real array and of its elements were refused ("cannot resolve assignment
+target"), and an event control whose `iff` qualifier reads `ev.triggered`
+was refused as a call without an effect summary. 9.4.5 L12123-12125: "An
+intra-assignment delay or event control shall delay the assignment of the new
+value to the left-hand side, but the right-hand expression shall be evaluated
+before the delay, instead of after the delay." 15.5.3 L20735-20736: "The
+triggered event property evaluates to true if the given event has been
+triggered in the current time step and false otherwise."

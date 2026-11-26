@@ -394,11 +394,6 @@ impl EmitCtx<'_, '_> {
                 self.path
             ));
         }
-        if let Some(write) =
-            self.lower_virtual_interface_array_write(lhs, rhs, op, blocking, None)?
-        {
-            return Ok(write);
-        }
         if let Some(aggregate_assignment) = self
             .cg
             .lower_unpacked_aggregate_assignment(&self.path, lhs, rhs, !blocking, op)?
@@ -449,85 +444,6 @@ impl EmitCtx<'_, '_> {
             rhs: rhs_ir,
             nba: !blocking,
         })
-    }
-
-    /// `v.mem[i] = e` or `v.mem[i] <= e` through a virtual-interface handle
-    /// (SV 25.9): one assignment per instance the handle can bind, chosen by
-    /// the instance bound when the statement executes (an invalid handle
-    /// reports at the access and writes nothing). The right-hand side and
-    /// indices are lowered once per arm and evaluated once. `delay` is that of
-    /// `v.mem[i] <= #d e`.
-    fn lower_virtual_interface_array_write(
-        &mut self,
-        lhs: NodeId,
-        rhs: NodeId,
-        op: Operation,
-        blocking: bool,
-        delay: Option<&IrDelay>,
-    ) -> Result<Option<IrStmt>, String> {
-        let Some(element) = self
-            .cg
-            .virtual_interface_array_element(&self.path, lhs, true)?
-        else {
-            return Ok(None);
-        };
-        if op != Operation::Assignment {
-            return Err(self.cg.locate_error(
-                lhs,
-                format!(
-                    "a compound assignment to an element of an unpacked array member through \
-                 a virtual interface is not supported in `{}`; use `=` or `<=`",
-                    self.path
-                ),
-            ));
-        }
-        let indices = element
-            .indices
-            .iter()
-            .map(|index| self.cg.lower_expr(&self.path, *index))
-            .collect::<Result<Vec<_>, _>>()?;
-        let (elem_sel, _) = self
-            .cg
-            .virtual_interface_element_select(&self.path, &element)?;
-        let mut value: Option<IrExpr> = None;
-        let mut items = Vec::with_capacity(element.arrays.len());
-        for (instance, array) in element.arrays.iter().enumerate() {
-            let lh = IrLhs::ArrayElem {
-                arr: self.cg.reference_array(array.ir),
-                indices: indices.clone(),
-                elem_sel: elem_sel.clone(),
-            };
-            let rhs_ir = match &value {
-                Some(value) => value.clone(),
-                None => {
-                    let lowered = self.lower_assignment_rhs(lhs, rhs, op, &lh)?;
-                    let lowered = apply_lhs_assignment_context(&self.cg.model, &lh, lowered);
-                    value = Some(lowered.clone());
-                    lowered
-                }
-            };
-            items.push(IrCaseItem::new(
-                vec![lhs_integer_expr(instance as i128)],
-                vec![match delay {
-                    Some(ticks) => IrStmt::DelayedAssign {
-                        lhs: lh,
-                        rhs: rhs_ir,
-                        ticks: ticks.clone(),
-                    },
-                    None => IrStmt::Assign {
-                        lhs: lh,
-                        rhs: rhs_ir,
-                        nba: !blocking,
-                    },
-                }],
-            ));
-        }
-        Ok(Some(IrStmt::Case {
-            sel: Codegen::virtual_interface_instance_query(&element),
-            kind: IrCaseKind::Exact,
-            items,
-            check: IrUniquePriorityCheck::None,
-        }))
     }
 
     /// `lhs = <overloaded update>` (IEEE 1800-2009 11.11) whose target is a
@@ -875,9 +791,10 @@ impl EmitCtx<'_, '_> {
             return Ok(vec![IrStmt::Block(timed)]);
         }
         // A run-time member select queues one branch's write, as a record
-        // queues one write per leaf.
+        // or a real array queues one write per leaf.
         if self.cg.native_record_target(lhs)
             || self.whole_unpacked_record(lhs)
+            || self.cg.real_array_shape(lhs).is_some()
             || matches!(self.cg.native_member_select(&self.path, lhs), Ok(Some(_)))
         {
             return self.lower_delayed_native_record(h, lhs, rhs, false, scaled_ticks);
@@ -894,11 +811,6 @@ impl EmitCtx<'_, '_> {
             NodeKind::Stmt(StmtKind::Assign { op, .. }) => *op,
             _ => unreachable!("non-assignment passed to lower_delayed_assignment"),
         };
-        if let Some(write) =
-            self.lower_virtual_interface_array_write(lhs, rhs, op, false, Some(&scaled_ticks))?
-        {
-            return Ok(vec![write]);
-        }
         let lh = self.cg.lower_lhs(&self.path, lhs)?;
         let rhs_ir = self.lower_assignment_rhs(lhs, rhs, op, &lh)?;
         let rhs_ir = apply_lhs_assignment_context(&self.cg.model, &lh, rhs_ir);
@@ -929,8 +841,11 @@ impl EmitCtx<'_, '_> {
         h: NodeId,
         lhs: NodeId,
         rhs: NodeId,
-        wait: Vec<IrStmt>,
+        mut wait: Vec<IrStmt>,
     ) -> Result<Vec<IrStmt>, String> {
+        // Views of unpacked interface members the target names are bound
+        // again once the control has passed, where the target is located.
+        wait.append(&mut self.target_rebinds);
         let op = match self.cg.kind(h) {
             NodeKind::Stmt(StmtKind::Assign { op, .. }) => *op,
             _ => unreachable!("non-assignment passed to lower_blocking_timed_assignment"),
@@ -1350,6 +1265,15 @@ impl EmitCtx<'_, '_> {
                 "compound event/repeat intra-assignment timing in `{}` is not supported",
                 self.path
             ));
+        }
+        // A target bound through a handle is located at issue (SV 10.4.2):
+        // its updates are built now and queued when the control fires.
+        if !blocking && self.cg.names_interface_view(lhs) {
+            let (specs, count) = self.intra_event_specs(timing)?;
+            let count = count
+                .map(|count| self.lower_repeat_count(count))
+                .transpose()?;
+            return self.lower_held_event_nba(h, lhs, rhs, &specs, count);
         }
         if !blocking && self.located_event_nba(lhs) {
             let (specs, count) = self.intra_event_specs(timing)?;

@@ -17,6 +17,17 @@ fn a_clocking_event_queues_updates() {
 }
 
 #[test]
+fn real_arrays_take_timed_updates_and_controls_read_triggered() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "real_arrays",
+        include_str!("../fixtures/sim/feature_completion/ki_event_updates/real_arrays.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
 fn a_captured_loop_variable_ends_with_its_last_write() {
     sim_cli::run_case_backend_parity(
         SUITE,

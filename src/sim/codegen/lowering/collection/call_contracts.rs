@@ -303,6 +303,10 @@ impl<'a> Codegen<'a> {
     /// Built-in container and string methods that only read their receiver
     /// (SV 9.4.2 admits built-in methods with singular results).
     fn builtin_query_method(&self, scope_path: &str, name: &str, receiver: NodeId) -> bool {
+        // The triggered state of an event is read, never written (SV 15.5.3).
+        if name == "triggered" && self.event_target_of(receiver).is_some() {
+            return true;
+        }
         if self.container_of(receiver).is_some() {
             return matches!(name, "size" | "num" | "exists");
         }

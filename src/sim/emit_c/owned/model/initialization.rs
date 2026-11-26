@@ -623,7 +623,7 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
     initialize.push_str(&super::super::native_values::native_type_tables(model)?.1);
     initialize.push_str(&super::super::patterns::pattern_setup(model));
     destroy.push_str(&super::super::native_values::native_value_teardown(model));
-    for array in model.arrays.iter().filter(|array| !array.activation) {
+    for array in model.arrays.iter().filter(|array| array.is_model_storage()) {
         defaults(
             &mut initialize,
             &mut destroy,

@@ -78,11 +78,6 @@ impl MonitorReads {
                 self.names.insert(name.clone());
             }
             IrDependency::PackedRange { storage, .. } => self.note_one(storage),
-            IrDependency::InterfaceInstance { arms, .. } => {
-                for arm in arms {
-                    self.note_one(arm);
-                }
-            }
             IrDependency::RefFormal { .. } | IrDependency::NativeAccess(_) => self.opaque = true,
             // Array cells, containers, strings, handles, records and
             // activation cells are never merge targets.

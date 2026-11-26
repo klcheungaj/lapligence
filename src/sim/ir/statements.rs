@@ -497,6 +497,9 @@ pub enum IrStmt {
     },
     /// Create lexical non-flattened fixed storage with registered cleanup.
     FixedArrayDeclare(usize),
+    /// Bind a view of an unpacked interface member through a virtual
+    /// interface handle for the statements after it in its block.
+    InterfaceBind(Box<super::IrInterfaceBinding>),
     /// Default-construct lexical native value storage with registered cleanup.
     NativeValueDeclare(usize),
     /// Default-construct an activation native value, and its companion

@@ -1325,6 +1325,16 @@ impl<'a> Codegen<'a> {
                     writes.insert(self.signal_dependency(info));
                 }
             }
+            NodeKind::Expr(ExprKind::HierPath { .. })
+                if self.staged_interface_view(lhs).is_some() =>
+            {
+                if let Some(array) = self.interface_view_array(lhs) {
+                    writes.insert(IrDependency::ArrayContents(array.ir));
+                } else if let Some(container) = self.interface_view_container(lhs) {
+                    writes.insert(IrDependency::ContainerContents(container.ir));
+                    writes.insert(IrDependency::ContainerShape(container.ir));
+                }
+            }
             NodeKind::Expr(ExprKind::HierPath { .. }) => {
                 if let Some((_, _, member)) = self.unpacked_member_info(lhs) {
                     if let Some(signal) = member.signal.as_ref() {
@@ -1484,8 +1494,7 @@ impl<'a> Codegen<'a> {
                 | IrDependency::SharedNative { .. }
                 | IrDependency::RefFormal { .. }
                 | IrDependency::NativeRefFormal { .. }
-                | IrDependency::NativeAccess(_)
-                | IrDependency::InterfaceInstance { .. } => {
+                | IrDependency::NativeAccess(_) => {
                     return Err(format!(
                         "container/object dependencies cannot yet drive force evaluators in `{scope_path}`"
                     ))
@@ -2128,6 +2137,12 @@ impl<'a> Codegen<'a> {
                 return Ok(());
             }
             _ => {}
+        }
+        // An unpacked member through a handle, read through its view
+        // (`stage_dependency_views`).
+        if let Some(array) = self.interface_view_array(node) {
+            self.add_dependency(IrDependency::ArrayContents(array.ir), seen, out);
+            return Ok(());
         }
         if let Some(container) = self.container_of(node) {
             self.add_container_dependencies(node, container.ir, true, true, seen, out);

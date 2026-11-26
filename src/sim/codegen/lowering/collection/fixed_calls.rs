@@ -118,6 +118,7 @@ impl Codegen<'_> {
             dims: dimensions.clone(),
             total,
             sampled_image: false,
+            bound: false,
         });
         Ok(info)
     }

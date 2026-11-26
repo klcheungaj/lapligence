@@ -890,7 +890,11 @@ impl Codegen<'_> {
     /// chain (`h` in `h.n.q`): rebinding it moves the access. A method or
     /// built-in call on the property does not read the receiver path, so the
     /// read walk adds no dependency on it.
-    fn root_handle_dependency(&self, name: &str, out: &mut Vec<IrDependency>) {
+    pub(in crate::sim::codegen) fn root_handle_dependency(
+        &self,
+        name: &str,
+        out: &mut Vec<IrDependency>,
+    ) {
         let mut current = name.to_owned();
         for _ in 0..MAX_HANDLE_PROPERTY_DEPTH {
             let Some(access) = self
@@ -929,7 +933,7 @@ impl Codegen<'_> {
 
     /// Whether a handle expression can be evaluated again whenever the wait
     /// arms without side effects.
-    fn rearmable_handle(handle: &IrChandleExpr) -> bool {
+    pub(in crate::sim::codegen) fn rearmable_handle(handle: &IrChandleExpr) -> bool {
         match handle {
             IrChandleExpr::Null
             | IrChandleExpr::Read(_)
@@ -1712,26 +1716,50 @@ impl Codegen<'_> {
     /// interface-member reads of `root` resolved to native-access
     /// dependencies. Use it only where the consumer arms its wait again
     /// after every wake.
-    pub(in super::super) fn with_dynamic_reads<T>(
+    pub(in super::super) fn with_dynamic_reads(
         &mut self,
         path: &str,
         root: NodeId,
-        collect: impl FnOnce(&Self) -> Result<T, String>,
-    ) -> Result<T, String> {
+        collect: impl FnOnce(&Self) -> Result<Vec<IrDependency>, String>,
+    ) -> Result<Vec<IrDependency>, String> {
         self.with_prepared_reads(path, root, collect)
     }
 
-    fn with_prepared_reads<T>(
+    fn with_prepared_reads(
         &mut self,
         path: &str,
         root: NodeId,
-        collect: impl FnOnce(&Self) -> Result<T, String>,
-    ) -> Result<T, String> {
+        collect: impl FnOnce(&Self) -> Result<Vec<IrDependency>, String>,
+    ) -> Result<Vec<IrDependency>, String> {
+        // Unpacked members through handles are read through views of their
+        // storage, resolved through the handle when the wait arms.
+        let nodes = if self.interface_views_possible {
+            self.implicit_read_nodes(root, true)
+        } else {
+            Vec::new()
+        };
+        let views = self.stage_dependency_views(path, &nodes)?;
         self.dynamic_read_walk = true;
         let prepared = self.prepare_dynamic_reads(path, root);
         let result = prepared.and_then(|()| collect(self));
         self.dynamic_read_walk = false;
         self.dynamic_reads.clear();
+        self.end_dependency_views(views, result)
+    }
+
+    /// End the staging [`Self::stage_dependency_views`] opened, if `views`,
+    /// and resolve the dependencies of its views.
+    fn end_dependency_views(
+        &mut self,
+        views: bool,
+        result: Result<Vec<IrDependency>, String>,
+    ) -> Result<Vec<IrDependency>, String> {
+        if !views {
+            return result;
+        }
+        self.end_interface_views();
+        let result = result.and_then(|reads| self.interface_view_dependencies(reads));
+        self.dependency_views.clear();
         result
     }
 
@@ -1746,23 +1774,29 @@ impl Codegen<'_> {
     /// which arms on the new instance. Members the block also writes through
     /// the same handle and member are left out (9.2.2.2.1 b). Function bodies
     /// are followed when `include_function_bodies` (always_comb).
-    pub(in super::super) fn with_interface_reads<T>(
+    pub(in super::super) fn with_interface_reads(
         &mut self,
         path: &str,
         root: NodeId,
         include_function_bodies: bool,
-        collect: impl FnOnce(&Self) -> Result<T, String>,
-    ) -> Result<T, String> {
+        collect: impl FnOnce(&Self) -> Result<Vec<IrDependency>, String>,
+    ) -> Result<Vec<IrDependency>, String> {
         if self.model.virtual_interfaces.is_empty() {
             return collect(self);
         }
+        let nodes = if self.interface_views_possible {
+            self.implicit_read_nodes(root, include_function_bodies)
+        } else {
+            Vec::new()
+        };
+        let views = self.stage_dependency_views(path, &nodes)?;
         let saved_reads = std::mem::take(&mut self.dynamic_reads);
         let saved_errors = std::mem::take(&mut self.dynamic_read_errors);
         let prepared = self.prepare_interface_reads(path, root, include_function_bodies);
         let result = prepared.and_then(|()| collect(self));
         self.dynamic_reads = saved_reads;
         self.dynamic_read_errors = saved_errors;
-        result
+        self.end_dependency_views(views, result)
     }
 
     /// The nodes an implicit-sensitivity walk of `root` can reach, each with
@@ -1844,12 +1878,7 @@ impl Codegen<'_> {
             ) => *base,
             _ => return Ok(()),
         };
-        if let Some(element) = self.virtual_interface_array_element(path, lhs, true)? {
-            out.insert(element.key);
-        } else {
-            self.written_interface_members(path, base, out)?;
-        }
-        Ok(())
+        self.written_interface_members(path, base, out)
     }
 
     /// A located rejection of a virtual-interface read that an implicit
@@ -1879,16 +1908,10 @@ impl Codegen<'_> {
                 }
             }
         }
-        // Structural member paths of element selects (`v.mem` of `v.mem[i]`)
-        // are no reads of their own.
-        let mut structural = HashSet::new();
         // Parents are listed before their children, so a member path that
         // fails (`v.s.f`) yields to a member path below it that succeeds.
         let mut failed: Vec<(NodeId, String)> = Vec::new();
         for (node, in_callee) in nodes {
-            if structural.contains(&node) {
-                continue;
-            }
             // always_comb follows called functions, but not into the
             // implementation a virtual-interface method call selects.
             if include_function_bodies && self.virtual_interface_method_call(node) {
@@ -1898,59 +1921,6 @@ impl Codegen<'_> {
                     "the storage a virtual-interface method call reads",
                 );
                 self.dynamic_read_errors.insert(node, error);
-                continue;
-            }
-            let element = match self.kind(node) {
-                NodeKind::Expr(
-                    ExprKind::BitSelect { .. }
-                    | ExprKind::ArraySelect { .. }
-                    | ExprKind::PartSelect { .. }
-                    | ExprKind::IndexedPartSelect { .. },
-                ) => self.virtual_interface_array_element(path, node, false),
-                _ => Ok(None),
-            };
-            let element = match element {
-                Ok(element) => element,
-                Err(error) => {
-                    self.dynamic_read_errors.insert(node, error);
-                    continue;
-                }
-            };
-            if let Some(element) = element {
-                structural.insert(element.member_path);
-                if written.contains(&element.key) {
-                    continue;
-                }
-                let IrChandleExpr::Read(handle) = element.handle else {
-                    let error = self.unobservable_interface_read(
-                        path,
-                        node,
-                        "an element of an unpacked array member read through a handle other than a virtual-interface variable",
-                    );
-                    self.dynamic_read_errors.insert(node, error);
-                    continue;
-                };
-                let mut arms = Vec::new();
-                for array in &element.arrays {
-                    let mut dependencies = Vec::new();
-                    self.add_fixed_array_dependency(
-                        array,
-                        &element.indices,
-                        &mut HashSet::new(),
-                        &mut dependencies,
-                    );
-                    arms.extend(dependencies);
-                }
-                // A constant index outside the bounds reads no storage.
-                if arms.len() == element.arrays.len() {
-                    self.dynamic_reads.entry(node).or_default().push(
-                        IrDependency::InterfaceInstance {
-                            handle,
-                            interface: element.descriptor,
-                            arms,
-                        },
-                    );
-                }
                 continue;
             }
             if !self.dynamic_interface_member(node) {

@@ -1694,17 +1694,6 @@ impl<'a> Codegen<'a> {
                 format!("ref formal {index}")
             }
             IrDependency::NativeAccess(name) => format!("native access {name}"),
-            IrDependency::InterfaceInstance {
-                handle,
-                interface,
-                arms,
-            } => format!(
-                "object[{handle}] interface[{interface}] instance of {}",
-                arms.iter()
-                    .map(|arm| self.dependency_sort_key(arm))
-                    .collect::<Vec<_>>()
-                    .join(" | ")
-            ),
         }
     }
 

@@ -179,10 +179,7 @@ impl<'a> Codegen<'a> {
                         "compound assignment to nested resizable container element in {path} is not supported"
                     ));
                 }
-                let indices = source_indices
-                    .into_iter()
-                    .map(|index| self.lower_container_index(path, index))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let indices = self.lower_container_path_indices(path, container, source_indices)?;
                 let mut prelude = Vec::new();
                 let source = self.nested_container_source(path, container, 1, rhs, &mut prelude)?;
                 prelude.push(IrStmt::Container(Box::new(IrContainerStmt::SetContainer {
@@ -203,10 +200,7 @@ impl<'a> Codegen<'a> {
                         "compound assignment to nested resizable container element in {path} is not supported"
                     ));
                 }
-                let indices = source_indices
-                    .into_iter()
-                    .map(|index| self.lower_container_index(path, index))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let indices = self.lower_container_path_indices(path, container, source_indices)?;
                 let element = self
                     .container_element_type(container, indices.len())
                     .ok_or_else(|| format!("invalid nested container write in {path}"))?;
@@ -282,7 +276,7 @@ impl<'a> Codegen<'a> {
                 .container_element_type(container.ir, 1)
                 .is_some_and(|element| matches!(element, IrContainerElement::Container { .. }))
             {
-                let indices = vec![self.lower_container_index(path, index)?];
+                let indices = vec![self.lower_container_top_index(path, container.ir, index)?];
                 let mut prelude = Vec::new();
                 let source =
                     self.nested_container_source(path, container.ir, 1, rhs, &mut prelude)?;
@@ -654,6 +648,37 @@ impl<'a> Codegen<'a> {
                         pattern_key_expr(0, 64, true, false),
                         count,
                     );
+                }
+            }
+            // A whole real class property takes a real array value element
+            // for element, every value read before the first write.
+            if self.is_fixed_view(dst.ir) && self.model.containers[dst.ir].element.is_real() {
+                if let Some((dims, _)) = self.real_array_shape(type_node) {
+                    let values = self.real_array_values(path, rhs, &dims)?;
+                    let mut statements = Vec::with_capacity(values.len() * 2);
+                    let mut writes = Vec::with_capacity(values.len());
+                    for (position, value) in values.into_iter().enumerate() {
+                        let name = format!("_llg_real_view_{}_{position}", rhs.0);
+                        statements.push(IrStmt::DeclLocal {
+                            name: name.clone(),
+                            width: 0,
+                            signed: false,
+                            two_state: false,
+                            init: Some(Box::new(value)),
+                        });
+                        writes.push(IrStmt::Container(Box::new(IrContainerStmt::SetReal {
+                            container: dst.ir,
+                            index: pattern_key_expr(
+                                i128::try_from(position).unwrap_or(i128::MAX),
+                                64,
+                                true,
+                                false,
+                            ),
+                            value: IrExpr::new(IrExprKind::LocalRead(name), 0, false, None),
+                        })));
+                    }
+                    statements.extend(writes);
+                    return Ok(IrStmt::Block(statements));
                 }
             }
             self.reject_native_row_copy(path, rhs)?;

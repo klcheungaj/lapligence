@@ -403,18 +403,11 @@ impl<'a> Codegen<'a> {
                     },
                     _ if element.is_real() => IrContainerExpr::GetReal {
                         container: container.ir,
-                        index: Box::new(self.lower_container_index(path, *index)?),
+                        index: Box::new(self.lower_container_top_index(path, container.ir, *index)?),
                     },
                     _ if element.is_packed() => IrContainerExpr::Get {
                         container: container.ir,
-                        index: Box::new(if matches!(
-                            self.model.containers[container.ir].kind,
-                            IrContainerKind::Queue { .. }
-                        ) {
-                            self.lower_queue_index(path, container.ir, *index)?
-                        } else {
-                            self.lower_container_index(path, *index)?
-                        }),
+                        index: Box::new(self.lower_container_top_index(path, container.ir, *index)?),
                     },
                     _ => {
                         return Err(format!(
@@ -467,18 +460,11 @@ impl<'a> Codegen<'a> {
                     },
                     _ if element.is_real() => IrContainerExpr::GetReal {
                         container: container.ir,
-                        index: Box::new(self.lower_container_index(path, indices[0])?),
+                        index: Box::new(self.lower_container_top_index(path, container.ir, indices[0])?),
                     },
                     _ if element.is_packed() => IrContainerExpr::Get {
                         container: container.ir,
-                        index: Box::new(if matches!(
-                            self.model.containers[container.ir].kind,
-                            IrContainerKind::Queue { .. }
-                        ) {
-                            self.lower_queue_index(path, container.ir, indices[0])?
-                        } else {
-                            self.lower_container_index(path, indices[0])?
-                        }),
+                        index: Box::new(self.lower_container_top_index(path, container.ir, indices[0])?),
                     },
                     _ => {
                         return Err(format!(

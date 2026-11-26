@@ -2570,6 +2570,19 @@ struct Codegen<'a> {
     /// `(descriptor, member)` of a member with no packed or real value (a
     /// string, a handle): a virtual interface reaches no such member.
     virtual_interface_unvalued: HashSet<(usize, String)>,
+    /// Whether some member path names an unpacked member through a
+    /// virtual-interface handle, so statements and expressions may bind
+    /// views of it; false keeps the scan off every other design.
+    interface_views_possible: bool,
+    /// Views bound for the statements and expressions being lowered, by the
+    /// member path (`v.a`) that names each (`stage_interface_views`).
+    staged_interface_views: HashMap<NodeId, objects::InterfaceView>,
+    /// What each open staging of views added, innermost last.
+    interface_stagings: Vec<objects::InterfaceStaging>,
+    /// Views staged for a read walk (`stage_dependency_views`): the handle,
+    /// descriptor and storage slot a wait on the view resolves when it arms,
+    /// or why no wait can.
+    dependency_views: HashMap<crate::sim::ir::IrInterfaceStorage, objects::DependencyView>,
     /// `(descriptor, method name)` → method slot.
     virtual_interface_methods: HashMap<(usize, String), usize>,
     /// Modport view restrictions keyed by descriptor and view name. Each
@@ -2946,6 +2959,10 @@ impl<'a> Codegen<'a> {
             virtual_interface_instances: HashMap::new(),
             virtual_interface_members: HashMap::new(),
             virtual_interface_unvalued: HashSet::new(),
+            interface_views_possible: false,
+            staged_interface_views: HashMap::new(),
+            interface_stagings: Vec::new(),
+            dependency_views: HashMap::new(),
             virtual_interface_methods: HashMap::new(),
             virtual_interface_views: HashMap::new(),
             virtual_interface_view_methods: HashMap::new(),
@@ -3065,6 +3082,9 @@ impl<'a> Codegen<'a> {
     /// the array was collected.
     fn array_of(&self, node: NodeId) -> Option<&ArrayInfo> {
         if let Some(array) = self.array_globals.get(&node) {
+            return Some(array);
+        }
+        if let Some(array) = self.interface_view_array(node) {
             return Some(array);
         }
         if let Some(column) = self.record_column_array(node) {
@@ -3729,6 +3749,10 @@ struct EmitCtx<'c, 'a> {
     cg: &'c mut Codegen<'a>,
     path: String,
     saw_wait: bool,
+    /// The bindings of the views that the target of the timed blocking
+    /// assignment being lowered names, run again when its control has
+    /// passed (`Codegen::target_interface_bindings`).
+    target_rebinds: Vec<IrStmt>,
     /// Exact process kind for the root process being lowered. Nested
     /// function/task contexts leave this unset; it distinguishes plain
     /// `always @*` from the SystemVerilog implicit-sensitivity forms.

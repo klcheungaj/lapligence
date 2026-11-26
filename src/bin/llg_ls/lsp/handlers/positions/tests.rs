@@ -1046,7 +1046,19 @@ fn positions_follow_the_text_that_was_analysed() {
         let mut server = Server::start(project_root("followed"), &[("m.sv", first)]).await;
         assert_eq!(placement(&server, "m.sv"), "same");
         server.change("m.sv", &first.replacen("7", "3", 1)).await;
+        let epochs = |server: &Server| -> Vec<u64> {
+            let state = server.backend().lock_state();
+            state
+                .roots
+                .values()
+                .map(|root| root.analysis_epoch)
+                .collect()
+        };
+        let before = epochs(&server);
         server.save("m.sv").await;
+        // The edit below lands while the analysis runs when the loop sees it
+        // running; an analysis that ends between two looks has advanced the
+        // epoch, and the edit then lands after it, which ends the same way.
         let start = Instant::now();
         while server
             .backend()
@@ -1054,6 +1066,7 @@ fn positions_follow_the_text_that_was_analysed() {
             .roots
             .values()
             .all(|root| root.running.is_none())
+            && epochs(&server) == before
         {
             assert!(start.elapsed() < Duration::from_secs(60), "no analysis");
             tokio::time::sleep(Duration::from_millis(1)).await;

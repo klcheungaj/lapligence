@@ -1656,35 +1656,6 @@ fixed array.
 `typedef struct packed { logic [3:0] hi, lo; } p_t; p_t q[$]; initial begin
 q.push_back(0); q[0].hi = 3; end`
 
-## Fixed arrays of containers with a range that does not start at 0
-
-**Status:** open, a silent wrong result; found while testing static properties.
-
-### Symptom
-
-In a class property (static or not) that is a fixed array of queues, dynamic or
-associative arrays declared with a range such as `[1:0]` or `[2:1]`, a write of
-a whole element (`q[0] = '{1, 2}`, `d[0] = new[2]`), an element of an element
-(`d[0][1] = "z"`) and `foreach` use the position in the array where methods
-(`q[0].push_back`, `size`, `pop_front`) use the index: `q[0] = '{1, 2}` fills
-`q[1]` of a `[1:0]` array.
-
-### Cause
-
-Some paths into a fixed-size container view convert the index to a position by
-the declared range and some take it as the position.
-
-### Intended direction
-
-Convert the index by the range on every path into the view
-(`fixed_view_ranges`).
-
-### Reproduce
-
-`class c; static int q[1:0][$]; endclass initial begin c::q[0] = '{1, 2};
-$display("%p", c::q); end` prints `'{'{1, 2} , '{}}` (the left element, `q[1]`,
-first), not `'{'{}, '{1, 2} }`.
-
 ## Records of the leaf form: two errors a column does not have
 
 **Status:** open (FIN-001 rule 7: records below `LLG_RECORD_COLUMN_MIN_CELLS`
@@ -1949,31 +1920,6 @@ Pass a native record's leaf markers with the record value.
 `sim_014/neg_ref_wait_record_property_whole.sv` and
 `neg_ref_wait_record_property_real.sv`;
 `sim_008/record_ref_interface_element_waits.sv` with `-D N=16`.
-
-## Initializers of arrays of events
-
-**Status:** open.
-
-### Symptom
-
-A declaration initializer of a fixed array, dynamic array, queue or associative
-array of events (`event ea[2] = '{a, null}`, `event q[$] = '{a, b}`) stops the
-import: "named-event arrays cannot have declaration initializers" (ELAB-002,
-without a location). Initializers of scalar events and assignments of elements
-work.
-
-### Cause
-
-`CoreDb` records an array of events without an initializer and refuses one.
-
-### Intended direction
-
-Keep the initializer and lower it as assignments of the elements, like that of
-a scalar event (6.8).
-
-### Reproduce
-
-`event a; event ea[2] = '{a, null}; initial $display("%b", ea[0] == a);`
 
 ## Level waits on the identity of an event variable reject
 
@@ -2608,8 +2554,7 @@ follow ...": a member read inside a called function through the function's
 handle formal or local (`function f(virtual bus_if b); return b.a;`), a member
 read through an element of a virtual-interface array (`va[1].a`), and an
 interface method call through a handle under `always_comb` (`v.f()`, whose
-body the bound instance selects). Elements of unpacked array members are
-followed only through a virtual-interface variable.
+body the bound instance selects).
 
 ### Cause
 
@@ -2694,12 +2639,39 @@ member has no signal.
 
 ### Intended direction
 
-Native slots in the descriptor, as unpacked members get (the follow-up of
-sim-defects-10 item 3).
+Storage slots in the descriptor, as unpacked members have
+(`IrVirtualInterface::storage`, bound as views).
 
 ### Reproduce
 
 `tests/fixtures/sim/virtual_interfaces/neg_string_member.sv`.
+
+## Unpacked members of an interface type without instances
+
+**Status:** open. Each use rejects with a located diagnostic.
+
+### Symptom
+
+When the design has no instance of an interface type, a use of an unpacked
+member through a virtual interface of that type (`v.a[1] = 3` with
+`int a[4]`) stops compilation at the use (for an element, "cannot resolve
+array base of select `a`"). Such a handle can only be null, so the use
+could only fail at run time, which is what a packed member does.
+
+### Cause
+
+A view of an unpacked member takes its shape from the member's storage in
+an instance of the interface; without one there is no shape.
+
+### Intended direction
+
+Shape the view from the member's declaration and fail at the use as for a
+null handle.
+
+### Reproduce
+
+`interface ifc; int a[4]; endinterface` and
+`module tb; virtual ifc v; initial v.a[1] = 3; endmodule`.
 
 ## Remaining items of unpacked array concatenations
 
@@ -2711,10 +2683,9 @@ As an item of an unpacked array concatenation (SV 10.10): a dense fixed array
 of reals, events or rows (an item of a queue of fixed arrays); a queue or
 dynamic array that is an element of a container (`{qq[1], 0}`, also as one
 element of a queue of queues); an array of rows into a queue of queues
-(`qq = {m, q}` with `int m[2][2]`); an unpacked member through a virtual
-interface; an item of a run-time size into a fixed target of two dimensions,
-a real fixed target or an associative-array element. A whole assignment of
-such an array to a queue (`rq = r2`) rejects too.
+(`qq = {m, q}` with `int m[2][2]`); an item of a run-time size into a fixed
+target of two dimensions, a real fixed target or an associative-array element.
+A whole assignment of such an array to a queue (`rq = r2`) rejects too.
 
 ### Cause
 
@@ -4347,3 +4318,86 @@ cancellation and a bound).
 
 Open a file with a module, send `textDocument/didChange` that adds a port to it, and
 `textDocument/documentSymbol`.
+
+## Queues and arrays of event queues
+
+**Status:** open; rejected with a located diagnostic (CODEGEN-009).
+
+### Symptom
+
+A queue, dynamic or associative array whose elements are themselves event
+queues or arrays (`event w[$][$]`, `event d[2][$]`) reports "event container
+element ... requires an event handle or null" wherever it is declared.
+Event arrays of one container level, and fixed event arrays, work.
+
+### Cause
+
+Event containers hold only event handles, not nested containers.
+
+### Intended direction
+
+Let an event container nest like containers of other element types.
+
+### Reproduce
+
+`event a; event w[$][$]; initial w.push_back({a});`
+
+## Fixed arrays of containers: element patterns, equality and concatenation
+
+**Status:** open; rejected with located diagnostics (CODEGEN-009).
+
+### Symptom
+
+For a fixed array of queues, dynamic or associative arrays (`int q[2][$]`), an
+assignment pattern written to an element or the whole array
+(`q[0] = '{'{1}, '{2}}` as a declaration initializer, `q[0] <= '{3}`), an
+equality of two elements (`q[0] == q[1]`), an element inside an unpacked
+concatenation (`t = {q[0], q[1]}`, `q[0] = {q[0], 6}`) and an element passed
+to a `ref` formal are refused. `q[0] = '{1, 2}`, copies, methods, `foreach`
+and `%p` work. A two-dimensional fixed array of queues prints `%p` without the
+space after its inner closing braces that another implementation prints (white
+space is implementation dependent, 21.2.1.7).
+
+### Cause
+
+Container element operands and nested patterns are lowered only for whole
+container variables.
+
+### Intended direction
+
+Stage an element into a temporary container, as `foreach` and methods select
+it, and lower these forms on the temporary.
+
+### Reproduce
+
+`int q[2][$]; initial begin q[0] = '{1}; q[1] = '{1}; $display(q[0] == q[1]);
+end`
+
+## Automatic block variables captured by a fork that runs again
+
+**Status:** open; rejected with a located diagnostic (CODEGEN-001).
+
+### Symptom
+
+An automatic string, class handle, virtual interface, event or record declared
+in a procedural block and read by a `join_none`/`join_any` fork in a loop that
+runs again ("can be live in two activations through a `join_any`/`join_none`
+fork that runs again") is refused, as is a queue, dynamic array or record of a
+subroutine activation that a fork branch reads ("capturing native subroutine
+storage in a fork is not supported (SIM-010)"). Integral and real automatics
+work.
+
+### Cause
+
+Block variables of these types are one model object per declaration, not one
+per activation, and fork frames copy only packed, real and handle slots.
+
+### Intended direction
+
+Give such variables activation storage in the process frame and capture them
+into the fork frame like integral automatics.
+
+### Reproduce
+
+`foreach (q[k]) begin automatic virtual ifc z = q[k]; fork #1 z.n = 30;
+join_none end`

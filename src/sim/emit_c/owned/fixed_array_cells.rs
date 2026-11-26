@@ -84,7 +84,7 @@ impl Frame<'_, '_> {
                 self.fixed_array_address(array)?
             )
         } else {
-            info.cell_address(linear)
+            self.cell_address(array, linear)?
         })
     }
 

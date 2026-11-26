@@ -178,6 +178,7 @@ impl Frame<'_, '_> {
             IrNativeAccessKind::ClassContainer { .. }
                 | IrNativeAccessKind::ClassRecord { .. }
                 | IrNativeAccessKind::MailboxCount
+                | IrNativeAccessKind::InterfaceStorage { .. }
         ) {
             return Err("a change-marker access is a wait dependency, not storage".to_owned());
         }
@@ -257,7 +258,8 @@ impl Frame<'_, '_> {
             | IrNativeAccessKind::ElementItem { .. }
             | IrNativeAccessKind::ClassContainer { .. }
             | IrNativeAccessKind::ClassRecord { .. }
-            | IrNativeAccessKind::MailboxCount => {
+            | IrNativeAccessKind::MailboxCount
+            | IrNativeAccessKind::InterfaceStorage { .. } => {
                 unreachable!("value items, element items and change markers resolve above")
             }
         };

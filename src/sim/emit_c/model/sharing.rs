@@ -202,7 +202,7 @@ fn registry(
             );
         }
     }
-    for array in model.arrays.iter().filter(|array| !array.activation) {
+    for array in model.arrays.iter().filter(|array| array.is_model_storage()) {
         let ty = if array.real { "double" } else { "sv4_t" };
         let shape = format!(
             "{}:{}:{}:{:?}:{}",

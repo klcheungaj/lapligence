@@ -54,6 +54,16 @@ impl Codegen<'_> {
         let (left, right) = match (left_container, right_container) {
             (Some(left), Some(right)) => (left.ir, right.ir),
             (None, None) => return Ok(None),
+            // A fixed view of packed words beside a fixed array compares
+            // as the two packed values, which is the element-by-element
+            // result: any known differing bit gives 0, else any unknown
+            // bit gives X (SV 11.2.2, 11.4.5).
+            (Some(view), None) | (None, Some(view))
+                if self.is_fixed_view(view.ir)
+                    && self.model.containers[view.ir].element.is_packed() =>
+            {
+                return Ok(None)
+            }
             _ => {
                 return Err(format!(
                     "unpacked array equality in `{path}` needs array variables on both sides"

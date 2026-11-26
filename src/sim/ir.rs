@@ -28,7 +28,7 @@ pub(in crate::sim) use native_values::{shared_native_capture_index, shared_nativ
 mod checkers;
 pub use checkers::IrFreeSet;
 mod native_access;
-pub use native_access::{IrClassAllocation, IrNativeAccess, IrNativeAccessKind};
+pub use native_access::{IrClassAllocation, IrInterfacePart, IrNativeAccess, IrNativeAccessKind};
 mod native_values;
 pub(in crate::sim) use native_values::{
     is_class_handle_kind, native_item_count, native_leaf_type, validate_native_type,
@@ -50,11 +50,12 @@ pub use containers::{
 };
 pub use objects::{
     IrArrayDimension, IrArrayQuery, IrArrayQueryKind, IrArrayQueryTarget, IrChandleExpr, IrClass,
-    IrClassField, IrClassFieldType, IrDisplayArg, IrMailboxElement, IrMailboxExpr, IrMailboxTarget,
-    IrMailboxValue, IrObject, IrObjectQuery, IrObjectStmt, IrObjectType, IrProcessControl,
-    IrProcessExpr, IrProcessRandom, IrRunTimeFormat, IrStringExpr, IrStringInsideItem,
-    IrSynchronization, IrVirtualInterface, IrVirtualInterfaceInstance, IrVirtualInterfaceMember,
-    IrVirtualInterfaceMethod, IrVirtualInterfaceNested,
+    IrClassField, IrClassFieldType, IrDisplayArg, IrInterfaceBinding, IrInterfaceStorage,
+    IrMailboxElement, IrMailboxExpr, IrMailboxTarget, IrMailboxValue, IrObject, IrObjectQuery,
+    IrObjectStmt, IrObjectType, IrProcessControl, IrProcessExpr, IrProcessRandom, IrRunTimeFormat,
+    IrStringExpr, IrStringInsideItem, IrSynchronization, IrVirtualInterface,
+    IrVirtualInterfaceInstance, IrVirtualInterfaceMember, IrVirtualInterfaceMethod,
+    IrVirtualInterfaceNested,
 };
 
 pub use validate::IrValidationError;
@@ -476,18 +477,6 @@ pub enum IrDependency {
     /// name it (level waits, process-evaluated event plans, sensitivity
     /// loops and reports).
     NativeValue(usize),
-    /// The storage of the interface instance that virtual-interface variable
-    /// `handle` (an object index) binds when the wait arms: `arms[i]` names
-    /// instance `i` of descriptor `interface` (an element or contents marker
-    /// of that instance's unpacked array member, `v.mem[i]`). Like
-    /// [`IrDependency::NativeAccess`], only waits that arm again after every
-    /// wake may name it; a null or unbound handle selects storage that never
-    /// changes.
-    InterfaceInstance {
-        handle: usize,
-        interface: usize,
-        arms: Vec<IrDependency>,
-    },
 }
 
 impl IrDependency {

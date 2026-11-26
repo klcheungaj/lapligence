@@ -140,7 +140,8 @@ impl Codegen<'_> {
                 NodeKind::FuncTask { .. } => automatic,
                 _ => self.db.variable_lifetime(node) == VariableLifetime::Automatic,
             };
-            self.allocate_subroutine_container(inst, node, lifetime, function)?;
+            self.allocate_subroutine_container(inst, node, lifetime, function)
+                .map_err(|error| self.locate_error(node, error))?;
         }
         Ok(())
     }
@@ -203,8 +204,9 @@ impl Codegen<'_> {
         scope: NodeId,
     ) -> Result<Option<usize>, String> {
         let automatic = self.db.variable_lifetime(declaration) == VariableLifetime::Automatic;
-        let Some(ir) =
-            self.allocate_subroutine_container(self.inst, declaration, automatic, scope)?
+        let Some(ir) = self
+            .allocate_subroutine_container(self.inst, declaration, automatic, scope)
+            .map_err(|error| self.locate_error(declaration, error))?
         else {
             return Ok(None);
         };

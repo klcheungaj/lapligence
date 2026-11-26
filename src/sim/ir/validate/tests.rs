@@ -251,6 +251,7 @@ fn rejects_array_total_that_disagrees_with_dimensions() {
         dims: vec![(3, 0), (1, 0)],
         total: 7,
         sampled_image: false,
+        bound: false,
     });
 
     let error = model.validate().expect_err("invalid array total must fail");
@@ -280,6 +281,7 @@ fn rejects_array_storage_above_selected_cell_limit() {
         dims: vec![(0, crate::sim::ir::LLG_MAX_FIXED_ARRAY_CELLS as i32)],
         total: crate::sim::ir::LLG_MAX_FIXED_ARRAY_CELLS + 1,
         sampled_image: false,
+        bound: false,
     });
 
     let error = model
@@ -1532,6 +1534,7 @@ fn descriptor_value_assignment_requires_matching_descriptor_shape() {
         dims,
         total,
         sampled_image: false,
+        bound: false,
     };
     model
         .arrays
@@ -1612,6 +1615,7 @@ fn descriptor_cast_requires_equal_size_lexical_shape() {
             dims,
             total,
             sampled_image: false,
+            bound: false,
         }
     };
     model
@@ -1689,6 +1693,7 @@ fn rejects_invalid_index_default_with_wrong_width() {
         dims: vec![(0, 2)],
         total: 3,
         sampled_image: false,
+        bound: false,
     });
     let error = model
         .validate()
@@ -1720,6 +1725,7 @@ fn record_columns_use_descriptor_storage_regardless_of_extent() {
         dims: vec![(0, 0)],
         total: 1,
         sampled_image: false,
+        bound: false,
     };
     let mut model = valid_model();
     model.arrays.push(cell("left", true));
@@ -1771,6 +1777,7 @@ fn force_dependencies_must_name_persistent_fixed_arrays() {
         dims: vec![(0, 3)],
         total: 4,
         sampled_image: false,
+        bound: false,
     };
     let model_with = |activation: bool, dependency: IrDependency| {
         let mut model = valid_model();
@@ -1894,6 +1901,7 @@ fn statement_sequences_admit_only_non_suspending_setup() {
         dims: vec![(0, 0)],
         total: 1,
         sampled_image: false,
+        bound: false,
     });
     let read = IrExpr::new(
         IrExprKind::ArrayRead {
@@ -2274,6 +2282,7 @@ fn memory_slice_position_selector_must_match_its_view() {
         dims: vec![(2, 3), (7, 0)],
         total: 16,
         sampled_image: false,
+        bound: false,
     });
     let index = IrMemorySelector {
         dimension: 0,
@@ -2505,6 +2514,7 @@ fn memory_dump_cannot_carry_source_text() {
         dims: vec![(0, 3)],
         total: 4,
         sampled_image: false,
+        bound: false,
     });
     let task = |write: bool, text: Option<Vec<u8>>| IrStmt::Memory {
         write,
