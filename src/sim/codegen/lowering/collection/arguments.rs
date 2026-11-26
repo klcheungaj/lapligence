@@ -1175,10 +1175,17 @@ impl<'a> Codegen<'a> {
         ),
         String,
     > {
-        let lhs = match self.fixed_storage_lhs(path, actual)? {
+        let mut lhs = match self.fixed_storage_lhs(path, actual)? {
             Some(lhs) => lhs,
             None => self.lower_lhs(path, actual)?,
         };
+        // An element through a computed handle is located where the copy-in
+        // reads it and again at the copy-out (decision VM-D1).
+        if let Some(bindings) = self.take_placed_interface_bindings(actual) {
+            lhs = self
+                .target_after_bindings(lhs, bindings)
+                .map_err(|error| self.locate_error(actual, error))?;
+        }
         let mut captures = Vec::new();
         let mut sequence = 0usize;
         let (lhs, read) = match selectors {

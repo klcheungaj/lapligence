@@ -141,6 +141,11 @@ impl EmitCtx<'_, '_> {
         if let (true, Some(Ok(bindings))) = (timed_blocking, &interface_views) {
             let lhs = self.cg.node(h).children[0];
             self.target_rebinds = self.cg.target_interface_bindings(lhs, bindings);
+            // A target through a computed handle in a statement that may
+            // rebind handles has a view of its own, bound only there.
+            if let Some(placed) = self.cg.take_placed_interface_bindings(lhs) {
+                self.placed_target_bindings = placed;
+            }
         }
         // Queue and dynamic-array members of container record elements are
         // staged around statements that evaluate their operands once.
@@ -196,9 +201,14 @@ impl EmitCtx<'_, '_> {
             interface_views,
         } = entry;
         self.target_rebinds.clear();
+        self.placed_target_bindings.clear();
+        let mut lowered = lowered;
         let views = match interface_views {
             Some(Ok(views)) => {
-                self.cg.end_interface_views();
+                let ended = self.cg.end_interface_views();
+                if let (Ok(_), Err(error)) = (&lowered, ended) {
+                    lowered = Err(error);
+                }
                 views
             }
             Some(Err(error)) => {

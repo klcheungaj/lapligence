@@ -237,15 +237,17 @@ impl Validator<'_> {
                 indices,
                 elem_sel,
             } => {
+                // The indices run before the element is located, so a view
+                // their first one binds (decision VM-D1) is in scope here.
+                for (idx, index) in indices.iter().enumerate() {
+                    self.validate_expr(index, formals, format_args!("{path}.indices[{idx}]"))?;
+                }
                 self.validate_fixed_activation(*arr, path)?;
                 let array = self.model.arrays.get(*arr).ok_or_else(|| {
                     IrValidationError::new(path, format!("array index {arr} is out of bounds"))
                 })?;
                 if indices.len() != array.dims.len() {
                     return self.fail(path, "array LHS index count does not match its dimensions");
-                }
-                for (idx, index) in indices.iter().enumerate() {
-                    self.validate_expr(index, formals, format_args!("{path}.indices[{idx}]"))?;
                 }
                 self.validate_elem_sel(elem_sel, formals, format_args!("{path}.elem_sel"))?;
                 if array.real && matches!(elem_sel, IrElemSel::PackedChain(_)) {

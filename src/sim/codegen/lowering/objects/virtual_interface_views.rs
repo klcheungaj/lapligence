@@ -17,9 +17,21 @@
 //! staging has one view of a member, that declaration stands for the view;
 //! when two views share it (`w.a[0] = v.a[1]`), each select binds its own
 //! view while it lowers ([`Codegen::lower_interface_select`]).
+//!
+//! Where something the statement runs may rebind a handle (a call of a user
+//! subroutine, an assignment operator), a use reads the handle where it is
+//! evaluated (decision VM-D1). A handle held in storage is read again by
+//! each use (`IrInterfaceBinding::refresh`). A computed handle (`va[k]`) is
+//! evaluated once per use: a use that such an effect precedes in evaluation
+//! order gets a view of its own, bound by the lowering of the node the use
+//! starts at ([`Codegen::placed_interface_bindings`]), so the handle is read
+//! after that effect and before the use's own selects; a use no effect
+//! precedes binds before the statement, as every use of a statement without
+//! such effects does.
 
 use super::virtual_interfaces::VirtualInterfaceMemberPath;
 use super::*;
+use crate::sim::codegen::lowering::collection::data_query;
 use crate::sim::codegen::lowering::expressions::after_statements;
 use crate::sim::ir::{IrDependency, IrInterfaceBinding, IrInterfacePart, IrInterfaceStorage};
 
@@ -46,6 +58,34 @@ pub(in crate::sim::codegen) struct InterfaceStaging {
     declarations: Vec<(NodeId, DeclarationBinding)>,
     /// Declarations that two views of the staging share.
     shared: HashSet<NodeId>,
+    /// The nodes whose lowering runs a binding of the staging
+    /// (`Codegen::placed_interface_bindings`).
+    placed: Vec<NodeId>,
+}
+
+/// How [`Codegen::stage_use`] binds the view of a use.
+enum StagedBinding {
+    /// A new view bound before the statement.
+    Before(IrStmt),
+    /// A view of the use's own, bound where the use starts.
+    Placed(IrStmt),
+    /// The view of an earlier use of the same handle path.
+    Shared,
+}
+
+/// One step of the evaluation-order walk of
+/// [`Codegen::uses_after_effects`].
+enum OrderStep {
+    /// Evaluate the node.
+    Visit(NodeId),
+    /// The effect of an enclosing node has happened.
+    Effect,
+    /// A called subroutine copies its formal out to this actual.
+    CopyOut(NodeId),
+}
+
+fn visit(nodes: &[NodeId]) -> impl Iterator<Item = OrderStep> + '_ {
+    nodes.iter().map(|node| OrderStep::Visit(*node))
 }
 
 /// What a declaration resolves to in the storage tables.
@@ -121,9 +161,20 @@ impl Codegen<'_> {
         let mut written = Vec::new();
         self.interface_view_writes(root, &mut written);
         let refresh = refresh || self.may_rebind_handles(root);
+        let placed = if refresh {
+            self.uses_after_effects(root, &uses)
+        } else {
+            Vec::new()
+        };
         let uses = uses
             .into_iter()
-            .map(|node| (node, written.contains(&node)))
+            .map(|node| {
+                let start = placed
+                    .iter()
+                    .find(|(path, _)| *path == node)
+                    .map(|(_, start)| *start);
+                (node, written.contains(&node), start)
+            })
             .collect();
         self.stage_views(path, uses, refresh, None)
     }
@@ -176,10 +227,10 @@ impl Codegen<'_> {
             .filter(|(_, in_callee)| *in_callee)
             .map(|(node, _)| *node)
             .collect();
-        let uses: Vec<(NodeId, bool)> = nodes
+        let uses: Vec<(NodeId, bool, Option<NodeId>)> = nodes
             .iter()
             .filter(|(node, _)| self.names_member_through_handle(*node))
-            .map(|(node, _)| (*node, false))
+            .map(|(node, _)| (*node, false, None))
             .collect();
         if uses.is_empty() {
             return Ok(false);
@@ -189,58 +240,49 @@ impl Codegen<'_> {
             .is_some())
     }
 
-    /// Stage a view for each use `(node, written)` that names an unpacked
-    /// member through a handle; the uses of one handle path share one view.
-    /// A read walk's staging (`callee` holds the uses in called functions)
-    /// notes what each view's dependency resolves.
+    /// Stage a view for each use `(node, written, start)` that names an
+    /// unpacked member through a handle; the uses of one handle path share
+    /// one view. A use with a `start` node that reads a computed handle gets
+    /// a view of its own, which the lowering of `start` binds. A read walk's
+    /// staging (`callee` holds the uses in called functions) notes what each
+    /// view's dependency resolves.
     fn stage_views(
         &mut self,
         path: &str,
-        uses: Vec<(NodeId, bool)>,
+        uses: Vec<(NodeId, bool, Option<NodeId>)>,
         refresh: bool,
         callee: Option<&HashSet<NodeId>>,
     ) -> Result<Option<Vec<IrStmt>>, String> {
         let mut staging = InterfaceStaging::default();
         let mut bindings = Vec::new();
         let mut views: Vec<(NodeId, InterfaceView)> = Vec::new();
-        for (node, written) in uses {
-            let view = match self.interface_view_path(path, node, written) {
-                Ok(Some((target, slot))) => match views
-                    .iter()
-                    .find(|(first, _)| self.same_member_path(*first, node))
-                {
-                    Some((_, view)) => Ok(Some(view.clone())),
-                    None => self
-                        .new_interface_view(path, node, &target, slot, refresh)
-                        .map(|(view, binding)| {
-                            if let Some(callee) = callee {
-                                let dependency = self.dependency_view(
-                                    path,
-                                    node,
-                                    &target,
-                                    &binding,
-                                    callee.contains(&node),
-                                );
-                                self.dependency_views.insert(view.storage, dependency);
+        // Views of uses bound where they start: no other use shares them.
+        let mut own: Vec<InterfaceView> = Vec::new();
+        for (node, written, start) in uses {
+            match self.stage_use(path, node, written, start, refresh, callee, &mut views) {
+                Ok(Some((view, binding))) => {
+                    match (binding, start) {
+                        (StagedBinding::Placed(binding), Some(start)) => {
+                            self.placed_interface_bindings
+                                .entry(start)
+                                .or_default()
+                                .push(binding);
+                            if !staging.placed.contains(&start) {
+                                staging.placed.push(start);
                             }
-                            bindings.push(binding);
-                            views.push((node, view.clone()));
-                            Some(view)
-                        }),
-                },
-                Ok(None) => Ok(None),
-                Err(error) => Err(error),
-            };
-            match view {
-                Ok(Some(view)) => {
+                            own.push(view.clone());
+                        }
+                        (StagedBinding::Placed(binding) | StagedBinding::Before(binding), _) => {
+                            bindings.push(binding)
+                        }
+                        (StagedBinding::Shared, _) => {}
+                    }
                     self.staged_interface_views.insert(node, view);
                     staging.paths.push(node);
                 }
                 Ok(None) => {}
                 Err(error) => {
-                    for node in staging.paths {
-                        self.staged_interface_views.remove(&node);
-                    }
+                    self.unstage_failed(staging);
                     return Err(error);
                 }
             }
@@ -249,7 +291,7 @@ impl Codegen<'_> {
             return Ok(None);
         }
         let mut declarations: Vec<(NodeId, usize)> = Vec::new();
-        for (_, view) in &views {
+        for view in views.iter().map(|(_, view)| view).chain(&own) {
             let Some(declaration) = view.declaration else {
                 continue;
             };
@@ -264,8 +306,10 @@ impl Codegen<'_> {
         for (declaration, count) in declarations {
             let view = views
                 .iter()
-                .find(|(_, view)| view.declaration == Some(declaration))
-                .map(|(_, view)| view.clone());
+                .map(|(_, view)| view)
+                .chain(&own)
+                .find(|view| view.declaration == Some(declaration))
+                .cloned();
             let previous = if count == 1 {
                 self.bind_interface_declaration(declaration, view.as_ref())
             } else {
@@ -276,6 +320,137 @@ impl Codegen<'_> {
         }
         self.interface_stagings.push(staging);
         Ok(Some(bindings))
+    }
+
+    /// The view of use `node` and how it is bound. A use with a `start`
+    /// node through a computed handle gets a view of its own, whose binding
+    /// the caller places at `start`; any other use shares the view of its
+    /// handle path with the earlier uses in `views`.
+    #[allow(clippy::too_many_arguments)]
+    fn stage_use(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        written: bool,
+        start: Option<NodeId>,
+        refresh: bool,
+        callee: Option<&HashSet<NodeId>>,
+        views: &mut Vec<(NodeId, InterfaceView)>,
+    ) -> Result<Option<(InterfaceView, StagedBinding)>, String> {
+        let Some((target, slot)) = self.interface_view_path(path, node, written)? else {
+            return Ok(None);
+        };
+        // A handle held in storage is read again by each use instead.
+        let lowered = match start {
+            Some(_) => Some(self.virtual_interface_handle(path, node, &target)?),
+            None => None,
+        };
+        if let Some(handle) = lowered
+            .as_ref()
+            .filter(|handle| !Self::rearmable_handle(handle))
+        {
+            let (view, binding) =
+                self.new_interface_view(path, node, &target, slot, handle.clone(), false)?;
+            return Ok(Some((view, StagedBinding::Placed(binding))));
+        }
+        if let Some((_, view)) = views
+            .iter()
+            .find(|(first, _)| self.same_member_path(*first, node))
+        {
+            return Ok(Some((view.clone(), StagedBinding::Shared)));
+        }
+        let handle = match lowered {
+            Some(handle) => handle,
+            None => self.virtual_interface_handle(path, node, &target)?,
+        };
+        let (view, binding) =
+            self.new_interface_view(path, node, &target, slot, handle, refresh)?;
+        if let Some(callee) = callee {
+            let dependency =
+                self.dependency_view(path, node, &target, &binding, callee.contains(&node));
+            self.dependency_views.insert(view.storage, dependency);
+        }
+        views.push((node, view.clone()));
+        Ok(Some((view, StagedBinding::Before(binding))))
+    }
+
+    /// Undo what a staging that failed added.
+    fn unstage_failed(&mut self, staging: InterfaceStaging) {
+        for node in staging.paths {
+            self.staged_interface_views.remove(&node);
+        }
+        for start in staging.placed {
+            self.placed_interface_bindings.remove(&start);
+        }
+    }
+
+    /// The bindings that the lowering of `node` runs before it, if a use
+    /// starts there (`placed_interface_bindings`).
+    pub(in super::super) fn take_placed_interface_bindings(
+        &mut self,
+        node: NodeId,
+    ) -> Option<Vec<IrStmt>> {
+        if self.placed_interface_bindings.is_empty() {
+            return None;
+        }
+        self.placed_interface_bindings.remove(&node)
+    }
+
+    /// `lhs`, the target of a use that starts at it, with `bindings` run
+    /// just before its first selector: after the right-hand side, which the
+    /// target follows (SV 10.4.1), and before the selects of the element.
+    pub(in super::super) fn target_after_bindings(
+        &self,
+        lhs: IrLhs,
+        bindings: Vec<IrStmt>,
+    ) -> Result<IrLhs, String> {
+        match lhs {
+            IrLhs::ArrayElem {
+                arr,
+                mut indices,
+                elem_sel,
+            } if !indices.is_empty() => {
+                let first = indices.remove(0);
+                indices.insert(0, after_statements(bindings, first));
+                Ok(IrLhs::ArrayElem {
+                    arr,
+                    indices,
+                    elem_sel,
+                })
+            }
+            _ => Err(Self::unplaced_interface_use()),
+        }
+    }
+
+    /// `value`, a string element read of a use that starts at it, with
+    /// `bindings` run just before its index, which precedes the read.
+    pub(in super::super) fn string_after_bindings(
+        &self,
+        value: IrStringExpr,
+        bindings: Vec<IrStmt>,
+    ) -> Result<IrStringExpr, String> {
+        match value {
+            IrStringExpr::ContainerGet { container, index } => Ok(IrStringExpr::ContainerGet {
+                container,
+                index: Box::new(after_statements(bindings, *index)),
+            }),
+            IrStringExpr::ContainerGetNested {
+                container,
+                mut indices,
+            } if !indices.is_empty() => {
+                let first = indices.remove(0);
+                indices.insert(0, after_statements(bindings, first));
+                Ok(IrStringExpr::ContainerGetNested { container, indices })
+            }
+            _ => Err(Self::unplaced_interface_use()),
+        }
+    }
+
+    fn unplaced_interface_use() -> String {
+        "an unpacked interface member through a computed virtual-interface handle is not \
+         supported in this operand of a statement that calls a subroutine or assigns in an \
+         expression; assign the handle to a virtual-interface variable first"
+            .to_owned()
     }
 
     /// What a wait on view storage bound by `binding` resolves when it arms:
@@ -395,28 +570,40 @@ impl Codegen<'_> {
     /// Whether `node` is a member path through a virtual-interface handle
     /// that no staging binds yet.
     fn names_member_through_handle(&self, node: NodeId) -> bool {
-        match self.kind(node) {
-            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
-                !self.staged_interface_views.contains_key(&node)
-                    && refs
-                        .iter()
-                        .flatten()
-                        .any(|target| self.virtual_interface_spelling(*target).is_some())
-            }
-            _ => false,
-        }
+        !self.staged_interface_views.contains_key(&node) && self.handle_member_path(node)
     }
 
-    /// End the innermost staging [`Self::stage_interface_views`] opened.
-    pub(in crate::sim::codegen) fn end_interface_views(&mut self) {
+    /// Whether `node` is a member path through a virtual-interface handle.
+    fn handle_member_path(&self, node: NodeId) -> bool {
+        matches!(self.kind(node), NodeKind::Expr(ExprKind::HierPath { refs, .. })
+            if refs
+                .iter()
+                .flatten()
+                .any(|target| self.virtual_interface_spelling(*target).is_some()))
+    }
+
+    /// End the innermost staging [`Self::stage_interface_views`] opened. A
+    /// binding placed at a node whose lowering never ran it is a located
+    /// error: its use would read a view nothing bound.
+    pub(in crate::sim::codegen) fn end_interface_views(&mut self) -> Result<(), String> {
         let Some(staging) = self.interface_stagings.pop() else {
-            return;
+            return Ok(());
         };
         for node in staging.paths {
             self.staged_interface_views.remove(&node);
         }
         for (declaration, previous) in staging.declarations.into_iter().rev() {
             self.restore_interface_declaration(declaration, previous);
+        }
+        let mut unplaced = None;
+        for start in staging.placed {
+            if self.placed_interface_bindings.remove(&start).is_some() && unplaced.is_none() {
+                unplaced = Some(start);
+            }
+        }
+        match unplaced {
+            Some(start) => Err(self.locate_error(start, Self::unplaced_interface_use())),
+            None => Ok(()),
         }
     }
 
@@ -530,8 +717,10 @@ impl Codegen<'_> {
             return Ok(None);
         };
         let value = self.lower_expr(path, h);
-        self.end_interface_views();
-        Ok(Some(after_statements(bindings, value?)))
+        let ended = self.end_interface_views();
+        let value = value?;
+        ended?;
+        Ok(Some(after_statements(bindings, value)))
     }
 
     /// Whether evaluating `root` may rebind a handle before a use: it calls
@@ -544,36 +733,252 @@ impl Codegen<'_> {
             _ => self.node(root).children.clone(),
         };
         while let Some(node) = pending.pop() {
-            match self.kind(node) {
-                NodeKind::Stmt(_) => continue,
-                NodeKind::FuncCall {
-                    callee: Some(callee),
-                    ..
-                }
-                | NodeKind::MethodCall {
-                    callee: Some(callee),
-                    ..
-                } if matches!(self.kind(*callee), NodeKind::FuncTask { .. }) => return true,
-                NodeKind::Expr(ExprKind::Operation { op, assignment, .. })
-                    if *assignment
-                        || matches!(
-                            op,
-                            Operation::Assignment
-                                | Operation::PostIncrement
-                                | Operation::PreIncrement
-                                | Operation::PostDecrement
-                                | Operation::PreDecrement
-                                | Operation::OverloadUpdate
-                                | Operation::OverloadPostUpdate
-                        ) =>
-                {
-                    return true
-                }
-                _ => {}
+            if matches!(self.kind(node), NodeKind::Stmt(_)) {
+                continue;
+            }
+            if self.rebinding_effect(node) {
+                return true;
             }
             pending.extend(self.node(node).children.iter().copied());
         }
         false
+    }
+
+    /// Whether `node`, once its operands are evaluated, may rebind a handle:
+    /// a call of a user subroutine or an assignment operator.
+    fn rebinding_effect(&self, node: NodeId) -> bool {
+        match self.kind(node) {
+            NodeKind::FuncCall {
+                callee: Some(callee),
+                ..
+            }
+            | NodeKind::MethodCall {
+                callee: Some(callee),
+                ..
+            } => matches!(self.kind(*callee), NodeKind::FuncTask { .. }),
+            NodeKind::Expr(ExprKind::Operation { op, assignment, .. }) => {
+                *assignment || Self::assignment_operator(*op)
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether `op` writes its first operand: an assignment, an increment or
+    /// a decrement, or an overloaded update.
+    pub(in crate::sim::codegen) fn assignment_operator(op: Operation) -> bool {
+        matches!(
+            op,
+            Operation::Assignment
+                | Operation::PostIncrement
+                | Operation::PreIncrement
+                | Operation::PostDecrement
+                | Operation::PreDecrement
+                | Operation::OverloadUpdate
+                | Operation::OverloadPostUpdate
+        )
+    }
+
+    /// The member paths among `uses` that a rebinding effect of `root`
+    /// precedes in evaluation order, each with the node its use starts at:
+    /// the outermost select or method call of the member path, or the path
+    /// itself. Operands evaluate left to right, an effect after its own
+    /// operands, a method's receiver before its arguments; a simple
+    /// assignment locates an element target after its right-hand side (SV
+    /// 10.4.1, and after its control when it has one), a compound one and a
+    /// whole-member target before it. Effects inside a use (in its handle or
+    /// its selects) do not precede it.
+    fn uses_after_effects(&self, root: NodeId, uses: &[NodeId]) -> Vec<(NodeId, NodeId)> {
+        let mut seen: Vec<NodeId> = Vec::new();
+        let mut placed = Vec::new();
+        let mut effect = false;
+        let mut pending = vec![OrderStep::Visit(root)];
+        while let Some(step) = pending.pop() {
+            let node = match step {
+                OrderStep::Effect => {
+                    effect = true;
+                    continue;
+                }
+                // The target of an element actual is located again at the
+                // copy-out, as any copied-out actual's is (SV 13.5), after
+                // the call.
+                OrderStep::CopyOut(actual) => {
+                    if let Some(path) = self.use_member_path(actual) {
+                        if path != actual
+                            && uses.contains(&path)
+                            && !placed.iter().any(|(placed, _)| *placed == path)
+                        {
+                            placed.push((path, actual));
+                        }
+                    }
+                    continue;
+                }
+                OrderStep::Visit(node) => node,
+            };
+            if node != root && matches!(self.kind(node), NodeKind::Stmt(_)) {
+                continue;
+            }
+            if let Some(path) = self.use_member_path(node) {
+                if uses.contains(&path) && !seen.contains(&path) {
+                    seen.push(path);
+                    if effect {
+                        placed.push((path, node));
+                    }
+                }
+            }
+            // A whole member passed to a subroutine is bound when the call
+            // starts, before its other actuals, as the reference simulator
+            // does; the call's own lowering binds it.
+            if matches!(
+                self.kind(node),
+                NodeKind::FuncCall { .. } | NodeKind::MethodCall { .. }
+            ) {
+                for actual in self.call_argument_nodes(node) {
+                    let actual = self.unwrap_output_actual(actual);
+                    if self.use_member_path(actual) == Some(actual)
+                        && uses.contains(&actual)
+                        && !seen.contains(&actual)
+                    {
+                        seen.push(actual);
+                        if effect {
+                            placed.push((actual, node));
+                        }
+                    }
+                }
+            }
+            let steps = self.evaluation_steps(node);
+            pending.extend(steps.into_iter().rev());
+        }
+        placed
+    }
+
+    /// The operands of `node` in the order they are evaluated, with the
+    /// node's own rebinding effect where it happens.
+    fn evaluation_steps(&self, node: NodeId) -> Vec<OrderStep> {
+        let children = &self.node(node).children;
+        match self.kind(node) {
+            NodeKind::Stmt(StmtKind::Assign {
+                op,
+                delay,
+                blocking,
+            }) if children.len() >= 2 => {
+                let (lhs, rhs) = (children[0], children[1]);
+                let rest = visit(&children[2..]);
+                let whole = self.use_member_path(lhs) == Some(lhs);
+                if *op != Operation::Assignment || whole {
+                    [OrderStep::Visit(lhs), OrderStep::Visit(rhs)]
+                        .into_iter()
+                        .chain(rest)
+                        .collect()
+                } else {
+                    // A nonblocking assignment locates its target at issue.
+                    let control = (*blocking && delay.is_some()).then_some(OrderStep::Effect);
+                    std::iter::once(OrderStep::Visit(rhs))
+                        .chain(rest)
+                        .chain(control)
+                        .chain([OrderStep::Visit(lhs)])
+                        .collect()
+                }
+            }
+            NodeKind::Expr(ExprKind::Operation {
+                op,
+                assignment,
+                operands,
+                ..
+            }) if (*assignment || Self::assignment_operator(*op)) && !operands.is_empty() => {
+                // A simple assignment evaluates its value before its
+                // target, a compound one its target first.
+                let mut steps: Vec<OrderStep> =
+                    if *op == Operation::Assignment && operands.len() == 2 {
+                        visit(&[operands[1], operands[0]]).collect()
+                    } else {
+                        visit(operands).collect()
+                    };
+                steps.push(OrderStep::Effect);
+                steps
+            }
+            NodeKind::FuncCall { .. } | NodeKind::MethodCall { .. } => self.call_steps(node),
+            _ => visit(children).collect(),
+        }
+    }
+
+    /// The evaluation steps of call `call`: a method's receiver, then the
+    /// actuals in order (the target of an output or inout actual, which the
+    /// frontend wraps in an assignment from the formal, is read there for
+    /// an inout one), then a user subroutine's effect and its copy-out.
+    fn call_steps(&self, call: NodeId) -> Vec<OrderStep> {
+        let receiver = match self.kind(call) {
+            NodeKind::MethodCall { receiver, .. } => *receiver,
+            _ => None,
+        };
+        let copied = if self.rebinding_effect(call) {
+            self.copied_out_actuals(call)
+        } else {
+            Vec::new()
+        };
+        let mut steps: Vec<OrderStep> = receiver.map(OrderStep::Visit).into_iter().collect();
+        for child in &self.node(call).children {
+            if Some(*child) == receiver {
+                continue;
+            }
+            steps.push(OrderStep::Visit(if copied.contains(child) {
+                self.unwrap_output_actual(*child)
+            } else {
+                *child
+            }));
+        }
+        if self.rebinding_effect(call) {
+            steps.push(OrderStep::Effect);
+            steps.extend(
+                copied
+                    .into_iter()
+                    .map(|actual| OrderStep::CopyOut(self.unwrap_output_actual(actual))),
+            );
+        }
+        steps
+    }
+
+    /// The member path a use starting at `node` names: `node` itself, a
+    /// select of it, a member of its element (`va[k].p[1].y`, a path rooted
+    /// at the select), a method called on one of these, or a data query of
+    /// one (`$size(va[k].q)`), which its lowering takes whole.
+    fn use_member_path(&self, node: NodeId) -> Option<NodeId> {
+        let mut current = node;
+        loop {
+            match self.kind(current) {
+                NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+                    if self.handle_member_path(current) {
+                        return Some(current);
+                    }
+                    match refs.first().copied().flatten() {
+                        Some(first) if matches!(self.kind(first), NodeKind::Expr(_)) => {
+                            current = first
+                        }
+                        _ => return None,
+                    }
+                }
+                NodeKind::Expr(ExprKind::MemberSelect { base, .. }) => current = *base,
+                NodeKind::SysCall { name } if data_query(name) => {
+                    current = *self.node(current).children.first()?
+                }
+                NodeKind::Expr(
+                    ExprKind::ArraySelect { base, .. }
+                    | ExprKind::BitSelect { base, .. }
+                    | ExprKind::PartSelect { base, .. }
+                    | ExprKind::IndexedPartSelect { base, .. },
+                ) => {
+                    let base = *base;
+                    if let Some(path) = self.select_member_path(current, base) {
+                        return Some(path);
+                    }
+                    current = base;
+                }
+                NodeKind::MethodCall {
+                    receiver: Some(receiver),
+                    ..
+                } => current = *receiver,
+                _ => return None,
+            }
+        }
     }
 
     /// The located rejection of `node`, a member path through a handle or a
@@ -649,15 +1054,8 @@ impl Codegen<'_> {
     /// their own, and so does the `with` clause of an array method, which
     /// runs in a callback of its own.
     fn collect_interface_view_uses(&self, node: NodeId, out: &mut Vec<NodeId>) {
-        if let NodeKind::Expr(ExprKind::HierPath { refs, .. }) = self.kind(node) {
-            if !self.staged_interface_views.contains_key(&node)
-                && refs
-                    .iter()
-                    .flatten()
-                    .any(|target| self.virtual_interface_spelling(*target).is_some())
-            {
-                out.push(node);
-            }
+        if self.names_member_through_handle(node) {
+            out.push(node);
         }
         if let NodeKind::MethodCall {
             receiver: Some(receiver),
@@ -852,6 +1250,7 @@ impl Codegen<'_> {
         node: NodeId,
         target: &VirtualInterfaceMemberPath,
         slot: usize,
+        handle: IrChandleExpr,
         refresh: bool,
     ) -> Result<(InterfaceView, IrStmt), String> {
         let descriptor = target.descriptor;
@@ -908,7 +1307,6 @@ impl Codegen<'_> {
                 (IrInterfaceStorage::Container(ir), None)
             }
         };
-        let handle = self.virtual_interface_handle(path, node, target)?;
         let site = self.required_site("virtual interface member access", path, node);
         let declaration = match self.kind(node) {
             NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs.last().copied().flatten(),

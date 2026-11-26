@@ -297,6 +297,11 @@ impl Frame<'_, '_> {
                 result
             }
             ContainerGet { container, index } => {
+                // A view its index binds (decision VM-D1) is named after the
+                // index runs.
+                let bound = super::pure_calls::binds_views(index)
+                    .then(|| self.expression(index))
+                    .transpose()?;
                 let container_name = self.container_name(*container)?;
                 let mut container = self.ctx.model.containers[*container].clone();
                 container.c_name = container_name;
@@ -311,7 +316,10 @@ impl Frame<'_, '_> {
                         ),
                     ));
                 }
-                let index = self.expression(index)?;
+                let index = match bound {
+                    Some(index) => index,
+                    None => self.expression(index)?,
+                };
                 let function = match container.kind {
                     IrContainerKind::Dynamic => "llg_dyn_value_get_string",
                     IrContainerKind::Queue { .. } => "llg_queue_value_get_string",
@@ -340,10 +348,18 @@ impl Frame<'_, '_> {
                 result
             }
             ContainerGetNested { container, indices } => {
+                let bound = indices
+                    .first()
+                    .is_some_and(super::pure_calls::binds_views)
+                    .then(|| self.container_indices(indices))
+                    .transpose()?;
                 let container_name = self.container_name(*container)?;
                 let mut container = self.ctx.model.containers[*container].clone();
                 container.c_name = container_name;
-                let (list, values) = self.container_indices(indices)?;
+                let (list, values) = match bound {
+                    Some(bound) => bound,
+                    None => self.container_indices(indices)?,
+                };
                 let function = match container.kind {
                     IrContainerKind::Dynamic => "llg_dyn_value_get_nested_string",
                     IrContainerKind::Queue { .. } => "llg_queue_value_get_nested_string",

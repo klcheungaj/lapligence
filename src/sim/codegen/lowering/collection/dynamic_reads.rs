@@ -1757,8 +1757,11 @@ impl Codegen<'_> {
         if !views {
             return result;
         }
-        self.end_interface_views();
-        let result = result.and_then(|reads| self.interface_view_dependencies(reads));
+        // A read walk places no binding, so ending it cannot fail.
+        let result = self
+            .end_interface_views()
+            .and(result)
+            .and_then(|reads| self.interface_view_dependencies(reads));
         self.dependency_views.clear();
         result
     }

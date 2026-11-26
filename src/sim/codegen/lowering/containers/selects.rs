@@ -524,16 +524,14 @@ impl Codegen<'_> {
         let value = apply_lhs_assignment_context(&self.model, &stage.target, value);
         let value = ir_to_storage(value, stage.width, false, false)?;
         let value_name = format!("_csv{}", lhs.0);
-        let mut block = vec![
-            IrStmt::DeclLocal {
-                name: value_name.clone(),
-                width: stage.width,
-                signed: false,
-                two_state: false,
-                init: Some(Box::new(value)),
-            },
-            IrStmt::Block(wait.to_vec()),
-        ];
+        let mut block = vec![IrStmt::DeclLocal {
+            name: value_name.clone(),
+            width: stage.width,
+            signed: false,
+            two_state: false,
+            init: Some(Box::new(value)),
+        }];
+        block.extend(wait.iter().cloned());
         block.extend(stage.keys);
         block.push(stage.element);
         block.push(IrStmt::Assign {

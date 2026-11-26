@@ -679,18 +679,7 @@ impl<'a> Codegen<'a> {
                 assignment,
                 operands,
                 ..
-            }) if *assignment
-                || matches!(
-                    op,
-                    Operation::Assignment
-                        | Operation::PostIncrement
-                        | Operation::PreIncrement
-                        | Operation::PostDecrement
-                        | Operation::PreDecrement
-                        | Operation::OverloadUpdate
-                        | Operation::OverloadPostUpdate
-                ) =>
-            {
+            }) if *assignment || Self::assignment_operator(*op) => {
                 out.extend(operands.first().copied());
             }
             NodeKind::FuncCall {
@@ -716,6 +705,60 @@ impl<'a> Codegen<'a> {
     /// The actuals among `actuals` bound to a non-`const` `ref` formal of
     /// subroutine `callee`.
     fn ref_actuals(&self, actuals: &[NodeId], callee: NodeId, out: &mut Vec<NodeId>) {
+        self.directed_actuals(actuals, callee, out, |formal| {
+            matches!(
+                formal,
+                NodeKind::FuncArg {
+                    direction: DbDirection::Ref,
+                    const_ref: false,
+                    ..
+                }
+            )
+        });
+    }
+
+    /// The actuals of call `call` that its subroutine copies out to
+    /// (`output` and `inout` formals, SV 13.5): their targets are written
+    /// after the subroutine returns.
+    pub(in super::super) fn copied_out_actuals(&self, call: NodeId) -> Vec<NodeId> {
+        let mut out = Vec::new();
+        let children = self.node(call).children.as_slice();
+        let (actuals, callee) = match self.kind(call) {
+            NodeKind::FuncCall {
+                callee: Some(callee),
+                ..
+            } => (children, *callee),
+            NodeKind::MethodCall {
+                receiver,
+                callee: Some(callee),
+                ..
+            } => match children.split_first() {
+                Some((first, rest)) if receiver.as_ref() == Some(first) => (rest, *callee),
+                _ => (children, *callee),
+            },
+            _ => return out,
+        };
+        self.directed_actuals(actuals, callee, &mut out, |formal| {
+            matches!(
+                formal,
+                NodeKind::FuncArg {
+                    direction: DbDirection::Output | DbDirection::Inout,
+                    ..
+                }
+            )
+        });
+        out
+    }
+
+    /// The actuals among `actuals` of a call of `callee` whose formal
+    /// `selected` accepts.
+    fn directed_actuals(
+        &self,
+        actuals: &[NodeId],
+        callee: NodeId,
+        out: &mut Vec<NodeId>,
+        selected: impl Fn(&NodeKind) -> bool,
+    ) {
         if !matches!(self.kind(callee), NodeKind::FuncTask { .. }) {
             return;
         }
@@ -725,14 +768,7 @@ impl<'a> Codegen<'a> {
             .iter()
             .filter(|child| matches!(self.kind(**child), NodeKind::FuncArg { .. }));
         for (actual, formal) in actuals.iter().zip(formals) {
-            if matches!(
-                self.kind(*formal),
-                NodeKind::FuncArg {
-                    direction: DbDirection::Ref,
-                    const_ref: false,
-                    ..
-                }
-            ) {
+            if selected(self.kind(*formal)) {
                 out.push(*actual);
             }
         }

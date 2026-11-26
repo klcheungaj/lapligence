@@ -31,6 +31,11 @@ const DATA_QUERIES: &[&str] = &[
     "$unpacked_dimensions",
 ];
 
+/// Whether system function `name` queries the type of its operand.
+pub(in crate::sim::codegen) fn data_query(name: &str) -> bool {
+    DATA_QUERIES.contains(&name)
+}
+
 impl<'a> Codegen<'a> {
     /// The static property `node` selects through an object expression that
     /// has to be evaluated for its effects (the owned database keeps it in
@@ -49,7 +54,7 @@ impl<'a> Codegen<'a> {
         let mut outer = self.node(node).parent;
         while let Some(parent) = outer {
             match self.kind(parent) {
-                NodeKind::SysCall { name } if DATA_QUERIES.contains(&name.as_str()) => return None,
+                NodeKind::SysCall { name } if data_query(name) => return None,
                 NodeKind::Expr(_) => outer = self.node(parent).parent,
                 _ => break,
             }

@@ -41,6 +41,20 @@ impl EmitCtx<'_, '_> {
             .get(1)
             .copied()
             .ok_or_else(|| "assignment without RHS".to_string())?;
+        // A target through a computed handle that the right-hand side may
+        // rebind is located after it (decision VM-D1): the value goes to a
+        // temporary, then the target's views are bound and the target is
+        // written, as a timed blocking assignment does around its control.
+        // No control runs, so the process does not wait.
+        if (force_blocking || blocking) && op == Operation::Assignment {
+            if let Some(bindings) = self.cg.take_placed_interface_bindings(lhs) {
+                let saw_wait = self.saw_wait;
+                self.placed_target_bindings = bindings;
+                let lowered = self.lower_blocking_timed_assignment(h, lhs, rhs, Vec::new());
+                self.saw_wait = saw_wait;
+                return lowered.map(IrStmt::Block);
+            }
+        }
         self.lower_assignment_operands(lhs, rhs, force_blocking || blocking, op, force_blocking)
     }
 
@@ -835,7 +849,10 @@ impl EmitCtx<'_, '_> {
     /// SV 9.4.5 ("the right-hand expression shall be evaluated before the
     /// delay") and 10.4.1 ("If variable_lvalue requires an evaluation, it
     /// shall be evaluated at the time specified by the intra-assignment
-    /// timing control").
+    /// timing control"). With an empty `wait` it splits an untimed
+    /// assignment around the bindings of its target's own views
+    /// (`placed_target_bindings`, decision VM-D1); the callee helpers get
+    /// the statements that run between value and write.
     pub(super) fn lower_blocking_timed_assignment(
         &mut self,
         h: NodeId,
@@ -846,13 +863,22 @@ impl EmitCtx<'_, '_> {
         // Views of unpacked interface members the target names are bound
         // again once the control has passed, where the target is located.
         wait.append(&mut self.target_rebinds);
+        // Views of the target's own follow the control in the write's scope;
+        // an untimed split runs them alone.
+        let placed = std::mem::take(&mut self.placed_target_bindings);
         let op = match self.cg.kind(h) {
             NodeKind::Stmt(StmtKind::Assign { op, .. }) => *op,
             _ => unreachable!("non-assignment passed to lower_blocking_timed_assignment"),
         };
         if self.cg.native_record_target(lhs) {
+            wait.extend(placed);
             return self.lower_blocking_native_record(h, lhs, rhs, op, wait);
         }
+        let wait: Vec<IrStmt> = if wait.is_empty() {
+            placed
+        } else {
+            std::iter::once(IrStmt::Block(wait)).chain(placed).collect()
+        };
         if op == Operation::Assignment {
             let path = self.path.clone();
             if let Some(statement) = self
@@ -901,14 +927,15 @@ impl EmitCtx<'_, '_> {
                 }
             };
             self.saw_wait = true;
-            return Ok(vec![IrStmt::Block(vec![
-                IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
+            return Ok(vec![IrStmt::Block(
+                std::iter::once(IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
                     tmp,
                     Some(value),
-                ))),
-                IrStmt::Block(wait),
-                IrStmt::Object(Box::new(write)),
-            ])]);
+                ))))
+                .chain(wait)
+                .chain([IrStmt::Object(Box::new(write))])
+                .collect(),
+            )]);
         }
         if string_target {
             self.cg.ensure_string_actual_writable(&self.path, lhs)?;
@@ -920,21 +947,24 @@ impl EmitCtx<'_, '_> {
             let value = self.cg.lower_string(&self.path, rhs)?;
             self.saw_wait = true;
             let tmp = format!("_st{}", h.0);
-            return Ok(vec![IrStmt::Block(vec![
-                IrStmt::DeclString {
+            return Ok(vec![IrStmt::Block(
+                std::iter::once(IrStmt::DeclString {
                     name: tmp.clone(),
                     init: Some(value),
-                },
-                IrStmt::Block(wait),
-                IrStmt::Object(Box::new(IrObjectStmt::StringAssignLocal(
-                    target,
-                    IrStringExpr::LocalRead(tmp.clone()),
-                ))),
-                IrStmt::Object(Box::new(IrObjectStmt::StringAssignLocal(
-                    tmp,
-                    IrStringExpr::Literal(Vec::new()),
-                ))),
-            ])]);
+                })
+                .chain(wait)
+                .chain([
+                    IrStmt::Object(Box::new(IrObjectStmt::StringAssignLocal(
+                        target,
+                        IrStringExpr::LocalRead(tmp.clone()),
+                    ))),
+                    IrStmt::Object(Box::new(IrObjectStmt::StringAssignLocal(
+                        tmp,
+                        IrStringExpr::Literal(Vec::new()),
+                    ))),
+                ])
+                .collect(),
+            )]);
         }
         let lh = self.cg.lower_lhs(&self.path, lhs)?;
         let rhs_ir = self.lower_assignment_rhs(lhs, rhs, op, &lh)?;
@@ -944,21 +974,22 @@ impl EmitCtx<'_, '_> {
         // re-declarations (loops, repeated task inlining) out of one C scope.
         let tmp = format!("_t{}", h.0);
         let (w, s) = (rhs_ir.width, rhs_ir.signed);
-        Ok(vec![IrStmt::Block(vec![
-            IrStmt::DeclLocal {
+        Ok(vec![IrStmt::Block(
+            std::iter::once(IrStmt::DeclLocal {
                 name: tmp.clone(),
                 width: w,
                 signed: s,
                 two_state: false,
                 init: Some(Box::new(rhs_ir)),
-            },
-            IrStmt::Block(wait),
-            IrStmt::Assign {
+            })
+            .chain(wait)
+            .chain([IrStmt::Assign {
                 lhs: lh,
                 rhs: IrExpr::new(IrExprKind::LocalRead(tmp), w, s, None),
                 nba: false,
-            },
-        ])])
+            }])
+            .collect(),
+        )])
     }
 
     /// Whether a destination writes into a resizable container element,
@@ -1207,11 +1238,12 @@ impl EmitCtx<'_, '_> {
             _ => return Err(unsupported()),
         };
         self.saw_wait = true;
-        Ok(vec![IrStmt::Block(vec![
-            capture,
-            IrStmt::Block(wait),
-            IrStmt::Container(Box::new(store)),
-        ])])
+        Ok(vec![IrStmt::Block(
+            std::iter::once(capture)
+                .chain(wait)
+                .chain([IrStmt::Container(Box::new(store))])
+                .collect(),
+        )])
     }
 
     /// Lower event/repeat intra-assignment timing. A blocking assignment
