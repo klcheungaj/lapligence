@@ -1083,7 +1083,7 @@ pub fn driver_signal_of_lhs(db: &Db, id: NodeId) -> Option<NodeId> {
 }
 
 fn add_driver_lhs_write(db: &Db, lhs: NodeId, seen: &mut IdSet<NodeId>, out: &mut Vec<NodeId>) {
-    add_lhs_members(db, lhs, driven_objects_of_lhs, seen, out);
+    add_lhs_members(db, lhs, written_objects_of_lhs, seen, out);
 }
 
 /// The objects a write to `id` drives: [`driver_signal_of_lhs`] plus, for a
@@ -1091,15 +1091,12 @@ fn add_driver_lhs_write(db: &Db, lhs: NodeId, seen: &mut IdSet<NodeId>, out: &mu
 /// The frontend models such a member as a detached node (no parent) at the end
 /// of a hierarchical path (or as the base of a member-array select, which the
 /// database maps to its owner); a class property or a signal in another scope
-/// has a parent and stays the only driven object.
-fn driven_objects_of_lhs(db: &Db, id: NodeId) -> [Option<NodeId>; 2] {
-    [driver_signal_of_lhs(db, id), member_owner_of_lhs(db, id)]
-}
-
-/// [`driven_objects_of_lhs`], also resolving a member path rooted at an
-/// element select (`rq[i].f`, whose references keep the select) to the array.
+/// has a parent and stays the only driven object. A member path rooted at an
+/// element select (`rq[i].f`, whose references keep the select) drives the
+/// array. Writes ([`collect_writes`]) and drivers ([`collect_driver_writes`])
+/// resolve targets alike.
 fn written_objects_of_lhs(db: &Db, id: NodeId) -> [Option<NodeId>; 2] {
-    let mut driven = driven_objects_of_lhs(db, id);
+    let mut driven = [driver_signal_of_lhs(db, id), member_owner_of_lhs(db, id)];
     if driven[1].is_some() {
         return driven;
     }
