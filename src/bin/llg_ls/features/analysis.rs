@@ -52,6 +52,9 @@ pub struct Analysis {
     /// position instead of the first name match in the model.  Empty for
     /// parse-fallback analyses (the model supplies details there).
     pub decl_details: tokens::DeclDetails,
+    /// Where the declarations that the outline lists end
+    /// ([`tokens::DeclExtents`]). Empty for analyses that capture none.
+    pub(crate) decl_extents: tokens::DeclExtents,
     /// Lint findings from the shared linter (`source: "llg-lint"` when
     /// published), produced alongside the Slang diagnostics.  1-based
     /// positions.  Empty when compilation failed or no semantic DB design was built.
@@ -215,6 +218,7 @@ impl Analysis {
             index,
             bindings,
             decl_details: HashMap::new(),
+            decl_extents: HashMap::new(),
             lint,
             design: Vec::new(),
             module_graph: ModuleGraph::default(),
@@ -250,6 +254,12 @@ impl Analysis {
     /// [`Analysis::fatal_preflight`].
     pub(super) fn with_macros(mut self, macros: macros::MacroTable) -> Analysis {
         self.macros = macros;
+        self
+    }
+
+    /// Attach the declaration ends captured during the same Slang pass.
+    fn with_decl_extents(mut self, extents: tokens::DeclExtents) -> Analysis {
+        self.decl_extents = extents;
         self
     }
 
@@ -977,6 +987,7 @@ pub(super) fn analyze_inner_slang(
     )
     .with_macros(projection.macros)
     .with_decl_details(projection.details)
+    .with_decl_extents(projection.extents)
     .with_module_graph(module_graph)
     .with_configured_top(opts.top.clone());
     analysis.attach_frontend_diagnostics(frontend_diagnostics);

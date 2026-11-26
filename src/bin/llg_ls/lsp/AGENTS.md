@@ -37,8 +37,9 @@ Components: [readme](readme.md), [handlers](handlers/readme.md). Server rules:
   ticketed `publish_ordered` path (`diagnostics.rs` docs).
 - Valid analysis replaces `last_good`; compile/admission failures keep navigation.
 - A request position reaches `last_good` only through `Placement::analysed`, and
-  its positions leave the server only through `Places`, or not at all
-  ([handlers](handlers/readme.md)). Open texts change only through
+  its positions leave the server only through `Places`, or not at all; sent
+  diagnostics move through `BackendState::place_diagnostics` after the digest
+  comparison ([handlers](handlers/readme.md)). Open texts change only through
   `BackendState::set_document` and `remove_document`.
 - Watched-file registrations are serialized by their own gate and read the
   watcher set only after taking their turn. No notification handler waits for

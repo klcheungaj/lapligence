@@ -1015,7 +1015,10 @@ struct SharedFrameType {
 /// a caller is grouped. A layout used by one coroutine keeps its
 /// `<fn>_frame_t` name; a shared layout is named `llg_shared_frame_<k>_t`.
 /// Each artifact's `frame_type` and source are rewritten to the shared name;
-/// the returned list holds each typedef once, in callee-first order.
+/// the returned list holds each typedef once, in callee-first order. The
+/// overlaid structs a frame names instead of nesting them past
+/// [`super::MAX_NESTED_DEFINITIONS`] are `llg_frame_part_<n>_t`, numbered
+/// across the model and defined before the frame.
 fn share_frame_types(
     execution: &ExecutionModel,
     functions: &mut CoroutineArtifacts,
@@ -1025,6 +1028,7 @@ fn share_frame_types(
 ) -> Result<Vec<SharedFrameType>, String> {
     const SELF_NAME: &str = "__llg_frame_self__";
     const GROUP_PREFIX: &str = "__llg_frame_group_";
+    const PART_PREFIX: &str = "__llg_frame_part_";
     let mut by_index = functions
         .iter_mut()
         .map(|(index, artifact)| (*index, artifact))
@@ -1048,7 +1052,9 @@ fn share_frame_types(
     let mut groups = Vec::<(String, String, usize)>::new(); // key, first type, members
     let mut member_groups = Vec::with_capacity(ordered.len());
     for artifact in &ordered {
-        let text = artifact.layout.render_typedef(SELF_NAME)?;
+        let text = artifact
+            .layout
+            .render_typedef(SELF_NAME, |part| format!("{PART_PREFIX}{part}__"))?;
         let key = rewrite_identifiers(&text, |identifier| {
             group_of_type
                 .get(identifier)
@@ -1079,13 +1085,25 @@ fn share_frame_types(
             }
         })
         .collect::<Vec<_>>();
+    // The structs a frame names instead of nesting them are numbered across
+    // the model.
+    let mut parts = 0usize;
     let mut frame_types = groups
         .iter()
         .zip(&names)
         .map(|((key, _, _), name)| {
+            let first = parts;
             let typedef = rewrite_identifiers(key, |identifier| {
                 if identifier == SELF_NAME {
                     return Some(name.clone());
+                }
+                if let Some(part) = identifier
+                    .strip_prefix(PART_PREFIX)
+                    .and_then(|rest| rest.strip_suffix("__"))
+                    .and_then(|part| part.parse::<usize>().ok())
+                {
+                    parts = parts.max(first + part + 1);
+                    return Some(format!("llg_frame_part_{}_t", first + part));
                 }
                 identifier
                     .strip_prefix(GROUP_PREFIX)

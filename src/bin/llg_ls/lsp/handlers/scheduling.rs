@@ -639,7 +639,7 @@ impl Backend {
         let config = root.descriptor.effective_config();
         let open_documents = state.open_documents(root, &descriptors);
         let files: Vec<PathBuf> = root
-            .units(&descriptors, &config, &open_documents)
+            .units(&descriptors, &config, &open_documents, &state.documents)
             .into_iter()
             .collect();
         let cancel = server_token().child();

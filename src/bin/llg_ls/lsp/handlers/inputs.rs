@@ -7,6 +7,7 @@
 //! unchanged file starts none. A run that is still to start, after the delay or
 //! after the running one ends, reads the newest state anyway.
 
+use super::positions::OpenTexts;
 use super::*;
 use features::SourceFingerprint;
 use llg::cancel::CancelToken;
@@ -141,20 +142,26 @@ impl RootState {
         self.discovered.iter().any(|file| file == path)
     }
 
-    /// The compilation units of this root while `open` holds its open documents.
+    /// The compilation units of this root while `open` holds its open documents,
+    /// of `documents`. A unit opened through a symbolic link is compiled as the
+    /// document only, so that the analysis names the file as the client does.
     pub(super) fn units(
         &self,
         descriptors: &[RootDescriptor],
         config: &LlgConfig,
         open: &OpenDocuments,
+        documents: &OpenTexts,
     ) -> BTreeSet<PathBuf> {
-        let discovered = self.discovered.iter().filter(|file| {
-            workspace::owning_root_unfiltered(file, descriptors)
-                .is_some_and(|owner| owner.root == self.descriptor.root)
-        });
-        let open = open
+        let open: Vec<&PathBuf> = open
             .keys()
-            .filter(|path| self.is_unit(descriptors, config, path, true));
+            .filter(|path| self.is_unit(descriptors, config, path, true))
+            .collect();
+        let linked = documents.aliased_identities(open.iter().copied());
+        let discovered = self.discovered.iter().filter(|file| {
+            !linked.contains(file)
+                && workspace::owning_root_unfiltered(file, descriptors)
+                    .is_some_and(|owner| owner.root == self.descriptor.root)
+        });
         discovered.chain(open).cloned().collect()
     }
 
@@ -308,7 +315,7 @@ impl BackendState {
         let descriptors = self.descriptors();
         let config = root.descriptor.effective_config();
         let open = self.open_documents(root, &descriptors);
-        newest.units != root.units(&descriptors, &config, &open)
+        newest.units != root.units(&descriptors, &config, &open, &self.documents)
     }
 }
 

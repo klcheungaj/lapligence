@@ -87,6 +87,11 @@ invocation locations in configuration diagnostics.
   preprocessor's resolutions (all four tables are empty but in editor captures), sorted by range; a macro reference without a
   definition is predefined. Their counts are bounded by the lexical token limit
   (`LLG_SLANG_MAX_LEXICAL_TARGETS` per body name) and the record byte budget.
+- `declaration_extents` (ABI 89, editor captures only) give the whole text of
+  each module, interface, program, package, class, function and task
+  declaration by its name, so that the outline encloses declarations
+  (`core::tokens::DeclExtents`). One per declaration, bounded by the lexical
+  token limit.
 - `attributes` (ABI 69) are the attribute instances of simulation captures
   (none in declaration-only and editor captures): owner node, value constant, name range
   and whether the value is a string literal, in source order per owner. The DB

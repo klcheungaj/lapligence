@@ -238,6 +238,9 @@ both cases. The stream asks no callback: its receiver aborts it.
   `LlgSlangMacroReference` per written name and resolution (with the uses in a
   body resolved where it is expanded), and one `LlgSlangInclude` per resolved
   directive, so consumers scan no source text.
+- In editor capture, `LexicalCapture` gives one `LlgSlangDeclarationExtent` per
+  module, interface, program, package, class, function or task declaration
+  whose text is in one file: its name and its syntax range.
 - Class specializations: the names written in a `C#(...)::name` value
   assignment bind from the overridden parameter initializer when this use
   site wrote it, else by lookup in the context of the symbol or statement

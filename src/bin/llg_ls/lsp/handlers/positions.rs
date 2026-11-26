@@ -3,7 +3,8 @@
 //! An analysis starts on a save, so it describes an older text while a document
 //! has unsaved edits. A request asks it at the analysed position of the place
 //! the user sees ([`Placement::analysed`]), and what it names leaves the server at
-//! its place in the current texts or not at all ([`Places::location`]).
+//! its place in the current texts or not at all ([`Places::location`]). Sent
+//! diagnostics move the same way ([`BackendState::place_diagnostics`]).
 //!
 //! The analysed text of an open document ([`AnalysedTexts`]) is the document's
 //! own text, shared with it, until an edit replaces that. So a document is
@@ -27,6 +28,12 @@ pub(super) struct OpenTexts {
     /// The documents that are files, by path: the analyses name paths, and the
     /// spelling of a URI is the client's.
     uris: HashMap<PathBuf, Url>,
+    /// The same by the identity of the file ([`input_identity`]): an analysis
+    /// may read a document through another spelling (a symbolic link).
+    identities: HashMap<PathBuf, Url>,
+    /// The identities of the documents opened through a symbolic link, by
+    /// path.
+    aliased: HashMap<PathBuf, PathBuf>,
     /// The documents whose latest text exceeds the size limit. The text here is
     /// the last one that did not, which the user no longer sees.
     rejected: HashSet<Url>,
@@ -35,6 +42,14 @@ pub(super) struct OpenTexts {
 impl OpenTexts {
     pub(super) fn insert(&mut self, uri: Url, text: SharedText) {
         if let Some(path) = Backend::uri_to_path(&uri) {
+            // A change keeps the identity of the document.
+            if !self.texts.contains_key(&uri) {
+                let identity = input_identity(&path);
+                self.identities.insert(identity.clone(), uri.clone());
+                if identity != path {
+                    self.aliased.insert(path.clone(), identity);
+                }
+            }
             self.uris.insert(path, uri.clone());
         }
         self.rejected.remove(&uri);
@@ -44,9 +59,36 @@ impl OpenTexts {
     pub(super) fn remove(&mut self, uri: &Url) -> Option<SharedText> {
         if let Some(path) = Backend::uri_to_path(uri) {
             self.uris.remove(&path);
+            let identity = self.aliased.remove(&path).unwrap_or(path);
+            if self.identities.get(&identity) == Some(uri) {
+                self.identities.remove(&identity);
+            }
         }
         self.rejected.remove(uri);
         self.texts.remove(uri)
+    }
+
+    /// The URI of the open document that is the file an analysis read as
+    /// `path`, whose identity is `identity` when it differs from `path`.
+    pub(super) fn document(&self, path: &Path, identity: Option<&PathBuf>) -> Option<&Url> {
+        self.uris
+            .get(path)
+            .or_else(|| self.identities.get(identity.map_or(path, PathBuf::as_path)))
+    }
+
+    /// The identity of open document `path` when it was opened through a
+    /// symbolic link.
+    pub(super) fn aliased(&self, path: &Path) -> Option<&PathBuf> {
+        self.aliased.get(path)
+    }
+
+    /// The identities of open documents `paths` that were opened through a
+    /// symbolic link.
+    pub(super) fn aliased_identities<'a>(
+        &'a self,
+        paths: impl Iterator<Item = &'a PathBuf>,
+    ) -> HashSet<&'a PathBuf> {
+        paths.filter_map(|path| self.aliased.get(path)).collect()
     }
 
     /// The last text of document `uri` within the size limit.
@@ -173,6 +215,16 @@ impl Placement {
         }
     }
 
+    /// Whether the analysed text has the character at `position` of the
+    /// document.
+    fn has_analysed(&self, position: Position) -> bool {
+        match self {
+            Self::Same => true,
+            Self::Edited(pair) => pair.map().has_analysed(position),
+            Self::Unknown => false,
+        }
+    }
+
     /// Where the analysed identifier `name` is now.
     fn current_name(&self, range: Range, name: &str) -> Option<Range> {
         let place = self.current(range)?;
@@ -186,14 +238,21 @@ impl Placement {
         spelled.then_some(place)
     }
 
-    /// Where an analysed stretch of text is now that began with a place which
-    /// is `start` now.
-    pub(super) fn current_stretch(&self, range: Range, start: Range) -> Range {
-        let end = match self {
-            Self::Edited(pair) => pair.map().current_end(range.end),
-            _ => Some(range.end),
+    /// Where an analysed stretch of text is now that holds a place which is
+    /// `place` now. It begins at `place` when its first character is gone.
+    pub(super) fn current_stretch(&self, range: Range, place: Range) -> Range {
+        let (start, end) = match self {
+            Self::Edited(pair) => {
+                let map = pair.map();
+                (map.current_start(range.start), map.current_end(range.end))
+            }
+            _ => (Some(range.start), Some(range.end)),
         };
-        Range::new(start.start, start.end.max(end.unwrap_or(start.end)))
+        let start = start.filter(|start| *start <= place.start);
+        Range::new(
+            start.unwrap_or(place.start),
+            place.end.max(end.unwrap_or(place.end)),
+        )
     }
 
     /// The analysed position that a request at `position` of the document asks
@@ -239,6 +298,39 @@ impl RootState {
 }
 
 impl BackendState {
+    /// The URI of the open document that is the file which an analysis names
+    /// `path`.
+    pub(super) fn document_of_file(&self, path: &Path) -> Option<&Url> {
+        let identity = self
+            .roots
+            .values()
+            .find_map(|root| root.input_aliases.get(path));
+        self.documents.document(path, identity)
+    }
+
+    /// The name by which `analysis`, the last of root `root`, read the file of
+    /// open document `path`, when that is another spelling of it: either went
+    /// through a symbolic link.
+    pub(super) fn analysed_name(
+        &self,
+        root: &RootState,
+        analysis: &Analysis,
+        path: &Path,
+    ) -> Option<String> {
+        let identity = self.documents.aliased(path).map_or(path, PathBuf::as_path);
+        let aliases = root
+            .input_aliases
+            .iter()
+            .filter(|(_, target)| target.as_path() == identity)
+            .map(|(name, _)| name.as_path());
+        std::iter::once(identity)
+            .chain(aliases)
+            .filter(|name| *name != path)
+            .find(|name| analysis.compiled_length(name).is_some())
+            .and_then(Path::to_str)
+            .map(str::to_owned)
+    }
+
     /// How the positions that `texts` belong to relate to those of the file
     /// `path` now.
     pub(super) fn placement(&mut self, texts: &AnalysedTexts, path: &Path) -> Placement {
@@ -385,6 +477,41 @@ impl BackendState {
         });
     }
 
+    /// Move `diagnostics` that the last analysis of root `key` found in `file`
+    /// to their places in the current texts, when they are sent: digests and
+    /// unions compare them at the places of the analysed texts, which the
+    /// client never sees. A range whose text an edit touched stays where the
+    /// analysis had it: the client shows the finding at the place of the
+    /// analysed text rather than not at all, and the next analysis replaces it.
+    pub(super) fn place_diagnostics(
+        &mut self,
+        key: &RootKey,
+        file: &Path,
+        diagnostics: &mut [Diagnostic],
+    ) {
+        let texts = match self.roots.get(key) {
+            Some(root) if root.diagnosed_analysed_texts => Arc::clone(&root.analysed_texts),
+            _ => return,
+        };
+        let placement = self.placement(&texts, file);
+        for diagnostic in diagnostics {
+            if let Some(range) = placement.current(diagnostic.range) {
+                diagnostic.range = range;
+            }
+            for related in diagnostic.related_information.iter_mut().flatten() {
+                let Some(path) = Backend::uri_to_path(&related.location.uri) else {
+                    continue;
+                };
+                let range = self
+                    .placement(&texts, &path)
+                    .current(related.location.range);
+                if let Some(range) = range {
+                    related.location.range = range;
+                }
+            }
+        }
+    }
+
     /// Drop the analysed texts of the document `path`, which was edited, when
     /// those of the edited documents exceed the budget.
     fn enforce_text_budget(&mut self, path: &Path) {
@@ -463,6 +590,41 @@ impl Query {
 }
 
 impl Backend {
+    /// Tell the client that the module explorer has other places, after an
+    /// edit of `uri` and a pause ([`EXPLORER_EDIT_DEBOUNCE`]), when the last
+    /// analysis of a root read the file.
+    pub(super) fn explorer_moved_by(&self, uri: &Url) {
+        let edit = {
+            let mut state = self.lock_state();
+            let Some(path) = Self::uri_to_path(uri) else {
+                return;
+            };
+            let read = state
+                .roots
+                .values()
+                .any(|root| root.last_good.is_some() && root.analysed_texts.contains_key(&path));
+            if !read {
+                return;
+            }
+            state.explorer_edits += 1;
+            state.explorer_edits
+        };
+        let (client, state) = (self.client.clone(), Arc::clone(&self.state));
+        tokio::spawn(async move {
+            tokio::time::sleep(EXPLORER_EDIT_DEBOUNCE).await;
+            let last = {
+                let state = state.lock().unwrap_or_else(|error| error.into_inner());
+                state.explorer_edits == edit && !state.shutting_down
+            };
+            if last {
+                crate::llg_debug!("event=module_explorer.moved edits={edit}");
+                client
+                    .send_notification::<LlgModuleExplorerChanged>(ModuleExplorerChangedParams {})
+                    .await;
+            }
+        });
+    }
+
     /// What requests about `uri` are answered from now. `None` for a document
     /// that no root owns.
     pub(super) fn query(
@@ -477,6 +639,11 @@ impl Backend {
         let max_file_bytes = root.descriptor.effective_config().analysis.max_file_bytes;
         let key = root.descriptor.root.clone();
         let served = root.served();
+        // The analysis answers by its own name of the file.
+        let path = served
+            .as_ref()
+            .and_then(|served| state.analysed_name(root, &served.analysis, &real))
+            .unwrap_or(path);
         let placement = match &served {
             Some(served) => state.placement(&served.texts, &real),
             None => Placement::Unknown,
@@ -521,6 +688,20 @@ pub(super) fn current_symbols(
         }
     }
     placed
+}
+
+/// The outline of an edited document: the analysis' `symbols` at their places
+/// in the current text ([`current_symbols`]), and beside them the declarations
+/// of the isolated parse of that text whose names the analysed text lacks
+/// ([`features::DocumentIdentifiers::declaration_symbols`]).
+pub(super) fn edited_symbols(
+    placement: &Placement,
+    symbols: Vec<DocumentSymbol>,
+    identifiers: &features::DocumentIdentifiers,
+) -> Vec<DocumentSymbol> {
+    let mut symbols = current_symbols(placement, symbols);
+    symbols.extend(identifiers.declaration_symbols(|range| !placement.has_analysed(range.start)));
+    symbols
 }
 
 /// The symbols that match `query`, once per place.
@@ -607,14 +788,16 @@ impl Places {
             // No document has that name.
             return Some(start);
         };
-        let range = features::name_range(start, name);
+        let nodes = features::tokens_of(&self.served.analysis, file);
+        let range = features::identifier_range(nodes, start, name);
         let place = self.location(Some(name), &Location::new(uri, range))?;
         Some(place.range.start)
     }
 
     /// The current line of a declaration.
     pub(super) fn line(&mut self, target: &llg::core::tokens::DeclTarget) -> Option<u32> {
-        let target = features::target_location(target);
+        let nodes = features::tokens_of(&self.served.analysis, &target.file);
+        let target = features::target_location(target, nodes);
         let location = self.location(target.name.as_deref(), &target.location)?;
         Some(location.range.start.line)
     }

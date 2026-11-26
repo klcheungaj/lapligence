@@ -56,7 +56,11 @@ model of the chain, not from the simulator under test.
 `deep_nesting.sv` nests every construct tens to hundreds of levels deep: above
 the 60 to 70 levels that used to overflow the stack of an unoptimized `llg`,
 and below what a C compiler accepts, because nested statements become nested
-C blocks (MSVC stops at 128). Tests of the limit itself
+C blocks (MSVC stops at 128). Its `initial` process overlays sibling blocks
+more deeply than C11 guarantees for nested structure and union definitions
+(63 levels; MSVC refuses the 65th, C1046), so the frame of that process names
+the structs past the limit; `fin_002e` counts the nesting of the model's
+definitions in both optimizer modes. Tests of the limit itself
 (`llg::stack::MAX_NESTING_DEPTH`) generate their sources in
 [`tests/deep_nesting.rs`](../../../../deep_nesting.rs) and build nothing.
 

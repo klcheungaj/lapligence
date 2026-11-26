@@ -901,7 +901,9 @@ pub(super) fn share(
         };
         let key = match body {
             Body::Coroutine(artifact) => {
-                let shape = artifact.layout.render_typedef("llg_key_frame")?;
+                let shape = artifact
+                    .layout
+                    .render_typedef("llg_key_frame", |part| format!("llg_key_part_{part}"))?;
                 let shape = rewrite_identifiers(&shape, |name| frame_names.get(name));
                 format!(
                     "{:?}:{}:{shape}:{}",
@@ -1002,7 +1004,9 @@ pub(super) fn share(
             };
             let artifact = processes[index].as_ref().unwrap();
             let frame_name = format!("llg_body_frame_{}_t", sequence - 1);
-            let mut typedef = artifact.layout.render_typedef(&frame_name)?;
+            let mut typedef = artifact.layout.render_typedef(&frame_name, |part| {
+                format!("llg_body_part_{}_{part}_t", sequence - 1)
+            })?;
             // Embedded callee types have already been canonicalized in the body.
             typedef = rewrite_identifiers(&typedef, |name| frame_names.get(name));
             typedef = typedef.replacen(

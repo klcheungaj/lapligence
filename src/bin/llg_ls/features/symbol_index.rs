@@ -15,7 +15,7 @@ pub struct SymEntry {
     pub col: u32,
     /// 0-based end line (usually `== line`).
     pub end_line: u32,
-    /// 0-based end column (exclusive-ish; `col + name length`).
+    /// 0-based end column, after the written name ([`identifier_range`]).
     pub end_col: u32,
     /// `true` for declaration sites, `false` for reference sites.
     pub is_decl: bool,
@@ -24,6 +24,31 @@ pub struct SymEntry {
     pub scope: Option<String>,
     /// Hover text for the object (SystemVerilog declaration snippet).
     pub detail: Option<String>,
+}
+
+impl SymEntry {
+    /// The range of the written name.
+    pub fn range(&self) -> Range {
+        Range::new(
+            Position::new(self.line, self.col),
+            Position::new(self.end_line, self.end_col),
+        )
+    }
+}
+
+/// The end column of the identifier `name` written at the 0-based `line` and
+/// `col` of `file` ([`identifier_range`]).
+fn name_end(
+    tokens: &HashMap<&str, &FileTokens>,
+    file: &str,
+    line: u32,
+    col: u32,
+    name: &str,
+) -> u32 {
+    let nodes = tokens.get(file).map(|tokens| tokens.nodes.as_slice());
+    identifier_range(nodes, Position::new(line, col), name)
+        .end
+        .character
 }
 
 /// Workspace-wide symbol index: every declaration and reference site the
@@ -111,7 +136,6 @@ impl SymbolIndex {
                 .map(|n| (n.line, n.col))
                 .unwrap_or((m.line, m.col));
             let name = clean_name(&m.name).to_owned();
-            let len = lsp_name_len(&name);
             let line = line1.saturating_sub(1);
             let col = col1.saturating_sub(1);
             decls.push(SymEntry {
@@ -121,7 +145,7 @@ impl SymbolIndex {
                 line,
                 col,
                 end_line: line,
-                end_col: col.saturating_add(len),
+                end_col: name_end(&tokens_by_file, &file, line, col, &name),
                 is_decl: true,
                 scope: None,
                 detail: Some(format!("module {name}")),
@@ -143,7 +167,6 @@ impl SymbolIndex {
                 .map(|n| (n.line, n.col))
                 .unwrap_or((p.line, p.col));
             let name = clean_name(&p.name).to_owned();
-            let len = lsp_name_len(&name);
             let line = line1.saturating_sub(1);
             let col = col1.saturating_sub(1);
             decls.push(SymEntry {
@@ -153,7 +176,7 @@ impl SymbolIndex {
                 line,
                 col,
                 end_line: line,
-                end_col: col.saturating_add(len),
+                end_col: name_end(&tokens_by_file, &file, line, col, &name),
                 is_decl: true,
                 scope: None,
                 detail: Some(format!("package {name}")),
@@ -189,9 +212,9 @@ impl SymbolIndex {
                     continue;
                 };
                 let name = clean_name(&param.name).to_owned();
-                let len = lsp_name_len(&name);
                 let line = line1.saturating_sub(1);
                 let col = col1.saturating_sub(1);
+                let end_col = name_end(&tokens_by_file, &file, line, col, &name);
                 decls.push(SymEntry {
                     name,
                     kind: SymKind::Param,
@@ -199,7 +222,7 @@ impl SymbolIndex {
                     line,
                     col,
                     end_line: line,
-                    end_col: col.saturating_add(len),
+                    end_col,
                     is_decl: true,
                     scope: Some(pkg_name.clone()),
                     detail: Some(format_param(param)),
@@ -208,9 +231,9 @@ impl SymbolIndex {
             }
             for ec in &p.enum_consts {
                 let name = clean_name(&ec.name).to_owned();
-                let len = lsp_name_len(&name);
                 let line = ec.line.saturating_sub(1);
                 let col = ec.col.saturating_sub(1);
+                let end_col = name_end(&tokens_by_file, &file, line, col, &name);
                 decls.push(SymEntry {
                     name,
                     kind: SymKind::EnumConst,
@@ -218,7 +241,7 @@ impl SymbolIndex {
                     line,
                     col,
                     end_line: line,
-                    end_col: col.saturating_add(len),
+                    end_col,
                     is_decl: true,
                     scope: Some(pkg_name.clone()),
                     detail: Some(format_enum_const(ec)),
@@ -253,7 +276,6 @@ impl SymbolIndex {
                 .map(|n| (n.line, n.col))
                 .unwrap_or((c.line, c.col));
             let name = clean_name(&c.name).to_owned();
-            let len = lsp_name_len(&name);
             let line = line1.saturating_sub(1);
             let col = col1.saturating_sub(1);
             decls.push(SymEntry {
@@ -263,7 +285,7 @@ impl SymbolIndex {
                 line,
                 col,
                 end_line: line,
-                end_col: col.saturating_add(len),
+                end_col: name_end(&tokens_by_file, &file, line, col, &name),
                 is_decl: true,
                 scope: None,
                 detail: Some(format_class(c)),
@@ -276,9 +298,9 @@ impl SymbolIndex {
                     continue;
                 };
                 let mname = clean_name(&m.name).to_owned();
-                let mlen = lsp_name_len(&mname);
                 let mline = m.line.saturating_sub(1);
                 let mcol = m.col.saturating_sub(1);
+                let mend = name_end(&tokens_by_file, &mfile, mline, mcol, &mname);
                 decls.push(SymEntry {
                     name: mname.clone(),
                     kind: if m.is_task {
@@ -290,7 +312,7 @@ impl SymbolIndex {
                     line: mline,
                     col: mcol,
                     end_line: mline,
-                    end_col: mcol.saturating_add(mlen),
+                    end_col: mend,
                     is_decl: true,
                     scope: scope.clone(),
                     detail: Some(func_signature(m)),
@@ -321,9 +343,9 @@ impl SymbolIndex {
             // Class fields reuse `SymKind::Var` (no dedicated Field kind).
             for f in &c.fields {
                 let fname = clean_name(&f.name).to_owned();
-                let flen = lsp_name_len(&fname);
                 let fline = f.line.saturating_sub(1);
                 let fcol = f.col.saturating_sub(1);
+                let fend = name_end(&tokens_by_file, &file, fline, fcol, &fname);
                 decls.push(SymEntry {
                     name: fname.clone(),
                     kind: SymKind::Var,
@@ -331,7 +353,7 @@ impl SymbolIndex {
                     line: fline,
                     col: fcol,
                     end_line: fline,
-                    end_col: fcol.saturating_add(flen),
+                    end_col: fend,
                     is_decl: true,
                     scope: scope.clone(),
                     detail: Some(format_class_field(f)),
@@ -367,9 +389,9 @@ impl SymbolIndex {
                         })
                         .map(|n| (n.line, n.col))
                         .unwrap_or((i.line, i.col));
-                    let len = lsp_name_len(&name);
                     let line = line1.saturating_sub(1);
                     let col = col1.saturating_sub(1);
+                    let end_col = name_end(tokens_by_file, &file, line, col, &name);
                     let def = clean_name(&i.def_name).to_owned();
                     let detail = format!("{} {}", def, i.name);
                     let idx = decls.len();
@@ -380,7 +402,7 @@ impl SymbolIndex {
                         line,
                         col,
                         end_line: line,
-                        end_col: col.saturating_add(len),
+                        end_col,
                         is_decl: true,
                         scope,
                         detail: Some(detail),
@@ -415,9 +437,9 @@ impl SymbolIndex {
             for f in &inst.funcs {
                 let Some(file) = f.file.clone() else { continue };
                 let name = clean_name(&f.name).to_owned();
-                let len = lsp_name_len(&name);
                 let line = f.line.saturating_sub(1);
                 let col = f.col.saturating_sub(1);
+                let end_col = name_end(&tokens_by_file, &file, line, col, &name);
                 decls.push(SymEntry {
                     name: name.clone(),
                     kind: if f.is_task {
@@ -429,7 +451,7 @@ impl SymbolIndex {
                     line,
                     col,
                     end_line: line,
-                    end_col: col.saturating_add(len),
+                    end_col,
                     is_decl: true,
                     scope: Some(f.scope.clone()),
                     detail: Some(func_signature(f)),
@@ -503,9 +525,8 @@ impl SymbolIndex {
                 let Some((kind, is_decl)) = classify_token(n.kind, forced_decl) else {
                     continue;
                 };
-                let len = lsp_name_len(name);
-                let line = n.line.saturating_sub(1);
-                let col = n.col.saturating_sub(1);
+                let range = token_range(n);
+                let (line, col) = (range.start.line, range.start.character);
                 let scope = enclosing_scope(&scope_providers, &ft.path, n.line);
                 let detail = if is_decl {
                     match kind {
@@ -526,8 +547,8 @@ impl SymbolIndex {
                     file: ft.path.clone(),
                     line,
                     col,
-                    end_line: line,
-                    end_col: col.saturating_add(len),
+                    end_line: range.end.line,
+                    end_col: range.end.character,
                     is_decl,
                     scope,
                     detail,
@@ -579,7 +600,7 @@ impl SymbolIndex {
         let after = decls.partition_point(|entry| (entry.line, entry.col) <= (line, col));
         decls[..after]
             .last()
-            .filter(|entry| entry.line == line && col < entry.col + lsp_name_len(&entry.name))
+            .filter(|entry| entry.line == line && col < entry.end_col)
     }
 
     /// Declarations in `file`, sorted by (line, col).

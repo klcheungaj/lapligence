@@ -696,3 +696,178 @@ fn lsp_stdio_open_unsaved_excluded_svh_overrides_disk_include_for_open_top() {
     assert_no_shadow_uris(&symbols);
     client.shutdown();
 }
+
+const LINKED_TOP: &str =
+    "module top;\n`include \"defs.svh\"\n  sub u (.o(d));\n  assign w = W;\nendmodule\n";
+const LINKED_DEFS: &str = "localparam int W = 4;\n  logic [W-1:0] d, w;\n";
+const LINKED_SUB: &str =
+    "module sub(output logic [3:0] o);\n  assign o = missing_name;\nendmodule\n";
+
+/// The documents of one session over files that symbolic links name.
+#[cfg(unix)]
+struct LinkedDocuments<'a> {
+    top: &'a Path,
+    defs: &'a Path,
+    sub: &'a Path,
+    /// Spellings of the same files that no document has.
+    others: &'a [&'a Path],
+}
+
+/// Results, diagnostics and the places of unsaved edits land on the documents,
+/// whatever spelling the analysis reads the files by, and no unit is compiled
+/// twice.
+#[cfg(unix)]
+fn check_linked_documents(root: &Path, documents: LinkedDocuments<'_>) {
+    let mut client = LspProcess::spawn(root);
+    client
+        .initialize(&[("linked", root)], default_init_options())
+        .expect("initialize and the first analysis");
+    for (path, text) in [
+        (documents.top, LINKED_TOP),
+        (documents.defs, LINKED_DEFS),
+        (documents.sub, LINKED_SUB),
+    ] {
+        client.open(path, text).expect("open");
+    }
+    let sub_uri = file_uri(documents.sub);
+    let diagnostics = wait_for_diagnostics(&mut client, &sub_uri, has_severity_1);
+    assert!(
+        diagnostics.to_string().contains("missing_name"),
+        "{diagnostics}"
+    );
+
+    let at = |line: u64, character: u64| {
+        json!({
+            "textDocument": { "uri": file_uri(documents.top) },
+            "position": { "line": line, "character": character },
+            "context": { "includeDeclaration": true },
+        })
+    };
+    let places = |result: &Value| -> Vec<(String, u64)> {
+        let mut places: Vec<(String, u64)> = result
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|location| {
+                let uri = location["uri"].as_str().unwrap_or_default().to_owned();
+                (
+                    uri,
+                    location["range"]["start"]["line"].as_u64().unwrap_or(99),
+                )
+            })
+            .collect();
+        places.sort();
+        places
+    };
+    // Notifications are handled beside requests: ask until the answer comes.
+    let wait_references = |client: &mut LspProcess, mut expected: Vec<(String, u64)>| {
+        expected.sort();
+        let deadline = Instant::now() + POLL_TIMEOUT;
+        loop {
+            let references = client
+                .request("textDocument/references", at(3, 13))
+                .expect("references");
+            if places(&references) == expected {
+                return;
+            }
+            assert!(Instant::now() < deadline, "{references}");
+            thread::sleep(POLL_INTERVAL);
+        }
+    };
+    let (defs_uri, top_uri) = (file_uri(documents.defs), file_uri(documents.top));
+    let expected = vec![
+        (defs_uri.clone(), 0),
+        (defs_uri.clone(), 1),
+        (top_uri.clone(), 3),
+    ];
+    wait_references(&mut client, expected);
+    let definition = client
+        .request("textDocument/definition", at(2, 3))
+        .expect("definition");
+    assert_eq!(definition["uri"], sub_uri.as_str(), "{definition}");
+
+    // An unsaved line above the declarations.
+    client
+        .change(documents.defs, 2, &format!("// A note.\n{LINKED_DEFS}"))
+        .expect("change");
+    let moved = vec![(defs_uri.clone(), 1), (defs_uri, 2), (top_uri, 3)];
+    wait_references(&mut client, moved);
+
+    let others: Vec<String> = documents.others.iter().map(|path| file_uri(path)).collect();
+    for message in &client.notifications {
+        let params = &message["params"];
+        if message["method"] != "textDocument/publishDiagnostics" {
+            continue;
+        }
+        assert!(
+            !params.to_string().contains("DuplicateDefinition"),
+            "a unit was compiled twice: {params}"
+        );
+    }
+    for other in &others {
+        let last = client.notifications.iter().rev().find(|message| {
+            message["method"] == "textDocument/publishDiagnostics"
+                && message["params"]["uri"] == other.as_str()
+        });
+        assert!(
+            last.is_none_or(|message| message["params"]["diagnostics"] == json!([])),
+            "{other}: {last:?}"
+        );
+    }
+    client.shutdown();
+}
+
+#[cfg(unix)]
+#[test]
+fn lsp_stdio_results_land_on_documents_opened_through_symbolic_links() {
+    let base = std::env::temp_dir().join(format!("llg-lsp-symlinks-{}", std::process::id()));
+    let _cleanup = super::rename::TempDirCleanup(base.clone());
+    let config = |directory: &str| {
+        format!(
+            "schema_version = 1\n[sources]\ndirectories = [\"{directory}\"]\n\
+             include = [\"**/*.sv\"]\n[lint]\nenabled = false\n"
+        )
+    };
+
+    // Symbolic links to files: the analysis reads the header through one, and
+    // the client opens the unit through another.
+    let ws = base.join("ws");
+    fs::create_dir_all(ws.join("inc")).expect("create inc");
+    fs::create_dir_all(ws.join("rtl")).expect("create rtl");
+    fs::write(ws.join(CONFIG_FILE), config(".")).expect("write the configuration");
+    fs::write(ws.join("top.sv"), LINKED_TOP).expect("write top");
+    fs::write(ws.join("inc/defs_real.svh"), LINKED_DEFS).expect("write defs");
+    fs::write(ws.join("rtl/sub_real.sv"), LINKED_SUB).expect("write sub");
+    std::os::unix::fs::symlink(ws.join("inc/defs_real.svh"), ws.join("defs.svh"))
+        .expect("link defs");
+    std::os::unix::fs::symlink(ws.join("rtl/sub_real.sv"), ws.join("sub.sv")).expect("link sub");
+    check_linked_documents(
+        &ws,
+        LinkedDocuments {
+            top: &ws.join("top.sv"),
+            defs: &ws.join("inc/defs_real.svh"),
+            sub: &ws.join("sub.sv"),
+            others: &[&ws.join("defs.svh"), &ws.join("rtl/sub_real.sv")],
+        },
+    );
+
+    // A root that is a symbolic link, which discovery does not follow: the
+    // client opens the header by the path the link resolves to.
+    let real = base.join("real");
+    let link = base.join("link");
+    fs::create_dir_all(&real).expect("create real");
+    std::os::unix::fs::symlink(&real, &link).expect("link the root");
+    fs::write(real.join(CONFIG_FILE), config(".")).expect("write the configuration");
+    fs::write(real.join("top.sv"), LINKED_TOP).expect("write top");
+    fs::write(real.join("defs.svh"), LINKED_DEFS).expect("write defs");
+    fs::write(real.join("sub.sv"), LINKED_SUB).expect("write sub");
+    check_linked_documents(
+        &link,
+        LinkedDocuments {
+            top: &link.join("top.sv"),
+            defs: &real.join("defs.svh"),
+            sub: &link.join("sub.sv"),
+            others: &[&link.join("defs.svh")],
+        },
+    );
+}

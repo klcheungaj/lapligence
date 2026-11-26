@@ -126,6 +126,32 @@ pub(super) fn decode_include(
     })
 }
 
+/// Copy one declaration extent, rejecting a missing range, a range in another
+/// file than the name or not holding it, and records out of order.
+pub(super) fn decode_declaration_extent(
+    item: &RawDeclarationExtent,
+    files: &[File],
+    previous: Option<&DeclarationExtent>,
+) -> Result<DeclarationExtent, SlangError> {
+    let missing = || invalid_native("declaration extent record has no range");
+    let name = decode_range(item.name, files)?.ok_or_else(missing)?;
+    let range = decode_range(item.range, files)?.ok_or_else(missing)?;
+    if range.file_id != name.file_id || range.start > name.start || range.end < name.end {
+        return Err(invalid_native(
+            "declaration extent record does not hold its name",
+        ));
+    }
+    let key =
+        |extent: &DeclarationExtent| (range_key(extent.name), extent.range.start, extent.range.end);
+    let extent = DeclarationExtent { name, range };
+    if previous.is_some_and(|previous| key(previous) >= key(&extent)) {
+        return Err(invalid_native(
+            "declaration extent records are not sorted and distinct",
+        ));
+    }
+    Ok(extent)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -316,6 +342,48 @@ mod tests {
             ..valid
         };
         assert!(decode(earlier, Some(&used)).is_err());
+    }
+
+    #[test]
+    fn declaration_extents_hold_their_names_in_order() {
+        let valid = RawDeclarationExtent {
+            name: raw_range(3, 5),
+            range: raw_range(1, 9),
+        };
+        let decode = |item: RawDeclarationExtent, previous: Option<&DeclarationExtent>| {
+            decode_declaration_extent(&item, &files(), previous)
+        };
+        let extent = decode(valid, None).expect("extent");
+        assert_eq!((extent.range.start, extent.range.end), (1, 9));
+        for (index, invalid) in [
+            RawDeclarationExtent {
+                range: NO_RANGE,
+                ..valid
+            },
+            RawDeclarationExtent {
+                name: NO_RANGE,
+                ..valid
+            },
+            RawDeclarationExtent {
+                range: raw_range(4, 9),
+                ..valid
+            },
+            RawDeclarationExtent {
+                range: raw_range(1, 4),
+                ..valid
+            },
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert!(decode(invalid, None).is_err(), "record {index}");
+        }
+        assert!(decode(valid, Some(&extent)).is_err(), "a repeat");
+        let earlier = RawDeclarationExtent {
+            name: raw_range(2, 3),
+            range: raw_range(0, 9),
+        };
+        assert!(decode(earlier, Some(&extent)).is_err());
     }
 
     #[test]

@@ -100,6 +100,27 @@ fn llg_address_space_limit_does_not_count_the_pipeline_stack() {
     assert!(stderr.contains("mode=address-space+watchdog"), "{stderr}");
 }
 
+/// Address space the process holds untouched when it installs the limit is
+/// not memory either: mimalloc, the allocator of musl builds, reserves a
+/// 1 GiB arena at its first allocation, which left the limit no room for the
+/// watchdog's thread. On glibc the same reserve is a heap that keeps
+/// `top_pad` bytes spare; musl ignores the variable and has its arena.
+#[cfg(target_os = "linux")]
+#[test]
+fn llg_address_space_limit_does_not_count_an_allocator_reserve() {
+    const LIMIT_MIB: usize = 512;
+    const RESERVE: usize = 1 << 30;
+    let directory = sim_harness::TempDir::new("memory_allocator_reserve").expect("test directory");
+    let mut command = command();
+    command
+        .env("LLG_MEMORY_LIMIT_MB", LIMIT_MIB.to_string())
+        .env("LLG_MEMORY_ADDRESS_SPACE_LIMIT", "1")
+        .env("GLIBC_TUNABLES", format!("glibc.malloc.top_pad={RESERVE}"));
+    let (status, stderr) = generate(command, &directory);
+    assert_eq!(status, Some(0), "{stderr}");
+    assert!(stderr.contains("mode=address-space+watchdog"), "{stderr}");
+}
+
 /// Without room for the stack nothing is compiled, and `llg` says why.
 #[cfg(target_os = "linux")]
 #[test]

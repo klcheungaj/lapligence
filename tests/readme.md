@@ -884,6 +884,8 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   precedence and longest-root ownership transfer on workspace add/remove.
   Unsaved sources/headers are authoritative; reject include escapes, use
   read-only staging and create no compiler artifacts in the workspace CWD.
+  Results of files read or opened through symbolic links land on the open
+  documents (`lsp_stdio/workspace.rs`, Unix only).
 - Shared-file diagnostics deduplicate identical findings and label distinct ones
   `[<root-name>]`. Owner-wins tokens/hover labeling; publish unopened files,
   watched fixes and stale-diagnostic clearing. New lint rules need triggering and
@@ -893,14 +895,17 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   configurations start one analysis when the newest one read other texts, and
   edits none; a rename waits for the save and its analysis; newer triggers, root
   removal, shutdown, `exit` and the end of the input cancel the running one,
-  whose results never show; continuous saves let one finish. Decisions are read
+  whose results never show; continuous saves let one finish; the diagnostics of an
+  analysis that an edit overtook arrive at the places of the edited text. Decisions are read
   from the lifecycle log, and the client answers the server's requests while it
   waits. Unit sweeps in `features/tests/cancellation.rs` cancel at every poll.
 - `lsp_stdio/unsaved_positions.rs`: every request about documents with unsaved
   edits answers at the positions of the visible text or not at all; cached answers
-  survive an edit above them, and an edit cancels the isolated parse of the older
-  text. `lsp/handlers/positions/tests.rs` compares random edits with a server in the
-  same process that analysed the edited text.
+  survive an edit above them, an edit cancels the isolated parse of the older
+  text, a burst of edits sends one `llg/moduleExplorerChanged`, and the outline
+  lists the design units of the unsaved text. `lsp/handlers/positions/tests.rs`
+  compares random edits with a server in the same process that analysed the
+  edited text.
 - Failed compiles keep last-good navigation. Non-syntax errors with surviving data
   keep features; syntax-broken roots keep declaration symbols/hover where
   possible, fatal-only roots do not. Watched fixes upgrade analysis. A
@@ -1260,7 +1265,10 @@ scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test sim_cou
 `quick` inherits `test` with `opt-level = 0`. Cargo's `--profile` and nextest's
 `--cargo-profile` choose the build profile; nextest's `--profile` independently
 chooses runner settings such as concurrency. Run the optimized default for
-repository validation and performance comparisons. These profiles control Rust
+repository validation and performance comparisons. A test holds in every
+profile: frames and inlining differ by more than ten times between `quick` and
+the optimized ones (CI tests `test` and `release`), so a test that needs a
+stack size measures it (`name_chain_tests`) instead of assuming it. These profiles control Rust
 compilation; generated-model optimization and CLI `--no-opt` runs keep their
 existing settings.
 

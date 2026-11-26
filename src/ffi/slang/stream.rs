@@ -87,9 +87,10 @@ pub(super) enum Table {
     MacroDefinitions,
     MacroReferences,
     Includes,
+    DeclarationExtents,
 }
 
-const TABLE_COUNT: usize = Table::Includes as usize + 1;
+const TABLE_COUNT: usize = Table::DeclarationExtents as usize + 1;
 const TABLES: [Table; TABLE_COUNT] = [
     Table::Files,
     Table::RelatedDiagnostics,
@@ -116,6 +117,7 @@ const TABLES: [Table; TABLE_COUNT] = [
     Table::MacroDefinitions,
     Table::MacroReferences,
     Table::Includes,
+    Table::DeclarationExtents,
 ];
 
 impl Table {
@@ -146,6 +148,7 @@ impl Table {
             Self::MacroDefinitions => "macro definition records",
             Self::MacroReferences => "macro reference records",
             Self::Includes => "include records",
+            Self::DeclarationExtents => "declaration extent records",
         }
     }
 
@@ -176,6 +179,7 @@ impl Table {
             Self::MacroDefinitions => std::mem::size_of::<RawMacroDefinition>(),
             Self::MacroReferences => std::mem::size_of::<RawMacroReference>(),
             Self::Includes => std::mem::size_of::<RawInclude>(),
+            Self::DeclarationExtents => std::mem::size_of::<RawDeclarationExtent>(),
         }
     }
 }
@@ -248,6 +252,7 @@ pub(super) struct StreamBuilder {
     macro_definitions: Vec<MacroDefinition>,
     macro_references: Vec<MacroReference>,
     includes: Vec<Include>,
+    declaration_extents: Vec<DeclarationExtent>,
 }
 
 impl StreamBuilder {
@@ -302,6 +307,7 @@ impl StreamBuilder {
             macro_definitions: Vec::new(),
             macro_references: Vec::new(),
             includes: Vec::new(),
+            declaration_extents: Vec::new(),
         }
     }
 
@@ -351,6 +357,7 @@ impl StreamBuilder {
             macro_definitions: self.macro_definitions,
             macro_references: self.macro_references,
             includes: self.includes,
+            declaration_extents: self.declaration_extents,
         };
         Ok((snapshot, self.profile))
     }
@@ -400,6 +407,7 @@ impl StreamBuilder {
             raw.macro_definition_count,
             raw.macro_reference_count,
             raw.include_count,
+            raw.declaration_extent_count,
         ];
         let header = Header {
             flags: raw.flags,
@@ -505,6 +513,8 @@ impl StreamBuilder {
             Table::MacroDefinitions,
             Table::MacroReferences,
             Table::Includes,
+            // One per declaration, which has a name token.
+            Table::DeclarationExtents,
         ] {
             enforce_count(
                 header.count(table),
@@ -571,6 +581,8 @@ impl StreamBuilder {
         self.macro_references
             .reserve_exact(capacity(Table::MacroReferences));
         self.includes.reserve_exact(capacity(Table::Includes));
+        self.declaration_extents
+            .reserve_exact(capacity(Table::DeclarationExtents));
         self.header = Some(header);
         // Native capture is complete once the header arrives; the stream
         // phase covers delivery and decoding.
@@ -1042,6 +1054,22 @@ impl StreamBuilder {
         }
         Ok(())
     }
+
+    pub(super) fn declaration_extents(
+        &mut self,
+        raw: &[RawDeclarationExtent],
+    ) -> Result<(), SlangError> {
+        self.enter(Table::DeclarationExtents, raw.len())?;
+        for item in raw {
+            let extent = preprocessor::decode_declaration_extent(
+                item,
+                &self.files,
+                self.declaration_extents.last(),
+            )?;
+            self.declaration_extents.push(extent);
+        }
+        Ok(())
+    }
 }
 
 /// Run one receiver for a sink callback, recording its first error.
@@ -1165,6 +1193,7 @@ batch_receivers! {
     sink_macro_definitions: RawMacroDefinition => MacroDefinitions, macro_definitions;
     sink_macro_references: RawMacroReference => MacroReferences, macro_references;
     sink_includes: RawInclude => Includes, includes;
+    sink_declaration_extents: RawDeclarationExtent => DeclarationExtents, declaration_extents;
 }
 
 /// The callback table whose context is `builder`. The returned value borrows
@@ -1199,6 +1228,7 @@ pub(super) fn sink_for(builder: &mut StreamBuilder) -> RawSink {
         macro_definitions: sink_macro_definitions,
         macro_references: sink_macro_references,
         includes: sink_includes,
+        declaration_extents: sink_declaration_extents,
         end: sink_end,
     }
 }

@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 88u
+#define LLG_SLANG_ABI_VERSION 89u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -1862,6 +1862,19 @@ typedef struct {
   uint64_t file_id;
 } LlgSlangInclude;
 
+/* The text of a module, interface, program, package, class, function or task
+ * declaration (ABI v89), captured with LLG_SLANG_COMPILE_EDITOR only. `name`
+ * is the declared name (the start of its semantic node's range) and `range`
+ * the whole declaration with its attributes, end keyword and end label, in the
+ * file of the name. A declaration whose text is not in one file (one a macro
+ * expands to, or one cut by an include) has no record. Records are sorted by
+ * name, then range, and distinct; a header parsed into several syntax trees
+ * may give one name several ranges. */
+typedef struct {
+  LlgSlangSourceRange name;
+  LlgSlangSourceRange range;
+} LlgSlangDeclarationExtent;
+
 /* Capture stream (ABI v15).
  *
  * llg_slang_compile() does not return a snapshot owner. After Slang has
@@ -1918,6 +1931,7 @@ typedef struct {
   uint64_t macro_definition_count;
   uint64_t macro_reference_count;
   uint64_t include_count;
+  uint64_t declaration_extent_count;
 } LlgSlangStreamHeader;
 
 typedef struct {
@@ -1978,6 +1992,9 @@ typedef struct {
                                uint64_t count);
   uint32_t (*includes)(void* context, const LlgSlangInclude* records,
                        uint64_t count);
+  uint32_t (*declaration_extents)(void* context,
+                                  const LlgSlangDeclarationExtent* records,
+                                  uint64_t count);
   uint32_t (*end)(void* context);
 } LlgSlangSink;
 
