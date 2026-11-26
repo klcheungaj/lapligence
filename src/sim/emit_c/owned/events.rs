@@ -1,6 +1,7 @@
 //! Numeric delays and waits on stable storage. Stack descriptors only borrow.
 use super::*;
 use crate::sim::execution::ScheduleRegion;
+use crate::sim::ir::IrInterfacePart;
 
 /// Binding name of an event formal's activation-owned handle.
 pub(super) fn event_formal_binding(index: usize) -> String {
@@ -236,11 +237,6 @@ impl Frame<'_, '_> {
                 "{{ .sig = &{}_llg_dep }}",
                 self.ctx.model.native_values[*value].c_name
             ),
-            IrDependency::InterfaceInstance {
-                handle,
-                interface,
-                arms,
-            } => self.interface_instance_dependency(*handle, *interface, arms)?,
             IrDependency::Object(index) => {
                 let object = &self.ctx.model.objects[*index];
                 if !object.ty.has_change_marker() {
@@ -330,6 +326,35 @@ impl Frame<'_, '_> {
                 false,
                 format!("llg_mailbox_dependency((llg_mailbox_t*){receiver})"),
             ),
+            IrNativeAccessKind::InterfaceStorage {
+                interface,
+                slot,
+                part,
+            } => {
+                let real = self.ctx.model.virtual_interfaces[interface].instances[0].storage[slot]
+                    .is_some_and(|storage| {
+                        matches!(storage, crate::sim::ir::IrInterfaceStorage::Array(array)
+                            if self.ctx.model.arrays[array].real)
+                    });
+                match part {
+                    IrInterfacePart::Cell(cell) if real => (
+                        true,
+                        format!("llg_vif_real_cell_dependency({receiver}, {interface}, {slot}, {cell}ULL)"),
+                    ),
+                    IrInterfacePart::Cell(cell) => (
+                        false,
+                        format!("llg_dependency_or_never(llg_vif_cell_dependency({receiver}, {interface}, {slot}, {cell}ULL))"),
+                    ),
+                    IrInterfacePart::Contents => (
+                        false,
+                        format!("llg_dependency_or_never(llg_vif_marker_dependency({receiver}, {interface}, {slot}, 0))"),
+                    ),
+                    IrInterfacePart::Shape => (
+                        false,
+                        format!("llg_dependency_or_never(llg_vif_marker_dependency({receiver}, {interface}, {slot}, 1))"),
+                    ),
+                }
+            }
             IrNativeAccessKind::InterfaceEvent { .. } => {
                 return Err("a virtual interface clocking event is no wait dependency".to_owned())
             }
@@ -337,44 +362,6 @@ impl Frame<'_, '_> {
                 return Err(pending("native value item wait dependencies"))
             }
         })
-    }
-
-    /// The fixed-array marker of the instance `handle` binds when the wait
-    /// arms. A null handle, or one of another descriptor, selects storage
-    /// that never changes: arming is not an access.
-    fn interface_instance_dependency(
-        &mut self,
-        handle: usize,
-        interface: usize,
-        arms: &[IrDependency],
-    ) -> Result<String, String> {
-        let object = self.ctx.model.objects[handle].c_name.clone();
-        let env = self.scalar("void*", object);
-        let instance = self.scalar(
-            "uint32_t",
-            format!(
-                "({env} && ((const llg_vif_env_t*){env})->interface_id == {interface}u) ? ((const llg_vif_env_t*){env})->instance_id : UINT32_MAX"
-            ),
-        );
-        let mut marker = "NULL".to_owned();
-        for (position, arm) in arms.iter().enumerate().rev() {
-            let arm = match arm {
-                IrDependency::ArrayElement { array, index } => {
-                    let array = self.ctx.model.array(*array);
-                    if array.sparse() {
-                        array.cell_address(&index.to_string())
-                    } else {
-                        format!("&{}_llg_element_deps[{index}]", array.c_name)
-                    }
-                }
-                IrDependency::ArrayContents(array) => {
-                    format!("&{}_llg_contents_dep", self.ctx.model.array(*array).c_name)
-                }
-                _ => return Err(pending("this interface-instance dependency arm")),
-            };
-            marker = format!("{instance} == {position}u ? {arm} : ({marker})");
-        }
-        Ok(format!("{{ .sig = llg_dependency_or_never({marker}) }}"))
     }
 
     pub(super) fn wait_any(

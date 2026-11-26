@@ -300,6 +300,7 @@ impl Frame<'_, '_> {
                 self.fixed_arrays.insert(*index, pointer);
                 self.vpi_auto_bind(VpiAutoKey::Array(*index));
             }
+            IrStmt::InterfaceBind(binding) => self.interface_bind(binding)?,
             IrStmt::NativeValueDeclare(index) => {
                 let pointer = self.new_native_value(self.ctx.model.native_values[*index].ty);
                 self.native_values.insert(*index, pointer);
@@ -326,8 +327,8 @@ impl Frame<'_, '_> {
                 };
                 let item = self.value_item_root(root, items)?;
                 let item = self.scalar("llg_value_t*", item);
-                let info = self.ctx.model.array(dst.array);
-                let (total, cell) = (info.total, info.cell_address("_llg_n"));
+                let total = self.ctx.model.array(dst.array).total;
+                let cell = self.cell_address(dst.array, "_llg_n")?;
                 let store = if *nba {
                     format!("llg_nba_after({cell}, {item}->value.items[_llg_n].value.packed, 0)")
                 } else {

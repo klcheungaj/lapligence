@@ -72,6 +72,15 @@ pub(in crate::sim::codegen) fn immediate_display_task(name: &str) -> bool {
     )
 }
 
+/// Whether `name` is a display task that formats its arguments later
+/// (`$strobe`, `$monitor`, ...), reading them again then.
+pub(in crate::sim::codegen) fn deferred_display_task(name: &str) -> bool {
+    matches!(
+        display_task_variant(name),
+        Some((DisplayTaskKind::Deferred { .. }, _))
+    )
+}
+
 /// Whether `name` is a task that prints while its statement runs and lets the
 /// run continue: an immediate display task, `$info`, `$warning` or `$error`.
 pub(in crate::sim::codegen) fn immediate_output_task(name: &str) -> bool {

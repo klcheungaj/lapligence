@@ -34,7 +34,7 @@ impl Frame<'_, '_> {
                         self.fixed_array_address(array_index)?
                     )
                 } else {
-                    array.cell_address(&ordinal)
+                    self.cell_address(array_index, &ordinal)?
                 };
                 if self.sampled_reads {
                     let value = self.reserve(reduction.element_width, reduction.element_signed);

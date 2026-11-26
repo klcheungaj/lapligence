@@ -104,8 +104,7 @@ impl SignalNames {
             | IrDependency::SharedNative { .. }
             | IrDependency::RefFormal { .. }
             | IrDependency::NativeRefFormal { .. }
-            | IrDependency::NativeAccess(_)
-            | IrDependency::InterfaceInstance { .. } => None,
+            | IrDependency::NativeAccess(_) => None,
         }
     }
 }
@@ -658,6 +657,10 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
                 collect_mailbox_target_rw(target, rw);
             }
             operation.expressions(&mut |child| collect_expr_reads(child, model, rw))
+        }
+        // The bound storage is an array or container, never signal storage.
+        IrStmt::InterfaceBind(binding) => {
+            binding.expressions(&mut |child| collect_expr_reads(child, model, rw))
         }
         IrStmt::PlusArg(expression) => collect_expr_reads(expression, model, rw),
         IrStmt::Block(b) | IrStmt::ActivationScope { body: b, .. } => {

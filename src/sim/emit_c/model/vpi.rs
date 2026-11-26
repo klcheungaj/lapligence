@@ -514,7 +514,7 @@ fn fallback_objects(model: &IrModel) -> Vec<IrVpiObject> {
     }
     for (index, array) in model.arrays.iter().enumerate() {
         let parts = split_name(&array.hdl_name);
-        if array.activation || array.descriptor || array.sparse() || parts.len() < 2 {
+        if !array.is_model_storage() || array.descriptor || array.sparse() || parts.len() < 2 {
             continue;
         }
         objects.push(IrVpiObject {
@@ -750,7 +750,7 @@ pub(in crate::sim::emit_c) fn vpi_packed_registration(model: &IrModel) -> &'stat
 /// its keyed container when sparse; `None` for a lexical activation array,
 /// which has no static storage.
 pub(in crate::sim::emit_c) fn array_storage(array: &crate::sim::ir::IrArray) -> Option<String> {
-    if array.activation {
+    if !array.is_model_storage() {
         None
     } else if array.sparse() {
         Some(format!("&{}", array.c_name))

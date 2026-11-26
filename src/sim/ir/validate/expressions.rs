@@ -1866,6 +1866,7 @@ impl Validator<'_> {
 fn sequence_statement(statement: &IrStmt) -> bool {
     match statement.unlocated() {
         IrStmt::FixedArrayDeclare(_)
+        | IrStmt::InterfaceBind(_)
         | IrStmt::NativeValueDeclare(_)
         | IrStmt::NativeValueCopy { .. }
         | IrStmt::FixedValueAssign { nba: false, .. }

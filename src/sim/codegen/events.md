@@ -52,18 +52,27 @@ reference such as `h == null` (§9.2.2.2.1, AB-N2;
 (§9.2.2.2.1); chandle event expressions reject (§6.14). always_comb,
 always_latch and `@*` follow a member read through a virtual-interface handle
 (`with_interface_reads`, S99-D7): a packed member is an
-`IrDependency::NativeAccess`, an element of an unpacked array member an
-`IrDependency::InterfaceInstance` (one fixed-array marker per bound instance),
-both resolved through the handle each time the sensitivity loop or `@*` wait
-arms, beside the handle variable the read walk adds; a member the block also
-writes through the same handle is left out. Reads through a handle formal of a
+`IrDependency::NativeAccess` of `InterfaceMember`, an unpacked member (whole,
+a slice, an element, a container's contents or shape) one of
+`InterfaceStorage` naming the descriptor slot and the part
+(`objects/virtual_interface_views.rs`: the read walk stages views, and
+`interface_view_dependencies` turns their array and container dependencies
+into slot parts), both resolved through the handle each time the sensitivity
+loop or `@*` wait arms, beside the handle variable the read walk adds; a
+member the block also writes through the same handle is left out. Reads through a handle formal of a
 called function, a vif-array element or another handle the arming process
 cannot evaluate, and `v.f()` calls under always_comb, are located errors.
-An element of an unpacked array member through a virtual interface
-(`objects/virtual_interfaces.rs`, `v.mem[i]`) has no member slot: reads are a
-`Mux` chain and `=`/`<=` writes an `IrStmt::Case` over
-`IrObjectQuery::VirtualInterfaceInstance`, one arm per bound instance's array,
-like the SIM-034 drives; other uses are located rejections. Copy supported automatic evaluator captures and
+An unpacked member through a virtual interface (`v.mem`, `v.q`,
+`objects/virtual_interface_views.rs`) is a view: a bound array or an
+activation container of the member's shape, which `IrStmt::InterfaceBind`
+points at the descriptor storage slot of the instance the handle binds, once
+before the statement or expression evaluation that uses it; the statement
+then lowers once against the view, as against lexical storage, so code size
+does not grow with the number of instances. A statement that may rebind the
+handle (a call, an assignment operator) binds again at each use, a timed
+blocking assignment binds its target's views again after its control, and an
+event-controlled or delayed NBA holds the target it located at issue
+(decision VM-D2). Copy supported automatic evaluator captures and
 transitively reject disallowed callback effects/captures. Named/mixed events retain
 identity and atomic registration. An instance `event` class property
 (`IrClassField::event`) is a handle slot of its object: `EventTarget::access`

@@ -607,10 +607,10 @@ impl<'a> TriggerStorage<'a> {
                     matches!(
                         access.kind,
                         crate::sim::ir::IrNativeAccessKind::InterfaceMember { .. }
+                            | crate::sim::ir::IrNativeAccessKind::InterfaceStorage { .. }
                     )
                 })
             }
-            IrDependency::InterfaceInstance { .. } => valid_interface_instance(ir, dependency),
             // A process-local cell is no static trigger storage.
             IrDependency::SharedCell { .. }
             | IrDependency::SharedNative { .. }
@@ -618,36 +618,6 @@ impl<'a> TriggerStorage<'a> {
             | IrDependency::NativeRefFormal { .. } => false,
         }
     }
-}
-
-/// Whether an [`IrDependency::InterfaceInstance`] names a chandle handle
-/// variable and one fixed-array marker per instance of its descriptor.
-pub(in crate::sim) fn valid_interface_instance(ir: &IrModel, dependency: &IrDependency) -> bool {
-    let IrDependency::InterfaceInstance {
-        handle,
-        interface,
-        arms,
-    } = dependency
-    else {
-        return false;
-    };
-    ir.objects
-        .get(*handle)
-        .is_some_and(|object| object.ty == crate::sim::ir::IrObjectType::Chandle)
-        && ir
-            .virtual_interfaces
-            .get(*interface)
-            .is_some_and(|interface| interface.instances.len() == arms.len())
-        && arms.iter().all(|arm| match arm {
-            IrDependency::ArrayElement { array, index } => ir
-                .arrays
-                .get(*array)
-                .is_some_and(|array| !array.real && *index < array.total),
-            IrDependency::ArrayContents(array) => {
-                ir.arrays.get(*array).is_some_and(|array| !array.real)
-            }
-            _ => false,
-        })
 }
 
 fn build_processes(ir: &mut IrModel) -> (Vec<ExecutionProcess>, EffectSummaries) {
@@ -1014,6 +984,8 @@ fn collect_effects(
             IrStmt::ClockingDrive { .. } => effects.push(ExecutionEffect::EnqueueUpdate(
                 ScheduleRegion::ReNonblockingAssign,
             )),
+            // A use of a view bound through a null handle ends the run.
+            IrStmt::InterfaceBind(_) => effects.push(ExecutionEffect::Terminate),
             IrStmt::FixedValueAssign { nba: false, .. }
             | IrStmt::FixedArrayOrder(_)
             | IrStmt::RealArrayOrder(_)
@@ -1576,6 +1548,9 @@ fn collect_statement_expression_effects(
                 collect_expression_effects(ir, expression, effects, visited_calls)
             });
             collect_object_statement_effects(ir, operation, effects, visited_calls);
+        }
+        IrStmt::InterfaceBind(binding) => {
+            collect_chandle_effects(ir, &binding.handle, effects, visited_calls)
         }
         IrStmt::DeclLocal {
             init: Some(init), ..

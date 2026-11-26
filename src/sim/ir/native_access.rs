@@ -66,6 +66,27 @@ pub enum IrNativeAccessKind {
     /// The count change marker of the mailbox the receiver names, allocated
     /// when a wait first observes it; only a wait dependency (SV 15.4.2).
     MailboxCount,
+    /// A change marker of unpacked member storage slot `slot` (see
+    /// [`crate::sim::ir::IrInterfaceStorage`]) of the interface instance the
+    /// receiver, a virtual-interface handle, binds when the wait arms (SV
+    /// 25.9); only a wait dependency, never storage. An unbound receiver
+    /// selects storage that never changes.
+    InterfaceStorage {
+        interface: usize,
+        slot: usize,
+        part: IrInterfacePart,
+    },
+}
+
+/// The change marker of interface member storage a wait names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrInterfacePart {
+    /// Any value of the array or container.
+    Contents,
+    /// One cell of the array, in flattened storage order.
+    Cell(u64),
+    /// The size and membership of the container.
+    Shape,
 }
 
 #[derive(Clone, Debug, PartialEq)]

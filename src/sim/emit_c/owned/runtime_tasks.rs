@@ -60,7 +60,7 @@ impl Frame<'_, '_> {
                 } else {
                     "llg_memory_read_view"
                 },
-                array.c_name.clone(),
+                self.dense_array_base(view.array)?,
             )
         };
         let element = MemoryElement {

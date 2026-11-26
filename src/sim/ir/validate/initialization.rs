@@ -99,7 +99,10 @@ impl Validator<'_> {
                     )?;
                 }
                 IrPreFn::MonEval { args, context, .. } => {
-                    self.with_receiver(this, || {
+                    // An evaluator is a lexical scope of its own: an operand
+                    // binds the views it reads there.
+                    self.fixed_activations.borrow_mut().push(HashSet::new());
+                    let result = self.with_receiver(this, || {
                         args.iter().enumerate().try_for_each(|(arg_idx, arg)| {
                             self.validate_expr(
                                 arg,
@@ -107,7 +110,9 @@ impl Validator<'_> {
                                 format_args!("{path}.pre_fns[{idx}].args[{arg_idx}]"),
                             )
                         })
-                    })?;
+                    });
+                    self.fixed_activations.borrow_mut().pop();
+                    result?;
                     if let Some(context) = context {
                         for (capture_idx, capture) in context.captures().iter().enumerate() {
                             self.validate_capture(
@@ -208,7 +213,10 @@ impl Validator<'_> {
                     }
                 }
                 IrPreFn::DisplayEval { args, prelude, .. } => {
-                    self.with_receiver(this, || {
+                    // The report evaluator is a lexical scope of its own:
+                    // an operand binds the views it reads there.
+                    self.fixed_activations.borrow_mut().push(HashSet::new());
+                    let result = self.with_receiver(this, || {
                         self.validate_stmts(
                             prelude,
                             branch_formals,
@@ -233,7 +241,9 @@ impl Validator<'_> {
                             result?;
                         }
                         Ok(())
-                    })?;
+                    });
+                    self.fixed_activations.borrow_mut().pop();
+                    result?;
                 }
                 IrPreFn::RealEval { value, context, .. } => {
                     if !value.is_real() {

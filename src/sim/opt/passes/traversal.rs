@@ -490,6 +490,9 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         IrStmt::Object(operation) => {
             operation.expressions_mut(&mut |child| walk_expr_mut(child, f))
         }
+        IrStmt::InterfaceBind(binding) => {
+            binding.expressions_mut(&mut |child| walk_expr_mut(child, f))
+        }
         IrStmt::PlusArg(expression) => walk_expr_mut(expression, f),
         IrStmt::RandomSeed { seed } => walk_expr_mut(seed, f),
         IrStmt::Randomize(operation) => {

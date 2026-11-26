@@ -119,6 +119,61 @@ impl EmitCtx<'_, '_> {
         Ok(vec![IrStmt::Block(before)])
     }
 
+    /// `target <= @(e) value` over a target that must be located at issue
+    /// and cannot be located again by a waiter (a member bound through a
+    /// virtual-interface handle): the write runs at issue with its updates
+    /// in a hold, and the process that waits for the control releases them.
+    pub(super) fn lower_held_event_nba(
+        &mut self,
+        h: NodeId,
+        lhs: NodeId,
+        rhs: NodeId,
+        specs: &[EventSpec],
+        count: Option<IrExpr>,
+    ) -> Result<Vec<IrStmt>, String> {
+        let statement =
+            self.lower_assignment_operands(lhs, rhs, false, Operation::Assignment, false)?;
+        let frame = self.cg.new_frame_id()?;
+        let mut split = EventNbaSplit {
+            ctx: self,
+            frame,
+            prefix: format!("_ne{}", h.0),
+            sequence: 0,
+            before: Vec::new(),
+            captures: Vec::new(),
+            captured: HashSet::new(),
+            hold: None,
+            guards: Vec::new(),
+        };
+        split.hold_write(vec![statement]);
+        let EventNbaSplit {
+            mut before,
+            captures,
+            hold,
+            ..
+        } = split;
+        let action = hold
+            .map(|held| {
+                IrStmt::Container(Box::new(IrContainerStmt::NbaHoldRelease {
+                    held: IrChandleExpr::LocalRead(held),
+                    delay: None,
+                }))
+            })
+            .into_iter()
+            .collect();
+        before.push(self.spawn_process_evaluated_action(
+            h,
+            specs,
+            count,
+            frame,
+            captures,
+            action,
+            "event_native_nba",
+            self.event_nba_process(specs),
+        )?);
+        Ok(vec![IrStmt::Block(before)])
+    }
+
     /// Lower `record = #d value` or `record <= #d value` for a native record
     /// target. The nonblocking form queues every leaf with the same delay;
     /// the blocking form captures every leaf before suspending and performs

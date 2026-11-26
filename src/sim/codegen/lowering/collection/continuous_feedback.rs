@@ -171,8 +171,7 @@ impl Codegen<'_> {
             | IrDependency::SharedNative { .. }
             | IrDependency::RefFormal { .. }
             | IrDependency::NativeRefFormal { .. }
-            | IrDependency::NativeAccess(_)
-            | IrDependency::InterfaceInstance { .. } => {}
+            | IrDependency::NativeAccess(_) => {}
         }
     }
 

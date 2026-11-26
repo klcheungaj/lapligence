@@ -16,7 +16,7 @@ impl<'a> Codegen<'a> {
     /// converted to [`IrLhs`] (identical by construction during the seam
     /// transition; sub-expression codes ride along verbatim).
     pub(in super::super) fn lower_lhs(&mut self, path: &str, lhs: NodeId) -> Result<IrLhs, String> {
-        self.lower_lhs_node(path, lhs)
+        self.with_interface_select(lhs, |this| this.lower_lhs_node(path, lhs))
             .map_err(|error| self.locate_error(lhs, error))
     }
 
