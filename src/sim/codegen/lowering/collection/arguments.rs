@@ -1618,6 +1618,9 @@ pub(in super::super) enum CallWriteback {
         keys: super::super::containers::ElementKeys,
         element: IrContainerElement,
         prelude: Vec<IrStmt>,
+        /// Bindings of the actual's own view through a computed handle,
+        /// run again just before the store (decision VM-D1).
+        rebind: Vec<IrStmt>,
     },
 }
 
@@ -1644,6 +1647,7 @@ impl CallWriteback {
                 container,
                 keys,
                 element,
+                rebind,
                 ..
             } => {
                 let real = matches!(element, IrContainerElement::Real { .. });
@@ -1679,7 +1683,12 @@ impl CallWriteback {
                         value,
                     },
                 };
-                IrStmt::Container(Box::new(statement))
+                let statement = IrStmt::Container(Box::new(statement));
+                if rebind.is_empty() {
+                    statement
+                } else {
+                    IrStmt::Block(rebind.into_iter().chain([statement]).collect())
+                }
             }
         })
     }
