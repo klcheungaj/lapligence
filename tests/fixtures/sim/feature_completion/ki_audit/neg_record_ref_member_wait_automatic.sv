@@ -1,6 +1,7 @@
 // An event control on a member of a `ref` formal whose actual is an
-// automatic record of a subroutine: a located limit (docs/known_issues.md,
-// unpacked records with dense member arrays).
+// automatic record of a subroutine, named by a fork branch: a located limit
+// at the fork, since an automatic record of the column form has no fork frame
+// form (docs/known_issues.md, unpacked records with dense member arrays).
 module tb;
   typedef struct { int a[16]; string s; } rec_t;
   task automatic watch(ref rec_t r);

@@ -320,9 +320,9 @@ fn dense_member_record_forms_are_located_limits() {
     sim_cli::reject_case_with_id(
         SUITE,
         "neg_record_ref_member_wait_automatic",
-        "CODEGEN-009",
-        Some("13:7"),
-        "task `watch` waits on a native record `ref` formal, so each of its record actuals must be a module, static or procedural-block record",
+        "CODEGEN-001",
+        Some("13:5"),
+        "fork branch in `tb` references native record or container `local_r` of the enclosing activation",
     );
 }
 

@@ -540,8 +540,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
   that a `join_none`/`join_any` fork keeps live while their block runs again
   are locals of each activation, shared with its branches
   ([ki_block_activation_locals](../tests/fixtures/sim/feature_completion/ki_block_activation_locals/readme.md));
-  a wait on such a record and a fork naming a record of lexical columns reject
-  ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage));
+  a wait on such a record
+  ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage))
+  and a fork naming an automatic record of lexical columns
+  ([known issue](known_issues.md#unpacked-records-with-dense-member-arrays-emit-per-cell-code)) reject;
   class handles and records declared in a `join_none` branch of a function
   belong to the branch and its receiver's properties are reached through the
   captured receiver, while strings declared there stay limited

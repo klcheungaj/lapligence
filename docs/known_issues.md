@@ -653,10 +653,7 @@ result (`f(...).inner`; scalar members such as `f(...).s` work); native outputs
 bound inside an expression (call them as a statement instead); record ports
 whose type has a built-in semaphore, mailbox or process member (those handles
 publish no change marker) or a chandle member (chandle ports themselves are
-illegal, SV 6.14, and value links carry no chandle leaf); an automatic
-record of lexical columns (a member array of 16 or more cells) that a fork
-branch names, in a procedural block or a subroutine (it has no fork frame
-form); a wait in a fork branch on an automatic record the branch shares
+illegal, SV 6.14, and value links carry no chandle leaf); a wait in a fork branch on an automatic record the branch shares
 while another process stores into it (a record publishes no change); a
 member default whose value is itself a record with native members (its
 frontend constant is not captured). Tagged unions with real, string, record or
@@ -710,8 +707,8 @@ An addressed-container operand for container members of elements (in place
 of statement staging); a direct run-time item index
 for member selects of subroutine records, whose elements share one value; a
 commit-time tag guard on queued
-native writes for tagged-union member NBAs; a fork frame form for
-column records; and a change marker for automatic records a fork shares.
+native writes for tagged-union member NBAs; and a change marker for
+automatic records a fork shares.
 
 ### Reproduce
 
@@ -2229,6 +2226,12 @@ limits apply to the form named:
 - column form: an event control on a member of a `ref` formal whose actual is an
   automatic record of a subroutine; a module, static or procedural-block record
   works, and so does an element of a column.
+- column form: an automatic record, of a procedural block or a subroutine,
+  that a fork branch names, also as a `ref` actual: it has no fork frame form,
+  so the fork rejects ("references native record or container ... of the
+  enclosing activation", `sim_007/bad_block_column_record_fork.sv`,
+  `ki_audit/neg_record_ref_member_wait_automatic.sv`); it used to stop with an
+  unlocated invalid-model error. A static column record works.
 
 ### Cause
 
