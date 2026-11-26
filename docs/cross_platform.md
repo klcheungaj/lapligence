@@ -323,6 +323,15 @@ DPI-C and VPI DLLs:
   user before the cache save.
 - On musl, root `build.rs` and `mimalloc_shim.c` wrap C `malloc`/`free` for every
   binary ([executables](../src/bin/readme.md)).
+- mimalloc (musl builds, and `llg_ls`'s Rust allocations everywhere) reserves
+  a 1 GiB arena at its first allocation. Counted against an address-space
+  limit (`LLG_MEMORY_ADDRESS_SPACE_LIMIT`), that untouched range left no room
+  for the watchdog's thread in the shipped `llg` (CI: HOST-003 "watchdog
+  thread unavailable", `mode=native-only`) and none for further mappings, so
+  on Linux the limit now comes on top of every range the process holds when
+  it installs it (`ffi::process_memory::install_native_limit`). glibc's
+  `GLIBC_TUNABLES=glibc.malloc.top_pad=1073741824` reproduces such a reserve
+  (`sim_memory_guard::llg_address_space_limit_does_not_count_an_allocator_reserve`).
 - On glibc, `llg` keeps its pipeline thread on the process's first heap
   (`ffi::process_memory::share_one_heap`). What a second thread still costs
   there is glibc's locking of slow-path allocations, about 0.5 % of a compile's

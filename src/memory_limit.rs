@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use crate::ffi::process_memory::{self, NativeLimitGuard};
+use crate::ffi::process_memory::{self, NativeLimitGuard, StackReservations};
 use crate::stack::PIPELINE_STACK_BYTES;
 
 const MEMORY_LIMIT_ENV: &str = "LLG_MEMORY_LIMIT_MB";
@@ -348,7 +348,10 @@ pub fn install(pipelines: usize) -> InstallReport {
 ///
 /// The stacks of the `pipelines` pipeline threads the process may run at once
 /// are address space that is never memory, so an address-space limit comes on
-/// top of them.
+/// top of them, and on Linux also on top of every range the process holds
+/// untouched when it installs the limit, such as its allocator's reserve
+/// ([`process_memory::install_native_limit`]). A process that installs the
+/// policy on its pipeline thread counts that stack as mapped.
 ///
 /// Every failure is fail-soft: malformed configuration disables only the
 /// affected option, native-limit failures retain the portable watchdog, and a
@@ -402,7 +405,7 @@ fn install_config_with_logger(
         limit_bytes,
         config
             .address_space_limit
-            .then(|| (pipelines as u64).saturating_mul(PIPELINE_STACK_BYTES as u64)),
+            .then(|| stack_reservations(pipelines, crate::stack::on_pipeline())),
     ) {
         Ok(guard) => {
             let mode = safeguard_mode(guard.mode());
@@ -474,6 +477,19 @@ fn install_config_with_logger(
         guard: MemoryLimitGuard { native, watchdog },
         mode,
         error,
+    }
+}
+
+/// The stacks of the `pipelines` pipeline threads a process runs at once, one
+/// of them mapped when the limit is installed `on_pipeline`.
+fn stack_reservations(pipelines: usize, on_pipeline: bool) -> StackReservations {
+    let stack = PIPELINE_STACK_BYTES as u64;
+    let mapped = u64::from(on_pipeline && pipelines > 0);
+    StackReservations {
+        mapped: mapped * stack,
+        unmapped: (pipelines as u64)
+            .saturating_sub(mapped)
+            .saturating_mul(stack),
     }
 }
 
@@ -575,9 +591,10 @@ mod tests {
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     use super::watchdog_loop;
     use super::{
-        install_config, memory_limit_exceeded, parse_values, warning_threshold_bytes,
-        warning_threshold_reached, Environment, MemoryConfig, DEFAULT_POLL_MS,
-        DEFAULT_WARNING_PERCENT, MEBIBYTE,
+        install_config, memory_limit_exceeded, parse_values, stack_reservations,
+        warning_threshold_bytes, warning_threshold_reached, Environment, MemoryConfig,
+        StackReservations, DEFAULT_POLL_MS, DEFAULT_WARNING_PERCENT, MEBIBYTE,
+        PIPELINE_STACK_BYTES,
     };
 
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -765,5 +782,34 @@ mod tests {
     fn limit_boundary_is_not_exceeded_until_usage_is_above_it() {
         assert!(!memory_limit_exceeded(100, 100));
         assert!(memory_limit_exceeded(101, 100));
+    }
+
+    /// `llg` installs the policy on its one pipeline, `llg_ls` before either
+    /// of its two starts.
+    #[test]
+    fn the_stack_of_the_installing_pipeline_is_mapped() {
+        let stack = PIPELINE_STACK_BYTES as u64;
+        assert_eq!(
+            stack_reservations(1, true),
+            StackReservations {
+                mapped: stack,
+                unmapped: 0
+            }
+        );
+        assert_eq!(
+            stack_reservations(2, false),
+            StackReservations {
+                mapped: 0,
+                unmapped: 2 * stack
+            }
+        );
+        assert_eq!(
+            stack_reservations(2, true),
+            StackReservations {
+                mapped: stack,
+                unmapped: stack
+            }
+        );
+        assert_eq!(stack_reservations(0, true), StackReservations::default());
     }
 }
