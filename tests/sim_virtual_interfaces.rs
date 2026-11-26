@@ -375,6 +375,20 @@ fn unpacked_member_timed_writes_locate_their_target_after_the_control() {
     );
 }
 
+/// A use through a computed handle in a statement whose calls change the
+/// handle reads it once, where the use starts in the operand order
+/// (decision VM-D1).
+#[test]
+fn unpacked_member_uses_read_a_computed_handle_in_operand_order() {
+    sim_cli::run_case(
+        "virtual_interfaces",
+        "member_array_order",
+        include_str!("fixtures/sim/virtual_interfaces/member_array_order.out"),
+        "INFO: member_array_order.sv:129:8: [SIM-001] (tb @ 2 ns) $finish called\n",
+        &[],
+    );
+}
+
 #[test]
 fn unpacked_member_of_a_null_handle_fails_at_runtime() {
     sim_cli::run_case_failing_at_runtime(

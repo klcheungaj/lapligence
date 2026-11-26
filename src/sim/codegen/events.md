@@ -69,10 +69,16 @@ points at the descriptor storage slot of the instance the handle binds, once
 before the statement or expression evaluation that uses it; the statement
 then lowers once against the view, as against lexical storage, so code size
 does not grow with the number of instances. A statement that may rebind the
-handle (a call, an assignment operator) binds again at each use, a timed
-blocking assignment binds its target's views again after its control, and an
-event-controlled or delayed NBA holds the target it located at issue
-(decision VM-D2). Copy supported automatic evaluator captures and
+handle (a call, an assignment operator) reads a handle held in storage again
+at each use; a use through a computed handle (`va[k].a`) that such an effect
+precedes in evaluation order gets a view of its own, bound once where the use
+starts (decision VM-D1): an `IrExprKind::Sequence` before a read, before the
+first selector of an element target or actual, which an untimed assignment
+locates after its right-hand side (the timed split with no control, its
+`placed_target_bindings`), and again before a container element actual's
+copy-out store. A timed blocking assignment binds its target's views again
+after its control, and an event-controlled or delayed NBA holds the target it
+located at issue (decision VM-D2). Copy supported automatic evaluator captures and
 transitively reject disallowed callback effects/captures. Named/mixed events retain
 identity and atomic registration. An instance `event` class property
 (`IrClassField::event`) is a handle slot of its object: `EventTarget::access`
