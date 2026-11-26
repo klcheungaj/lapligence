@@ -128,6 +128,34 @@ impl Codegen<'_> {
         self.stage_views(path, uses, refresh, None)
     }
 
+    /// The bindings among `bindings`, a timed blocking assignment's staging,
+    /// of the views its target `lhs` names. The assignment runs them again
+    /// when its control has passed, where it locates the target, so the
+    /// handle, a computed one too, is read then (SV 10.4.1 L13024-13025: "If
+    /// variable_lvalue requires an evaluation, it shall be evaluated at the
+    /// time specified by the intra-assignment timing control").
+    pub(in crate::sim::codegen) fn target_interface_bindings(
+        &self,
+        lhs: NodeId,
+        bindings: &[IrStmt],
+    ) -> Vec<IrStmt> {
+        let mut views = Vec::new();
+        let mut pending = vec![lhs];
+        while let Some(node) = pending.pop() {
+            if let Some(view) = self.staged_interface_view(node) {
+                views.push(view.storage);
+            }
+            pending.extend(self.node(node).children.iter().copied());
+        }
+        bindings
+            .iter()
+            .filter(|statement| {
+                matches!(statement, IrStmt::InterfaceBind(binding) if views.contains(&binding.view))
+            })
+            .cloned()
+            .collect()
+    }
+
     /// Stage views of the unpacked members that the nodes of a read walk
     /// name through handles (`nodes`, each with whether it lies in a called
     /// function's body), for the walk alone: a read of a view is a

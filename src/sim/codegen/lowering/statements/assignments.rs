@@ -840,8 +840,11 @@ impl EmitCtx<'_, '_> {
         h: NodeId,
         lhs: NodeId,
         rhs: NodeId,
-        wait: Vec<IrStmt>,
+        mut wait: Vec<IrStmt>,
     ) -> Result<Vec<IrStmt>, String> {
+        // Views of unpacked interface members the target names are bound
+        // again once the control has passed, where the target is located.
+        wait.append(&mut self.target_rebinds);
         let op = match self.cg.kind(h) {
             NodeKind::Stmt(StmtKind::Assign { op, .. }) => *op,
             _ => unreachable!("non-assignment passed to lower_blocking_timed_assignment"),

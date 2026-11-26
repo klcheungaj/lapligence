@@ -3749,6 +3749,10 @@ struct EmitCtx<'c, 'a> {
     cg: &'c mut Codegen<'a>,
     path: String,
     saw_wait: bool,
+    /// The bindings of the views that the target of the timed blocking
+    /// assignment being lowered names, run again when its control has
+    /// passed (`Codegen::target_interface_bindings`).
+    target_rebinds: Vec<IrStmt>,
     /// Exact process kind for the root process being lowered. Nested
     /// function/task contexts leave this unset; it distinguishes plain
     /// `always @*` from the SystemVerilog implicit-sensitivity forms.

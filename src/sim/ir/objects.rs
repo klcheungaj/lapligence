@@ -102,8 +102,10 @@ pub enum IrInterfaceStorage {
 /// Bind the view `view` (an array marked `bound`, or an activation
 /// container) to the storage of descriptor slot `slot` of the interface
 /// instance `handle` binds when the binding runs (SV 25.9). A statement
-/// binds each view it uses once, before it runs; an expression evaluated
-/// more than once binds before each evaluation. The binding itself never
+/// binds each view it uses once, before it runs (a timed blocking
+/// assignment binds the views of its target again when its control has
+/// passed); an expression evaluated more than once binds before each
+/// evaluation. The binding itself never
 /// fails: a null handle leaves the view unbound, and each use of an unbound
 /// view reports at `site` and ends the run (decision S99-D8).
 ///

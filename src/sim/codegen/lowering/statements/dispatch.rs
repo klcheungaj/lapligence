@@ -92,8 +92,8 @@ impl EmitCtx<'_, '_> {
         // Unpacked interface members named through handles are bound before
         // a statement that evaluates its operands once, and before a
         // `foreach` for its header. A timed nonblocking assignment binds its
-        // target at issue (SV 10.4.2); a timed blocking one binds each use
-        // again where it runs, its target after the control (SV 10.4.1).
+        // target at issue (SV 10.4.2); a timed blocking one binds the views
+        // of its target again when its control has passed (SV 10.4.1).
         // Element staging below may locate elements in them.
         let timed_blocking = matches!(
             self.cg.kind(h),
@@ -133,11 +133,15 @@ impl EmitCtx<'_, '_> {
                 );
         let interface_views = if views {
             self.cg
-                .stage_interface_views(&self.path, h, timed_blocking)
+                .stage_interface_views(&self.path, h, false)
                 .transpose()
         } else {
             None
         };
+        if let (true, Some(Ok(bindings))) = (timed_blocking, &interface_views) {
+            let lhs = self.cg.node(h).children[0];
+            self.target_rebinds = self.cg.target_interface_bindings(lhs, bindings);
+        }
         // Queue and dynamic-array members of container record elements are
         // staged around statements that evaluate their operands once.
         let staging = matches!(
@@ -191,6 +195,7 @@ impl EmitCtx<'_, '_> {
             staged,
             interface_views,
         } = entry;
+        self.target_rebinds.clear();
         let views = match interface_views {
             Some(Ok(views)) => {
                 self.cg.end_interface_views();

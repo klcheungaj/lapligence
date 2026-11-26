@@ -22,6 +22,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             cg,
             path,
             saw_wait: false,
+            target_rebinds: Vec::new(),
             process_kind: None,
             inst,
             depth_arg: depth_arg.to_string(),
