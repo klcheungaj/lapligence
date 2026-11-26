@@ -2647,30 +2647,35 @@ Storage slots in the descriptor, as unpacked members have
 
 ## Unpacked members of an interface type without instances
 
-**Status:** open. Each use rejects with a located diagnostic.
+**Status:** open. Each use rejects with a located diagnostic ("unpacked
+member `a` of virtual interface `ifc` is not supported when the design has no
+instance of its interface type").
 
 ### Symptom
 
 When the design has no instance of an interface type, a use of an unpacked
 member through a virtual interface of that type (`v.a[1] = 3` with
-`int a[4]`) stops compilation at the use (for an element, "cannot resolve
-array base of select `a`"). Such a handle can only be null, so the use
-could only fail at run time, which is what a packed member does.
+`int a[4]`) stops compilation at the use. Such a handle can only be null, so
+the use could only fail at run time, which is what a packed member does and
+what the reference does ("uninitialized virtual interface object" at the
+use, after `(v == null) ? 1 : v.a[0]` and `$size(v.a)` have run).
 
 ### Cause
 
-A view of an unpacked member takes its shape from the member's storage in
-an instance of the interface; without one there is no shape.
+A view of an unpacked member takes its shape (an array or container of the
+model) from the member's storage in an instance of the interface, and the
+binding of a view, including the emitted callback fallback, names the
+storage of a bound instance; without one there is neither.
 
 ### Intended direction
 
-Shape the view from the member's declaration and fail at the use as for a
-null handle.
+Shape the view from the member's declaration (a storage template on the
+virtual-interface descriptor), let the binding of a descriptor without
+instances fail as for a null handle, and drop the error.
 
 ### Reproduce
 
-`interface ifc; int a[4]; endinterface` and
-`module tb; virtual ifc v; initial v.a[1] = 3; endmodule`.
+`tests/fixtures/sim/virtual_interfaces/neg_member_array_no_instance.sv`.
 
 ## Remaining items of unpacked array concatenations
 

@@ -2748,6 +2748,9 @@ These are bounded implementations, not full verification-infrastructure support.
   it is evaluated (decision VM-D1); a nonblocking write locates its target
   at issue (VM-D2), a timed blocking one after its control
   ([virtual_interfaces](../tests/fixtures/sim/virtual_interfaces/readme.md)).
+  Through a handle of an interface type the design never instantiates, an
+  unpacked member is a located compile error
+  ([known issue](known_issues.md#unpacked-members-of-an-interface-type-without-instances)).
   Handles held by class objects whose virtual methods use them, sent through
   `mailbox #(virtual ifc)`, passed to timed tasks and captured by fork
   branches execute. Modport expression ports and an interface instance used
