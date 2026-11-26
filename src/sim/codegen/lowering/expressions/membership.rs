@@ -8,6 +8,127 @@ use crate::sim::codegen::lowering::expressions::dispatch::after_statements;
 use crate::sim::ir::{IrContainer, IrContainerElement, IrContainerStmt, IrInsideArray};
 
 impl<'a> Codegen<'a> {
+    /// `value inside {items}` where a member has an effect (decision EO-D2):
+    /// the chain `value ==? m1 || value ==? m2 || ...` in member order, a
+    /// range `[lo:hi]` as `value >= lo && value <= hi`, so the scan stops
+    /// at the first match and a range's high bound is evaluated only when
+    /// the value is not below its low one. Each comparison reads the value
+    /// before its member; a value with an effect of its own, or one whose
+    /// lowering runs statements, is evaluated once before the chain.
+    pub(in super::super) fn lower_inside_in_order(
+        &mut self,
+        path: &str,
+        value: NodeId,
+        items: &[NodeId],
+    ) -> Result<IrExpr, String> {
+        let effect = self.contains_evaluation_effect(value);
+        let name = format!("_llg_iv{}", value.0);
+        if self.is_string_expr(path, value) {
+            return self.with_set_arrays(|this| {
+                let lowered = this.lower_string(path, value)?;
+                let (prelude, read) = if effect {
+                    let declare = IrStmt::DeclString {
+                        name: name.clone(),
+                        init: Some(lowered),
+                    };
+                    (vec![declare], IrStringExpr::LocalRead(name))
+                } else {
+                    (Vec::new(), lowered)
+                };
+                let chain = this
+                    .lower_inside_string_items(path, items)?
+                    .into_iter()
+                    .map(|item| {
+                        let query = IrObjectQuery::StringInside {
+                            value: read.clone(),
+                            items: vec![item],
+                        };
+                        object_query(query, 1, false)
+                    })
+                    .reduce(|chain, test| cmp_expr_ir(IrBinOp::LogOr, chain, test))
+                    .ok_or_else(|| format!("inside set is empty in `{path}`"))?;
+                Ok(if prelude.is_empty() {
+                    chain
+                } else {
+                    after_statements(prelude, chain)
+                })
+            });
+        }
+        self.with_set_arrays(|this| {
+            let lowered = this.lower_expr(path, value)?;
+            let (prelude, read) = if effect || Self::runs_statements(&lowered) {
+                let (width, signed) = (lowered.width, lowered.signed);
+                let declare = IrStmt::DeclLocal {
+                    name: name.clone(),
+                    width,
+                    signed,
+                    two_state: false,
+                    init: Some(Box::new(lowered)),
+                };
+                let read = IrExpr::new(IrExprKind::LocalRead(name), width, signed, None);
+                (vec![declare], read)
+            } else {
+                (Vec::new(), lowered)
+            };
+            let items = this.lower_inside_items(path, items)?;
+            let chain = Self::inside_in_order(path, &read, items)?;
+            Ok(if prelude.is_empty() {
+                chain
+            } else {
+                after_statements(prelude, chain)
+            })
+        })
+    }
+
+    /// The membership chain of decision EO-D2 over the lowered `items`,
+    /// each comparison reading `value` (also a `case inside` selector).
+    pub(in super::super) fn inside_in_order(
+        path: &str,
+        value: &IrExpr,
+        items: Vec<IrInsideItem>,
+    ) -> Result<IrExpr, String> {
+        let test = |item: IrInsideItem| {
+            IrExpr::new(
+                IrExprKind::Inside {
+                    value: Box::new(value.clone()),
+                    items: vec![item],
+                },
+                1,
+                false,
+                None,
+            )
+        };
+        items
+            .into_iter()
+            .map(|item| match item {
+                IrInsideItem::Range { low, high } => cmp_expr_ir(
+                    IrBinOp::LogAnd,
+                    test(IrInsideItem::OpenRange {
+                        low: Some(low),
+                        high: None,
+                    }),
+                    test(IrInsideItem::OpenRange {
+                        low: None,
+                        high: Some(high),
+                    }),
+                ),
+                item => test(item),
+            })
+            .reduce(|chain, test| cmp_expr_ir(IrBinOp::LogOr, chain, test))
+            .ok_or_else(|| format!("inside set is empty in `{path}`"))
+    }
+
+    /// Whether evaluating `value` runs statements (a view binding, a
+    /// staged copy), which a copy of it would repeat.
+    fn runs_statements(value: &IrExpr) -> bool {
+        let mut probe = value.clone();
+        let mut statements = false;
+        crate::sim::opt::walk_expr_mut(&mut probe, &mut |expression| {
+            statements |= matches!(expression.kind, IrExprKind::Sequence(_));
+        });
+        statements
+    }
+
     /// `h inside {a, q, null}` over handles of one kind: set membership uses
     /// `==` on nonintegral operands (SV 11.4.13, decision R14-D1 for
     /// chandles) and handle equality compares identity, so the set is the

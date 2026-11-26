@@ -53,12 +53,59 @@ impl EmitCtx<'_, '_> {
                 })
                 .map(|statement| vec![statement]);
         }
-        let entry = self.enter_statement(h)?;
+        // Nested assignments of the operands run first (decision EO-D1); the
+        // stagings' evaluation-order walks see them there.
+        let (hoists, outer_hoists) = self.begin_hoisting(h);
+        let entry = match self.enter_statement(h) {
+            Ok(entry) => entry,
+            Err(error) => {
+                self.cg.pending_hoists = outer_hoists;
+                return Err(error);
+            }
+        };
         let lowered = match (&entry.interface_views, &entry.staged) {
             (Some(Err(_)), _) | (_, Some(Err(_))) => Ok(Vec::new()),
-            _ => self.lower_stmt_operations(h),
+            _ => self.lower_hoisted(&hoists, |ctx| ctx.lower_stmt_operations(h)),
         };
+        self.cg.pending_hoists = outer_hoists;
         self.leave_statement(h, entry, lowered)
+    }
+
+    /// The nested assignments statement `h` runs before its other operands
+    /// (decision EO-D1), noted for the evaluation-order walks of its
+    /// stagings, and the note it replaced, which the caller restores.
+    pub(super) fn begin_hoisting(
+        &mut self,
+        h: NodeId,
+    ) -> (Vec<NodeId>, Option<(NodeId, Vec<NodeId>)>) {
+        let operands = self.cg.statement_hoisting_operands(h);
+        let hoists = self.cg.hoisted_assignment_nodes(&operands);
+        let note = (!hoists.is_empty()).then(|| (h, hoists.clone()));
+        (hoists, std::mem::replace(&mut self.cg.pending_hoists, note))
+    }
+
+    /// Run the nested assignments `hoists`, then the statements `lower`
+    /// produces, which read the values the assignments left.
+    pub(super) fn lower_hoisted(
+        &mut self,
+        hoists: &[NodeId],
+        lower: impl FnOnce(&mut Self) -> Result<Vec<IrStmt>, String>,
+    ) -> Result<Vec<IrStmt>, String> {
+        if hoists.is_empty() {
+            return lower(self);
+        }
+        let path = self.path.clone();
+        let lowered = self
+            .cg
+            .hoist_assignments(&path, hoists)
+            .and_then(|mut statements| {
+                statements.extend(lower(self)?);
+                Ok(statements)
+            });
+        let ended = self.cg.end_hoisted_assignments(hoists);
+        let statements = lowered?;
+        ended?;
+        Ok(vec![IrStmt::Block(statements)])
     }
 
     /// Set the operand state statement `h` lowers under. Nested statements
@@ -870,13 +917,21 @@ impl EmitCtx<'_, '_> {
     }
 
     fn lower_while(&mut self, cond: NodeId, body: NodeId) -> Result<Vec<IrStmt>, String> {
-        let c = self.cg.lower_boolean_expr(&self.path, cond)?;
+        let c = self.lower_loop_condition(cond)?;
         let (body, brk) = self.lower_loop_body(body)?;
         // `continue` lands on the back edge (the condition test):
         // its label sits at the END of the body (lower_loop_body).
         let mut out = vec![IrStmt::While { cond: c, body }];
         out.extend(brk);
         Ok(out)
+    }
+
+    /// A loop condition, which runs its nested assignments first at each
+    /// evaluation (decision EO-D1).
+    pub(super) fn lower_loop_condition(&mut self, cond: NodeId) -> Result<IrExpr, String> {
+        let path = self.path.clone();
+        self.cg
+            .lower_hoisting_expression(&path, cond, |cg| cg.lower_boolean_expr(&path, cond))
     }
 
     fn lower_repeat(&mut self, cond: NodeId, body: NodeId) -> Result<Vec<IrStmt>, String> {
