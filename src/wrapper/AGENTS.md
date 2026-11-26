@@ -10,7 +10,8 @@ destroyed and every table streams to the caller's `LlgSlangSink`. Contracts:
   and auxiliary bits).
 - `slang_c_api.cpp`: compile, capture, metadata parse and streaming.
 - `slang_platform.hpp/.cpp`: the only platform and compiler conditionals (glibc
-  heap trim, `LLG_NOINLINE`).
+  heap trim, `LLG_NOINLINE`, the guard that stops a build without C++
+  exceptions; MSVC options: `build_support/native_cxx.rs`).
 - `mimalloc_shim.c`: GNU/LLD `--wrap` of C `malloc`/`free` on musl.
 - `slang/`: vendored Slang (patched through `patches/slang/`; never edited here).
 

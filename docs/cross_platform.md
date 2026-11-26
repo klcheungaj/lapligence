@@ -200,7 +200,16 @@ MSVC compiler:
   19.29.30036.3 or newer, and the target's own sources keep `/W4 /WX`.
 - C mode lacks `max_align_t` (use `llg_co_max_align_t`). Unnamed enums have an
   `int` underlying type, so brace-initializing a `uint32_t` from an enum ternary
-  narrows (C2397); cast. `<chrono>` warning C4530 without `/EHsc` is harmless.
+  narrows (C2397); cast.
+- C++ needs `/EHsc`, which neither `cl` nor clang-cl enables by default and the
+  `cmake` crate's `CMAKE_CXX_FLAGS` (the `cc` crate's flags) drops from CMake's
+  defaults. Without it Slang builds without exceptions: a source nested past
+  its limit aborted `llg` and `llg_ls` with "internal compiler error:
+  'language constructs are too deeply nested'" (0xC0000409), and the wrapper's
+  exceptions unwound no destructors. Warning C4530 in a C++ unit is that
+  defect. build.rs adds `/EHsc /GR` (`build_support/native_cxx.rs`), and
+  `slang_platform.hpp` stops a build without exceptions on every compiler
+  (`native_cxx::component_the_wrapper_stops_a_build_without_exceptions`).
 - Unsequenced operands (`f() | g()`, C11 6.5p3) run in another order than under
   GCC/Clang; sequence calls with side effects as separate statements.
 - `cl` writes diagnostics to stdout: print both streams on failure. Ninja stops
