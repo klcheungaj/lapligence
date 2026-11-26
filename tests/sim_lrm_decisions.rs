@@ -3649,6 +3649,19 @@ fn a19_d92_nul_characters() {
     );
 }
 
+/// Port bits by index: by the packed range of the declaration a port
+/// connects (ANSI and non-ANSI, ascending, descending and negative ranges,
+/// a module-side select or concatenation, a two-dimensional packed port by
+/// multi-index), with each bit's connections on both sides.
+#[test]
+fn a19_d93_port_bits_by_index() {
+    run_vpi_decision(
+        "A19-D93_port_bits_by_index",
+        &["task $d93()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D93_port_bits_by_index.out"),
+    );
+}
+
 #[test]
 fn a19_d11_decompile_format() {
     run_vpi_decision(

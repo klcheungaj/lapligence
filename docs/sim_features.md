@@ -3190,8 +3190,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   member values, writes and `cbValueChange`, packed or unpacked, nested and
   in elements of unpacked arrays of structures (decisions A19-D1..D4).
   Structure objects (ADV-019 family 2): `vpiHighConn` and `vpiPortType` of
-  ports, port bits (`vpiBit`, `vpiPortBit`), interface and modport ports
-  whose connections are `vpiRefObj` objects with `vpiActual`, `vpiModport`,
+  ports, port bits (`vpiBit`, `vpiPortBit`, by index, decision A19-D93),
+  interface and modport ports whose connections are `vpiRefObj` objects
+  with `vpiActual`, `vpiModport`,
   instance arrays (`vpiModuleArray`, `vpiInterfaceArray`, `vpiGateArray`,
   `vpiSwitchArray`, `vpiUdpArray`) with `vpiRange`, element iteration,
   `vpi_handle_by_index` and the elements' `vpiIndex`, primitives (`vpiGate`,

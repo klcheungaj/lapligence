@@ -1512,6 +1512,28 @@ static uint32_t packed_select_indices(const llg_vpi_slot_t* slot, int64_t* indic
     return (uint32_t)slot->aux;
 }
 
+/* The storage LSB and width (`stride`) that the first `count` packed
+ * indices (leftmost first) of packed array type `typespec` select; 0 when
+ * one is outside its range (an error unless `quiet`). */
+static int32_t packed_indices_lsb(const llg_vpi_typespec_t* typespec, const int64_t* indices,
+                                  uint32_t count, int32_t quiet, uint64_t* lsb, uint64_t* stride) {
+    const int64_t* ranges = &g_vpi.types->ranges[2u * typespec->first_range];
+    *stride = typespec->width;
+    *lsb = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        const int64_t* range = &ranges[2u * i];
+        uint64_t extent = packed_extent(range), offset;
+        *stride /= extent;
+        /* The storage offset counts from the right bound. */
+        if (!index_offset(range[1], range[0], indices[i], &offset)) {
+            if (!quiet) vpi_error("LLG_VPI_INDEX", "packed index is outside the declared range");
+            return 0;
+        }
+        *lsb += offset * *stride;
+    }
+    return *stride && *lsb + *stride <= typespec->width;
+}
+
 /* The element (all packed indices but the last) or bit (every packed
  * index) of the packed array a row or unpacked element holds. Any other
  * index count, such as a subarray of a three-dimensional packed array, is
@@ -1527,21 +1549,10 @@ static vpiHandle packed_select(uint32_t row, uint64_t element, const int64_t* in
                                : "object has no access by index");
         return NULL;
     }
-    const int64_t* ranges = &g_vpi.types->ranges[2u * typespec->first_range];
-    uint64_t stride = typespec->width, lsb = 0;
-    for (uint32_t i = 0; i < count; ++i) {
-        const int64_t* range = &ranges[2u * i];
-        uint64_t extent = packed_extent(range), offset;
-        stride /= extent;
-        /* The storage offset counts from the right bound. */
-        if (!index_offset(range[1], range[0], indices[i], &offset)) {
-            if (!quiet) vpi_error("LLG_VPI_INDEX", "packed index is outside the declared range");
-            return NULL;
-        }
-        lsb += offset * stride;
-    }
-    if (!stride || lsb + stride > typespec->width) return NULL;
+    uint64_t stride, lsb;
+    if (!packed_indices_lsb(typespec, indices, count, quiet, &lsb, &stride)) return NULL;
     int32_t bit = count == typespec->range_count;
+    const int64_t* ranges = &g_vpi.types->ranges[2u * typespec->first_range];
     const int64_t* last = &ranges[2u * (typespec->range_count - 1u)];
     vpiHandle handle = make_select(row, element, (uint32_t)lsb, (uint32_t)stride,
                                    bit ? indices[count - 1u] : last[0],
@@ -2248,10 +2259,23 @@ static uint32_t port_conn(uint32_t row, int32_t high) {
     return role_conn(row, high ? LLG_VPI_ROLE_CONNECTION : LLG_VPI_ROLE_PORT_LOW);
 }
 
+/* Bits of a net or variable a connection references (a span of a link). */
+typedef struct {
+    uint32_t row;
+    uint64_t element;
+    uint32_t lsb;
+    uint32_t width;
+    uint32_t offset;
+    int32_t mapped;
+} llg_vpi_span_t;
+
+static int32_t code_span(uint32_t index, llg_vpi_span_t* span, int32_t depth);
+static int32_t code_is_select(int32_t type);
+
 /* The catalog object, and the bit of it counted from its LSB, that bit
  * `bit` (from the LSB) of expression object `index` reads through
- * concatenations and implicit conversions; 0 when that bit is not one bit
- * of a named object (decision A19-D58). */
+ * concatenations, implicit conversions and constant selects; 0 when that
+ * bit is not one bit of a named object (decision A19-D58). */
 static int32_t code_bit_object(uint32_t index, uint32_t bit, uint32_t* row, uint32_t* offset) {
     for (uint32_t depth = 0; depth < 64u; ++depth) {
         const llg_vpi_code_t* node = code_at(index);
@@ -2281,6 +2305,17 @@ static int32_t code_bit_object(uint32_t index, uint32_t bit, uint32_t* row, uint
             (uint64_t)node->object < g_vpi.object_count) {
             *row = (uint32_t)node->object;
             *offset = bit;
+            return 1;
+        }
+        if (code_is_select(node->type) && (node->flags & LLG_VPI_CODE_CONSTANT)) {
+            /* A select whose indices code_span cannot resolve spans its
+             * whole prefix, wider than the select. */
+            llg_vpi_span_t span;
+            if (!code_span(index, &span, 0) || span.element != LLG_VPI_NO_ELEMENT ||
+                span.width != node->width || bit >= span.width)
+                return 0;
+            *row = span.row;
+            *offset = span.lsb + bit;
             return 1;
         }
         return 0;
@@ -2330,16 +2365,61 @@ static vpiHandle port_bit_conn(const llg_vpi_slot_t* slot, int32_t high) {
         }
     }
     llg_vpi_model_object_t* target = row_object(row);
+    uint32_t offset = base + bit;
+    /* A bit of a packed array is named by all its packed indices (decision
+     * A19-D67). */
+    if (target && bit < width && packed_array_typespec(row, LLG_VPI_NO_ELEMENT))
+        return packed_bit(row, LLG_VPI_NO_ELEMENT, offset);
     if (!target || target->is_real || !target->packed || is_array_type(target->type) ||
         target->type == vpiPackedArrayVar || bit >= width) {
         vpi_error("LLG_VPI_UNSUPPORTED", "the connection of this port bit has no matching bit");
         return NULL;
     }
-    uint32_t offset = base + bit;
     int64_t left, right;
     packed_range(target, &left, &right);
     int64_t index = left >= right ? right + (int64_t)offset : right - (int64_t)offset;
     return make_select(row, LLG_VPI_NO_ELEMENT, offset, 1, index, index, NULL);
+}
+
+/* 37.14 access by index of a port (vpi_handle_by_index, and
+ * vpi_handle_by_multi_index with one index per packed dimension): the port
+ * bit that `indices` select in the packed ranges of the declaration the port
+ * connects, the same object as the vpiBit iteration gives; a port declared
+ * with a module-side select or concatenation has the range [size-1:0] of
+ * its expression. As in that iteration, a one-bit port has no bits (decision
+ * A19-D47) and an interface or modport port refuses them. An index outside
+ * the range answers as on the declaration itself: NULL, with an error for
+ * a packed array (decisions S42-D7, A19-D67). */
+static vpiHandle port_bit_by_indices(uint32_t row, const int64_t* indices, uint32_t count) {
+    const llg_vpi_model_object_t* port = row_object(row);
+    if (port->detail) {
+        vpi_error("LLG_VPI_RELATION", "an interface or modport port has no bits");
+        return NULL;
+    }
+    const llg_vpi_model_object_t* declared = port->target;
+    if (declared && is_array_type(declared->type)) return NULL;
+    if (port->width < 2u) return NULL;
+    const llg_vpi_typespec_t* typespec =
+        declared ? packed_array_typespec(row_of(declared), LLG_VPI_NO_ELEMENT) : NULL;
+    uint64_t offset;
+    if (typespec) {
+        uint64_t stride;
+        if (count != typespec->range_count) {
+            vpi_error("LLG_VPI_INDEX", "a port bit needs every packed index");
+            return NULL;
+        }
+        if (!packed_indices_lsb(typespec, indices, count, 0, &offset, &stride)) return NULL;
+    } else {
+        uint32_t bit;
+        if (count != 1u) {
+            vpi_error("LLG_VPI_INDEX", "too many indices for a packed object");
+            return NULL;
+        }
+        if (!packed_offset(declared ? declared : port, indices[0], &bit)) return NULL;
+        offset = bit;
+    }
+    if (offset >= port->width) return NULL;
+    return make_aux_slot(SLOT_PORTBIT, row, (uint32_t)offset);
 }
 
 /* vpiRange of an unpacked array or instance array: one range handle per
@@ -4514,6 +4594,7 @@ vpiHandle vpi_handle_by_index(vpiHandle object, PLI_INT32 index) {
             }
             return element_by_indices(slot->object, &value, 1, 0);
         }
+        if (base->type == vpiPort) return port_bit_by_indices(slot->object, &value, 1u);
         if (is_constant_type(base->type) || !has_values(base)) {
             vpi_error("LLG_VPI_INDEX", "object has no access by index");
             return NULL;
@@ -4569,6 +4650,7 @@ vpiHandle vpi_handle_by_multi_index(vpiHandle object, PLI_INT32 count, PLI_INT32
     if (is_instance_array_type(base->type))
         return object_handle(instance_element(row, values, (uint32_t)count));
     if (base->type == vpiNamedEventArray) return event_element(row, values, (uint32_t)count);
+    if (base->type == vpiPort) return port_bit_by_indices(row, values, (uint32_t)count);
     if (!is_array_type(base->type)) {
         if (packed_array_typespec(row, LLG_VPI_NO_ELEMENT))
             return packed_select(row, LLG_VPI_NO_ELEMENT, values, (uint32_t)count, 0);
@@ -8221,16 +8303,6 @@ typedef struct llg_vpi_link {
     uint8_t kind;
     uint8_t flags;        /* LINK_DRIVER, LINK_LOAD, LINK_MAPPED */
 } llg_vpi_link_t;
-
-/* Bits of a net or variable a connection references (a span of a link). */
-typedef struct {
-    uint32_t row;
-    uint64_t element;
-    uint32_t lsb;
-    uint32_t width;
-    uint32_t offset;
-    int32_t mapped;
-} llg_vpi_span_t;
 
 typedef struct {
     llg_vpi_span_t* items;

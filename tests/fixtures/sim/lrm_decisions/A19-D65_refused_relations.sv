@@ -13,9 +13,10 @@
 // parameter are not objects; a typespec has no instance, module or scope;
 // an enum constant does not lead back to its typespec; a class lists its
 // properties through vpiVariables, not vpiMemory, and no typedefs, typedef
-// alias, specialization parameter assignments or base-class arguments; a
-// port is not indexed; an array, a function call and a class variable have
-// no value; vpi_get(vpiName) of a string property is an error.
+// alias, specialization parameter assignments or base-class arguments; an
+// interface or modport port is not indexed (other ports: A19-D93); an
+// array, a function call and a class variable have no value;
+// vpi_get(vpiName) of a string property is an error.
 `timescale 1ns/1ns
 interface ifc;
   logic s;
