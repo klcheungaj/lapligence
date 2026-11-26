@@ -1155,12 +1155,21 @@ impl<'a> Codegen<'a> {
             return self.lower_queue_index(path, container, node);
         }
         let index = self.lower_container_index(path, node)?;
+        Ok(self.fixed_view_position(container, index))
+    }
+
+    /// The storage position of `index` in the outermost dimension of
+    /// `container`: the index itself unless `container` is a one-dimensional
+    /// fixed view whose declared range does not run upwards from 0. Every
+    /// path that turns an index of such a view into a position (selects,
+    /// writes, methods, `foreach`) goes through here.
+    pub(in super::super) fn fixed_view_position(&self, container: usize, index: IrExpr) -> IrExpr {
         let Some((left, right)) = self.fixed_view_ranges.get(&container).copied() else {
-            return Ok(index);
+            return index;
         };
         let lowest = left.min(right);
         if left <= right && lowest == 0 {
-            return Ok(index);
+            return index;
         }
         // One extra bit keeps the subtraction exact for every source width.
         let width = index.width.max(32) + 1;
@@ -1171,7 +1180,7 @@ impl<'a> Codegen<'a> {
         } else {
             (base, index)
         };
-        Ok(IrExpr::new(
+        IrExpr::new(
             IrExprKind::Bin {
                 op: IrBinOp::Sub,
                 a: Box::new(a),
@@ -1180,7 +1189,7 @@ impl<'a> Codegen<'a> {
             width,
             true,
             None,
-        ))
+        )
     }
 }
 

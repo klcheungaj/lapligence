@@ -179,10 +179,7 @@ impl<'a> Codegen<'a> {
                         "compound assignment to nested resizable container element in {path} is not supported"
                     ));
                 }
-                let indices = source_indices
-                    .into_iter()
-                    .map(|index| self.lower_container_index(path, index))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let indices = self.lower_container_path_indices(path, container, source_indices)?;
                 let mut prelude = Vec::new();
                 let source = self.nested_container_source(path, container, 1, rhs, &mut prelude)?;
                 prelude.push(IrStmt::Container(Box::new(IrContainerStmt::SetContainer {
@@ -203,10 +200,7 @@ impl<'a> Codegen<'a> {
                         "compound assignment to nested resizable container element in {path} is not supported"
                     ));
                 }
-                let indices = source_indices
-                    .into_iter()
-                    .map(|index| self.lower_container_index(path, index))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let indices = self.lower_container_path_indices(path, container, source_indices)?;
                 let element = self
                     .container_element_type(container, indices.len())
                     .ok_or_else(|| format!("invalid nested container write in {path}"))?;
@@ -282,7 +276,7 @@ impl<'a> Codegen<'a> {
                 .container_element_type(container.ir, 1)
                 .is_some_and(|element| matches!(element, IrContainerElement::Container { .. }))
             {
-                let indices = vec![self.lower_container_index(path, index)?];
+                let indices = vec![self.lower_container_top_index(path, container.ir, index)?];
                 let mut prelude = Vec::new();
                 let source =
                     self.nested_container_source(path, container.ir, 1, rhs, &mut prelude)?;

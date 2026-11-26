@@ -1097,10 +1097,19 @@ impl EmitCtx<'_, '_> {
         let mut omitted = false;
         for (depth, variable) in vars.iter().enumerate() {
             if let Some(&Some((left, right))) = dimensions.get(depth) {
+                // The outermost dimension of a fixed view of containers
+                // selects the element the levels below size or walk.
+                let selects = depth == 0 && self.cg.is_fixed_view(storage);
                 if let Some(variable) = variable {
                     let local = self.foreach_integral_local(*variable)?;
                     declarations.push(foreach_local_decl(&local));
+                    if selects {
+                        let index = IrExpr::resize_to(foreach_local_read(&local), 32, true);
+                        indices.push(self.cg.fixed_view_position(storage, index));
+                    }
                     levels.push(Level::Fixed(local, left, right));
+                } else if selects {
+                    omitted = true;
                 }
                 continue;
             }
