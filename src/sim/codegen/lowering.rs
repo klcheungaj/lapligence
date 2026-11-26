@@ -4810,12 +4810,17 @@ mod startup_spawn_tests {
 mod name_chain_tests {
     use super::*;
 
-    /// A walk that follows calls is as deep as the chain of them, so it stops
-    /// at the call that would leave too little stack for a nested tree.
-    #[test]
-    fn a_chain_of_calls_past_the_stack_is_a_located_error() {
-        const LINKS: usize = 400;
-        let chain: String = (0..LINKS)
+    /// The stack every lowering here runs on.
+    const STACK: usize = 64 << 20;
+    /// The precision of a measured depth.
+    const STEP: usize = 1 << 10;
+    /// Less than any frame a walk spends on one call it follows.
+    const MIN_LINK_BYTES: usize = 64;
+
+    /// The database of a process that calls the first of `links` functions,
+    /// each of which calls the next.
+    fn chain(links: usize) -> Db {
+        let chain: String = (0..links)
             .map(|link| {
                 format!(
                     "function automatic int f{link}(int x); return f{}(x) + g; endfunction\n",
@@ -4825,7 +4830,7 @@ mod name_chain_tests {
             .collect();
         let source = format!(
             "module tb;\nint a, g, y;\n{chain}\
-             function automatic int f{LINKS}(int x); return x + g; endfunction\n\
+             function automatic int f{links}(int x); return x + g; endfunction\n\
              always_comb y = f0(a);\nendmodule\n"
         );
         let compiled = crate::core::compile::compile_sources_checked(
@@ -4838,15 +4843,53 @@ mod name_chain_tests {
             },
         )
         .expect("compile the chain");
-        let db = Db::from_slang(&compiled.snapshot).expect("owned database");
-        let lower = |stack: usize, headroom: usize| {
-            crate::stack::run_on_stack(stack, headroom, || {
-                lower_model(&db, &CodegenOptions::default()).map(|_| ())
-            })
-            .expect("a thread")
-        };
-        lower(64 << 20, 1 << 20).expect("the chain fits");
-        let error = lower(64 << 20, 62 << 20).expect_err("2 MiB do not hold the chain");
+        Db::from_slang(&compiled.snapshot).expect("owned database")
+    }
+
+    /// Lower `db` on a stack whose floor lies `depth` bytes below its top.
+    fn lower(db: &Db, depth: usize) -> Result<(), String> {
+        crate::stack::run_on_stack(STACK, STACK - depth, || {
+            lower_model(db, &CodegenOptions::default()).map(|_| ())
+        })
+        .expect("a thread")
+    }
+
+    /// The least depth, to a [`STEP`], at which `db` lowers, given that it
+    /// lowers at `fits`. Frames differ between build profiles, so the test
+    /// measures them rather than assuming a size.
+    fn depth_needed(db: &Db, fits: usize) -> usize {
+        let (mut refused, mut lowered) = (0, fits);
+        while lowered - refused > STEP {
+            let depth = refused + (lowered - refused) / 2;
+            if lower(db, depth).is_ok() {
+                lowered = depth;
+            } else {
+                refused = depth;
+            }
+        }
+        lowered
+    }
+
+    /// A walk that follows calls is as deep as the chain of them, so it stops
+    /// at the call that would leave too little stack for a nested tree.
+    #[test]
+    fn a_chain_of_calls_past_the_stack_is_a_located_error() {
+        const LINKS: usize = 400;
+        let long = chain(LINKS);
+        let short = chain(1);
+        let room = STACK - (1 << 20);
+        lower(&long, room).expect("the chain fits");
+        let long_depth = depth_needed(&long, room);
+        let short_depth = depth_needed(&short, long_depth);
+        assert!(
+            long_depth >= short_depth + LINKS * MIN_LINK_BYTES,
+            "each call the walk follows takes stack: {short_depth} bytes for one, \
+             {long_depth} for {LINKS}"
+        );
+        // A floor between the two holds one call and not the chain.
+        let depth = (short_depth + long_depth) / 2;
+        lower(&short, depth).expect("one call fits");
+        let error = lower(&long, depth).expect_err("the chain does not fit");
         assert!(error.contains(crate::stack::EXHAUSTED), "{error}");
         let error = CodegenError::new(error);
         assert!(
