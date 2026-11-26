@@ -15,7 +15,7 @@
 // IEEE 1800-2009 13.5.2 (L19185-19187): "an inout argument is copied twice:
 //   once from the actual into the argument when the subroutine is called and
 //   once from the argument into the actual when the subroutine returns."
-// IEEE 1800-2009 10.4.1 (L13026-13027): "The order of evaluation of the
+// IEEE 1800-2009 10.4.1 (L13025-13027): "The order of evaluation of the
 //   variable_lvalue and the expression on the right-hand side is undefined if
 //   a timing control is not specified."
 class C;

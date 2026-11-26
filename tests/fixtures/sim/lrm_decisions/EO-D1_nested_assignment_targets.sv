@@ -13,12 +13,12 @@
 // IEEE 1800-2009 11.4.2 (SystemVerilog-1800-2009.txt L14500): "The ordering
 //   of assignment operations relative to any other operation within an
 //   expression is undefined."
-// IEEE 1800-2009 11.3.6 (L14462-14464): "The semantics of such an assignment
+// IEEE 1800-2009 11.3.6 (L14463-14465): "The semantics of such an assignment
 //   expression is that of a function that evaluates the right-hand side,
 //   casts the right-hand side to the left-hand data type, stacks it, updates
 //   the left-hand side, and returns the stacked value. The data type of the
 //   value that is returned is the data type of the left-hand side."
-// IEEE 1800-2009 10.4.1 (L13026-13027): "The order of evaluation of the
+// IEEE 1800-2009 10.4.1 (L13025-13027): "The order of evaluation of the
 //   variable_lvalue and the expression on the right-hand side is undefined if
 //   a timing control is not specified."
 class C;
