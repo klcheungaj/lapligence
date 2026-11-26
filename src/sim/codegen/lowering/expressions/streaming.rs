@@ -669,10 +669,14 @@ impl<'a> Codegen<'a> {
         path: &str,
         node: NodeId,
     ) -> Result<Option<IrExpr>, String> {
-        if !matches!(
-            self.kind(node),
-            NodeKind::Expr(ExprKind::Ref { .. } | ExprKind::HierPath { .. })
-        ) {
+        // Every expression passes here: a design without containers stops
+        // before any lookup.
+        if self.model.containers.is_empty()
+            || !matches!(
+                self.kind(node),
+                NodeKind::Expr(ExprKind::Ref { .. } | ExprKind::HierPath { .. })
+            )
+        {
             return Ok(None);
         }
         let Some(container) = self.container_of(node).map(|info| info.ir) else {
