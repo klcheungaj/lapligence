@@ -35,6 +35,10 @@ snapshot destruction, and execution after Db destruction at native O0/O3. Its
 expected output remains the caller's independent fixture oracle. Missing tools
 fail mandatory acceptance; see [feature completion slices](../readme.md#feature-completion-slices).
 
+In a cell of the [value/optimizer matrix](../readme.md#valueoptimizer-matrix)
+(`LLG_TEST_MATRIX_CELL`), `sim.rs` narrows its lane and optimizer-mode helpers
+to the cell, and `sim_cli.rs` uses them for every lane and mode it iterates.
+
 `vcd.rs` is an independent four-state VCD reader (IEEE 1800-2009 Syntax
 21-20, Table 21-9) for waveform suites: it shares no code with the runtime
 writer and rejects unbalanced scopes, illegal types, alias width mismatches,

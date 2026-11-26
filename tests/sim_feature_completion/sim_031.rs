@@ -125,7 +125,7 @@ fn a_seed_replays_the_same_selections_in_every_mode() {
         first[relations.len()..].starts_with("checksum "),
         "{first_label}: {first}"
     );
-    assert_eq!(outputs.len(), 6);
+    assert_eq!(outputs.len(), sim_cli::checked_matrix_runs());
     for (label, output) in &outputs[1..] {
         assert_eq!(output, first, "{label} differs from {first_label}");
     }

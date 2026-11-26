@@ -60,6 +60,18 @@ default-filter = """
     or (binary_id(=llg::general) and test(/^(lsp_stdio|shadowing|dump_tokens|config_effect|broken_sources|compilation_units|include_dir_search|parse_only|probe_bindings|slang_frontend|slang_static_function_return|elab_resolve)::/))
 """
 
+# The FIN-002 value/optimizer matrix (`scripts/value_matrix.py`,
+# tests/readme.md#valueoptimizer-matrix). Its default filter, inherited from
+# ci-lsp, is the set that runs no model and so depends on no value backend or
+# optimizer mode: the runner runs everything in the compact/GMP normal cell
+# and `not default()` in the others. JUnit gives the per-cell counts.
+[profile.value-matrix]
+inherits = "ci-lsp"
+test-threads = 8
+
+[profile.value-matrix.junit]
+path = "junit.xml"
+
 # Frontend-heavy suites (see the group below) get their own concurrency cap;
 # lighter suites (emit_decoupling, property_elab, …) run in the default
 # full-width pool.
