@@ -153,8 +153,11 @@ int32_t llg_event_triggered(const llg_event_t* ev) {
     return 1;
 }
 
+// No arm follows to report a null event here, so the access reports it.
 llg_event_object_t* llg_event_waited_object(const llg_event_t* ev) {
-    return event_control_null(ev) ? NULL : ev->object;
+    if (LLG_CO_LIKELY(!event_control_null(ev))) return ev->object;
+    llg_rt_failed_access("null event handle access", "event wait");
+    return NULL;
 }
 
 uint64_t llg_event_trigger_count(const llg_event_object_t* object) {
