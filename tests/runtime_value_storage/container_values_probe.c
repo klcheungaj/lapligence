@@ -17,6 +17,12 @@ static const llg_value_desc_t process_desc = {LLG_VALUE_PROCESS, 0, 0, 0, 0, 0, 
 static const llg_value_desc_t event_desc = {LLG_VALUE_EVENT, 0, 0, 0, 0, 0, 0, NULL, NULL, 0};
 
 static int live_refs;
+static int32_t live_changes;
+static void count_change(sv4_t* contents, sv4_t* shape, int32_t change) {
+    (void)contents;
+    (void)shape;
+    live_changes |= change;
+}
 static int created_events;
 static int event_objects[8];
 
@@ -397,6 +403,29 @@ static void check_nested_sequences(void) {
     llg_queue_push_back(b, nine);
     CHECK(llg_value_container_size(first) == 2);
     CHECK(queue_item(a, 0) == 5 && queue_item(a, 1) == 9);
+
+    /* A live alias forwards each change to the owner's dependency while any
+     * live alias holds the element; after the last, it publishes nothing. */
+    sv4_t owner_marker = SV4_EMPTY;
+    llg_nested_seq_t* live_a = NULL;
+    llg_nested_seq_t* live_b = NULL;
+    llg_queue_t* la = llg_nested_seq_bind_live(first, &live_a, &owner_marker, count_change);
+    llg_queue_t* lb = llg_nested_seq_bind_live(first, &live_b, &owner_marker, count_change);
+    CHECK(la == a && lb == a && live_a->publishers == 2);
+    CHECK(la->notify == count_change && la->contents_dependency == &owner_marker &&
+          la->shape_dependency == &owner_marker);
+    live_changes = 0;
+    llg_queue_push_back(la, one);
+    CHECK(live_changes != 0);
+    llg_nested_seq_unpin_live(&live_a);
+    CHECK(a->notify == count_change && pin_a->publishers == 1);
+    live_changes = 0;
+    sv4_t popped = llg_queue_pop_back(lb);
+    CHECK(live_changes != 0 && sv4_same(popped, one));
+    sv4_destroy(&popped);
+    llg_nested_seq_unpin_live(&live_b);
+    CHECK(a->notify == NULL && a->contents_dependency == NULL && pin_a->publishers == 0);
+    CHECK(pin_a->pins == 3 && llg_value_container_size(first) == 2);
 
     /* A write at the size appends; one further is ignored with a warning. */
     sv4_t path[2];

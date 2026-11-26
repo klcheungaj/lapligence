@@ -848,6 +848,7 @@ impl<'a> Codegen<'a> {
                 root: root(false),
                 items: Vec::new(),
                 container: alias,
+                live: false,
             })),
             IrStmt::Container(Box::new(IrContainerStmt::Copy { dst, src: alias })),
         ];

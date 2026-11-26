@@ -2220,6 +2220,10 @@ struct Codegen<'a> {
     /// The declaration statement of each automatic block string, handle or
     /// event that lives in its activation (`collect_block_native`).
     block_activation_locals: HashMap<NodeId, NodeId>,
+    /// Automatic block records that live in their activation
+    /// (`collect_block_record`) → their native value. Process bodies name
+    /// them through `native_roots`.
+    block_activation_records: IdMap<NodeId, usize>,
     /// `(declaration, initializer, path)` of static procedural-block
     /// strings and handles, lowered into the static schedule.
     block_native_initializers: Vec<(NodeId, NodeId, String)>,
@@ -2848,6 +2852,7 @@ impl<'a> Codegen<'a> {
             record_statement_initializers: Vec::new(),
             block_natives: HashMap::new(),
             block_activation_locals: HashMap::new(),
+            block_activation_records: IdMap::new(),
             block_native_initializers: Vec::new(),
             event_initializers: Vec::new(),
             events: Vec::new(),

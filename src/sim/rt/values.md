@@ -108,7 +108,11 @@ dynamic array, 1 an unbounded queue, above that a queue of at most
 `item_count - 1` elements), so every queue and dynamic-array operation works
 on the alias (`llg_nested_seq_bind`, `llg_nested_seq_unpin`) and a bounded
 queue keeps its bound. The nested storage has no dependencies or `notify`:
-the writer publishes through the owning container's `*_touch`. A null slot is
+the writer publishes through the owning container's `*_touch`. A live alias
+(`llg_nested_seq_bind_live`, `llg_nested_seq_unpin_live`: a task's `ref`
+formal, which can suspend) points them at the owner's contents dependency
+and notifier while any live alias holds the sequence (`publishers`), so each
+change reaches the owner's waiters as it happens. A null slot is
 the empty sequence; an emptied one may stay allocated, and equality treats
 both alike. A whole-element store replaces the allocation, so an alias bound
 before it keeps the old sequence. Index paths through nested levels

@@ -64,6 +64,15 @@ an alias of its own storage for the statement.
   subroutine area, rather, a reference to the original argument is passed to
   the subroutine."
 
-`neg_task_ref.sv`: the same element passed to a `ref` formal of a task stays
-a located error. The alias publishes its changes when the call returns, and a
-task can suspend while another process waits on the array.
+`task_refs.sv`: the same element passed to a `ref` formal of a task (a
+queue of integers or strings, a dynamic array the task reallocates; an array
+of a module, of a class property through its handle and of an automatic
+subroutine; two tasks holding one element at once) was refused, since the
+alias published its changes only when the call returned. While a task holds
+the alias, each change reaches the waiters of the array as it happens: a
+`wait` on the element in another process wakes at the task's write (`1 woke
+size=1`, `4 first of two`), not when the task returns.
+
+- 9.4.3 L12032-12033: "The wait statement shall evaluate a condition; and, if
+  it is false, the procedural statements following the wait statement shall
+  remain blocked until that condition becomes true before continuing."

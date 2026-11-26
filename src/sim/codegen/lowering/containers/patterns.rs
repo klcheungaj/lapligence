@@ -426,6 +426,7 @@ impl<'a> Codegen<'a> {
                 root,
                 items: Vec::new(),
                 container: temporary,
+                live: false,
             })));
             statements.push(self.lower_container_into(path, value, temporary, value)?);
         }
@@ -478,6 +479,7 @@ impl<'a> Codegen<'a> {
                     ),
                     items: Vec::new(),
                     container: temporary,
+                    live: false,
                 })));
             }
             statements.push(self.lower_container_into(path, value, temporary, value)?);

@@ -1317,6 +1317,9 @@ struct llg_nested_seq_t {
     size_t pins;
     const llg_value_desc_t* desc;
     uint8_t kind;
+    /* Live aliases (llg_nested_seq_bind_live) that forward its changes to
+     * its owner while they hold it; it sits in the padding after `kind`. */
+    uint32_t publishers;
     union {
         llg_dyn_array_t dyn;
         llg_queue_t queue;
@@ -1350,6 +1353,15 @@ llg_nested_seq_t* llg_nested_seq_merge(const llg_value_desc_t* desc,
  * the address of the pin). */
 void* llg_nested_seq_bind(llg_value_t* value, llg_nested_seq_t** pin);
 void llg_nested_seq_unpin(void* pin);
+/* llg_nested_seq_bind for an alias whose changes must reach the owner's
+ * waiters as they happen (a task `ref` formal that can suspend): while any
+ * such alias holds the sequence, its changes notify `contents` through
+ * `notify`, the owner container's contents dependency and notifier (a change
+ * of the nested size is a change of the owner's contents). The lexical owner
+ * gives the pin back through llg_nested_seq_unpin_live. */
+void* llg_nested_seq_bind_live(llg_value_t* value, llg_nested_seq_t** pin,
+                               sv4_t* contents, llg_container_notify_fn notify);
+void llg_nested_seq_unpin_live(void* pin);
 /* One level of an index path below slot `owner`. `value_at` gives the
  * element of a sequence of values, NULL for an invalid index, a null or
  * packed sequence or another kind of slot. A sequence of packed elements

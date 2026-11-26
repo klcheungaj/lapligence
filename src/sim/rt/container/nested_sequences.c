@@ -288,6 +288,50 @@ void* llg_nested_seq_bind(llg_value_t* value, llg_nested_seq_t** pin) {
     return &seq->array;
 }
 
+/* Point the change notification of `seq`'s storage at `contents` through
+ * `notify` (NULL, NULL: none, the default of a nested sequence). */
+static void llg_nested_seq_link(llg_nested_seq_t* seq, sv4_t* contents,
+                                llg_container_notify_fn notify) {
+    switch (seq->kind) {
+        case LLG_NESTED_SEQ_DYN:
+            seq->array.dyn.contents_dependency = contents;
+            seq->array.dyn.shape_dependency = contents;
+            seq->array.dyn.notify = notify;
+            break;
+        case LLG_NESTED_SEQ_QUEUE:
+            seq->array.queue.contents_dependency = contents;
+            seq->array.queue.shape_dependency = contents;
+            seq->array.queue.notify = notify;
+            break;
+        case LLG_NESTED_SEQ_DYN_VALUES:
+            seq->array.dyn_values.contents_dependency = contents;
+            seq->array.dyn_values.shape_dependency = contents;
+            seq->array.dyn_values.notify = notify;
+            break;
+        default:
+            seq->array.queue_values.contents_dependency = contents;
+            seq->array.queue_values.shape_dependency = contents;
+            seq->array.queue_values.notify = notify;
+            break;
+    }
+}
+
+void* llg_nested_seq_bind_live(llg_value_t* value, llg_nested_seq_t** pin,
+                               sv4_t* contents, llg_container_notify_fn notify) {
+    void* storage = llg_nested_seq_bind(value, pin);
+    llg_nested_seq_t* seq = *pin;
+    if (seq->publishers == UINT32_MAX) llg_container_fatal("nested sequence alias overflow");
+    if (seq->publishers++ == 0) llg_nested_seq_link(seq, contents, notify);
+    return storage;
+}
+
+void llg_nested_seq_unpin_live(void* pin) {
+    llg_nested_seq_t** owner = pin;
+    if (!*owner) return;
+    if (--(*owner)->publishers == 0) llg_nested_seq_link(*owner, NULL, NULL);
+    llg_nested_seq_unpin(pin);
+}
+
 void llg_nested_seq_unpin(void* pin) {
     llg_nested_seq_t** owner = pin;
     if (!*owner) return;
@@ -334,9 +378,12 @@ static int32_t llg_nested_seq_store(llg_value_t* target, llg_seq_view_t source) 
     }
     int32_t outer = llg_nested_seq_changes;
     llg_nested_seq_changes = 0;
+    /* A live alias's forwarding (llg_nested_seq_bind_live) comes back
+     * after the assignment; the owner publishes the assignment itself. */
+    llg_container_notify_fn forward = *notify;
     *notify = llg_nested_seq_note_change;
     llg_nested_seq_assign(seq, source);
-    *notify = NULL;
+    *notify = forward;
     int32_t changed = llg_nested_seq_changes != 0;
     llg_nested_seq_changes = outer;
     /* Emptied and unaliased: back to the null default. */

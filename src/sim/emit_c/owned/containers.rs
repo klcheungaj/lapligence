@@ -392,6 +392,7 @@ impl Frame<'_, '_> {
             root,
             items,
             container,
+            live,
         } = operation
         {
             if !matches!(root, IrValueItemRoot::Element(_)) {
@@ -414,14 +415,28 @@ impl Frame<'_, '_> {
                 _ => self.value_item_root(root, items)?,
             };
             self.pending_touches.truncate(touches);
+            // A live alias forwards its changes to the waiters of the
+            // container whose element it binds until it is unpinned.
+            let owner = match (live, root) {
+                (
+                    true,
+                    IrValueItemRoot::Element(IrChandleExpr::ContainerElement { container, .. }),
+                ) => Some(self.container_name(*container)?),
+                (true, _) => return Err("a live alias needs a container element".to_owned()),
+                (false, _) => None,
+            };
+            let suffix = if owner.is_some() { "_live" } else { "" };
             let pin = self.scalar(
                 &format!("{nested}_t**"),
-                format!("({nested}_t**)llg_value_scope_object(llg_value_scope_begin_object(sizeof({nested}_t*), {nested}_unpin))"),
+                format!("({nested}_t**)llg_value_scope_object(llg_value_scope_begin_object(sizeof({nested}_t*), {nested}_unpin{suffix}))"),
             );
-            let storage = self.scalar(
-                &format!("{ty}*"),
-                format!("({ty}*){nested}_bind({slot}, {pin})"),
-            );
+            let bind = match owner {
+                Some(owner) => format!(
+                    "{nested}_bind_live({slot}, {pin}, {owner}.contents_dependency, {owner}.notify)"
+                ),
+                None => format!("{nested}_bind({slot}, {pin})"),
+            };
+            let storage = self.scalar(&format!("{ty}*"), format!("({ty}*){bind}"));
             self.containers.insert(*container, format!("(*{storage})"));
             return Ok(());
         }

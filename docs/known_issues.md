@@ -653,10 +653,11 @@ result (`f(...).inner`; scalar members such as `f(...).s` work); native outputs
 bound inside an expression (call them as a statement instead); record ports
 whose type has a built-in semaphore, mailbox or process member (those handles
 publish no change marker) or a chandle member (chandle ports themselves are
-illegal, SV 6.14, and value links carry no chandle leaf); an automatic record declared in a procedural block that a `join_any` or
-`join_none` fork can keep live while the block is entered again (see
-[Automatic block records captured by a fork that runs
-again](#automatic-block-records-captured-by-a-fork-that-runs-again)); a
+illegal, SV 6.14, and value links carry no chandle leaf); an automatic
+record of lexical columns (a member array of 16 or more cells) that a fork
+branch names, in a procedural block or a subroutine (it has no fork frame
+form); a wait in a fork branch on an automatic record the branch shares
+while another process stores into it (a record publishes no change); a
 member default whose value is itself a record with native members (its
 frontend constant is not captured). Tagged unions with real, string, record or
 class-handle members execute as module, static and subroutine values
@@ -709,8 +710,8 @@ An addressed-container operand for container members of elements (in place
 of statement staging); a direct run-time item index
 for member selects of subroutine records, whose elements share one value; a
 commit-time tag guard on queued
-native writes for tagged-union member NBAs; and per-activation native
-roots for forked automatic block records, strings and handles.
+native writes for tagged-union member NBAs; a fork frame form for
+column records; and a change marker for automatic records a fork shares.
 
 ### Reproduce
 
@@ -4323,66 +4324,24 @@ cancellation and a bound).
 Open a file with a module, send `textDocument/didChange` that adds a port to it, and
 `textDocument/documentSymbol`.
 
-## Fixed arrays of containers: task references and row spacing
+## Fixed arrays of containers: row spacing
 
-**Status:** open; a task `ref` actual rejects with a located diagnostic
-(CODEGEN-001).
-
-### Symptom
-
-For a fixed array of queues or dynamic arrays (`int q[2][$]`), an element
-passed to a `ref` formal of a task is refused ("a queue or dynamic array
-nested in a container element as the ref actual of `t` is not supported");
-a function's `ref` formal takes it. A two-dimensional fixed array of queues
-prints `%p` without the space after its inner closing braces that another
-implementation prints (white space is implementation dependent, 21.2.1.7).
-
-### Cause
-
-The element is bound to an alias of its storage for the statement, which
-publishes its changes to the array when the statement ends; a task that
-suspends would hide them from waiters until it returns. The `%p` space
-follows the type of the whole array only (decision S24-D2).
-
-### Intended direction
-
-Let changes through the alias publish to the array as they happen, then
-accept task `ref` actuals.
-
-### Reproduce
-
-`int q[2][$]; task automatic t(ref int x[$]); #1 x.push_back(1); endtask
-initial t(q[0]);`
-
-## Automatic block records captured by a fork that runs again
-
-**Status:** open; rejected with a located diagnostic (CODEGEN-001).
+**Status:** open; implementation-dependent white space (decision S24-D2).
 
 ### Symptom
 
-An automatic unpacked record with string, real, handle or container members
-declared in a procedural block and read by a `join_none`/`join_any` fork
-while the block runs again ("automatic record `r` ... can be live in two
-activations through a `join_any`/`join_none` fork that runs again") is
-refused. Automatic block strings, class handles, chandles, virtual
-interfaces and events in the same position are locals of each activation and
-work ([fixture](../tests/fixtures/sim/feature_completion/ki_block_activation_locals/readme.md)),
-as do integral, real and container automatics and records of a subroutine
-activation.
+A two-dimensional fixed array of queues prints `%p` without the space after
+its inner closing braces that another implementation prints (white space is
+implementation dependent, 21.2.1.7).
 
 ### Cause
 
-A block record is leaf model storage collected with its scope (one set of
-leaves per declaration, which the waveform table also names), not one per
-activation. The activation form of a native record (a native value in a
-shared fork frame) exists only for subroutine bodies.
+The `%p` space follows the type of the whole array only (decision S24-D2).
 
 ### Intended direction
 
-Give such a record the subroutine native-value activation storage in the
-process body, declared at block entry and shared through the fork frame like
-a subroutine record.
+None planned while the spacing stays implementation dependent.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_007/bad_block_record_fork.sv`.
+`int q[2][$]; initial begin q[1].push_back(1); $display("%p", q); end`

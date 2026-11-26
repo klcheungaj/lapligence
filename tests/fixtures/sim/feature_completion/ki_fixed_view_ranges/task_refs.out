@@ -1,0 +1,13 @@
+1 in task size=1
+1 woke size=1 '{1} 
+1 d grew '{0, 0, 9} 
+2 woke size=2 '{5, 2} 
+2 woke q[1][0]=5
+2 sq size=2 '{"xx", "x"} 
+3 after '{5, 2}  '{"xx", "x"}  '{0, 0, 9} 
+4 first of two '{1} 
+5 second of two '{1, 2} 
+6 class woke '{1} 
+7 in task size=2
+7 local woke '{1} 
+9 local after '{5, 2} 

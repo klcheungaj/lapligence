@@ -1,0 +1,18 @@
+A alate 0 1.5 '{0, 7} 
+A' 10
+A alate 1 1.5 '{1, 7} 
+A' 11
+A alate 2 1.5 '{2, 7} 
+A' 12
+ref go 5 0
+B joined go! 5
+B after go!
+ref go 5 0
+B joined go! 5
+B after go!
+C changed2
+C changed2
+D d 0
+D d 1
+E e 19
+E e 21

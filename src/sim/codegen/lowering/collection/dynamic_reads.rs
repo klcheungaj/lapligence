@@ -757,7 +757,13 @@ impl Codegen<'_> {
         let scope = match self.enclosing_func_task(declaration) {
             Some(function) => function,
             None => {
-                let mut scope = declaration;
+                // A block record's `Var` hangs on a scope block outside the
+                // statement tree; its declaration statement is in it.
+                let mut scope = self
+                    .block_activation_locals
+                    .get(&declaration)
+                    .copied()
+                    .unwrap_or(declaration);
                 while let Some(parent) = self.node(scope).parent {
                     if matches!(self.kind(parent), NodeKind::ModuleInst { .. }) {
                         break;

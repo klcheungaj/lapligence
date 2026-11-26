@@ -7,7 +7,10 @@
 //! comparison lowering apply unchanged. Each declaration of each instance owns
 //! its leaves. Static records keep their value and initialize once in the
 //! static schedule (SV 6.21, 10.5); automatic records are reset to their
-//! default-uninitialized value and initialized at every block entry.
+//! default-uninitialized value and initialized at every block entry. An
+//! automatic record that a fork can keep live while its block is entered
+//! again is a native value of each activation instead, as a subroutine
+//! record is (`block_activation_records`).
 use super::record_defaults::LeafDefault;
 use super::*;
 use crate::core::db::JoinKind;
@@ -180,9 +183,20 @@ impl Codegen<'_> {
                 format!("automatic record `{name}` in `{path}` has no declaration statement")
             })?;
             if self.concurrent_block_activation(statement, declaration) {
-                return Err(format!(
-                    "automatic record `{name}` in `{path}` can be live in two activations through a `join_any`/`join_none` fork that runs again; this is not supported"
-                ));
+                // Like a subroutine record: a native value of each
+                // activation, declared at its statement and shared with the
+                // fork's branches through their frame.
+                let inst = self.inst;
+                let Some(value) = self.native_storage_for(inst, declaration, true)? else {
+                    return Err(format!(
+                        "automatic record `{name}` in `{path}` can be live in two activations through a `join_any`/`join_none` fork that runs again; a record of this type is not supported there"
+                    ));
+                };
+                self.native_value_layouts.insert(value, declaration);
+                self.block_activation_records.insert(declaration, value);
+                self.block_activation_locals.insert(declaration, statement);
+                self.native_roots.insert(declaration, value);
+                return Ok(());
             }
         }
         let scope = self.block_storage_scope(path, declaration);

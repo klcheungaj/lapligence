@@ -685,9 +685,19 @@ impl Codegen<'_> {
                         .is_some_and(|container| self.model.containers[container.ir].activation))
                     // Shared activation records and containers live in a
                     // fork frame.
-                    && !self.shared_locals.contains(&target);
-                if activation && !self.is_ref_formal(target) && !self.node_is_within(target, branch)
-                {
+                    && !self.shared_locals.contains(&target)
+                    // Automatic column records have no fork frame form.
+                    || self.activation_records.contains_key(&target)
+                        && self.db.variable_lifetime(target) == VariableLifetime::Automatic;
+                // A block record of each activation whose declaration
+                // statement is in the branch is the branch's own (the
+                // frontend hangs its `Var` on an outer block).
+                let own = self.node_is_within(target, branch)
+                    || self
+                        .block_activation_locals
+                        .get(&target)
+                        .is_some_and(|statement| self.node_is_within(*statement, branch));
+                if activation && !self.is_ref_formal(target) && !own {
                     return Some(self.node(target).name.clone());
                 }
             }
@@ -767,6 +777,13 @@ impl Codegen<'_> {
                     .map(|value| (node, *value))
             })
             .collect();
+        // Block records of each activation stay named for the process
+        // bodies lowered after this subroutine.
+        self.native_roots.extend(
+            self.block_activation_records
+                .unordered()
+                .map(|(node, value)| (*node, *value)),
+        );
         // A method names the native record properties of its class and its
         // bases through `this` (SIM-011).
         if let Some(class) = self.class_method_owner(function) {

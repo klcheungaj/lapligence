@@ -193,9 +193,14 @@ declared in process blocks get the same leaf storage, collected per
 declaration and instance with the scope (`collection/block_records.rs`): static
 ones initialize in the static schedule, automatic ones are reset and
 initialized at their declaration statement, and an automatic one that a
-`join_any`/`join_none` fork could keep live across re-entry rejects
+`join_any`/`join_none` fork could keep live across re-entry
 (`concurrent_block_activation`: an enclosing detached fork that runs again,
-or a block that runs again starting one that reads it). Block-declared
+or a block that runs again starting one that reads it) is instead a native
+value of each activation (`block_activation_records`, named through
+`native_roots`), declared at its statement and shared through the fork frame
+like a subroutine record. Waits on it follow the subroutine rule
+(`reject_shared_automatic_records`); a column record named by a fork branch
+rejects (`native_activation_capture`). Block-declared
 strings, chandles, class handles and virtual interfaces: `collection/block_natives.rs`
 module docs; they resolve only by declaration identity. Native record leaves without a declaration
 initializer take their type's member defaults (`collection/record_defaults.rs`;
@@ -259,7 +264,10 @@ lexical container without a copy (`stage_element_members`):
 element's own storage and pins it for the statement, so every container
 operation applies unchanged, each element is located once and two names of
 one element share its storage; `TouchContents` publishes a change to the
-owner after the statement. Deeper levels resolve once the level above has
+owner after the statement. A queue or dynamic array an element holds whole,
+passed to a task's `ref` formal, is a `live` alias that also forwards each
+change to the owner's waiters while bound (`task_ref_actual`), since the
+task can suspend before the statement ends. Deeper levels resolve once the level above has
 its alias (`stage_below_aliases`). An expression outside such a
 statement (a condition, loop bound, `foreach` array, declaration initializer
 or timed assignment value) binds the member before each

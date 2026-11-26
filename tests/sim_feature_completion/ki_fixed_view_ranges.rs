@@ -50,10 +50,12 @@ fn elements_are_compared_concatenated_and_passed_by_reference_whole() {
 }
 
 #[test]
-fn a_task_reference_to_an_element_is_explicit() {
-    sim_cli::reject_case(
+fn elements_passed_to_task_references_publish_as_they_change() {
+    sim_cli::run_case_backend_parity(
         SUITE,
-        "neg_task_ref",
-        "a queue or dynamic array nested in a container element as the ref actual of `t` is not supported; pass a variable at tb:11:10",
+        "task_refs",
+        include_str!("../fixtures/sim/feature_completion/ki_fixed_view_ranges/task_refs.out"),
+        &[],
+        &[],
     );
 }

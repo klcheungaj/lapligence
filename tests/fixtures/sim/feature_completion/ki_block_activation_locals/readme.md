@@ -1,4 +1,4 @@
-# Automatic block strings, handles and events captured by a fork that runs again
+# Automatic block strings, handles, events and records captured by a fork that runs again
 
 An automatic string, class handle, virtual interface or event declared in a
 procedural block and read by a `join_none`/`join_any` branch while the block
@@ -6,8 +6,15 @@ runs again was refused ("can be live in two activations through a
 `join_any`/`join_none` fork that runs again"): it was one model object per
 declaration. Such a variable is now a local of each activation of its
 block, and the fork branches of that activation share it like an integral
-automatic. Automatic block records keep the located error
-([known issue](../../../../../docs/known_issues.md#automatic-block-records-captured-by-a-fork-that-runs-again)).
+automatic. An automatic block record with string, real, handle or container
+members in that position (`records.sv`) is a native value of each
+activation, as a subroutine record is: declared at its statement and shared
+through the fork frame. A branch that waits on such a record while another
+process stores into it is rejected, as for a subroutine record (a record
+publishes no change), and so is a fork branch that names a record of
+lexical columns (a member array of 16 or more cells), which has no fork frame
+form (`sim_007/bad_block_record_fork.sv`,
+`sim_007/bad_block_column_record_fork.sv`).
 
 The task module (`sim_feature_completion/ki_block_activation_locals.rs`)
 runs the fixture through the public CLI in both HDL optimizer modes and on
@@ -44,3 +51,17 @@ industry-standard simulator, which gives every line. Clause lines are from
   actual writes the shared string (`AB0`); `wait (z == "go")` wakes on the
   parent's write. The loop variable `i` is shared too: `go 1`, `go 2`.
 - (E) A fork's own declaration in a loop: `w0`, `w1`.
+
+`records.sv`:
+
+- (A) A loop body record with string, real and queue members: each
+  iteration's branch reads the parent's writes made after the fork
+  (`alate`, `'{i, 7}`) and its own writes (`A' 10`).
+- (B) A record passed to a task's `ref` formal by a detached branch, and read
+  by a joined fork nested in it: the task's write is the parent's (`go!`).
+- (C) A record declared in a `join_none` branch that runs again is that
+  branch's own, shared with its nested fork: `changed2` (the for-loop
+  variable is shared too).
+- (D) Whole-record copies out of and into the shared record.
+- (E) An `always @(posedge clk)` block's record: each edge's branch reads
+  that edge's value (`E e 19`, `E e 21`).

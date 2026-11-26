@@ -1097,10 +1097,16 @@ pub enum IrContainerStmt {
     /// array, so it stays valid if the element is deleted or replaced while
     /// the statement runs. A read locator of a missing element binds an
     /// empty array.
+    ///
+    /// A `live` alias (a queue or dynamic array an element of container
+    /// storage holds whole, bound to a `ref` formal of a task) also forwards
+    /// each change it makes to the waiters of that container while it is
+    /// bound, since the task can suspend before the statement ends.
     BindElement {
         root: IrValueItemRoot,
         items: Vec<u32>,
         container: usize,
+        live: bool,
     },
     /// Publish a change of `container` made through an alias of one of its
     /// nested elements.
@@ -2187,12 +2193,26 @@ impl IrContainerStmt {
                 root,
                 items,
                 container,
+                live,
             } => {
                 let container = container_kind(model, *container, None)?;
                 if !container.activation {
                     return Err(IrValidationError::new(
                         "container",
                         "only activation containers alias a nested element",
+                    ));
+                }
+                if *live
+                    && (!items.is_empty()
+                        || matches!(container.kind, IrContainerKind::Associative { .. })
+                        || !matches!(
+                            root,
+                            IrValueItemRoot::Element(IrChandleExpr::ContainerElement { .. })
+                        ))
+                {
+                    return Err(IrValidationError::new(
+                        "container",
+                        "a live alias binds a queue or dynamic array an element of container storage holds whole",
                     ));
                 }
                 let mut item = Some(root.element(model, string_return)?);

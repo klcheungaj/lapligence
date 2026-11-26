@@ -494,7 +494,12 @@ fn procedural_block_record_boundaries_are_rejected_explicitly() {
     sim_cli::reject_case(
         SUITE,
         "bad_block_record_fork",
-        "bad_block_record_fork.sv:9:27 automatic record `r` in `tb` can be live in two activations through a `join_any`/`join_none` fork that runs again; this is not supported",
+        "bad_block_record_fork.sv:15:27 automatic record `r` shared with a fork cannot be observed by a wait or event expression in `tb`",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "bad_block_column_record_fork",
+        "bad_block_column_record_fork.sv:11:17 fork branch in `tb` references native record or container `r` of the enclosing activation",
     );
     sim_cli::reject_case(
         SUITE,

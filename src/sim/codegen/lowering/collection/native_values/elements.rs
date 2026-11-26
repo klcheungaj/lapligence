@@ -1950,10 +1950,7 @@ impl Codegen<'_> {
             // A member passed to an output, inout or ref formal is written
             // after the call. A nested element passed whole to an
             // input formal is read once.
-            NodeKind::FuncCall {
-                callee, is_task, ..
-            } => {
-                let is_task = *is_task;
+            NodeKind::FuncCall { callee, .. } => {
                 let directions: Vec<DbDirection> = callee
                     .map(|callee| {
                         self.node(callee)
@@ -1976,8 +1973,9 @@ impl Codegen<'_> {
                     }
                     // A nested element passed whole to an output or inout
                     // formal: the call copies the alias in and out. A `ref`
-                    // formal takes only an associative alias; the actual of
-                    // any other rejects where the call is lowered.
+                    // formal binds the alias (a live one for a task, see
+                    // `stage_nested_elements`); a form the call cannot take
+                    // rejects where the call is lowered.
                     let by_reference = direction == Some(DbDirection::Ref);
                     if matches!(direction, Some(DbDirection::Output | DbDirection::Inout))
                         || by_reference
@@ -1992,11 +1990,7 @@ impl Codegen<'_> {
                             _ => child,
                         };
                         if let Some(selection) = self.nested_element_selection(actual) {
-                            let live =
-                                by_reference && is_task && !self.selects_associative(&selection);
-                            if let (ElementSelector::Indices(indices), false) =
-                                (&selection.selector, live)
-                            {
+                            if let ElementSelector::Indices(indices) = &selection.selector {
                                 for index in indices.clone() {
                                     self.collect_staged_members(index, false, out, nested);
                                 }
@@ -2366,6 +2360,7 @@ impl Codegen<'_> {
                 root: locator(self, member.mutated)?,
                 items: leaf.items.clone(),
                 container: ir,
+                live: false,
             })));
             if member.mutated {
                 after.push(IrStmt::Container(Box::new(IrContainerStmt::TouchContents(
@@ -2456,12 +2451,22 @@ impl Codegen<'_> {
                     write,
                 }))
             };
+            // A queue or dynamic array a task's `ref` formal takes is changed
+            // while the task can suspend: its changes reach the container's
+            // waiters as they happen, not only after the statement.
+            let live = group.mutated
+                && !matches!(
+                    self.model.containers[ir].kind,
+                    IrContainerKind::Associative { .. }
+                )
+                && group.nodes.iter().any(|node| self.task_ref_actual(*node));
             // The array is used in place: a copy would cost its size at
             // every statement and lose a change made through another name.
             before.push(IrStmt::Container(Box::new(IrContainerStmt::BindElement {
                 root: locator(self, group.mutated)?,
                 items: Vec::new(),
                 container: ir,
+                live,
             })));
             if group.mutated {
                 after.push(IrStmt::Container(Box::new(IrContainerStmt::TouchContents(
@@ -2470,6 +2475,57 @@ impl Codegen<'_> {
             }
         }
         Ok(())
+    }
+
+    /// Whether `actual` is the actual of a `ref` formal of a task call (the
+    /// frontend may wrap it in an assignment).
+    fn task_ref_actual(&self, actual: NodeId) -> bool {
+        let mut argument = actual;
+        let mut call = self.node(actual).parent;
+        if let Some(parent) = call.filter(|parent| {
+            matches!(
+                self.kind(*parent),
+                NodeKind::Expr(ExprKind::Operation {
+                    op: Operation::Assignment,
+                    ..
+                })
+            )
+        }) {
+            argument = parent;
+            call = self.node(parent).parent;
+        }
+        let Some(call) = call else {
+            return false;
+        };
+        let NodeKind::FuncCall {
+            callee: Some(callee),
+            is_task: true,
+            ..
+        } = self.kind(call)
+        else {
+            return false;
+        };
+        let Some(position) = self
+            .call_argument_nodes(call)
+            .iter()
+            .position(|node| *node == argument)
+        else {
+            return false;
+        };
+        self.node(*callee)
+            .children
+            .iter()
+            .filter(|formal| matches!(self.kind(**formal), NodeKind::FuncArg { .. }))
+            .nth(position)
+            .is_some_and(|formal| {
+                matches!(
+                    self.kind(*formal),
+                    NodeKind::FuncArg {
+                        direction: DbDirection::Ref,
+                        ..
+                    }
+                )
+            })
     }
 
     /// Stage `node` when it reads a queue or dynamic array nested in an

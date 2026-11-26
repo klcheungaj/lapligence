@@ -407,9 +407,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   untimed or `#delay` NBAs act on owned elements, and on members of elements
   (decision S07-D4); an element of a fixed array of queues, dynamic or
   associative arrays is also a whole equality operand, an unpacked
-  concatenation item and a function `ref` actual (a task `ref` actual is a
-  [known issue](known_issues.md#fixed-arrays-of-containers-task-references-and-row-spacing),
-  [operands](../tests/fixtures/sim/feature_completion/ki_fixed_view_ranges/readme.md));
+  concatenation item and a function or task `ref` actual, whose changes
+  reach the array's waiters as they happen
+  ([operands](../tests/fixtures/sim/feature_completion/ki_fixed_view_ranges/readme.md));
   event controls and bit/part selects reach those members,
   and event-controlled NBAs reach record targets (S07-D6).
   Class handles are identity leaves of native records (`r.h.v` reaches the
@@ -536,12 +536,12 @@ Macros, includes and their edition-specific behavior are counted in §11.
   commits after its last event (SIM-014).
   Delayed continuous drivers, automatic monitors and broader aggregate
   combinations remain restricted; automatic
-  procedural-block strings, handles, virtual interfaces and events that a
-  `join_none`/`join_any` fork keeps live while their block runs again are
-  locals of each activation, shared with its branches
-  ([ki_block_activation_locals](../tests/fixtures/sim/feature_completion/ki_block_activation_locals/readme.md)),
-  while block records there reject
-  ([known issue](known_issues.md#automatic-block-records-captured-by-a-fork-that-runs-again));
+  procedural-block strings, handles, virtual interfaces, events and records
+  that a `join_none`/`join_any` fork keeps live while their block runs again
+  are locals of each activation, shared with its branches
+  ([ki_block_activation_locals](../tests/fixtures/sim/feature_completion/ki_block_activation_locals/readme.md));
+  a wait on such a record and a fork naming a record of lexical columns reject
+  ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage));
   class handles and records declared in a `join_none` branch of a function
   belong to the branch and its receiver's properties are reached through the
   captured receiver, while strings declared there stay limited
@@ -1058,10 +1058,15 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Illegal iterator writes reject. Nested traversal takes associative levels
   at any position (`foreach (ad[k, j])`, `foreach (aa[k, j])`), fixed inner
   dimensions, omitted slots (`foreach (w[, j])`), and a selected element
-  (`foreach (aa["k"][j])`). Automatic strings, records and handles declared in a loop body that a
-  `join_none` fork keeps live into the next iteration
-  ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage))
-  reject with explicit diagnostics. SV §§12.7.1, 12.7.3 **[SV-2005]**.
+  (`foreach (aa["k"][j])`). A `join_none`/`join_any` branch shares the
+  loop's one iterator, an integral index or a string key, and reads the value
+  the loop leaves (decision S12-D3,
+  [fixture](../tests/fixtures/sim/feature_completion/ki_foreach_fork_capture/readme.md)).
+  Automatic strings, handles, events and records declared in a loop body
+  that a `join_none` fork keeps live into the next iteration are locals of
+  each activation
+  ([ki_block_activation_locals](../tests/fixtures/sim/feature_completion/ki_block_activation_locals/readme.md)).
+  SV §§12.7.1, 12.7.3 **[SV-2005]**.
 - 🚫 **Procedural assign/deassign** — Every procedural `assign` and
   `deassign` statement, whatever its target (whole, concatenated, real,
   aggregate or non-numeric variables, and local or hierarchical references
@@ -3204,7 +3209,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   member values, writes and `cbValueChange`, packed or unpacked, nested and
   in elements of unpacked arrays of structures (decisions A19-D1..D4).
   Structure objects (ADV-019 family 2): `vpiHighConn` and `vpiPortType` of
-  ports, port bits (`vpiBit`, `vpiPortBit`, by index, decision A19-D93),
+  ports, the sizes of interface, unpacked and string ports (decision
+  A19-D94), port bits (`vpiBit`, `vpiPortBit`, by index, decision A19-D93),
   interface and modport ports whose connections are `vpiRefObj` objects
   with `vpiActual`, `vpiModport`,
   instance arrays (`vpiModuleArray`, `vpiInterfaceArray`, `vpiGateArray`,
