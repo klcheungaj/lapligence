@@ -25,6 +25,9 @@ pub(super) struct RootState {
     pub(super) last_good: Option<Arc<Analysis>>,
     /// The texts of open documents that `last_good` compiled.
     pub(super) analysed_texts: Arc<AnalysedTexts>,
+    /// The identities of the files that `last_good` read through a symbolic
+    /// link, by the path it names them by.
+    pub(super) input_aliases: HashMap<PathBuf, PathBuf>,
     /// Identity of the `last_good` snapshot for the request memoization keys
     /// (`request_cache`).  Stamped with a fresh process-global value exactly
     /// where a commit replaces or clears `last_good`, so any input change that
@@ -694,6 +697,7 @@ impl Backend {
                 published_digests: BTreeMap::new(),
                 all_diagnostics: BTreeMap::new(),
                 diagnosed_analysed_texts: true,
+                input_aliases: HashMap::new(),
                 generation: 0,
                 pending_parent_id: None,
                 scheduler: SchedulerState::default(),
@@ -850,17 +854,24 @@ impl Backend {
         Some((root, real, paths))
     }
 
-    /// The URI that the client knows for one that an analysis names.
+    /// The URI that the client knows for one that an analysis names: that of
+    /// the open document which is the file, whatever spelling the analysis
+    /// read it by.
     pub(super) fn map_uri(state: &BackendState, uri: &Url) -> Url {
-        uri.to_file_path()
-            .ok()
-            .and_then(|path| {
-                let real = state
-                    .roots
-                    .values()
-                    .find_map(|root| root.shadow.real_path(&path))?;
-                Self::path_to_uri(&real)
-            })
+        let Ok(path) = uri.to_file_path() else {
+            return uri.clone();
+        };
+        let real = state
+            .roots
+            .values()
+            .find_map(|root| root.shadow.real_path(&path));
+        let named = real.as_deref().unwrap_or(&path);
+        if let Some(document) = workspace::normalize_absolute_path(named)
+            .and_then(|named| state.document_of_file(&named).cloned())
+        {
+            return document;
+        }
+        real.and_then(|real| Self::path_to_uri(&real))
             .unwrap_or_else(|| uri.clone())
     }
 

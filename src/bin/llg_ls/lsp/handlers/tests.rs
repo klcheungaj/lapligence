@@ -661,6 +661,7 @@ fn oversized_compile_job_publishes_limit_and_retains_last_good_snapshot() {
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::new(),
             diagnosed_analysed_texts: true,
+            input_aliases: HashMap::new(),
             generation: 1,
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
@@ -1157,6 +1158,7 @@ fn commit_job_publishes_fileless_diagnostics_on_an_open_compiled_file() {
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::new(),
             diagnosed_analysed_texts: true,
+            input_aliases: HashMap::new(),
             generation: 1,
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
@@ -1276,6 +1278,7 @@ fn commit_job_serves_features_from_partial_analyses() {
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::new(),
             diagnosed_analysed_texts: true,
+            input_aliases: HashMap::new(),
             generation: 1,
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
@@ -1444,6 +1447,7 @@ fn commit_job_publishes_closed_files_and_suppresses_unchanged_payloads() {
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::new(),
             diagnosed_analysed_texts: true,
+            input_aliases: HashMap::new(),
             generation: 1,
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
@@ -1751,7 +1755,12 @@ fn related_diagnostic_uris_do_not_leak_shadow_paths() {
         data: None,
     }];
 
-    remap_related_diagnostic_uris(&mut diagnostics, &shadow);
+    remap_related_diagnostic_uris(
+        &mut diagnostics,
+        &shadow,
+        &OpenTexts::default(),
+        &HashMap::new(),
+    );
 
     let related = &diagnostics[0].related_information.as_ref().unwrap()[0];
     assert_eq!(
@@ -2282,6 +2291,7 @@ fn watcher_options_cover_config_sources_and_include_deps() {
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::new(),
             diagnosed_analysed_texts: true,
+            input_aliases: HashMap::new(),
             generation: 0,
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
@@ -2356,6 +2366,7 @@ fn reload_keeps_last_valid_config_on_malformed_reload() {
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::new(),
             diagnosed_analysed_texts: true,
+            input_aliases: HashMap::new(),
             generation: 0,
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
@@ -2487,6 +2498,7 @@ fn dep_dependents_maps_every_dependent_root() {
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::new(),
             diagnosed_analysed_texts: true,
+            input_aliases: HashMap::new(),
             generation: 0,
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
@@ -2512,6 +2524,7 @@ fn dep_dependents_maps_every_dependent_root() {
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::new(),
             diagnosed_analysed_texts: true,
+            input_aliases: HashMap::new(),
             generation: 0,
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
@@ -2706,6 +2719,7 @@ fn two_root_state_with_shared_file(
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::from([(shared.to_path_buf(), vec![diag_a])]),
             diagnosed_analysed_texts: true,
+            input_aliases: HashMap::new(),
             generation: 1,
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
@@ -2731,6 +2745,7 @@ fn two_root_state_with_shared_file(
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::from([(shared.to_path_buf(), vec![diag_b])]),
             diagnosed_analysed_texts: true,
+            input_aliases: HashMap::new(),
             generation: 1,
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
@@ -3000,6 +3015,7 @@ fn single_root_state(root: &Path, discovered: Vec<PathBuf>) -> BackendState {
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::new(),
             diagnosed_analysed_texts: true,
+            input_aliases: HashMap::new(),
             generation: 1,
             pending_parent_id: None,
             scheduler: SchedulerState::default(),

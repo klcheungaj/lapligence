@@ -657,6 +657,13 @@ follows; the results of a cancelled analysis are dropped and those of the one
 before it stay. After three cancelled analyses in a row the next one is left to
 finish, so that saving more often than an analysis takes still shows results.
 
+A file that the client opens through a symbolic link, or by the path that a link
+which the analysis reads resolves to, is the open document: results and
+diagnostics name it as the client does, at the places of its current text. A
+compilation unit opened through a link is compiled as the document only, not also
+as the file that discovery found. Which root owns a document, and so reads its
+unsaved text, still follows its path as written.
+
 The server asks for `textDocument/didSave` notifications (without the text). An
 edit made in a client that sends none is analysed when a watched-file event
 reports its write to the disk. Without such events either, only opening and

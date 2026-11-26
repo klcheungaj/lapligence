@@ -28,6 +28,12 @@ pub(super) struct OpenTexts {
     /// The documents that are files, by path: the analyses name paths, and the
     /// spelling of a URI is the client's.
     uris: HashMap<PathBuf, Url>,
+    /// The same by the identity of the file ([`input_identity`]): an analysis
+    /// may read a document through another spelling (a symbolic link).
+    identities: HashMap<PathBuf, Url>,
+    /// The identities of the documents opened through a symbolic link, by
+    /// path.
+    aliased: HashMap<PathBuf, PathBuf>,
     /// The documents whose latest text exceeds the size limit. The text here is
     /// the last one that did not, which the user no longer sees.
     rejected: HashSet<Url>,
@@ -36,6 +42,14 @@ pub(super) struct OpenTexts {
 impl OpenTexts {
     pub(super) fn insert(&mut self, uri: Url, text: SharedText) {
         if let Some(path) = Backend::uri_to_path(&uri) {
+            // A change keeps the identity of the document.
+            if !self.texts.contains_key(&uri) {
+                let identity = input_identity(&path);
+                self.identities.insert(identity.clone(), uri.clone());
+                if identity != path {
+                    self.aliased.insert(path.clone(), identity);
+                }
+            }
             self.uris.insert(path, uri.clone());
         }
         self.rejected.remove(&uri);
@@ -45,9 +59,36 @@ impl OpenTexts {
     pub(super) fn remove(&mut self, uri: &Url) -> Option<SharedText> {
         if let Some(path) = Backend::uri_to_path(uri) {
             self.uris.remove(&path);
+            let identity = self.aliased.remove(&path).unwrap_or(path);
+            if self.identities.get(&identity) == Some(uri) {
+                self.identities.remove(&identity);
+            }
         }
         self.rejected.remove(uri);
         self.texts.remove(uri)
+    }
+
+    /// The URI of the open document that is the file an analysis read as
+    /// `path`, whose identity is `identity` when it differs from `path`.
+    pub(super) fn document(&self, path: &Path, identity: Option<&PathBuf>) -> Option<&Url> {
+        self.uris
+            .get(path)
+            .or_else(|| self.identities.get(identity.map_or(path, PathBuf::as_path)))
+    }
+
+    /// The identity of open document `path` when it was opened through a
+    /// symbolic link.
+    pub(super) fn aliased(&self, path: &Path) -> Option<&PathBuf> {
+        self.aliased.get(path)
+    }
+
+    /// The identities of open documents `paths` that were opened through a
+    /// symbolic link.
+    pub(super) fn aliased_identities<'a>(
+        &'a self,
+        paths: impl Iterator<Item = &'a PathBuf>,
+    ) -> HashSet<&'a PathBuf> {
+        paths.filter_map(|path| self.aliased.get(path)).collect()
     }
 
     /// The last text of document `uri` within the size limit.
@@ -240,6 +281,34 @@ impl RootState {
 }
 
 impl BackendState {
+    /// The URI of the open document that is the file which an analysis names
+    /// `path`.
+    pub(super) fn document_of_file(&self, path: &Path) -> Option<&Url> {
+        let identity = self
+            .roots
+            .values()
+            .find_map(|root| root.input_aliases.get(path));
+        self.documents.document(path, identity)
+    }
+
+    /// The name by which `analysis`, the last of root `root`, read the file of
+    /// open document `path`, when that is another spelling of it: either went
+    /// through a symbolic link.
+    fn analysed_name(&self, root: &RootState, analysis: &Analysis, path: &Path) -> Option<String> {
+        let identity = self.documents.aliased(path).map_or(path, PathBuf::as_path);
+        let aliases = root
+            .input_aliases
+            .iter()
+            .filter(|(_, target)| target.as_path() == identity)
+            .map(|(name, _)| name.as_path());
+        std::iter::once(identity)
+            .chain(aliases)
+            .filter(|name| *name != path)
+            .find(|name| analysis.compiled_length(name).is_some())
+            .and_then(Path::to_str)
+            .map(str::to_owned)
+    }
+
     /// How the positions that `texts` belong to relate to those of the file
     /// `path` now.
     pub(super) fn placement(&mut self, texts: &AnalysedTexts, path: &Path) -> Placement {
@@ -513,6 +582,11 @@ impl Backend {
         let max_file_bytes = root.descriptor.effective_config().analysis.max_file_bytes;
         let key = root.descriptor.root.clone();
         let served = root.served();
+        // The analysis answers by its own name of the file.
+        let path = served
+            .as_ref()
+            .and_then(|served| state.analysed_name(root, &served.analysis, &real))
+            .unwrap_or(path);
         let placement = match &served {
             Some(served) => state.placement(&served.texts, &real),
             None => Placement::Unknown,

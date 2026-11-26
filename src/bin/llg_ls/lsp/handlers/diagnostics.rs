@@ -1,5 +1,6 @@
 //! Diagnostic identity, publication suppression, and shared-file merging.
 
+use super::positions::OpenTexts;
 use super::*;
 
 /// Rebuild the reverse map from include dependency to dependent roots.
@@ -126,7 +127,15 @@ pub(super) fn merge_shared_file_diagnostics(
         .collect()
 }
 
-pub(super) fn remap_related_diagnostic_uris(diagnostics: &mut [Diagnostic], shadow: &ShadowPaths) {
+/// Name the files of related locations as the client knows them: real paths
+/// instead of staged ones, and the spelling of an open document for a file it
+/// is ([`open_spelling`]).
+pub(super) fn remap_related_diagnostic_uris(
+    diagnostics: &mut [Diagnostic],
+    shadow: &ShadowPaths,
+    documents: &OpenTexts,
+    aliases: &HashMap<PathBuf, PathBuf>,
+) {
     for diagnostic in diagnostics {
         let Some(related) = diagnostic.related_information.as_mut() else {
             continue;
@@ -135,14 +144,30 @@ pub(super) fn remap_related_diagnostic_uris(diagnostics: &mut [Diagnostic], shad
             let Ok(path) = information.location.uri.to_file_path() else {
                 continue;
             };
-            let Some(real) = shadow.real_path(&path) else {
-                continue;
-            };
-            if let Ok(uri) = Url::from_file_path(real) {
-                information.location.uri = uri;
+            let real = shadow.real_path(&path);
+            let named = real.is_some();
+            let real = real.unwrap_or(path);
+            let spelled = open_spelling(documents, aliases, real.clone());
+            if named || spelled != real {
+                if let Ok(uri) = Url::from_file_path(spelled) {
+                    information.location.uri = uri;
+                }
             }
         }
     }
+}
+
+/// The path of the open document that is the file an analysis read as `path`,
+/// whose identity `aliases` has when it differs; `path` for any other file.
+fn open_spelling(
+    documents: &OpenTexts,
+    aliases: &HashMap<PathBuf, PathBuf>,
+    path: PathBuf,
+) -> PathBuf {
+    documents
+        .document(&path, aliases.get(&path))
+        .and_then(Backend::uri_to_path)
+        .unwrap_or(path)
 }
 
 pub(super) fn root_names(state: &BackendState) -> BTreeMap<RootKey, String> {
@@ -505,7 +530,8 @@ impl Backend {
         let mut result = result;
         // What the analysis read of the documents that are open now; the other
         // admitted texts are released here.
-        let snapshots = std::mem::take(&mut result.snapshots);
+        let mut snapshots = std::mem::take(&mut result.snapshots);
+        let aliases = std::mem::take(&mut snapshots.aliases);
         let mut read: BTreeMap<PathBuf, SharedText> = state
             .documents
             .files()
@@ -568,11 +594,14 @@ impl Backend {
             .unwrap_or_default();
         // Full per-real-path diagnostics map (open or closed): feeds both
         // the project-wide publication map and the shared-file aggregation.
+        // An open document has the findings of the file it is.
+        let documents = &state.documents;
         let mut all: BTreeMap<PathBuf, Vec<Diagnostic>> = BTreeMap::new();
         for (path, mut diagnostics) in diagnostics_by_path {
             let path = PathBuf::from(path);
             let real = root.shadow.real_path(&path).unwrap_or(path);
-            remap_related_diagnostic_uris(&mut diagnostics, &root.shadow);
+            let real = open_spelling(documents, &aliases, real);
+            remap_related_diagnostic_uris(&mut diagnostics, &root.shadow, documents, &aliases);
             all.entry(real).or_default().extend(diagnostics);
         }
         for diagnostics in all.values_mut() {
@@ -590,8 +619,9 @@ impl Backend {
             if shared_files.contains(real) {
                 continue;
             }
-            if let Some(uri) = Self::path_to_uri(real) {
-                current.insert(uri, all.get(real).cloned().unwrap_or_default());
+            let real = open_spelling(documents, &aliases, real.clone());
+            if let Some(uri) = Self::path_to_uri(&real) {
+                current.insert(uri, all.get(&real).cloned().unwrap_or_default());
             }
         }
         // Analyzed-but-not-compiled files (e.g. include headers) publish when
@@ -615,6 +645,9 @@ impl Backend {
         // strictly valid still register their resolved include dependencies.
         let snapshot_replaced = result.analysis.is_none() || usable;
         root.diagnosed_analysed_texts = snapshot_replaced;
+        if snapshot_replaced {
+            root.input_aliases = aliases;
+        }
         if result.analysis.is_none() {
             root.last_good = None;
             read.clear();

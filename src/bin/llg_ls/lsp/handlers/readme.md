@@ -15,7 +15,8 @@ Blocking Slang work and filesystem isolation stay in scheduling/staging.
   it. Hover, references, definitions in other documents, symbols, the explorer and the
   token dump answer at the places of the current texts and leave out what has none;
   `prepareRename` and `rename` answer `ContentModified` for an edited document, because
-  an edit elsewhere would change something else.
+  an edit elsewhere would change something else. A document is the file an analysis
+  read by its path or by its identity (a symbolic link either way).
 - `staging`: bounded inputs, private shadow paths and include authorization.
 - `diagnostics`: commits, ticket-ordered publication, deduplication and shared-file
   aggregation. Digests and unions compare the places of the analysed texts; a payload

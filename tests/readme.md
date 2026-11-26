@@ -884,6 +884,8 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   precedence and longest-root ownership transfer on workspace add/remove.
   Unsaved sources/headers are authoritative; reject include escapes, use
   read-only staging and create no compiler artifacts in the workspace CWD.
+  Results of files read or opened through symbolic links land on the open
+  documents (`lsp_stdio/workspace.rs`, Unix only).
 - Shared-file diagnostics deduplicate identical findings and label distinct ones
   `[<root-name>]`. Owner-wins tokens/hover labeling; publish unopened files,
   watched fixes and stale-diagnostic clearing. New lint rules need triggering and
