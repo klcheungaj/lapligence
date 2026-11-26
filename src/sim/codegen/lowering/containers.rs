@@ -10,7 +10,7 @@ mod assignments;
 mod callbacks;
 mod class_upcast;
 mod equality;
-mod fixed_arrays;
+pub(super) mod fixed_arrays;
 mod fixed_cells;
 pub(in crate::sim::codegen) use fixed_cells::FIXED_CELL_UNROLL_LIMIT;
 mod fixed_patterns;

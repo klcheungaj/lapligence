@@ -1,6 +1,7 @@
 //! Events.
 
 use super::*;
+use crate::sim::codegen::lowering::containers::fixed_arrays::P30PatternSource;
 
 impl<'a> Codegen<'a> {
     // ── Signal resolution ──────────────────────────────────────────────────
@@ -74,6 +75,11 @@ impl<'a> Codegen<'a> {
             elements,
         ));
         self.event_arrays.insert(declaration, array);
+        if let Some(initializer) = metadata.initializer() {
+            self.reserve_initializer_order(declaration);
+            self.event_initializers
+                .push((declaration, initializer, path.to_owned()));
+        }
         Ok(())
     }
 
@@ -111,13 +117,19 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
-    /// The assignment of its initializer to a scalar event variable (SV 6.17).
+    /// The assignment of its initializer to a scalar event variable (SV 6.17),
+    /// or to each element of a static event array.
     pub(in super::super) fn event_initializer(
         &mut self,
         path: &str,
         declaration: NodeId,
         initializer: NodeId,
     ) -> Result<IrStmt, String> {
+        if self.event_arrays.contains_key(&declaration) {
+            return self
+                .event_array_initializer(path, declaration, initializer)
+                .map_err(|error| self.locate_error(initializer, error));
+        }
         let target = EventTarget {
             declaration,
             indices: Vec::new(),
@@ -128,6 +140,63 @@ impl<'a> Codegen<'a> {
             target: self.event_ref_of(&target, path)?,
             source: self.lower_event_source(path, initializer)?,
         })
+    }
+
+    /// The element assignments of the initializer of static event array
+    /// `declaration` (SV 6.17, 10.9): an assignment pattern of events, or a
+    /// whole static event array, in declaration (left-to-right) order.
+    fn event_array_initializer(
+        &mut self,
+        path: &str,
+        declaration: NodeId,
+        initializer: NodeId,
+    ) -> Result<IrStmt, String> {
+        let dims = self
+            .db
+            .event_array_meta(declaration)
+            .map(|metadata| {
+                metadata
+                    .dimensions()
+                    .iter()
+                    .copied()
+                    .collect::<Option<Vec<_>>>()
+            })
+            .flatten()
+            .ok_or_else(|| format!("event array initializer in `{path}` has unresolved bounds"))?;
+        let mut statements = Vec::new();
+        for (linear, source) in self
+            .p30_pattern_values(path, initializer, &dims)?
+            .into_iter()
+            .enumerate()
+        {
+            let element = |codegen: &Self, owner: NodeId, linear: u64| {
+                codegen
+                    .event_elements
+                    .get(&(owner, linear))
+                    .map(|info| IrEventRef::Static(info.ir))
+            };
+            let linear = u64::try_from(linear).map_err(|_| "event array is too large")?;
+            let target = element(self, declaration, linear)
+                .ok_or_else(|| format!("event array initializer in `{path}` has too many items"))?;
+            let source = match source {
+                P30PatternSource::Leaf(leaf) => self.lower_event_source(path, leaf)?,
+                P30PatternSource::Element { node, index, .. } => {
+                    let array = self
+                        .event_target_of(node)
+                        .filter(|source| source.indices.is_empty() && source.via.is_none())
+                        .map(|source| source.declaration)
+                        .filter(|source| self.event_arrays.contains_key(source));
+                    let index = u64::try_from(index).map_err(|_| "event array is too large")?;
+                    Some(array.and_then(|array| element(self, array, index)).ok_or_else(|| {
+                        format!(
+                            "this event array initializer item in `{path}` is not supported: use an assignment pattern of events or a whole static event array"
+                        )
+                    })?)
+                }
+            };
+            statements.push(IrStmt::EventAssign { target, source });
+        }
+        Ok(IrStmt::Block(statements))
     }
 
     /// The event whose synchronization object `node` names as a value;

@@ -1920,31 +1920,6 @@ Pass a native record's leaf markers with the record value.
 `neg_ref_wait_record_property_real.sv`;
 `sim_008/record_ref_interface_element_waits.sv` with `-D N=16`.
 
-## Initializers of arrays of events
-
-**Status:** open.
-
-### Symptom
-
-A declaration initializer of a fixed array, dynamic array, queue or associative
-array of events (`event ea[2] = '{a, null}`, `event q[$] = '{a, b}`) stops the
-import: "named-event arrays cannot have declaration initializers" (ELAB-002,
-without a location). Initializers of scalar events and assignments of elements
-work.
-
-### Cause
-
-`CoreDb` records an array of events without an initializer and refuses one.
-
-### Intended direction
-
-Keep the initializer and lower it as assignments of the elements, like that of
-a scalar event (6.8).
-
-### Reproduce
-
-`event a; event ea[2] = '{a, null}; initial $display("%b", ea[0] == a);`
-
 ## Level waits on the identity of an event variable reject
 
 **Status:** rejected with a located diagnostic (no longer a hang). Class event
@@ -4261,3 +4236,34 @@ was compared, and leave those whose place is gone where they were.
 
 Save a file with an error whose analysis takes a second, insert a line above the
 error within that second and read `textDocument/publishDiagnostics`.
+
+## Event arrays declared in subroutines and fixed event arrays in blocks
+
+**Status:** open; rejected with located diagnostics (CODEGEN-001, CODEGEN-009).
+
+### Symptom
+
+`task automatic t(); event te[2] = '{a, b}; ... endtask` (any event array of a
+subroutine) reports "subroutine event `te` ... with unpacked dimensions is not
+supported"; a fixed event array declared in a procedural block reports
+"unsupported procedural loop declaration ... (node kind NamedEvent)"; and a
+queue or array whose elements are event queues (`event w[$][$]`) reports
+"event container element ... requires an event handle or null" wherever it is
+declared. Event arrays of modules and classes, with or without an initializer,
+and queues and dynamic arrays of events in procedural blocks work.
+
+### Cause
+
+Subroutine declarations lower every named event as a scalar event; block
+fixed event arrays have no storage of their own; event containers hold only
+handles, not nested containers.
+
+### Intended direction
+
+Give subroutine and block event arrays container storage declared and
+initialized at entry like other procedural containers, and let event
+containers nest.
+
+### Reproduce
+
+`task automatic t(); event te[2]; -> te[0]; endtask`

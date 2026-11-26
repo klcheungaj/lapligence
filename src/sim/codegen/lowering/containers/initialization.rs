@@ -122,6 +122,7 @@ impl<'a> Codegen<'a> {
             let initializer = self
                 .db
                 .array_meta(owner)
+                .or_else(|| self.db.event_array_meta(owner))
                 .and_then(|meta| meta.initializer())
                 .ok_or_else(|| {
                     format!(
