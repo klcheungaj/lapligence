@@ -154,14 +154,13 @@ impl<'a> Codegen<'a> {
         let dims = self
             .db
             .event_array_meta(declaration)
-            .map(|metadata| {
+            .and_then(|metadata| {
                 metadata
                     .dimensions()
                     .iter()
                     .copied()
                     .collect::<Option<Vec<_>>>()
             })
-            .flatten()
             .ok_or_else(|| format!("event array initializer in `{path}` has unresolved bounds"))?;
         let mut statements = Vec::new();
         for (linear, source) in self
