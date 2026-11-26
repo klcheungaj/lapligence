@@ -970,12 +970,30 @@ impl EmitCtx<'_, '_> {
         }
     }
 
+    /// Lower for-loop header item `item` with the views of unpacked
+    /// interface members it names bound before it runs, as a statement binds
+    /// them.
+    fn with_header_views(
+        &mut self,
+        item: NodeId,
+        lower: impl FnOnce(&mut Self) -> Result<IrStmt, String>,
+    ) -> Result<IrStmt, String> {
+        let Some(mut statements) = self.cg.stage_interface_views(&self.path, item, false)? else {
+            return lower(self);
+        };
+        let lowered = lower(self);
+        self.cg.end_interface_views();
+        statements.push(lowered?);
+        Ok(IrStmt::Block(statements))
+    }
+
     fn lower_for_initializers(&mut self, init: &[NodeId]) -> Result<Vec<IrStmt>, String> {
         let mut init_stmts = Vec::with_capacity(init.len());
         for s in init {
             match self.cg.kind(*s) {
                 NodeKind::Stmt(StmtKind::Assign { .. }) => {
-                    init_stmts.push(self.lower_assignment(*s, true)?);
+                    init_stmts
+                        .push(self.with_header_views(*s, |this| this.lower_assignment(*s, true))?);
                 }
                 NodeKind::Expr(ExprKind::Operation { op, operands, .. }) => {
                     let op = *op;
@@ -987,7 +1005,9 @@ impl EmitCtx<'_, '_> {
                         ));
                     };
                     let (lhs, rhs) = (*lhs, *rhs);
-                    init_stmts.push(self.lower_assignment_operands(lhs, rhs, true, op, true)?);
+                    init_stmts.push(self.with_header_views(*s, |this| {
+                        this.lower_assignment_operands(lhs, rhs, true, op, true)
+                    })?);
                 }
                 other => {
                     return Err(format!(
@@ -1005,7 +1025,8 @@ impl EmitCtx<'_, '_> {
         for s in incr {
             match self.cg.kind(*s) {
                 NodeKind::Stmt(StmtKind::Assign { .. }) => {
-                    incr_stmts.push(self.lower_assignment(*s, true)?);
+                    incr_stmts
+                        .push(self.with_header_views(*s, |this| this.lower_assignment(*s, true))?);
                 }
                 NodeKind::Expr(ExprKind::Operation { op, operands, .. })
                     if !matches!(
@@ -1025,7 +1046,9 @@ impl EmitCtx<'_, '_> {
                         ));
                     };
                     let (lhs, rhs) = (*lhs, *rhs);
-                    incr_stmts.push(self.lower_assignment_operands(lhs, rhs, true, op, true)?);
+                    incr_stmts.push(self.with_header_views(*s, |this| {
+                        this.lower_assignment_operands(lhs, rhs, true, op, true)
+                    })?);
                 }
                 NodeKind::Expr(ExprKind::Operation { op, operands, .. })
                     if matches!(
@@ -1036,7 +1059,9 @@ impl EmitCtx<'_, '_> {
                             | Operation::PreDecrement
                     ) =>
                 {
-                    incr_stmts.push(self.lower_inc_dec(*op, operands)?)
+                    let (op, operands) = (*op, operands.clone());
+                    incr_stmts
+                        .push(self.with_header_views(*s, |this| this.lower_inc_dec(op, &operands))?)
                 }
                 NodeKind::FuncCall { is_task: false, .. } => {
                     // IEEE 1800-2009 12.7.1 admits function calls as steps.

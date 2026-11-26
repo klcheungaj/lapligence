@@ -90,8 +90,7 @@ fn dependency_pointer(ctx: &RCtx<'_>, dependency: &IrDependency) -> String {
         | IrDependency::SharedNative { .. }
         | IrDependency::RefFormal { .. }
         | IrDependency::NativeRefFormal { .. }
-        | IrDependency::NativeAccess(_)
-        | IrDependency::InterfaceInstance { .. } => {
+        | IrDependency::NativeAccess(_) => {
             unreachable!(
                 "shared cells, ref formals and native accesses exist only in the owned emitter"
             )
@@ -166,8 +165,7 @@ fn dependency_entry(ctx: &RCtx<'_>, dependency: &IrDependency) -> String {
         | IrDependency::SharedNative { .. }
         | IrDependency::RefFormal { .. }
         | IrDependency::NativeRefFormal { .. }
-        | IrDependency::NativeAccess(_)
-        | IrDependency::InterfaceInstance { .. } => {
+        | IrDependency::NativeAccess(_) => {
             unreachable!(
                 "shared cells, ref formals and native accesses exist only in the owned emitter"
             )

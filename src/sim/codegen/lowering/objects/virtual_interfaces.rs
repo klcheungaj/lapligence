@@ -212,7 +212,7 @@ impl Codegen<'_> {
     /// The lowered handle of a member path: a handle held in a record or
     /// class member (`r.v.x`) is the value of the member access expression,
     /// not of its declaration.
-    fn virtual_interface_handle(
+    pub(super) fn virtual_interface_handle(
         &mut self,
         path: &str,
         node: NodeId,
@@ -281,6 +281,10 @@ impl Codegen<'_> {
         node: NodeId,
         write: bool,
     ) -> Result<Option<VirtualInterfaceAccess>, String> {
+        // An unpacked member lowers against its bound view.
+        if self.staged_interface_view(node).is_some() {
+            return Ok(None);
+        }
         let Some(target) = self.virtual_interface_member_path(path, node, write)? else {
             return Ok(None);
         };
@@ -305,18 +309,14 @@ impl Codegen<'_> {
                     format!(
                         "clocking block `{member}` is not supported as a value through virtual interface `{spelling}` in `{path}`; wait on it with an event control or read its clockvars"
                     )
-                } else if self
-                    .virtual_interface_array_members(descriptor, &member)
-                    .is_some()
-                {
+                } else if self.unpacked_interface_member(descriptor, &member) {
+                    // Statements and expressions bind views of such members
+                    // (`stage_interface_views`); this use is in none.
                     self.locate_error(
                         node,
                         format!(
-                            "unpacked array member `{member}` of virtual interface `{spelling}` \
-                             is supported only through element selects (`{member}[i]`, \
-                             `{member}[i][b]`) that are read or assigned with `=` or `<=`; a \
-                             whole-array or slice use, or a use in an event control or wait, \
-                             is not supported in `{path}`"
+                            "unpacked member `{member}` of virtual interface `{spelling}` is \
+                             not supported here in `{path}`"
                         ),
                     )
                 } else if self
@@ -478,7 +478,7 @@ pub(in super::super) struct VirtualInterfaceMemberPath {
     /// `(descriptor, nested slot)` of each nested interface instance between
     /// the handle and the member (`tx` in `v.tx.x`), outermost first.
     nested: Vec<(usize, usize)>,
-    spelling: String,
+    pub(in super::super) spelling: String,
     view_port: bool,
 }
 
@@ -492,36 +492,11 @@ struct VirtualEventArray {
     indices: Vec<NodeId>,
 }
 
-/// An element of an unpacked array member reached through a
-/// virtual-interface handle (`v.mem[i]`; SV 25.9). The member's array in
-/// every instance the descriptor can bind is listed by instance index, so an
-/// access dispatches on the instance bound when it executes, like the
-/// SIM-034 clocking drives.
-pub(in super::super) struct VirtualInterfaceArrayElement {
-    pub(in super::super) handle: IrChandleExpr,
-    pub(in super::super) descriptor: usize,
-    pub(in super::super) site: String,
-    pub(in super::super) arrays: Vec<ArrayInfo>,
-    /// One index per unpacked dimension.
-    pub(in super::super) indices: Vec<NodeId>,
-    /// A bit, part or indexed part select of the element (`v.mem[i][3:0]`).
-    pub(in super::super) select: Option<NodeId>,
-    /// The member declaration the frontend names as the select base; it
-    /// carries the element's packed range.
-    pub(in super::super) declaration: NodeId,
-    /// The member path through the handle (`v.mem`), the select's
-    /// structural operand.
-    pub(in super::super) member_path: NodeId,
-    /// The handle declaration and member name, which identify the selected
-    /// storage in the source text.
-    pub(in super::super) key: (NodeId, String),
-}
-
 impl Codegen<'_> {
     /// What `declared` gives for member `member` in every instance bound to
     /// descriptor `descriptor`, by instance index, or `None` when it gives
     /// nothing for one of them.
-    fn virtual_interface_declarations<T>(
+    pub(super) fn virtual_interface_declarations<T>(
         &self,
         descriptor: usize,
         member: &str,
@@ -555,23 +530,28 @@ impl Codegen<'_> {
             .collect()
     }
 
-    /// The array of unpacked member `member` in every instance bound to
-    /// descriptor `descriptor`, by instance index, or `None` when the member
-    /// is not an unpacked array of the bound instances.
-    fn virtual_interface_array_members(
+    /// Whether member `member` of descriptor `descriptor` is array or
+    /// container storage in the instances it can bind.
+    pub(in super::super) fn unpacked_interface_member(
         &self,
         descriptor: usize,
         member: &str,
-    ) -> Option<Vec<ArrayInfo>> {
+    ) -> bool {
         self.virtual_interface_declarations(descriptor, member, |child| {
-            self.array_globals.get(&child).cloned()
+            (self.array_globals.contains_key(&child) || self.container_globals.contains_key(&child))
+                .then_some(())
         })
+        .is_some()
     }
 
     /// The member path (`v.mem`) below an element select whose base the
     /// frontend names as `base`: the path itself, or the structural operand
     /// of the innermost select when `base` is the member declaration.
-    fn select_member_path(&self, node: NodeId, base: NodeId) -> Option<NodeId> {
+    pub(in super::super) fn select_member_path(
+        &self,
+        node: NodeId,
+        base: NodeId,
+    ) -> Option<NodeId> {
         if matches!(self.kind(base), NodeKind::Expr(ExprKind::HierPath { .. })) {
             return Some(base);
         }
@@ -582,7 +562,10 @@ impl Codegen<'_> {
                     NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
                         refs.last().copied().flatten() == Some(base)
                     }
-                    NodeKind::Expr(ExprKind::ArraySelect { base: inner, .. }) => *inner == base,
+                    NodeKind::Expr(
+                        ExprKind::ArraySelect { base: inner, .. }
+                        | ExprKind::BitSelect { base: inner, .. },
+                    ) => *inner == base,
                     _ => false,
                 }
             })?;
@@ -591,230 +574,6 @@ impl Codegen<'_> {
             }
             current = next;
         }
-    }
-
-    /// Resolve `v.mem[i]` or `v.mem[i][b]`: an element (or a packed select
-    /// of an element) of an unpacked array member through a
-    /// virtual-interface handle. Other selects of such a member (slices,
-    /// fewer indices than dimensions, real elements) and instances whose
-    /// arrays differ in shape are located errors.
-    pub(in super::super) fn virtual_interface_array_element(
-        &mut self,
-        path: &str,
-        node: NodeId,
-        write: bool,
-    ) -> Result<Option<VirtualInterfaceArrayElement>, String> {
-        if let NodeKind::Expr(
-            ExprKind::PartSelect { base, .. } | ExprKind::IndexedPartSelect { base, .. },
-        ) = self.kind(node)
-        {
-            let inner = *base;
-            let Some(mut element) = self.virtual_interface_array_element(path, inner, write)?
-            else {
-                return Ok(None);
-            };
-            if element.select.is_some() {
-                return Err(self.locate_error(
-                    node,
-                    format!(
-                        "a select of a select of an element of an unpacked array member \
-                     through a virtual interface is not supported in `{path}`"
-                    ),
-                ));
-            }
-            element.select = Some(node);
-            return Ok(Some(element));
-        }
-        let (declaration, mut indices) = match self.kind(node) {
-            NodeKind::Expr(ExprKind::BitSelect { base, index }) => (*base, vec![*index]),
-            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => (*base, indices.clone()),
-            _ => return Ok(None),
-        };
-        let Some(base) = self.select_member_path(node, declaration) else {
-            return Ok(None);
-        };
-        let Some(target) = self.virtual_interface_member_path(path, base, write)? else {
-            return Ok(None);
-        };
-        if self
-            .virtual_interface_members
-            .contains_key(&(target.descriptor, target.member.clone()))
-        {
-            return Ok(None);
-        }
-        let Some(arrays) = self.virtual_interface_array_members(target.descriptor, &target.member)
-        else {
-            return Ok(None);
-        };
-        let location = self.source_location(node);
-        let member = &target.member;
-        let first = &arrays[0];
-        if arrays.iter().any(|array| {
-            array.elem_width != first.elem_width
-                || array.signed != first.signed
-                || array.real != first.real
-                || array.dims.len() != first.dims.len()
-        }) {
-            return Err(crate::sim::codegen::error::located(
-                &location,
-                format!(
-                    "unpacked array member `{member}` has different element types or \
-                 dimensions in the instances virtual interface `{}` can bind, in `{path}`",
-                    target.spelling
-                ),
-            ));
-        }
-        if first.real || first.shortreal {
-            return Err(crate::sim::codegen::error::located(
-                &location,
-                format!(
-                    "an element of real unpacked array member `{member}` through \
-                 virtual interface `{}` is not supported in `{path}`",
-                    target.spelling
-                ),
-            ));
-        }
-        let select = (indices.len() == first.dims.len() + 1)
-            .then(|| indices.pop())
-            .flatten();
-        if indices.len() != first.dims.len() {
-            return Err(crate::sim::codegen::error::located(
-                &location,
-                format!(
-                    "a slice of unpacked array member `{member}` through virtual \
-                 interface `{}` is not supported in `{path}`; select one element",
-                    target.spelling
-                ),
-            ));
-        }
-        let handle = self.virtual_interface_handle(path, base, &target)?;
-        let site = self.required_site("virtual interface member access", path, node);
-        let key = (target.handle, self.virtual_interface_key_member(&target));
-        Ok(Some(VirtualInterfaceArrayElement {
-            handle,
-            descriptor: target.descriptor,
-            site,
-            arrays,
-            indices,
-            select,
-            declaration,
-            member_path: base,
-            key,
-        }))
-    }
-
-    /// The element selection of an array-element access and its width.
-    pub(in super::super) fn virtual_interface_element_select(
-        &mut self,
-        path: &str,
-        element: &VirtualInterfaceArrayElement,
-    ) -> Result<(IrElemSel, u32), String> {
-        let base = element.declaration;
-        let Some(last) = element.select else {
-            return Ok((IrElemSel::Whole, element.arrays[0].elem_width));
-        };
-        Ok(match self.kind(last) {
-            NodeKind::Expr(ExprKind::PartSelect { left, right, .. }) => {
-                let (left, right) = (*left, *right);
-                let l = self.packed_relative_bound(base, self.eval_bound_i128(left)?)?;
-                let r = self.packed_relative_bound(base, self.eval_bound_i128(right)?)?;
-                let (l, r, width) = checked_select_bounds(l, r, "array-element part select")?;
-                (IrElemSel::Part(l, r), width)
-            }
-            NodeKind::Expr(ExprKind::IndexedPartSelect {
-                base_expr,
-                width_expr,
-                neg,
-                ..
-            }) => {
-                let (base_expr, width_expr, neg) = (*base_expr, *width_expr, *neg);
-                let width = self.indexed_part_select_width(width_expr, path)?;
-                (
-                    IrElemSel::Indexed {
-                        base: Box::new(self.lower_packed_index(path, base, base_expr)?),
-                        width,
-                        negative: neg ^ self.packed_range_ascending(base),
-                    },
-                    width,
-                )
-            }
-            _ => (
-                IrElemSel::Bit(Box::new(self.lower_packed_index(path, base, last)?)),
-                1,
-            ),
-        })
-    }
-
-    /// The bound instance of an array-element access, as an unsigned 32-bit
-    /// selector; an invalid handle reports at the access site.
-    pub(in super::super) fn virtual_interface_instance_query(
-        element: &VirtualInterfaceArrayElement,
-    ) -> IrExpr {
-        IrExpr::new(
-            IrExprKind::ObjectQuery(Box::new(IrObjectQuery::VirtualInterfaceInstance {
-                handle: element.handle.clone(),
-                interface: element.descriptor,
-                site: element.site.clone(),
-            })),
-            32,
-            false,
-            None,
-        )
-    }
-
-    /// Read `v.mem[i]`: the element of the bound instance's array. The
-    /// indices are lowered once per instance arm, and exactly one arm runs;
-    /// an invalid handle reads X.
-    pub(in super::super) fn virtual_interface_array_element_expr(
-        &mut self,
-        path: &str,
-        node: NodeId,
-    ) -> Result<Option<IrExpr>, String> {
-        let Some(element) = self.virtual_interface_array_element(path, node, false)? else {
-            return Ok(None);
-        };
-        let indices = element
-            .indices
-            .iter()
-            .map(|index| self.lower_expr(path, *index))
-            .collect::<Result<Vec<_>, _>>()?;
-        let (elem_sel, width) = self.virtual_interface_element_select(path, &element)?;
-        let signed = element.select.is_none() && element.arrays[0].signed;
-        let query = Codegen::virtual_interface_instance_query(&element);
-        let mut value = const_x_expr(width);
-        for (instance, array) in element.arrays.iter().enumerate().rev() {
-            let read = IrExpr::new(
-                IrExprKind::ArrayRead {
-                    arr: self.reference_array(array.ir),
-                    indices: indices.clone(),
-                    elem_sel: elem_sel.clone(),
-                },
-                width,
-                signed,
-                None,
-            );
-            let selected = IrExpr::new(
-                IrExprKind::Bin {
-                    op: IrBinOp::Eq,
-                    a: Box::new(query.clone()),
-                    b: Box::new(lhs_integer_expr(instance as i128)),
-                },
-                1,
-                false,
-                None,
-            );
-            value = IrExpr::new(
-                IrExprKind::Mux {
-                    sel: Box::new(selected),
-                    a: Box::new(read),
-                    b: Box::new(value),
-                },
-                width,
-                signed,
-                None,
-            );
-        }
-        Ok(Some(value))
     }
 }
 

@@ -210,10 +210,8 @@ impl Validator<'_> {
     ) -> ValidationResult {
         // A native-access dependency is resolved each time its wait arms.
         for (index, dependency) in sens.iter().enumerate() {
-            if matches!(
-                dependency,
-                IrDependency::NativeAccess(_) | IrDependency::InterfaceInstance { .. }
-            ) && !self.valid_dependency(dependency)
+            if matches!(dependency, IrDependency::NativeAccess(_))
+                && !self.valid_dependency(dependency)
             {
                 return self.fail(
                     format_args!("{path}.sens[{index}]"),
@@ -586,6 +584,9 @@ impl Validator<'_> {
                 if !scope.insert(*index) {
                     return self.fail(path, "duplicate fixed activation declaration");
                 }
+            }
+            IrStmt::InterfaceBind(binding) => {
+                self.validate_interface_binding(binding, formals, path)?;
             }
             IrStmt::FixedArrayOrder(order) => {
                 self.validate_fixed_array_order(order, formals, path)?;

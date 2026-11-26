@@ -48,6 +48,138 @@ impl Validator<'_> {
         .then_some(index)
     }
 
+    /// A binding names a view of the shape every instance of the descriptor
+    /// gives the slot: a bound array, whose uses must follow the binding in
+    /// its scope, or an activation container.
+    pub(super) fn validate_interface_binding(
+        &self,
+        binding: &IrInterfaceBinding,
+        formals: &[IrFormal],
+        path: IrPath<'_>,
+    ) -> ValidationResult {
+        let interface = self
+            .model
+            .virtual_interfaces
+            .get(binding.interface)
+            .filter(|interface| binding.slot < interface.storage.len())
+            .ok_or_else(|| {
+                IrValidationError::new(path, "interface binding slot is out of bounds")
+            })?;
+        binding
+            .handle
+            .validate(&self.model, formals, self.chandle_return.get())?;
+        let mut result = Ok(());
+        binding.expressions(&mut |child| {
+            if result.is_ok() {
+                result = self.validate_expr(child, formals, path);
+            }
+        });
+        result?;
+        let same_shape = |storage: IrInterfaceStorage| match (binding.view, storage) {
+            (IrInterfaceStorage::Array(view), IrInterfaceStorage::Array(array)) => {
+                let (Some(view), Some(array)) =
+                    (self.model.arrays.get(view), self.model.arrays.get(array))
+                else {
+                    return false;
+                };
+                !array.bound
+                    && !array.activation
+                    && view.elem_width == array.elem_width
+                    && view.signed == array.signed
+                    && view.two_state == array.two_state
+                    && view.real == array.real
+                    && view.shortreal == array.shortreal
+                    && view.dims == array.dims
+                    && view.sparse() == array.sparse()
+            }
+            (IrInterfaceStorage::Container(view), IrInterfaceStorage::Container(container)) => {
+                let (Some(view), Some(container)) = (
+                    self.model.containers.get(view),
+                    self.model.containers.get(container),
+                ) else {
+                    return false;
+                };
+                container.is_global_storage()
+                    && view.element == container.element
+                    && view.kind == container.kind
+            }
+            _ => false,
+        };
+        if interface
+            .instances
+            .iter()
+            .filter_map(|instance| instance.storage.get(binding.slot).copied().flatten())
+            .any(|storage| !same_shape(storage))
+        {
+            return self.fail(
+                path,
+                "interface binding view differs from the member storage",
+            );
+        }
+        match binding.view {
+            IrInterfaceStorage::Array(index) => {
+                if !self
+                    .model
+                    .arrays
+                    .get(index)
+                    .is_some_and(|array| array.bound)
+                {
+                    return self.fail(path, "interface binding of an array that is not a view");
+                }
+                let mut scopes = self.fixed_activations.borrow_mut();
+                let scope = scopes.last_mut().ok_or_else(|| {
+                    IrValidationError::new(path, "interface binding requires a lexical scope")
+                })?;
+                scope.insert(index);
+            }
+            IrInterfaceStorage::Container(index) => {
+                if !self.model.containers.get(index).is_some_and(|container| {
+                    container.activation && container.class_field.is_none()
+                }) {
+                    return self.fail(path, "interface binding of a container that is not a view");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// A wait on part `part` of storage slot `slot` of interface
+    /// descriptor `interface`: a cell of an array within its bounds, the
+    /// shape of a container, or the contents of either.
+    pub(super) fn validate_interface_part(
+        &self,
+        interface: usize,
+        slot: usize,
+        part: crate::sim::ir::IrInterfacePart,
+        path: IrPath<'_>,
+    ) -> ValidationResult {
+        use crate::sim::ir::IrInterfacePart;
+        let Some(storage) = self
+            .model
+            .virtual_interfaces
+            .get(interface)
+            .filter(|interface| slot < interface.storage.len())
+            .and_then(|interface| interface.instances.first())
+            .and_then(|instance| instance.storage.get(slot).copied().flatten())
+        else {
+            return self.fail(path, "interface storage reference is out of bounds");
+        };
+        let valid = match (storage, part) {
+            (_, IrInterfacePart::Contents) => true,
+            (IrInterfaceStorage::Array(array), IrInterfacePart::Cell(cell)) => self
+                .model
+                .arrays
+                .get(array)
+                .is_some_and(|array| cell < array.total),
+            (IrInterfaceStorage::Container(_), IrInterfacePart::Shape) => true,
+            _ => false,
+        };
+        if !valid {
+            return self.fail(path, "interface storage part does not fit its storage");
+        }
+        Ok(())
+    }
+
     pub(super) fn validate_fixed_activation(
         &self,
         index: usize,
@@ -57,7 +189,7 @@ impl Validator<'_> {
             .model
             .arrays
             .get(index)
-            .is_some_and(|array| array.activation)
+            .is_some_and(|array| array.activation || array.bound)
             && !self.function.get().is_some_and(|function| {
                 function.formals.iter().any(|formal| {
                     formal.fixed_array == Some(index) || formal.real_array == Some(index)
@@ -174,6 +306,7 @@ impl Validator<'_> {
                             .and_then(|class| class.fields.get(field))
                             .is_some_and(|field| field.native_value.is_some()),
                         crate::sim::ir::IrNativeAccessKind::InterfaceMember { .. }
+                        | crate::sim::ir::IrNativeAccessKind::InterfaceStorage { .. }
                         | crate::sim::ir::IrNativeAccessKind::MailboxCount => true,
                         _ => false,
                     })
@@ -189,9 +322,6 @@ impl Validator<'_> {
                 self.model.native_values.get(*value).is_some_and(|value| {
                     value.marker && !value.activation && value.class_field.is_none()
                 })
-            }
-            IrDependency::InterfaceInstance { .. } => {
-                crate::sim::execution::valid_interface_instance(&self.model, dependency)
             }
         }
     }

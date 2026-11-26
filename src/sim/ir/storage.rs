@@ -360,6 +360,11 @@ pub struct IrArray {
     /// sampled reads index the image. Descriptor arrays keep their own
     /// saved cells instead, and every other array pays nothing.
     pub(in crate::sim) sampled_image: bool,
+    /// A view of the array of an unpacked interface member, bound for one
+    /// statement to the instance a virtual-interface handle selects
+    /// ([`super::IrStmt::InterfaceBind`]): it has the member's shape but no
+    /// storage, declaration or initialization of its own.
+    pub(in crate::sim) bound: bool,
 }
 
 impl IrArray {
@@ -422,6 +427,7 @@ impl IrArray {
             dims,
             total,
             sampled_image: false,
+            bound: false,
         })
     }
 
@@ -438,6 +444,12 @@ impl IrArray {
     /// its electrical view.
     pub(in crate::sim) fn is_net(&self) -> bool {
         self.net.is_some() || !self.net_elements.is_empty()
+    }
+
+    /// Whether this array is model-global storage: neither activation
+    /// storage nor a bound view of another array.
+    pub(in crate::sim) fn is_model_storage(&self) -> bool {
+        !self.activation && !self.bound
     }
 
     pub(in crate::sim) fn sparse(&self) -> bool {

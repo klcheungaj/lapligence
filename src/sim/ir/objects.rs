@@ -82,6 +82,54 @@ pub struct IrVirtualInterfaceInstance {
     /// nested interface instance the descriptor exposes, by
     /// `IrVirtualInterface::nested` slot.
     pub(in crate::sim) nested: Vec<Option<usize>>,
+    /// The storage of each unpacked member the descriptor exposes, by
+    /// `IrVirtualInterface::storage` slot.
+    pub(in crate::sim) storage: Vec<Option<IrInterfaceStorage>>,
+}
+
+/// The storage of an unpacked member of an interface instance (an array of
+/// any kind, a queue, a dynamic or associative array, or a fixed view of
+/// strings or records): model storage of the same shape in every instance a
+/// descriptor can bind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum IrInterfaceStorage {
+    /// An index into [`super::IrModel::arrays`].
+    Array(usize),
+    /// An index into [`super::IrModel::containers`].
+    Container(usize),
+}
+
+/// Bind the view `view` (an array marked `bound`, or an activation
+/// container) to the storage of descriptor slot `slot` of the interface
+/// instance `handle` binds when the binding runs (SV 25.9). A statement
+/// binds each view it uses once, before it runs; an expression evaluated
+/// more than once binds before each evaluation. The binding itself never
+/// fails: a null handle leaves the view unbound, and each use of an unbound
+/// view reports at `site` and ends the run (decision S99-D8).
+///
+/// When `refresh` is set, something the statement runs (a call, an
+/// assignment operator) may rebind the handle, so each use binds the view
+/// again from the handle as the use runs: a use names the instance bound
+/// after the operands evaluated before it (`v.a[f()]`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrInterfaceBinding {
+    pub(in crate::sim) view: IrInterfaceStorage,
+    pub(in crate::sim) handle: IrChandleExpr,
+    pub(in crate::sim) interface: usize,
+    pub(in crate::sim) slot: usize,
+    pub(in crate::sim) site: String,
+    pub(in crate::sim) refresh: bool,
+}
+
+impl IrInterfaceBinding {
+    /// Visit the expressions of the handle.
+    pub(in crate::sim) fn expressions(&self, visit: &mut impl FnMut(&IrExpr)) {
+        self.handle.expressions(visit);
+    }
+
+    pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
+        self.handle.expressions_mut(visit);
+    }
 }
 
 /// An interface instance declared inside the descriptor's interface (`tx`
@@ -121,6 +169,10 @@ pub struct IrVirtualInterface {
     /// (`v.tx`, `v.tx.x`). A slot is added only when a selection names
     /// one, so descriptors without such selections are unchanged.
     pub(in crate::sim) nested: Vec<IrVirtualInterfaceNested>,
+    /// Names of the unpacked members used through a handle (`v.a`,
+    /// `v.q.size()`, `v.a[i]`). A slot is added only when a use names the
+    /// member, so descriptors without such uses keep their layout.
+    pub(in crate::sim) storage: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

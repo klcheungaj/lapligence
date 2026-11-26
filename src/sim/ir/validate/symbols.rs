@@ -37,7 +37,7 @@ impl Validator<'_> {
             unique("net_groups", index, "net", &group.c_name)?;
         }
         for (index, array) in model.arrays.iter().enumerate() {
-            if !array.activation {
+            if array.is_model_storage() {
                 unique("arrays", index, "static array storage", &array.c_name)?;
             }
         }

@@ -27,6 +27,7 @@ mod interfaces;
 use interfaces::{
     function_return_type, render_virtual_interface_call_bodies,
     render_virtual_interface_call_prototypes, render_virtual_interface_runtime,
+    render_virtual_interface_storage_type,
 };
 mod classes;
 use classes::{
@@ -1480,6 +1481,7 @@ fn render_model(
             desc_attributes(&host_descs, &artifact.desc_name)
         ));
     }
+    render_virtual_interface_storage_type(model, &mut out);
     for frame_type in &frame_types {
         out.push_str(&frame_type.typedef);
         if frame_type.root {
@@ -1615,7 +1617,7 @@ fn render_model(
     classes::render_gc_roots(model, &mut out);
     // Arrays start all-X; elements are filled in `main()` (a function call
     // is not a valid static initializer).
-    for a in model.arrays.iter().filter(|array| !array.activation) {
+    for a in model.arrays.iter().filter(|array| array.is_model_storage()) {
         if a.sparse() {
             out.push_str(&format!(
                 "llg_fixed_array_t {} = {{0}};\nstatic sv4_t {}_llg_contents_dep = SV4_EMPTY;\n",
@@ -1913,7 +1915,7 @@ fn unobserved_contents(model: &IrModel, rendered: &str, start: &str) -> String {
         model
             .arrays
             .iter()
-            .filter(|array| !array.activation && array.sparse())
+            .filter(|array| array.is_model_storage() && array.sparse())
     };
     if arrays().next().is_none() {
         return String::new();
@@ -1959,7 +1961,7 @@ fn unobserved_real_columns(model: &IrModel, rendered: &mut String, start: &str) 
     let columns = || {
         model.arrays.iter().filter(|array| {
             array.real
-                && !array.activation
+                && array.is_model_storage()
                 && array.cell_names == crate::sim::ir::IrCellNames::RecordLeaf
         })
     };

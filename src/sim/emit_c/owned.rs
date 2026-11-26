@@ -46,6 +46,7 @@ mod formatting;
 mod frame_cells;
 mod inertial;
 mod input;
+mod interface_views;
 mod mailboxes;
 pub(super) mod model;
 pub(super) mod native;
@@ -195,6 +196,11 @@ pub(super) struct Frame<'a, 'm> {
     stack_floor: crate::stack::StackFloor,
     code: String,
     fixed_arrays: HashMap<usize, String>,
+    /// Views of unpacked interface members bound in this frame
+    /// (`IrStmt::InterfaceBind`): the check each use runs first, which
+    /// reports a view its handle bound to no instance (and, for a view bound
+    /// again at each use, binds it first).
+    interface_views: HashMap<crate::sim::ir::IrInterfaceStorage, String>,
     /// Activation native values bound in this frame (`llg_value_t*` expressions).
     native_values: HashMap<usize, String>,
     /// Activation containers bound in this frame (container lvalue
@@ -569,6 +575,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             stack_floor: crate::stack::StackFloor::current(),
             code: String::new(),
             fixed_arrays: HashMap::new(),
+            interface_views: HashMap::new(),
             native_values: HashMap::new(),
             containers: HashMap::new(),
             slots: Vec::new(),

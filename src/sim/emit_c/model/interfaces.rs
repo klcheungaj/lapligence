@@ -1,6 +1,7 @@
 //! Interfaces.
 
 use super::*;
+use crate::sim::ir::IrInterfaceStorage;
 use crate::IdSet;
 
 /// Runtime environment for one virtual-interface specialization. Handles are
@@ -47,6 +48,17 @@ pub(super) fn render_virtual_interface_runtime(model: &IrModel, out: &mut String
         (
             format!("{event_define}#define LLG_VIF_MAX_NESTED {max_nested}\n"),
             format!("{event_field}void *nested[LLG_VIF_MAX_NESTED];\n"),
+        )
+    };
+    // Storage slots exist only when a use names an unpacked member through a
+    // handle (`v.a`), so other models keep the environment layout unchanged.
+    let max_storage = max_storage(model);
+    let (event_define, event_field) = if max_storage == 0 {
+        (event_define, event_field)
+    } else {
+        (
+            format!("{event_define}#define LLG_VIF_MAX_STORAGE {max_storage}\n"),
+            format!("{event_field}llg_vif_storage_t storage[LLG_VIF_MAX_STORAGE];\n"),
         )
     };
     out.push_str(&format!(
@@ -134,6 +146,9 @@ pub(super) fn render_virtual_interface_runtime(model: &IrModel, out: &mut String
              }\n\n",
         );
     }
+    if max_storage > 0 {
+        out.push_str(STORAGE_HELPERS);
+    }
     if max_events > 0 {
         out.push_str(
             "/* The handle of an event of the bound instance; a failed access\n\
@@ -210,8 +225,19 @@ pub(super) fn render_virtual_interface_runtime(model: &IrModel, out: &mut String
             nested.resize(max_nested, "NULL".to_owned());
             format!(", {{ {} }}", nested.join(", "))
         };
+        let storage = if max_storage == 0 {
+            String::new()
+        } else {
+            let mut storage = instance
+                .storage
+                .iter()
+                .map(|storage| storage_slot(model, *storage))
+                .collect::<Vec<_>>();
+            storage.resize(max_storage, "{ NULL, NULL, NULL, NULL }".to_owned());
+            format!(", {{ {} }}", storage.join(", "))
+        };
         out.push_str(&format!(
-            "static llg_vif_env_t {} = {{ {}, {}, {}, {{ {} }}{events}{nested} }};\n",
+            "static llg_vif_env_t {} = {{ {}, {}, {}, {{ {} }}{events}{nested}{storage} }};\n",
             instance.c_name,
             interface_id,
             instance_id,
@@ -220,6 +246,124 @@ pub(super) fn render_virtual_interface_runtime(model: &IrModel, out: &mut String
         ));
     }
     out.push('\n');
+}
+
+/// The most storage slots of one interface descriptor.
+fn max_storage(model: &IrModel) -> usize {
+    model
+        .virtual_interfaces
+        .iter()
+        .map(|interface| interface.storage.len())
+        .max()
+        .unwrap_or(0)
+}
+
+/// The type of a storage slot, ahead of the frame types whose bindings
+/// (`IrStmt::InterfaceBind`) point at one.
+pub(super) fn render_virtual_interface_storage_type(model: &IrModel, out: &mut String) {
+    if max_storage(model) > 0 {
+        out.push_str(STORAGE_TYPE);
+    }
+}
+
+/// The storage of one unpacked member of an interface instance: the address
+/// of its storage object (dense or real cells, a fixed-array descriptor or a
+/// container) and, for an array, the change markers its waits name.
+const STORAGE_TYPE: &str = "typedef struct {\n\
+    void *base;\n\
+    sv4_t *contents;\n\
+    sv4_t *cells;\n\
+    sv4_t *shape;\n\
+} llg_vif_storage_t;\n\n";
+
+/// A binding reads the storage slot of the instance a handle binds without
+/// reporting; a use of the binding reports a null handle at its own site.
+const STORAGE_HELPERS: &str =
+    "/* The storage of unpacked member `slot` of the bound instance, or NULL\n\
+ * when the handle binds none (SV 25.9). */\n\
+static llg_vif_storage_t *llg_vif_storage_quiet(void *raw, uint32_t interface_id,\n\
+                                                uint32_t slot) {\n\
+    llg_vif_env_t *env = (llg_vif_env_t *)raw;\n\
+    if (!env || env->interface_id != interface_id || slot >= LLG_VIF_MAX_STORAGE ||\n\
+        !env->storage[slot].base)\n\
+        return NULL;\n\
+    return &env->storage[slot];\n\
+}\n\n\
+/* A use of a binding: one made through a null handle ends the run at the\n\
+ * use (decision S99-D8). */\n\
+static llg_vif_storage_t *llg_vif_bound(llg_vif_storage_t *storage, const char *site) {\n\
+    if (!storage) llg_vif_fail(site);\n\
+    return storage;\n\
+}\n\n\
+/* A use that binds again where it is evaluated (a statement that may\n\
+ * rebind the handle before it): the storage the handle binds now, or the\n\
+ * storage its check bound when it binds none any more, which reports. */\n\
+static llg_vif_storage_t *llg_vif_rebind(llg_vif_storage_t **storage, void *raw,\n\
+                                         uint32_t interface_id, uint32_t slot,\n\
+                                         const char *site) {\n\
+    llg_vif_storage_t *now = llg_vif_storage_quiet(raw, interface_id, slot);\n\
+    if (now)\n\
+        *storage = now;\n\
+    else\n\
+        llg_vif_fail(site);\n\
+    return *storage;\n\
+}\n\n\
+/* Waits resolve without reporting: arming a wait on an unbound handle is\n\
+ * not an access. The contents (`shape` 0) or shape (1) marker of slot\n\
+ * `slot` of the bound instance. */\n\
+static sv4_t *llg_vif_marker_dependency(void *raw, uint32_t interface_id, uint32_t slot,\n\
+                                        int32_t shape) {\n\
+    llg_vif_storage_t *storage = llg_vif_storage_quiet(raw, interface_id, slot);\n\
+    if (!storage) return NULL;\n\
+    return shape ? storage->shape : storage->contents;\n\
+}\n\n\
+/* The marker of cell `cell` of the array in slot `slot`: its element marker\n\
+ * for dense cells, the cell of a descriptor array. */\n\
+static sv4_t *llg_vif_cell_dependency(void *raw, uint32_t interface_id, uint32_t slot,\n\
+                                      uint64_t cell) {\n\
+    llg_vif_storage_t *storage = llg_vif_storage_quiet(raw, interface_id, slot);\n\
+    if (!storage) return NULL;\n\
+    if (storage->cells) return &storage->cells[cell];\n\
+    return llg_fixed_array_cell((llg_fixed_array_t *)storage->base, cell);\n\
+}\n\n\
+/* Cell `cell` of the real array in slot `slot`, or storage that never\n\
+ * changes. */\n\
+static double llg_vif_invalid_storage_real;\n\n\
+static double *llg_vif_real_cell_dependency(void *raw, uint32_t interface_id,\n\
+                                            uint32_t slot, uint64_t cell) {\n\
+    llg_vif_storage_t *storage = llg_vif_storage_quiet(raw, interface_id, slot);\n\
+    return storage ? (double *)storage->base + cell : &llg_vif_invalid_storage_real;\n\
+}\n\n\
+/* A use where a failed access cannot leave (a callback): an unbound view\n\
+ * reports and names `fallback`, storage of the same shape, while the run\n\
+ * ends. */\n\
+static llg_vif_storage_t *llg_vif_valid(llg_vif_storage_t *storage,\n\
+                                        llg_vif_storage_t *fallback, const char *site) {\n\
+    if (storage) return storage;\n\
+    llg_vif_fail(site);\n\
+    return fallback;\n\
+}\n\n";
+
+/// The initializer of one storage slot of an instance environment.
+fn storage_slot(model: &IrModel, storage: Option<IrInterfaceStorage>) -> String {
+    match storage {
+        Some(IrInterfaceStorage::Array(index)) => {
+            let array = &model.arrays[index];
+            let name = &array.c_name;
+            if array.sparse() {
+                format!("{{ (void *)&{name}, &{name}_llg_contents_dep, NULL, NULL }}")
+            } else {
+                format!(
+                    "{{ (void *){name}, &{name}_llg_contents_dep, {name}_llg_element_deps, NULL }}"
+                )
+            }
+        }
+        Some(IrInterfaceStorage::Container(index)) => {
+            let name = &model.containers[index].c_name;
+            format!("{{ (void *)&{name}, &{name}_llg_contents_dep, NULL, &{name}_llg_shape_dep }}")
+        }
+        None => "{ NULL, NULL, NULL, NULL }".to_owned(),
+    }
 }
 
 /// The emission order of the instance environments: descriptor order, with

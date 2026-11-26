@@ -22,6 +22,8 @@ mod processes;
 mod queries;
 pub(in crate::sim::codegen) use format_text::c_format_literal;
 mod strings;
+mod virtual_interface_views;
+pub(super) use virtual_interface_views::{DependencyView, InterfaceStaging, InterfaceView};
 mod virtual_interfaces;
 
 /// Handle, descriptor, member slot, width (0 for a real member), signedness,

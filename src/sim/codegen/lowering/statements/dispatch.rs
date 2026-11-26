@@ -18,6 +18,9 @@ struct StatementEntry {
     hoisted: Result<Vec<IrStmt>, String>,
     /// Copies of staged element members, in and out.
     staged: Option<Result<Around, String>>,
+    /// Bindings of the views of unpacked interface members the statement
+    /// names (`stage_interface_views`).
+    interface_views: Option<Result<Vec<IrStmt>, String>>,
 }
 
 impl EmitCtx<'_, '_> {
@@ -51,8 +54,8 @@ impl EmitCtx<'_, '_> {
                 .map(|statement| vec![statement]);
         }
         let entry = self.enter_statement(h)?;
-        let lowered = match entry.staged {
-            Some(Err(_)) => Ok(Vec::new()),
+        let lowered = match (&entry.interface_views, &entry.staged) {
+            (Some(Err(_)), _) | (_, Some(Err(_))) => Ok(Vec::new()),
             _ => self.lower_stmt_operations(h),
         };
         self.leave_statement(h, entry, lowered)
@@ -86,6 +89,55 @@ impl EmitCtx<'_, '_> {
             mailbox_hoist.then(|| (h, Vec::new())),
         );
         let outer = self.cg.record_binding_declarations.replace(Vec::new());
+        // Unpacked interface members named through handles are bound before
+        // a statement that evaluates its operands once, and before a
+        // `foreach` for its header. A timed nonblocking assignment binds its
+        // target at issue (SV 10.4.2); a timed blocking one binds each use
+        // again where it runs, its target after the control (SV 10.4.1).
+        // Element staging below may locate elements in them.
+        let timed_blocking = matches!(
+            self.cg.kind(h),
+            NodeKind::Stmt(StmtKind::Assign {
+                blocking: true,
+                delay: Some(_),
+                ..
+            })
+        );
+        // A deferred report reads its operands again when it prints: each
+        // operand binds its own views there.
+        let deferred = matches!(
+            self.cg.kind(h),
+            NodeKind::SysCall { name } if super::deferred_display_task(name)
+        );
+        let views = timed_blocking
+            || !deferred
+                && matches!(
+                    self.cg.kind(h),
+                    NodeKind::Stmt(StmtKind::Assign { delay: None, .. })
+                        | NodeKind::Stmt(StmtKind::Assign {
+                            blocking: false,
+                            delay: Some(
+                                IntraControl::Delay(_)
+                                    | IntraControl::Event { .. }
+                                    | IntraControl::Repeat { .. }
+                            ),
+                            ..
+                        })
+                        | NodeKind::SysCall { .. }
+                        | NodeKind::FuncCall { .. }
+                        | NodeKind::MethodCall { .. }
+                        | NodeKind::Expr(ExprKind::Operation { .. })
+                        | NodeKind::Var { .. }
+                        | NodeKind::Stmt(StmtKind::VariableDecl { .. })
+                        | NodeKind::Stmt(StmtKind::Foreach { .. })
+                );
+        let interface_views = if views {
+            self.cg
+                .stage_interface_views(&self.path, h, timed_blocking)
+                .transpose()
+        } else {
+            None
+        };
         // Queue and dynamic-array members of container record elements are
         // staged around statements that evaluate their operands once.
         let staging = matches!(
@@ -117,6 +169,7 @@ impl EmitCtx<'_, '_> {
             outer,
             hoisted,
             staged,
+            interface_views,
         })
     }
 
@@ -136,7 +189,21 @@ impl EmitCtx<'_, '_> {
             outer,
             hoisted,
             staged,
+            interface_views,
         } = entry;
+        let views = match interface_views {
+            Some(Ok(views)) => {
+                self.cg.end_interface_views();
+                views
+            }
+            Some(Err(error)) => {
+                if let Some(Ok(_)) = &staged {
+                    self.cg.end_element_member_staging();
+                }
+                return Err(error);
+            }
+            None => Vec::new(),
+        };
         let (lowered, (before, after)) = match staged {
             Some(Err(error)) => (Err(error), Default::default()),
             Some(Ok(staging)) => {
@@ -171,6 +238,20 @@ impl EmitCtx<'_, '_> {
         if let Some((_, mut prelude)) = mailbox_prelude.filter(|(_, prelude)| !prelude.is_empty()) {
             prelude.append(&mut statements);
             statements = prelude;
+        }
+        // Views are bound before anything else of the statement runs; a
+        // declared variable outlives its statement, so its views are bound
+        // in the enclosing scope.
+        if !views.is_empty() {
+            if matches!(
+                self.cg.kind(h),
+                NodeKind::Var { .. } | NodeKind::Stmt(StmtKind::VariableDecl { .. })
+            ) {
+                statements.splice(0..0, views);
+            } else {
+                statements = views.into_iter().chain(statements).collect();
+                statements = vec![IrStmt::Block(statements)];
+            }
         }
         // Staged members are copied out before the operand prelude and back
         // after the statement, in one lexical scope.

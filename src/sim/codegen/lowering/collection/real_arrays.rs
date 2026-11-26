@@ -88,6 +88,7 @@ impl Codegen<'_> {
             dims: dims.clone(),
             total,
             sampled_image: false,
+            bound: false,
         });
         self.array_globals.insert(
             node,

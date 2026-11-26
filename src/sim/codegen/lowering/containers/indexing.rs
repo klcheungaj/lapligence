@@ -518,6 +518,9 @@ impl<'a> Codegen<'a> {
         if let Some(ir) = self.staged_nested_element(node) {
             return Some(ContainerInfo { ir });
         }
+        if let Some(view) = self.interface_view_container(node) {
+            return Some(view);
+        }
         if let Some(ir) = self.call_result_containers.get(&node) {
             return Some(ContainerInfo { ir: *ir });
         }
@@ -671,6 +674,9 @@ impl<'a> Codegen<'a> {
             if let Some(ir) = self.select_receiver_container(select) {
                 return Some(ContainerInfo { ir });
             }
+        }
+        if let Some(container) = self.interface_select_container(select) {
+            return Some(container);
         }
         if let Some(container) = self.container_of(base) {
             return Some(container);

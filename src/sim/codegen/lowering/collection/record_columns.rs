@@ -505,6 +505,7 @@ impl Codegen<'_> {
             dims: dimensions.clone(),
             total,
             sampled_image: false,
+            bound: false,
         });
         self.record_columns = true;
         Ok(AggregateMemberInfo {
@@ -590,6 +591,7 @@ impl Codegen<'_> {
             dims: vec![(0, 0)],
             total: 1,
             sampled_image: false,
+            bound: false,
         });
         self.record_columns = true;
         Ok(AggregateMemberInfo {
@@ -669,6 +671,7 @@ impl Codegen<'_> {
             dims: vec![(0, 0)],
             total: 1,
             sampled_image: false,
+            bound: false,
         });
         let mut tag = member.clone();
         tag.descriptor = TypeDescriptor {
@@ -803,6 +806,7 @@ impl Codegen<'_> {
             dims: dimensions.clone(),
             total,
             sampled_image: false,
+            bound: false,
         });
         Ok(ir)
     }
@@ -837,6 +841,7 @@ impl Codegen<'_> {
     ) -> Option<&ArrayInfo> {
         self.record_column_select(select)
             .map(|(column, _)| column)
+            .or_else(|| self.interface_select_array(select))
             .or_else(|| self.array_of(base))
     }
 
@@ -875,6 +880,7 @@ impl Codegen<'_> {
             dims: vec![(0, 0)],
             total: 1,
             sampled_image: false,
+            bound: false,
         });
         ir
     }

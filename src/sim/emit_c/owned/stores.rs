@@ -78,7 +78,7 @@ impl<'a, 'm> Frame<'a, 'm> {
         if !array.real {
             return Err("real-array operand requires real storage".to_owned());
         }
-        if array.activation {
+        if array.activation || array.bound {
             self.fixed_array_address(index)
         } else {
             Ok(array.c_name.clone())
@@ -95,15 +95,48 @@ impl<'a, 'm> Frame<'a, 'm> {
         ));
     }
 
+    /// The storage of array `index`: the descriptor address of descriptor
+    /// storage, or the base pointer of real or dense cells of a lexical
+    /// array or a bound view (`IrStmt::InterfaceBind`). A model array with
+    /// dense cells is named by [`Self::cell_address`] and
+    /// [`Self::dense_array_base`].
     pub(super) fn fixed_array_address(&self, index: usize) -> Result<String, String> {
         let array = self.ctx.model.array(index);
-        if array.activation {
+        if array.bound {
+            self.use_interface_view(crate::sim::ir::IrInterfaceStorage::Array(index));
+        }
+        if array.activation || array.bound {
             self.fixed_arrays
                 .get(&index)
                 .cloned()
                 .ok_or_else(|| "fixed array used before lexical declaration".to_owned())
         } else {
             Ok(format!("&{}", array.c_name))
+        }
+    }
+
+    /// The address of linear cell `offset` of array `index`.
+    pub(super) fn cell_address(&self, index: usize, offset: &str) -> Result<String, String> {
+        let array = self.ctx.model.array(index);
+        if !array.bound {
+            return Ok(array.cell_address(offset));
+        }
+        let base = self.fixed_array_address(index)?;
+        Ok(if array.sparse() {
+            format!("llg_fixed_array_cell({base}, {offset})")
+        } else {
+            format!("&({base})[{offset}]")
+        })
+    }
+
+    /// The first cell of dense (or real) array `index`, model storage or a
+    /// bound view.
+    pub(super) fn dense_array_base(&self, index: usize) -> Result<String, String> {
+        let array = self.ctx.model.array(index);
+        if array.bound || array.activation {
+            self.fixed_array_address(index)
+        } else {
+            Ok(array.c_name.clone())
         }
     }
 
@@ -173,7 +206,7 @@ impl<'a, 'm> Frame<'a, 'm> {
                 } else if let Some(image) = &image {
                     format!("&{image}[{offset}]")
                 } else {
-                    array.cell_address(&offset)
+                    self.cell_address(array_index, &offset)?
                 };
                 let pointer = self.scalar(
                     if image.is_some() {
@@ -256,7 +289,7 @@ impl<'a, 'm> Frame<'a, 'm> {
                         self.fixed_array_address(array_index)?
                     )
                 } else {
-                    array.cell_address(&linear)
+                    self.cell_address(array_index, &linear)?
                 }
             ),
         );

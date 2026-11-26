@@ -249,7 +249,7 @@ impl<'a> Codegen<'a> {
             IrDependency::RefFormal { .. } | IrDependency::NativeRefFormal { .. } => {
                 "`ref` formal storage".to_owned()
             }
-            IrDependency::NativeAccess(_) | IrDependency::InterfaceInstance { .. } => {
+            IrDependency::NativeAccess(_) => {
                 "class property or interface member storage".to_owned()
             }
             IrDependency::NativeValue(value) => self.native_value_layouts.get(value).map_or_else(

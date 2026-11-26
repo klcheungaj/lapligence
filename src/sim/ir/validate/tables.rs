@@ -1259,6 +1259,11 @@ impl Validator<'_> {
                     }
                 }
                 IrNativeAccessKind::MailboxCount => {}
+                IrNativeAccessKind::InterfaceStorage {
+                    interface,
+                    slot,
+                    part,
+                } => self.validate_interface_part(interface, slot, part, path)?,
                 IrNativeAccessKind::ValueItem { value, ty } => {
                     self.validate_native_leaf(value, &access.item_path, ty, path)?;
                     if access.receiver != IrChandleExpr::Null {

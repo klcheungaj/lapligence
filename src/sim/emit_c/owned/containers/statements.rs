@@ -1337,7 +1337,7 @@ pub(super) fn render(
                 )
             } else if !frame.ctx.model.array(*array).sparse() {
                 // Dense cells hold the items' own type (SV 7.6 equivalence).
-                let source = frame.ctx.model.array(*array).cell_address("_llg_n");
+                let source = frame.cell_address(*array, "_llg_n")?;
                 format!(
                     "    for (uint64_t _llg_n = 0; _llg_n < {total}ULL; ++_llg_n) (void)llg_value_item_set_packed(&({item})->value.items[_llg_n], *{source});\n"
                 )
@@ -1468,7 +1468,7 @@ impl Frame<'_, '_> {
                 self.fixed_array_address(array)?
             ))
         } else {
-            Ok(format!("({})", info.cell_address(index)))
+            Ok(format!("({})", self.cell_address(array, index)?))
         }
     }
 }

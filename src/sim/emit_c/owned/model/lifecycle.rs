@@ -404,7 +404,7 @@ pub(in crate::sim::emit_c) fn main(
     if model
         .arrays
         .iter()
-        .any(|array| !array.activation && array.sparse())
+        .any(|array| array.is_model_storage() && array.sparse())
     {
         out.push_str("    llg_model_unobserved_contents();\n");
     }
@@ -545,7 +545,7 @@ pub(in crate::sim::emit_c) fn main(
         for array in model
             .arrays
             .iter()
-            .filter(|array| !array.activation && !array.hdl_name.is_empty())
+            .filter(|array| array.is_model_storage() && !array.hdl_name.is_empty())
         {
             if array.sparse() {
                 tables.render(&registrations, &mut out);

@@ -1245,6 +1245,7 @@ impl<'a> Codegen<'a> {
             dims: dims.clone(),
             total,
             sampled_image: false,
+            bound: false,
         });
         Ok(ArrayInfo {
             global: self.global_name(path, name),
