@@ -383,6 +383,9 @@ mod ki_class_array_values;
 #[path = "sim_feature_completion/ki_event_initializers.rs"]
 mod ki_event_initializers;
 
+#[path = "sim_feature_completion/ki_nested_event_containers.rs"]
+mod ki_nested_event_containers;
+
 #[path = "sim_feature_completion/ki_initializer_order.rs"]
 mod ki_initializer_order;
 

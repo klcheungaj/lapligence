@@ -405,7 +405,12 @@ Macros, includes and their edition-specific behavior are counted in §11.
   range: run-time selects,
   slices, patterns, whole copies, equality, ambiguous conditional merges and
   untimed or `#delay` NBAs act on owned elements, and on members of elements
-  (decision S07-D4); event controls and bit/part selects reach those members,
+  (decision S07-D4); an element of a fixed array of queues, dynamic or
+  associative arrays is also a whole equality operand, an unpacked
+  concatenation item and a function `ref` actual (a task `ref` actual is a
+  [known issue](known_issues.md#fixed-arrays-of-containers-task-references-and-row-spacing),
+  [operands](../tests/fixtures/sim/feature_completion/ki_fixed_view_ranges/readme.md));
+  event controls and bit/part selects reach those members,
   and event-controlled NBAs reach record targets (S07-D6).
   Class handles are identity leaves of native records (`r.h.v` reaches the
   object). Run-time indices into native member arrays of subroutine records and
@@ -1237,8 +1242,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   and do not suspend the issuer; `.triggered` holds for the time step and is
   false for null (S14-D9); waiting on a null event ends the run (S14-D8);
   declaration initializers (an event, `null`, an event array) execute in every
-  scope, whole fixed event arrays assign and compare, and a conditional
-  operator selects an event (SD10-D3);
+  scope, whole fixed event arrays assign and compare, queues, dynamic,
+  associative and fixed arrays of event queues nest like other containers
+  ([ki_nested_event_containers](../tests/fixtures/sim/feature_completion/ki_nested_event_containers/readme.md)),
+  and a conditional operator selects an event (SD10-D3);
   events test false only when null; `wait_order` lets its
   first event use the triggered state, and a failure without an `else` is a
   run-time error that ends the run at once, without final procedures

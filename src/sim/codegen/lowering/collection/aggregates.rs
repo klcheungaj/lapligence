@@ -1435,7 +1435,7 @@ pub(in crate::sim::codegen::lowering) fn ir_container_kind(
 /// Whether a container element holds a resizable container: it is one, or a
 /// record member or fixed-array element below it is one. Statements and
 /// expressions naming such a nested container stage it.
-fn element_nests_container(element: &IrContainerElement) -> bool {
+pub(super) fn element_nests_container(element: &IrContainerElement) -> bool {
     match element {
         IrContainerElement::Container { .. } => true,
         IrContainerElement::Aggregate { members, .. }

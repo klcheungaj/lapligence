@@ -39,17 +39,15 @@ impl<'a> Codegen<'a> {
             self.collect_event_global(path, declaration, global);
             return Ok(());
         };
-        if !matches!(metadata.kind(), ArrayKind::Static) {
-            // Dynamic, queue and associative event arrays are resizable
-            // containers of event handles (SV 6.17, 7.5-7.10): elements
-            // share synchronization objects by identity.
-            let info = self.container_from_meta(
-                path,
-                &name,
-                declaration,
-                metadata,
-                IrContainerElement::Event,
-            )?;
+        // Dynamic, queue and associative event arrays are resizable
+        // containers of event handles (SV 6.17, 7.5-7.10): elements share
+        // synchronization objects by identity. A fixed array of them
+        // (`event d[2][$]`) is a fixed-size view of such containers.
+        let element = self.event_container_element(declaration)?;
+        if !matches!(metadata.kind(), ArrayKind::Static)
+            || aggregates::element_nests_container(&element)
+        {
+            let info = self.container_from_meta(path, &name, declaration, metadata, element)?;
             self.container_globals.insert(declaration, info);
             return Ok(());
         }
@@ -99,6 +97,25 @@ impl<'a> Codegen<'a> {
                 .push((declaration, initializer, path.to_owned()));
         }
         Ok(())
+    }
+
+    /// The element of an event array held in container storage: the element
+    /// of its declared type, so that an array of event queues
+    /// (`event w[$][$]`, `event d[2][$]`) nests like containers of other
+    /// element types.
+    pub(super) fn event_container_element(
+        &self,
+        declaration: NodeId,
+    ) -> Result<IrContainerElement, String> {
+        match self
+            .query_descriptor(declaration)
+            .map(|descriptor| &descriptor.shape)
+        {
+            Some(TypeShape::Container { element, .. } | TypeShape::FixedArray { element, .. }) => {
+                lower_container_element(element)
+            }
+            _ => Ok(IrContainerElement::Event),
+        }
     }
 
     /// The model event of `declaration`, a static scalar event of `path`. Its

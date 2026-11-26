@@ -4319,59 +4319,36 @@ cancellation and a bound).
 Open a file with a module, send `textDocument/didChange` that adds a port to it, and
 `textDocument/documentSymbol`.
 
-## Queues and arrays of event queues
+## Fixed arrays of containers: task references and row spacing
 
-**Status:** open; rejected with a located diagnostic (CODEGEN-009).
-
-### Symptom
-
-A queue, dynamic or associative array whose elements are themselves event
-queues or arrays (`event w[$][$]`, `event d[2][$]`) reports "event container
-element ... requires an event handle or null" wherever it is declared.
-Event arrays of one container level, and fixed event arrays, work.
-
-### Cause
-
-Event containers hold only event handles, not nested containers.
-
-### Intended direction
-
-Let an event container nest like containers of other element types.
-
-### Reproduce
-
-`event a; event w[$][$]; initial w.push_back({a});`
-
-## Fixed arrays of containers: element patterns, equality and concatenation
-
-**Status:** open; rejected with located diagnostics (CODEGEN-009).
+**Status:** open; a task `ref` actual rejects with a located diagnostic
+(CODEGEN-001).
 
 ### Symptom
 
-For a fixed array of queues, dynamic or associative arrays (`int q[2][$]`), an
-assignment pattern written to an element or the whole array
-(`q[0] = '{'{1}, '{2}}` as a declaration initializer, `q[0] <= '{3}`), an
-equality of two elements (`q[0] == q[1]`), an element inside an unpacked
-concatenation (`t = {q[0], q[1]}`, `q[0] = {q[0], 6}`) and an element passed
-to a `ref` formal are refused. `q[0] = '{1, 2}`, copies, methods, `foreach`
-and `%p` work. A two-dimensional fixed array of queues prints `%p` without the
-space after its inner closing braces that another implementation prints (white
-space is implementation dependent, 21.2.1.7).
+For a fixed array of queues or dynamic arrays (`int q[2][$]`), an element
+passed to a `ref` formal of a task is refused ("a queue or dynamic array
+nested in a container element as the ref actual of `t` is not supported");
+a function's `ref` formal takes it. A two-dimensional fixed array of queues
+prints `%p` without the space after its inner closing braces that another
+implementation prints (white space is implementation dependent, 21.2.1.7).
 
 ### Cause
 
-Container element operands and nested patterns are lowered only for whole
-container variables.
+The element is bound to an alias of its storage for the statement, which
+publishes its changes to the array when the statement ends; a task that
+suspends would hide them from waiters until it returns. The `%p` space
+follows the type of the whole array only (decision S24-D2).
 
 ### Intended direction
 
-Stage an element into a temporary container, as `foreach` and methods select
-it, and lower these forms on the temporary.
+Let changes through the alias publish to the array as they happen, then
+accept task `ref` actuals.
 
 ### Reproduce
 
-`int q[2][$]; initial begin q[0] = '{1}; q[1] = '{1}; $display(q[0] == q[1]);
-end`
+`int q[2][$]; task automatic t(ref int x[$]); #1 x.push_back(1); endtask
+initial t(q[0]);`
 
 ## Automatic block variables captured by a fork that runs again
 

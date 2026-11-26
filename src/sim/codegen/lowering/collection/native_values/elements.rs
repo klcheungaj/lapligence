@@ -2024,6 +2024,24 @@ impl Codegen<'_> {
                     self.collect_staged_members(child, position == 0, out, nested);
                 }
             }
+            // A nested element compared whole (SV 7.6, 11.4.5) or named as
+            // an item of an unpacked array concatenation (SV 10.10) is read
+            // through its alias.
+            NodeKind::Expr(ExprKind::Operation {
+                op:
+                    Operation::Equal
+                    | Operation::NotEqual
+                    | Operation::CaseEqual
+                    | Operation::CaseNotEqual
+                    | Operation::Concat,
+                ..
+            }) => {
+                for child in children {
+                    if !self.stage_whole_read(child, out, nested) {
+                        self.collect_staged_members(child, false, out, nested);
+                    }
+                }
+            }
             // A nested element printed whole (`%p`) is read through its
             // alias. A report formatted after its statement (`$strobe`,
             // `$monitor`) has no statement to bind one.
@@ -2738,6 +2756,27 @@ impl Codegen<'_> {
         }
         self.nested_element_selection(node)
             .is_some_and(|selection| !self.selects_associative(&selection))
+    }
+
+    /// Whether `node` names a queue or dynamic array that is a cell of a
+    /// fixed-size array (`q[1]` of `int q[2][$]`), staged for the statement.
+    /// No operation removes such a cell, and a write to its pinned sequence
+    /// keeps the alias's storage (`llg_value_replace_in_place`), so the
+    /// alias stands for the cell itself while the statement runs.
+    pub(in crate::sim::codegen) fn staged_fixed_cell(&self, node: NodeId) -> bool {
+        if self.staged_nested_element(node).is_none() {
+            return false;
+        }
+        let NodeKind::Expr(ExprKind::ArraySelect { base, indices }) = self.kind(node) else {
+            return false;
+        };
+        let Some(outer) = self.container_of(*base) else {
+            return false;
+        };
+        match self.fixed_view_dims.get(&outer.ir) {
+            Some(dimensions) => indices.len() == dimensions.len(),
+            None => self.fixed_view_ranges.contains_key(&outer.ir) && indices.len() == 1,
+        }
     }
 
     /// Whether `selection` names an associative array, which has no element
