@@ -1193,7 +1193,7 @@ pub fn document_symbols(a: &Analysis, file: &str) -> Vec<DocumentSymbol> {
     }
     for p in &a.model.packages {
         if p.file.as_deref() == Some(file) {
-            out.push(package_symbol(p, nodes));
+            out.push(package_symbol(a, file, p, nodes));
         }
     }
     for c in &a.model.classes {
@@ -1204,11 +1204,25 @@ pub fn document_symbols(a: &Analysis, file: &str) -> Vec<DocumentSymbol> {
     for inst in all_instances(&a.model.top_instances) {
         for f in &inst.funcs {
             if f.file.as_deref() == Some(file) {
-                out.push(func_symbol(f, nodes));
+                out.push(func_symbol(a, file, f, nodes));
             }
         }
     }
     out
+}
+
+/// The whole text of the declaration in `file` whose name is at `name`, which
+/// it holds (LSP: `selectionRange` inside `range`). `None` when the analysis
+/// captured none ([`Analysis::decl_extents`]).
+fn declaration_range(a: &Analysis, file: &str, name: Range) -> Option<Range> {
+    let key = (name.start.line + 1, name.start.character + 1);
+    let &(start, end) = a.decl_extents.get(file)?.get(&key)?;
+    let position =
+        |(line, col): (u32, u32)| Position::new(line.saturating_sub(1), col.saturating_sub(1));
+    Some(Range::new(
+        position(start).min(name.start),
+        position(end).max(name.end),
+    ))
 }
 
 /// Whether [`document_symbols`] lists every definition of `kind` in a file.
@@ -1219,18 +1233,23 @@ fn outlined_anywhere(kind: SymKind) -> bool {
 /// A `DocumentSymbol` for a function/task definition (flat: no argument
 /// children), ranged over the definition name.
 #[allow(deprecated)] // `DocumentSymbol::deprecated` is deprecated in lsp-types
-pub(super) fn func_symbol(f: &FuncDef, nodes: Option<&[TokenInfo]>) -> DocumentSymbol {
+pub(super) fn func_symbol(
+    a: &Analysis,
+    file: &str,
+    f: &FuncDef,
+    nodes: Option<&[TokenInfo]>,
+) -> DocumentSymbol {
     let name = clean_name(&f.name).to_owned();
     let start = Position::new(f.line.saturating_sub(1), f.col.saturating_sub(1));
-    let range = identifier_range(nodes, start, &name);
+    let selection_range = identifier_range(nodes, start, &name);
     DocumentSymbol {
         name,
         detail: Some(func_signature(f)),
         kind: SymbolKind::FUNCTION,
         tags: None,
         deprecated: None,
-        range,
-        selection_range: range,
+        range: declaration_range(a, file, selection_range).unwrap_or(selection_range),
+        selection_range,
         children: None,
     }
 }
@@ -1245,11 +1264,12 @@ pub(super) fn module_symbol(
     let name = clean_name(&m.name).to_owned();
     let start = Position::new(m.line.saturating_sub(1), m.col.saturating_sub(1));
     let selection_range = identifier_range(nodes, start, &name);
-    let range = Range::new(
-        start,
-        Position::new(m.end_line.saturating_sub(1), m.end_col.saturating_sub(1)),
-    );
-    let range = Range::new(start, range.end.max(selection_range.end));
+    // A parse-only analysis captures no declaration texts; its definitions end
+    // where the parse found them.
+    let range = declaration_range(a, file, selection_range).unwrap_or_else(|| {
+        let end = Position::new(m.end_line.saturating_sub(1), m.end_col.saturating_sub(1));
+        Range::new(start, end.max(selection_range.end))
+    });
     DocumentSymbol {
         name,
         detail: None,
@@ -1263,18 +1283,23 @@ pub(super) fn module_symbol(
 }
 
 #[allow(deprecated)] // `DocumentSymbol::deprecated` is deprecated in lsp-types
-pub(super) fn package_symbol(p: &PackageDef, nodes: Option<&[TokenInfo]>) -> DocumentSymbol {
+pub(super) fn package_symbol(
+    a: &Analysis,
+    file: &str,
+    p: &PackageDef,
+    nodes: Option<&[TokenInfo]>,
+) -> DocumentSymbol {
     let name = clean_name(&p.name).to_owned();
     let start = Position::new(p.line.saturating_sub(1), p.col.saturating_sub(1));
-    let range = identifier_range(nodes, start, &name);
+    let selection_range = identifier_range(nodes, start, &name);
     DocumentSymbol {
         name,
         detail: None,
         kind: SymbolKind::PACKAGE,
         tags: None,
         deprecated: None,
-        range,
-        selection_range: range,
+        range: declaration_range(a, file, selection_range).unwrap_or(selection_range),
+        selection_range,
         children: None,
     }
 }
@@ -1290,15 +1315,15 @@ pub(super) fn class_symbol(
 ) -> DocumentSymbol {
     let name = clean_name(&c.name).to_owned();
     let start = Position::new(c.line.saturating_sub(1), c.col.saturating_sub(1));
-    let range = identifier_range(nodes, start, &name);
+    let selection_range = identifier_range(nodes, start, &name);
     DocumentSymbol {
         name: name.clone(),
         detail: Some(format!("class {name}")),
         kind: SymbolKind::CLASS,
         tags: None,
         deprecated: None,
-        range,
-        selection_range: range,
+        range: declaration_range(a, file, selection_range).unwrap_or(selection_range),
+        selection_range,
         children: class_children(a, file, c, nodes),
     }
 }
@@ -1322,18 +1347,25 @@ pub(super) fn class_children(
                 && d.scope.as_deref() == Some(scope)
                 && matches!(d.kind, SymKind::Function | SymKind::Task | SymKind::Var)
         })
-        .map(child_symbol_from_entry)
+        .map(|d| {
+            let mut method = child_symbol_from_entry(d);
+            if let Some(range) = declaration_range(a, file, method.selection_range) {
+                method.range = range;
+            }
+            method
+        })
         .collect();
     if !kids.is_empty() {
         return Some(kids);
     }
-    class_children_fallback(c, file, nodes)
+    class_children_fallback(a, c, file, nodes)
 }
 
 /// Model-based fallback for [`class_children`]: methods (with their
 /// declaration positions) and fields (with their declaration positions).
 #[allow(deprecated)] // `DocumentSymbol::deprecated` is deprecated in lsp-types
 pub(super) fn class_children_fallback(
+    a: &Analysis,
     c: &ClassDef,
     file: &str,
     nodes: Option<&[TokenInfo]>,
@@ -1344,7 +1376,7 @@ pub(super) fn class_children_fallback(
     let mut kids = Vec::new();
     for m in &c.methods {
         if m.file.as_deref() == Some(file) {
-            kids.push(func_symbol(m, nodes));
+            kids.push(func_symbol(a, file, m, nodes));
         }
     }
     for f in &c.fields {

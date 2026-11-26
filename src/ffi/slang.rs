@@ -46,7 +46,7 @@ use metadata::{RawMetadataRequest, RawMetadataSink};
 
 use crate::cancel::{CancelToken, Cancelled};
 
-const ABI_VERSION: u32 = 87;
+const ABI_VERSION: u32 = 89;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -1977,6 +1977,16 @@ pub struct Include {
     pub file_id: u64,
 }
 
+/// The text of a module, interface, program, package, class, function or task
+/// declaration (`LlgSlangDeclarationExtent`), captured for the editor only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeclarationExtent {
+    /// The declared name, where its semantic node's range starts.
+    pub name: SourceRange,
+    /// The whole declaration, in the file of the name.
+    pub range: SourceRange,
+}
+
 /// Source library recorded for one elaborated instance, package or
 /// compilation-unit semantic node.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2147,6 +2157,9 @@ pub struct Snapshot {
     pub macro_references: Vec<MacroReference>,
     /// Resolved `` `include `` operands, sorted by operand and distinct.
     pub includes: Vec<Include>,
+    /// Declaration texts of an editor compile, sorted by name, then range,
+    /// and distinct. Empty otherwise.
+    pub declaration_extents: Vec<DeclarationExtent>,
 }
 
 impl Snapshot {
@@ -2448,6 +2461,13 @@ struct RawInclude {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+struct RawDeclarationExtent {
+    name: RawRange,
+    range: RawRange,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 struct RawFsmPragma {
     range: RawRange,
     scope: RawRange,
@@ -2579,6 +2599,7 @@ struct RawStreamHeader {
     macro_definition_count: u64,
     macro_reference_count: u64,
     include_count: u64,
+    declaration_extent_count: u64,
 }
 
 type RawBatch<T> = unsafe extern "C" fn(*mut std::ffi::c_void, *const T, u64) -> u32;
@@ -2613,6 +2634,7 @@ struct RawSink {
     macro_definitions: RawBatch<RawMacroDefinition>,
     macro_references: RawBatch<RawMacroReference>,
     includes: RawBatch<RawInclude>,
+    declaration_extents: RawBatch<RawDeclarationExtent>,
     end: unsafe extern "C" fn(*mut std::ffi::c_void) -> u32,
 }
 

@@ -225,6 +225,11 @@ pub type TokenKey = (String, u32, u32);
 pub type RefBindings = HashMap<TokenKey, DeclTarget>;
 pub type DeclDetails = HashMap<TokenKey, String>;
 pub type ParseDeclPositions = HashSet<TokenKey>;
+/// The starts and ends (1-based line and UTF-16 column) of the declarations
+/// that [`crate::ffi::slang::DeclarationExtent`] describes, by file and the
+/// 1-based position of the declared name. A name with several texts (a header
+/// parsed into several trees) keeps the earliest start and the furthest end.
+pub type DeclExtents = HashMap<String, HashMap<(u32, u32), ((u32, u32), (u32, u32))>>;
 
 /// [`DeclTarget::kind`] of a `` `define `` name.
 pub const TARGET_MACRO: &str = "macro";
@@ -310,6 +315,7 @@ pub struct Projection {
     pub details: DeclDetails,
     /// Positions (1-based) of the design's declaration tokens.
     pub declarations: ParseDeclPositions,
+    pub extents: DeclExtents,
 }
 
 /// The tokens of `file`, or of every admitted file.
@@ -416,12 +422,29 @@ fn project_steps<E>(
                 .or_insert(detail);
         }
     }
+    let mut extents = DeclExtents::new();
+    for extent in &snapshot.declaration_extents {
+        step()?;
+        let Some(source) = sources.file(extent.name.file_id) else {
+            continue;
+        };
+        if file.is_some_and(|file| file != source.name) {
+            continue;
+        }
+        let name = source.positions.position(extent.name.start);
+        let start = source.positions.position(extent.range.start);
+        let end = source.positions.position(extent.range.end);
+        let texts = extents.entry(source.name.to_owned()).or_default();
+        let text = texts.entry(name).or_insert((start, end));
+        *text = (text.0.min(start), text.1.max(end));
+    }
     Ok(Projection {
         tokens,
         bindings,
         macros,
         details,
         declarations,
+        extents,
     })
 }
 
@@ -1080,7 +1103,49 @@ fn semantic_kind(kind: SemanticKind) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::SourcePositions;
+    use super::{project_slang, SourcePositions};
+    use crate::ffi::slang;
+
+    /// Editor captures give each module, class and subroutine its whole text
+    /// by its name; one that a macro expands to has none, and simulation
+    /// captures give none.
+    #[test]
+    fn declaration_extents_are_editor_projections() {
+        let text = "`define UNIT(n) module n; endmodule\n\
+                    module \\m+ ;\n  function void f(); endfunction\nendmodule\n\
+                    `UNIT(hidden)\nclass C; endclass\n";
+        let sources = [slang::Source::compilation_unit("t.sv", text)];
+        let capture = |editor: bool| {
+            let options = slang::CompileOptions {
+                library_units: true,
+                editor,
+                ..Default::default()
+            };
+            slang::compile(&slang::CompileRequest {
+                sources: &sources,
+                library_sources: &[],
+                options: &options,
+            })
+            .expect("compile")
+        };
+        let snapshot = capture(true);
+        let mut extents: Vec<_> = project_slang(&snapshot, None, &[])
+            .extents
+            .remove("t.sv")
+            .expect("t.sv")
+            .into_iter()
+            .collect();
+        extents.sort();
+        assert_eq!(
+            extents,
+            [
+                ((2, 8), ((2, 1), (4, 10))),
+                ((3, 17), ((3, 3), (3, 33))),
+                ((6, 7), ((6, 1), (6, 18))),
+            ]
+        );
+        assert!(capture(false).declaration_extents.is_empty());
+    }
 
     #[test]
     fn source_positions_handle_utf16_newlines_and_clamped_offsets() {

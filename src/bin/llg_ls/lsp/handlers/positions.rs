@@ -238,14 +238,21 @@ impl Placement {
         spelled.then_some(place)
     }
 
-    /// Where an analysed stretch of text is now that began with a place which
-    /// is `start` now.
-    pub(super) fn current_stretch(&self, range: Range, start: Range) -> Range {
-        let end = match self {
-            Self::Edited(pair) => pair.map().current_end(range.end),
-            _ => Some(range.end),
+    /// Where an analysed stretch of text is now that holds a place which is
+    /// `place` now. It begins at `place` when its first character is gone.
+    pub(super) fn current_stretch(&self, range: Range, place: Range) -> Range {
+        let (start, end) = match self {
+            Self::Edited(pair) => {
+                let map = pair.map();
+                (map.current_start(range.start), map.current_end(range.end))
+            }
+            _ => (Some(range.start), Some(range.end)),
         };
-        Range::new(start.start, start.end.max(end.unwrap_or(start.end)))
+        let start = start.filter(|start| *start <= place.start);
+        Range::new(
+            start.unwrap_or(place.start),
+            place.end.max(end.unwrap_or(place.end)),
+        )
     }
 
     /// The analysed position that a request at `position` of the document asks

@@ -422,6 +422,7 @@ struct CaptureOutput {
   std::vector<LlgSlangMacroDefinition> macro_definitions;
   std::vector<LlgSlangMacroReference> macro_references;
   std::vector<LlgSlangInclude> includes;
+  std::vector<LlgSlangDeclarationExtent> declaration_extents;
 
   CaptureOutput(const Cancellation& cancellation, uint64_t byteLimit)
       : output_byte_limit(byteLimit), cancellation(cancellation) {
@@ -10176,6 +10177,7 @@ public:
   // envelope may replace any part of the source). Their names identify the
   // enclosing definition of an envelope.
   void handle(const syntax::ModuleDeclarationSyntax& syntax) {
+    declarationExtent(syntax, syntax.header->name);
     designScopes.push_back({syntax.getFirstToken().location(), syntax.header->name});
     // FSM pragmas belong to module, interface and program definitions
     // (IEEE 1800-2009 40.4.1), never to packages.
@@ -10190,6 +10192,32 @@ public:
     // protected text directly after the declaration holds it.
     if (syntax.endmodule.isMissing() && !missingEndScope)
       missingEndScope = syntax.header->name;
+  }
+
+  void handle(const syntax::ClassDeclarationSyntax& syntax) {
+    declarationExtent(syntax, syntax.name);
+    visitDefault(syntax);
+  }
+
+  void handle(const syntax::FunctionDeclarationSyntax& syntax) {
+    declarationExtent(syntax, syntax.prototype->name->getLastToken());
+    visitDefault(syntax);
+  }
+
+  // Orders the declaration extents by name, then range, once per range.
+  void finishDeclarationExtents() {
+    auto& extents = capture.output.declaration_extents;
+    const auto key = [](const LlgSlangDeclarationExtent& record) {
+      return std::tie(record.name.file_id, record.name.start, record.name.end,
+                      record.range.start, record.range.end);
+    };
+    std::sort(extents.begin(), extents.end(),
+              [&](const auto& left, const auto& right) { return key(left) < key(right); });
+    extents.erase(std::unique(extents.begin(), extents.end(),
+                              [&](const auto& left, const auto& right) {
+                                return key(left) == key(right);
+                              }),
+                  extents.end());
   }
 
   // Declarations whose first declarator can carry an FSM `tool enum` pragma
@@ -11072,6 +11100,31 @@ private:
   // A directive operand that is a keyword although Slang lexes it as an
   // identifier (the `none` of `default_nettype none).
   SourceLocation directiveKeyword;
+
+  // The text of a declaration whose name is `name`, for the editor's outline
+  // (LlgSlangDeclarationExtent). One record per declaration, so the lexical
+  // token limit bounds them.
+  void declarationExtent(const syntax::SyntaxNode& syntax, parsing::Token name) {
+    if (!macros || name.isMissing())
+      return;
+    // A macro expansion's text is not written where its locations map to.
+    const auto expanded = [&](SourceLocation location) {
+      return !location.valid() || capture.sourceManager.isMacroLoc(location);
+    };
+    if (expanded(name.location()) || expanded(syntax.getFirstToken().location()) ||
+        expanded(syntax.getLastToken().location()))
+      return;
+    const LlgSlangSourceRange named = capture.span(name.range());
+    const LlgSlangSourceRange whole = capture.span(syntax.sourceRange());
+    if (named.file_id == LLG_SLANG_INVALID_ID || whole.file_id != named.file_id ||
+        whole.start > named.start || whole.end < named.end)
+      return;
+    if (capture.output.declaration_extents.size() >= capture.maxLexicalTokens())
+      throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
+                          "declaration extent limit exceeded");
+    chargeRecord(capture.output, sizeof(LlgSlangDeclarationExtent));
+    capture.output.declaration_extents.push_back({named, whole});
+  }
 
   // Whether a token with these flags is a copy in a macro expansion that no
   // written argument maps back to.
@@ -12901,6 +12954,7 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
     macroCapture->finish();
   lexicalCapture.bindSemanticTokens();
   lexicalCapture.finishProtectedEnvelopes();
+  lexicalCapture.finishDeclarationExtents();
   lexicalCapture.finishFsmPragmas(root);
   if (edition.snapshotFlag == LLG_SLANG_SNAPSHOT_EDITION_VERILOG_2001) {
     Verilog2001SyntaxProfile profile(capture);
@@ -12935,7 +12989,7 @@ bool sinkComplete(const LlgSlangSink& sink) {
          sink.line_directives && sink.edition_findings &&
          sink.protected_envelopes && sink.fsm_pragmas && sink.attributes &&
          sink.lexical_targets && sink.macro_definitions && sink.macro_references &&
-         sink.includes && sink.end;
+         sink.includes && sink.declaration_extents && sink.end;
 }
 
 void checkSink(uint32_t status) {
@@ -12985,6 +13039,7 @@ void streamCapture(CaptureOutput& output, const LlgSlangSink& sink) {
       output.macro_definitions.size(),
       output.macro_references.size(),
       output.includes.size(),
+      output.declaration_extents.size(),
   };
   checkSink(sink.begin(sink.context, &header));
   streamTable(sink, sink.files, output.files);
@@ -13016,6 +13071,7 @@ void streamCapture(CaptureOutput& output, const LlgSlangSink& sink) {
   streamTable(sink, sink.macro_definitions, output.macro_definitions);
   streamTable(sink, sink.macro_references, output.macro_references);
   streamTable(sink, sink.includes, output.includes);
+  streamTable(sink, sink.declaration_extents, output.declaration_extents);
   checkSink(sink.end(sink.context));
 }
 

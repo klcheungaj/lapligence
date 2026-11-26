@@ -194,6 +194,21 @@ impl PositionMap {
         (!extended).then_some(range)
     }
 
+    /// Where a stretch of analysed text that began at `start` begins now, when
+    /// its first character is kept.
+    pub(crate) fn current_start(&self, start: Position) -> Option<Position> {
+        if let Some(run) = self.analysed_run(start.line) {
+            let line = run.current + (start.line - run.analysed);
+            return Some(Position::new(line, start.character));
+        }
+        let piece = self.analysed_piece(start)?;
+        let offset = piece.offset(piece.analysed, start)?;
+        Some(Position::new(
+            piece.current.line,
+            piece.current.character + offset,
+        ))
+    }
+
     /// Where a stretch of analysed text that ended at `end` ends now, when its
     /// last characters may be gone.
     pub(crate) fn current_end(&self, end: Position) -> Option<Position> {

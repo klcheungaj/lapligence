@@ -191,7 +191,11 @@ fn lsp_stdio_requests_answer_at_the_positions_of_the_unsaved_text() {
         .find(|symbol| symbol.0 == "top")
         .expect("top");
     assert_eq!(module.1, position_of(&top, "top(", 0));
-    assert_eq!(start_key(&module.2["start"]), module.1, "{answer}");
+    // The range is the whole declaration, at the places of the edited text.
+    let range = (start_key(&module.2["start"]), start_key(&module.2["end"]));
+    let (line, character) = position_of(&top, "endmodule", 0);
+    let end = (line, character + "endmodule".len() as u64);
+    assert_eq!(range, (position_of(&top, "module top", 0), end), "{answer}");
     for (name, needle) in [
         ("first", "first,"),
         ("second", "second;"),
