@@ -164,7 +164,7 @@ impl Codegen<'_> {
         };
         let name = self.node(node).name.clone();
         let element = if matches!(self.kind(node), NodeKind::NamedEvent) {
-            IrContainerElement::Event
+            self.event_container_element(node)?
         } else {
             let descriptor = self
                 .query_descriptor(node)
@@ -298,9 +298,14 @@ impl Codegen<'_> {
                 "a queue or dynamic-array member of a container record element as the ref actual of `{name}` in `{path}` is not supported"
             ));
         }
-        // No `ref` formal takes a nested queue or dynamic array
-        // (docs/known_issues.md); a nested associative array is a reference.
-        if direction == DbDirection::Ref && self.names_nested_sequence(self.p30_unwrap_cast(actual))
+        // A `ref` formal takes a nested queue or dynamic array only as the
+        // alias of a fixed-array cell, which a function call stages: a task
+        // that waits would publish its writes only when it returns
+        // (docs/known_issues.md). A nested associative array is a reference.
+        let unwrapped = self.p30_unwrap_cast(actual);
+        if direction == DbDirection::Ref
+            && self.names_nested_sequence(unwrapped)
+            && !self.staged_fixed_cell(unwrapped)
         {
             let what = format!(
                 "a queue or dynamic array nested in a container element as the ref actual of `{name}` is not supported; pass a variable"

@@ -448,6 +448,14 @@ impl Codegen<'_> {
         if let Some(value) = self.lower_container_chandle_query(path, node)? {
             return Ok(value);
         }
+        // A popped event element is the synchronization object it holds,
+        // as when it is stored (`void'(q.pop_front())`).
+        if let Some((container, back)) = self
+            .queue_pop_call(node)
+            .filter(|(container, _)| self.model.containers[*container].element.is_event())
+        {
+            return Ok(IrChandleExpr::QueuePop { container, back });
+        }
         if self.element_leaf_kind(node) == Some(IrClassFieldType::Chandle) {
             if let Some((name, _)) = self.element_leaf_symbol(path, node, false)? {
                 return Ok(IrChandleExpr::LocalRead(name));

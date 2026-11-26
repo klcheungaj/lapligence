@@ -37,3 +37,23 @@ fn real_elements_of_arrays_of_containers_read_as_reals() {
         &[],
     );
 }
+
+#[test]
+fn elements_are_compared_concatenated_and_passed_by_reference_whole() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "operands",
+        include_str!("../fixtures/sim/feature_completion/ki_fixed_view_ranges/operands.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn a_task_reference_to_an_element_is_explicit() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_task_ref",
+        "a queue or dynamic array nested in a container element as the ref actual of `t` is not supported; pass a variable at tb:11:10",
+    );
+}

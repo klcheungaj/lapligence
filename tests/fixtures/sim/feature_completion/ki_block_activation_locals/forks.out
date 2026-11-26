@@ -1,0 +1,21 @@
+A late 10 5
+A late 20 6
+A late 30 5
+A' late! 11 15
+A' late! 21 16
+A' late! 31 25
+B c0+ 100 woke
+C changed
+C changed
+B c1+ 101 woke
+D h changed 50 ab0
+show ab0 3 50
+D after AB0
+D z is go 1
+D h changed 51 ab1
+show ab1 3 51
+D after AB1
+D z is go 2
+E w0
+E w1
+B c2+ 102 woke

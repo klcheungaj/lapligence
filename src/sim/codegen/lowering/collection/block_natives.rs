@@ -7,8 +7,9 @@
 //! sensitivity) apply unchanged. Static declarations keep their value and
 //! initialize once in the static schedule (SV 6.21, 10.5); automatic ones
 //! are reset to their default (empty string, null) and initialized at every
-//! entry of their block, and reject when a fork could keep two activations
-//! live (see `concurrent_block_activation`).
+//! entry of their block. When a fork could keep two activations live (see
+//! `concurrent_block_activation`), an automatic declaration is instead a
+//! local of each activation, which fork branches share.
 use super::*;
 use crate::sim::ir::IrObject;
 
@@ -66,9 +67,18 @@ impl Codegen<'_> {
             VariableLifetime::Automatic
                 if self.concurrent_block_activation(statement, declaration) =>
             {
-                return Err(format!(
-                    "automatic variable `{name}` in `{path}` can be live in two activations through a `join_any`/`join_none` fork that runs again; this is not supported"
-                ))
+                // One model object cannot hold two live activations: the
+                // variable is a local of the process (or branch) activation
+                // that declares it, which fork branches share like an
+                // integral automatic.
+                let local = format!("_lbn{}", declaration.index());
+                match ty {
+                    IrObjectType::String => self.proc_string_locals.insert(declaration, local),
+                    _ => self.proc_semaphore_locals.insert(declaration, local),
+                };
+                self.block_natives.insert(declaration, path.to_owned());
+                self.block_activation_locals.insert(declaration, statement);
+                return Ok(());
             }
             VariableLifetime::Automatic => {}
             VariableLifetime::Static => {
@@ -96,7 +106,8 @@ impl Codegen<'_> {
     /// A named event declared in a procedural block: one synchronization
     /// object per declaration and instance, like a module-scope event. An
     /// event holds no value, so automatic declarations need no reset at
-    /// entry; two live activations would share one object and reject.
+    /// entry; one that can be live in two activations is a local object of
+    /// each activation instead.
     pub(super) fn collect_block_event(
         &mut self,
         path: &str,
@@ -106,13 +117,20 @@ impl Codegen<'_> {
         if self.event_globals.contains_key(&declaration) {
             return Ok(());
         }
+        if self.local_event_handles.contains_key(&declaration) {
+            return Ok(());
+        }
         let name = self.node(declaration).name.clone();
         if self.db.variable_lifetime(declaration) == VariableLifetime::Automatic
             && self.concurrent_block_activation(statement, declaration)
         {
-            return Err(format!(
-                "automatic event `{name}` in `{path}` can be live in two activations through a `join_any`/`join_none` fork that runs again; this is not supported"
-            ));
+            // Like a subroutine event: a fresh synchronization object at
+            // each entry of the declaring activation, which a fork captures
+            // by identity.
+            self.local_event_handles
+                .insert(declaration, format!("_llg_event_{}", declaration.index()));
+            self.block_activation_locals.insert(declaration, statement);
+            return Ok(());
         }
         let scope = self.block_storage_scope(path, declaration);
         let global = self.event_global_name(&scope, &name);
@@ -144,8 +162,12 @@ impl Codegen<'_> {
         if self.db.variable_lifetime(declaration) != VariableLifetime::Automatic {
             return Ok(Some(Vec::new()));
         }
-        let object = self.object_globals[&declaration];
         let initializer = self.db.var_initializer(declaration);
+        let Some(&object) = self.object_globals.get(&declaration) else {
+            return self
+                .block_native_local_declaration(path, declaration, initializer)
+                .map(Some);
+        };
         let mut statements = Vec::with_capacity(2);
         // A whole initializer replaces the value; it sees the default only
         // when it reads the variable itself.
@@ -163,6 +185,52 @@ impl Codegen<'_> {
             statements.push(self.block_native_assignment(path, declaration, initializer)?);
         }
         Ok(Some(statements))
+    }
+
+    /// The declaration of a block string or handle that lives in its
+    /// activation (see `collect_block_native`): a fresh local at each entry,
+    /// in a shared frame when a fork branch uses it (SV 6.21, 9.3.2).
+    fn block_native_local_declaration(
+        &mut self,
+        path: &str,
+        declaration: NodeId,
+        initializer: Option<NodeId>,
+    ) -> Result<Vec<IrStmt>, String> {
+        if let Some(name) = self.proc_string_local_name(declaration).map(str::to_owned) {
+            let init = initializer
+                .map(|initializer| self.lower_string(path, initializer))
+                .transpose()?;
+            if self.fork_shared(declaration) {
+                self.shared_locals.insert(declaration);
+                let observed = self.native_observed(declaration, self.inst);
+                return Ok(vec![IrStmt::SharedString {
+                    name,
+                    init,
+                    observed,
+                }]);
+            }
+            return Ok(vec![IrStmt::DeclString { name, init }]);
+        }
+        let name = self
+            .proc_semaphore_local_name(declaration)
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                format!(
+                    "procedural-block variable `{}` in `{path}` has no storage",
+                    self.node(declaration).name
+                )
+            })?;
+        let init = initializer
+            .map(|initializer| self.lower_chandle(path, initializer))
+            .transpose()?;
+        Ok(vec![IrStmt::Object(Box::new(
+            if self.fork_shared(declaration) {
+                self.shared_locals.insert(declaration);
+                IrObjectStmt::ChandleDeclareShared(name, init)
+            } else {
+                IrObjectStmt::ChandleDeclareLocal(name, init)
+            },
+        ))])
     }
 
     fn block_native_assignment(

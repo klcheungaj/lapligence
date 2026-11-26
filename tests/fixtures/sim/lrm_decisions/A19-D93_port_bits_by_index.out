@@ -1,0 +1,38 @@
+a size 4: [-1] NULL [0] bit 3 [1] bit 2 [2] bit 1 [3] bit 0 [4] NULL
+  low=tb.u.a[3] high=tb.ta[3]
+  low=tb.u.a[2] high=tb.ta[2]
+  low=tb.u.a[1] high=tb.ta[1]
+  low=tb.u.a[0] high=tb.ta[0]
+b size 4: [-1] NULL [0] bit 0 [1] bit 1 [2] bit 2 [3] bit 3 [4] NULL
+  low=tb.u.b[0] high=tb.tb_[3]
+  low=tb.u.b[1] high=tb.tb_[2]
+  low=tb.u.b[2] high=tb.tb_[1]
+  low=tb.u.b[3] high=tb.tb_[0]
+c size 4: [3] NULL [4] bit 3 [5] bit 2 [6] bit 1 [7] bit 0 [8] NULL
+  low=tb.u.c[7] high=tb.tc[3]
+  low=tb.u.c[6] high=tb.tc[2]
+  low=tb.u.c[5] high=tb.tc[1]
+  low=tb.u.c[4] high=tb.tc[0]
+s size 1: [-1] NULL [0] NULL [1] NULL
+  no bits
+n size 3: [-4] NULL [-3] bit 2 [-2] bit 1 [-1] bit 0 [0] NULL
+  low=tb.u.n[-1] high=tb.tn[2]
+  low=tb.u.n[-2] high=tb.tn[1]
+  low=tb.u.n[-3] high=tb.tn[0]
+x size 4: [1] NULL [2] bit 3 [3] bit 2 [4] bit 1 [5] bit 0 [6] NULL
+  low=tb.l.x[5] high=tb.wide[6]
+  low=tb.l.x[4] high=tb.wide[5]
+  low=tb.l.x[3] high=tb.wide[4]
+  low=tb.l.x[2] high=tb.wide[3]
+z size 3: [-1] NULL [0] bit 2 [1] bit 1 [2] bit 0 [3] NULL
+  low=tb.l.p[1] high=tb.ts
+  low=tb.l.p[0] high=tb.tn[1]
+  low=tb.l.q high=tb.tn[0]
+r size 3: [-1] NULL [0] bit 2 [1] bit 1 [2] bit 0 [3] NULL
+  low=tb.l.t[4] high=tb.tr[2]
+  low=tb.l.t[3] high=tb.tr[1]
+  low=tb.l.t[2] high=tb.tr[0]
+m [0] NULL error
+pk: [0][-1] NULL error [0][0] 5 [0][1] 4 [0][2] 3 [0][3] NULL error [1][-1] NULL error [1][0] 2 [1][1] 1 [1][2] 0 [1][3] NULL error [2][-1] NULL error [2][0] NULL error [2][1] NULL error [2][2] NULL error [2][3] NULL error
+pk [1] NULL error
+pk [1][2] low=tb.u.pk[1][2] high=tb.tpk[5]
