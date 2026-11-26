@@ -1411,8 +1411,19 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   assignments ([ki_audit](../tests/fixtures/sim/feature_completion/ki_audit/readme.md));
   packed selects of such a property as targets reject
   ([known issue](known_issues.md#selects-of-properties-of-computed-class-handles)).
+  A simple or compound assignment nested in an expression runs before the
+  other operands of its full expression (decision
+  [EO-D1](lrm_decisions.md#operand-evaluation-order-operand-order)) for every
+  target kind: fixed-array elements, slices and whole arrays, records and
+  members, queues, dynamic and associative arrays and their elements, class
+  properties and property-array elements, strings and class handles
+  (`lrm_decisions/EO-D1_nested_assignment_targets`); one whose target is a
+  string, a handle, an unpacked value, a container element or a class
+  property select rejects in an operand that `?:`, `&&`, `||`, `->`, `inside`
+  or a `with` clause may skip or repeat
+  ([known issue](known_issues.md#operand-order-of-record-elements-of-queues-and-dynamic-arrays)).
   Non-lvalues, continuous/port mutation expressions and unsupported
-  aggregates reject. SV §§11.4.1–11.4.2 **[SV-2005]**.
+  aggregates reject. SV §§11.3.6, 11.4.1–11.4.2 **[SV-2005]**.
 - 🟦 **Wildcard equality** — `==?`/`!=?` treat RHS X/Z as wildcards. Remaining
   LHS unknowns yield X unless a known mismatch decides the result; common-width
   and signed extension apply. SV §11.4.6 **[SV-2005]**.
@@ -1431,7 +1442,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   expressions are traversed (`sim_019/string_inside`, `inside_arrays`); slices of nested
   containers reject explicitly
   ([known issue](known_issues.md#set-membership-items-outside-packed-storage)),
-  as do over-limit payloads.
+  as do over-limit payloads. A set with a member that has an effect is
+  scanned member by member, reading the value again before each member, a
+  value selected through a computed handle with the handle evaluated again
+  (decision [EO-D2](lrm_decisions.md#operand-evaluation-order-operand-order),
+  `lrm_decisions/EO-D2_inside_value_handles`).
   SV §11.4.13 **[SV-2005]**.
 - 🟨 **Fixed reductions** — `sum/product/and/or/xor`, optional parentheses and
   lexical `with` maps support immediate integral elements and admitted fixed-row/

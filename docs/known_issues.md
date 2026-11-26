@@ -768,6 +768,50 @@ the pin held by the formal (SIM-008); fork capture pins (SIM-010).
 
 `tests/fixtures/sim/feature_completion/sim_006/neg_*.sv`.
 
+## Operand order of record elements of queues and dynamic arrays
+
+**Status:** open for the forms below; the other operand orders of
+[EO-D1 to EO-D4](lrm_decisions.md#operand-evaluation-order-operand-order)
+follow the industry-standard simulator.
+
+### Symptom
+
+With `typedef struct { int q[$]; int v; } r_t; r_t rq[$];` and a function
+`bump()` that sets `k = 1`:
+
+- a queue or dynamic-array member of a record element read after a call in
+  the same statement names the element the statement selected when it
+  started: `x = bump() + rq[k].q.size()` reads `rq[0].q`, the reference
+  `rq[1].q`;
+- a nested assignment whose target is a string, a handle, an unpacked value,
+  a container element or a class property select is rejected in an operand
+  that `?:`, `&&`, `||`, `->`, `inside` or an array method's `with` clause may
+  skip or repeat (`s2 = c ? (s = "a") : "b"`), with its location;
+- an output or inout actual of a function called in an expression that names
+  an element of a queue, dynamic or associative array, also of an unpacked
+  array property of a class, is rejected (it is supported where the call is a
+  statement).
+
+### Cause
+
+A queue or dynamic-array member of a record element of a queue or dynamic
+array is staged into a copy of the member, through an access of the element
+that the statement evaluates once, before the statement runs. Nested assignments with such targets have only the statement form,
+which runs where the full expression runs its nested assignments first.
+
+### Intended direction
+
+Stage a member that a use reads after an effect at that use, as the
+computed handles of class properties are evaluated where the use starts
+(EO-D4).
+
+### Reproduce
+
+The forms above in a module with `rq` filled by `push_back`; the supported
+neighbours are rows of
+`tests/fixtures/sim/lrm_decisions/EO-D4_handle_actuals_staged_targets.sv` and
+`tests/fixtures/sim/expression_mutations/nested_assignment_skipped_operand.sv`.
+
 ## Remaining forms of unpacked-array container elements and multidimensional class properties (SIM-011, SIM-027)
 
 **Status:** open; FIN-001 C1 serves cells of unpacked-array elements of

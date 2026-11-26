@@ -688,6 +688,41 @@ fn eo_d4_class_handle_at_use() {
     );
 }
 
+/// EO-D1 / IEEE 1800-2009 11.3.6: a nested assignment to every target kind
+/// (array element, slice and whole array, record and member, queue, dynamic
+/// and associative arrays and their elements, class properties, strings and
+/// handles) runs first and yields the value it stacked.
+#[test]
+fn eo_d1_nested_assignment_targets() {
+    run_decision(
+        "EO-D1_nested_assignment_targets",
+        include_str!("fixtures/sim/lrm_decisions/EO-D1_nested_assignment_targets.out"),
+    );
+}
+
+/// EO-D2 / IEEE 1800-2009 11.4.13: each comparison of a member-by-member
+/// scan evaluates again the handle its value is selected through; a string
+/// value with an effect is evaluated once.
+#[test]
+fn eo_d2_inside_value_handles() {
+    run_decision(
+        "EO-D2_inside_value_handles",
+        include_str!("fixtures/sim/lrm_decisions/EO-D2_inside_value_handles.out"),
+    );
+}
+
+/// EO-D4 / IEEE 1800-2009 13.5: a class property element passed as an
+/// actual evaluates its handle at its place among the actuals, and an
+/// element target in a statement that stages record-element members is
+/// located after the right-hand side.
+#[test]
+fn eo_d4_handle_actuals_staged_targets() {
+    run_decision(
+        "EO-D4_handle_actuals_staged_targets",
+        include_str!("fixtures/sim/lrm_decisions/EO-D4_handle_actuals_staged_targets.out"),
+    );
+}
+
 /// VM-D2 / IEEE 1800-2009 10.4.2: an event-controlled nonblocking write
 /// through a virtual interface locates its target at issue.
 #[test]
