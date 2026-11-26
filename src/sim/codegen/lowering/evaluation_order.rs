@@ -185,6 +185,13 @@ impl Codegen<'_> {
         )
     }
 
+    /// Whether `node` is the target of a copied-out actual.
+    pub(in crate::sim::codegen) fn copy_out_wrapper_target(&self, node: NodeId) -> bool {
+        self.node(node)
+            .parent
+            .is_some_and(|parent| self.copy_out_wrapper(parent))
+    }
+
     /// Whether `node` is a simple or compound assignment operator whose
     /// target holds a packed or real value, the forms an expression can
     /// yield.
@@ -490,5 +497,167 @@ impl Codegen<'_> {
             init: Some(Box::new(value)),
         });
         IrExpr::new(IrExprKind::LocalRead(name), width, signed, None)
+    }
+}
+
+impl Codegen<'_> {
+    /// Whether `node` is `root` or lies below it.
+    pub(in crate::sim::codegen) fn below(&self, mut node: NodeId, root: NodeId) -> bool {
+        loop {
+            if node == root {
+                return true;
+            }
+            match self.node(node).parent {
+                Some(parent) => node = parent,
+                None => return false,
+            }
+        }
+    }
+
+    /// The target of blocking assignment `h` when the computed handles it
+    /// is selected through are evaluated late (decision EO-D4): after the
+    /// nested assignments the statement runs first, and for an element
+    /// target after the right-hand side ([`Self::source_before_target`]).
+    pub(in crate::sim::codegen) fn late_located_target(&self, h: NodeId) -> Option<NodeId> {
+        let NodeKind::Stmt(StmtKind::Assign {
+            blocking: true,
+            delay: None,
+            ..
+        }) = self.kind(h)
+        else {
+            return None;
+        };
+        let hoists = matches!(&self.pending_hoists, Some((statement, _)) if *statement == h);
+        (hoists || self.source_before_target(h).is_some())
+            .then(|| self.node(h).children.first().copied())
+            .flatten()
+    }
+
+    /// The right-hand side of `h` when `h` is a simple blocking assignment
+    /// whose target is an element, a bit or a part of something (a select)
+    /// and whose right-hand side has an [effect](Self::evaluation_effect):
+    /// such a target is located after the right-hand side (decision EO-D4),
+    /// whatever handle it is selected through. A statement that stages
+    /// container members around it keeps the handles of its target before
+    /// it.
+    pub(in crate::sim::codegen) fn source_before_target(&self, h: NodeId) -> Option<NodeId> {
+        let NodeKind::Stmt(StmtKind::Assign {
+            blocking: true,
+            op: Operation::Assignment,
+            delay: None,
+        }) = self.kind(h)
+        else {
+            return None;
+        };
+        let [lhs, rhs] = self.node(h).children.as_slice() else {
+            return None;
+        };
+        let selected = matches!(
+            self.kind(*lhs),
+            NodeKind::Expr(
+                ExprKind::ArraySelect { .. }
+                    | ExprKind::BitSelect { .. }
+                    | ExprKind::PartSelect { .. }
+                    | ExprKind::IndexedPartSelect { .. }
+            )
+        );
+        (selected
+            && self.contains_evaluation_effect(*rhs)
+            && !(self.element_staging_possible && self.stages_members(h)))
+        .then_some(*rhs)
+    }
+
+    /// The computed handle (`ca[k]`, `f()`) that the whole-property target
+    /// of blocking assignment `h` is selected through (`ca[k].x`,
+    /// `f().d.x`), when its right-hand side has an
+    /// [effect](Self::evaluation_effect): such a target is located before
+    /// the right-hand side (decision EO-D4), so the handle is evaluated
+    /// first. A container or record property has a computed receiver of
+    /// its own, which the statement evaluates first already.
+    pub(in crate::sim::codegen) fn target_handle_first(&self, h: NodeId) -> Option<NodeId> {
+        let NodeKind::Stmt(StmtKind::Assign {
+            blocking: true,
+            delay: None,
+            ..
+        }) = self.kind(h)
+        else {
+            return None;
+        };
+        let [lhs, rhs] = self.node(h).children.as_slice() else {
+            return None;
+        };
+        if !self.contains_evaluation_effect(*rhs)
+            || self.computed_receiver_aliases.contains_key(lhs)
+        {
+            return None;
+        }
+        let mut node = *lhs;
+        loop {
+            node = match self.kind(node) {
+                NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+                    match refs.first().copied().flatten() {
+                        Some(first)
+                            if matches!(
+                                self.kind(first),
+                                NodeKind::Expr(_)
+                                    | NodeKind::FuncCall { .. }
+                                    | NodeKind::MethodCall { .. }
+                            ) =>
+                        {
+                            first
+                        }
+                        _ => return None,
+                    }
+                }
+                NodeKind::Expr(ExprKind::MemberSelect { base, .. }) => *base,
+                _ => break,
+            };
+        }
+        let computed = matches!(
+            self.kind(node),
+            NodeKind::Expr(ExprKind::ArraySelect { .. })
+                | NodeKind::FuncCall { .. }
+                | NodeKind::MethodCall { .. }
+        );
+        let class = matches!(
+            self.query_descriptor(node).map(|descriptor| &descriptor.shape),
+            Some(TypeShape::Opaque { kind }) if kind == "Class"
+        );
+        (node != *lhs && computed && class).then_some(node)
+    }
+
+    /// Evaluate handle `node` ([`Self::target_handle_first`]) into a
+    /// temporary that every lowering of `node` reads until
+    /// [`Self::end_target_handle`].
+    pub(in crate::sim::codegen) fn hoist_target_handle(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<IrStmt, String> {
+        let name = format!("_llg_th{}", node.0);
+        let handle = self.lower_chandle(path, node)?;
+        self.hoisted_values
+            .insert(node, HoistedValue::Handle(name.clone()));
+        self.hoisted_assignments.insert(node, false);
+        Ok(IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
+            name,
+            Some(handle),
+        ))))
+    }
+
+    /// Forget the handle [`Self::hoist_target_handle`] evaluated. One that
+    /// no lowering read would have been evaluated twice.
+    pub(in crate::sim::codegen) fn end_target_handle(
+        &mut self,
+        node: NodeId,
+    ) -> Result<(), String> {
+        self.hoisted_values.remove(&node);
+        match self.hoisted_assignments.remove(&node) {
+            Some(true) => Ok(()),
+            _ => Err(self.locate_error(
+                node,
+                "a handle that the target of this assignment is selected through is not supported here; assign it to a variable first",
+            )),
+        }
     }
 }

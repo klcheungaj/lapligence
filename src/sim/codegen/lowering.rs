@@ -1420,6 +1420,10 @@ enum ReceiverScope {
     Operand(NodeId),
     /// Below a nested statement, which is prepared on its own.
     Body,
+    /// Of the target of an assignment, evaluated after the nested
+    /// assignments the statement runs first and, for an element target,
+    /// after the right-hand side (decision EO-D4).
+    Target,
 }
 
 #[derive(Clone, Copy)]
@@ -2339,6 +2343,10 @@ struct Codegen<'a> {
     computed_receiver_aliases: HashMap<NodeId, ReceiverAlias>,
     /// Declarations of the computed handles of the statement being lowered.
     receiver_prelude: Vec<IrStmt>,
+    /// Declarations of the computed handles of the target of the
+    /// assignment being lowered that it locates late
+    /// ([`ReceiverScope::Target`]).
+    target_receivers: Vec<IrStmt>,
     /// Declarations of computed handles of operands evaluated lazily or
     /// repeatedly, run at each evaluation of the operand.
     receiver_roots: HashMap<NodeId, Vec<IrStmt>>,
@@ -2894,6 +2902,7 @@ impl<'a> Codegen<'a> {
             computed_receivers: HashMap::new(),
             computed_receiver_aliases: HashMap::new(),
             receiver_prelude: Vec::new(),
+            target_receivers: Vec::new(),
             receiver_roots: HashMap::new(),
             call_operand_scope: None,
             call_operand_prelude: None,
@@ -3774,6 +3783,10 @@ struct EmitCtx<'c, 'a> {
     /// through a computed handle (decision VM-D1): they run after the
     /// control, where the target is located, in the write's scope.
     placed_target_bindings: Vec<IrStmt>,
+    /// The computed handles of the element target of the assignment being
+    /// lowered, which it evaluates after its right-hand side (decision
+    /// EO-D4, [`Codegen::source_before_target`]).
+    late_target_receivers: Vec<IrStmt>,
     /// Exact process kind for the root process being lowered. Nested
     /// function/task contexts leave this unset; it distinguishes plain
     /// `always @*` from the SystemVerilog implicit-sensitivity forms.

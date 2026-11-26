@@ -24,6 +24,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             saw_wait: false,
             target_rebinds: Vec::new(),
             placed_target_bindings: Vec::new(),
+            late_target_receivers: Vec::new(),
             process_kind: None,
             inst,
             depth_arg: depth_arg.to_string(),

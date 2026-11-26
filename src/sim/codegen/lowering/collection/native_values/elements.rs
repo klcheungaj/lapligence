@@ -2078,6 +2078,13 @@ impl Codegen<'_> {
         Ok((before, after))
     }
 
+    /// Whether statement `h` stages container members around it.
+    pub(in crate::sim::codegen) fn stages_members(&self, h: NodeId) -> bool {
+        let (mut members, mut nested) = (Vec::new(), Vec::new());
+        self.collect_statement_members(h, &mut members, &mut nested);
+        !members.is_empty() || !nested.is_empty()
+    }
+
     /// Collect what statement `h` stages.
     fn collect_statement_members(
         &self,
