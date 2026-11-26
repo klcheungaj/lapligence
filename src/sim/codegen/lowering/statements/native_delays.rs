@@ -27,6 +27,7 @@ impl EmitCtx<'_, '_> {
             || (self.cg.native_record_target(member) && !self.native_nba_target(lhs))
             || self.whole_unpacked_record(member)
             || self.fixed_view_target(member)
+            || self.cg.real_array_shape(member).is_some()
     }
 
     /// An element of a fixed array of strings or handles, a slice of one or
