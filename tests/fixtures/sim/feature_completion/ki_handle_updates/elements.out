@@ -1,0 +1,7 @@
+index 2
+issued: ha -1 -1 -1 h2 -1 -1 pa -1 ia -1 sa -1 sb -1
+triggered: ha -1 -1 -1 h2 -1 -1 pa -1 ia -1 sa -1 sb -1
+after: ha -1 1 7 h2 -1 -1 pa 2 ia 10 sa 11 sb 12
+second: ha -1 1 7 h2 8 9 pa 2 ia 10 sa 11 sb 12
+whole: ha 2 -1 2 h2 8 2 pa 2 ia 10 sa 11 sb 12
+2

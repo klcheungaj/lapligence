@@ -1,0 +1,12 @@
+1 members: v 1 w 2 x 0
+2 element members: v 0 w 3 x 101
+3 record: v 5 w 5 x 101
+4 element: v 6 w 7 x 100
+5 element record: v 8 w 8 x 101
+6 arrays: v 13 w 12 x 101
+6 0 '' '' ''
+16 5 s5 7 s7 5 s3
+8 s8 s12 14.0
+17 packed: v 17 w 12 x 102
+17 3 part '{0, 0, 0}  '{0, 0, 0} 
+27 '{15, 2, 3}  '{16, 17, 18} 

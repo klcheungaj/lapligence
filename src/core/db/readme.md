@@ -68,6 +68,12 @@ A member path through a virtual interface lists every scope named by
 scope a reference node of its own), and
 `Db::virtual_interface_call_scopes` keeps the same names for a method call
 through one (`v.tx.f()`); those edges are metadata, never children.
+A path into a static class property (IEEE 1800-2009 8.8) starts at the
+property, one variable of its class, whatever names it: `c::s.a`, `o.s.a` and
+`this.s.a` have the same `ExprKind::HierPath` parts `s`, `a`, and `o.s` is
+the `ExprKind::Ref` of `s`; the object expression stays a child of the node.
+A path whose object expression assigns or calls a subroutine keeps it, so a
+consumer can see that dropping it would drop its effect.
 `Db::forward_typedef` gives the class definition each forward typedef names
 (`typedef class c;` or `typedef c;`, IEEE 1800-2009 6.18, 8.25; the generic
 definition of a parameterized class) and whether it names the `class`

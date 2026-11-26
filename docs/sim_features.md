@@ -631,7 +631,9 @@ Macros, includes and their edition-specific behavior are counted in §11.
   locals, admitted aggregate/class fields, mixed signatures, returns and
   input/output/inout/ref/const-ref calls are present. Untimed and `#delay`
   nonblocking writes to persistent chandles and module-record chandle members
-  store the issue-time pointer; an ambiguous conditional keeps equal pointers
+  store the issue-time pointer, like those to class, mailbox, semaphore and
+  process handles and to elements of fixed arrays of them, also with an event
+  control ([ki_handle_updates](../tests/fixtures/sim/feature_completion/ki_handle_updates/readme.md)); an ambiguous conditional keeps equal pointers
   or yields null. Chandle ports (including ref ports and records with chandle
   members), packed containment, arithmetic, continuous assignments (including
   of a record with a chandle member) and sensitivity/event expressions are
@@ -1143,7 +1145,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   not unrelated body reads. Helpers with visible writes, persistent static state
   or descriptor-array formals are evaluated by the waiting process when the
   control is reached and after each dependency change (§9), including lists
-  with declared named events (trigger counts) and real values (IEEE bit
+  with named events (trigger counts) and real values (IEEE bit
   patterns). Event controls and level waits on class properties (`@(h.x)`,
   `hs[i].x`, `n.next.x`, `posedge h.w[0]`, string and handle properties
   `@(h.s)`, `wait (h.nxt != null)`), static class properties, class storage
@@ -1159,7 +1161,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   `exists`, `len`, …) are admitted
   ([sim_013](../tests/fixtures/sim/feature_completion/sim_013/readme.md)).
   Real edges (SV §6.12.1), chandles (§6.14) and functions with output/ref
-  formals (§13.4) reject as language rules. Event handles or array-reading
+  formals (§13.4) reject as language rules. Array-reading
   helpers in named-event lists with process-evaluated sources, virtual
   methods and helper forms outside §9 reject. A wait or event control on the
   identity of event variables (`wait (k == g)`, `@(k == g)`) rejects at the
@@ -1253,8 +1255,6 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   assignments, comparisons, Boolean tests, event controls and input event
   actuals (`event_function_results`). `.triggered` of such a call rejects
   (SV 15.5.3).
-  Event handles other than declared named events in process-evaluated lists
-  reject.
   V §9.7.3; SV §15.5 **[1995/SV-2005]**.
 - 🟨 **Cycle delays** — Procedural `##N` repeats the resolved default clocking
   event, including irregular periods; `##0` continues in a step where the
@@ -3231,9 +3231,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   writes and `vpiIndex` (a string key: a `vpiStringConst` constant),
   selected by index or key at each access; nested containers list their
   innermost elements (`tb.qq[1][0]`), an element of an array of structures
-  gives its members, and static class properties (variables and events)
-  are listed by objects and definitions under `tb.C::si` full names
-  (decision A19-D87); the string, handle, unpacked array and container
+  gives its members, and static class properties (variables and events,
+  with the members and elements of a variable) are listed by objects and
+  definitions under `tb.C::si` full names (decision A19-D87); the string, handle, unpacked array and container
   members of a structure (a module's, in any storage form including
   columns, of an element of an array or queue, or of a structure property)
   and fixed-size class instance properties are objects with their elements,

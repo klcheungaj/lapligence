@@ -124,6 +124,7 @@ fn unused_storage_keeps_wait_sources_of_clocked_nonblocking_operations() {
             action: "a_t_nba_0".to_string(),
             frame: crate::sim::ir::FrameId::new(0),
             captures: Vec::new(),
+            bound: false,
         },
         IrStmt::ClockingDrive {
             lhs: IrLhs::Whole(5),

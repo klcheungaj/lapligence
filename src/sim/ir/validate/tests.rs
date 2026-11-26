@@ -1856,15 +1856,10 @@ fn runtime_queries_name_existing_storage_with_their_fixed_shape() {
         model.spawns.push("proc".to_string());
         model
     };
-    model_with(IrRuntimeQuery::EventTriggerCount(0), 64)
-        .validate()
-        .expect("a static event's trigger count is 64 bits");
     model_with(IrRuntimeQuery::ForceSourceActive(0), 1)
         .validate()
         .expect("a force-source query is one bit");
     for (query, width) in [
-        (IrRuntimeQuery::EventTriggerCount(0), 32),
-        (IrRuntimeQuery::EventTriggerCount(1), 64),
         (IrRuntimeQuery::ForceSourceActive(0), 2),
         (IrRuntimeQuery::ForceSourceActive(1), 1),
     ] {

@@ -792,6 +792,7 @@ static void release_expression_contexts(const llg_expr_event_spec_t* specs, int3
 
 static void free_deferred_trigger(llg_deferred_trigger_t* trigger) {
     if (!trigger) return;
+    if (trigger->occurred) llg_cancel_region_callback(trigger->occurrence);
     for (int32_t i = 0; i < trigger->n; i++) {
         llg_frame_release((llg_frame_t*)trigger->specs[i].eval_context);
         llg_frame_release((llg_frame_t*)trigger->specs[i].condition_context);

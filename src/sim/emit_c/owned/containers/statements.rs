@@ -32,8 +32,14 @@ pub(super) fn render(
         | IrContainerStmt::SharedDeclare(_)
         | IrContainerStmt::BindElement { .. }
         | IrContainerStmt::NbaBindOpen
-        | IrContainerStmt::NbaBindClose => {
-            return Err("container declarations and bindings are emitted by the frame".into())
+        | IrContainerStmt::NbaBindClose
+        | IrContainerStmt::NbaHoldOpen(_)
+        | IrContainerStmt::NbaHoldClose
+        | IrContainerStmt::NbaLocate { .. }
+        | IrContainerStmt::NbaLocateEnd => {
+            return Err(
+                "container declarations and update brackets are emitted by the frame".into(),
+            )
         }
         IrContainerStmt::TouchContents(container) => {
             let storage = &ctx.model.containers[*container];
@@ -1371,12 +1377,6 @@ pub(super) fn render(
             };
             format!("    for (uint64_t _llg_n = 0; _llg_n < {total}ULL; ++_llg_n) {store};\n")
         }
-        IrContainerStmt::NbaLocateEnd => "    llg_nba_locate_end();\n".to_owned(),
-        IrContainerStmt::NbaHoldOpen(held) => {
-            let held = frame.chandle(held)?;
-            format!("    llg_nba_hold_open({held});\n")
-        }
-        IrContainerStmt::NbaHoldClose => "    llg_nba_hold_close();\n".to_owned(),
         IrContainerStmt::NbaHoldRelease { held, delay } => {
             let ticks = match delay {
                 Some(delay) => frame.delay(delay)?,
@@ -1405,52 +1405,6 @@ pub(super) fn render(
                 None => "0ULL".to_owned(),
             };
             format!("    llg_container_nba_after({kind}, {target}, &{source}, {ticks});\n")
-        }
-        IrContainerStmt::NbaLocate {
-            root,
-            items,
-            selects,
-        } => {
-            let mut list = items.iter().map(u32::to_string).collect::<Vec<_>>();
-            for select in selects {
-                let position = frame.item_position(&select.indices, &select.dimensions)?;
-                list[select.slot] = format!("llg_native_item_step({position})");
-            }
-            let list = list.join(", ");
-            let items = format!("(const uint32_t[]){{ {list} }}, {}", items.len());
-            match root {
-                IrValueItemRoot::Value(value) => {
-                    // An observed record's marker toggles when the write
-                    // commits, not now: nothing has changed yet.
-                    frame.note_formal_store(*value)?;
-                    let root = frame.native_value_read(*value)?;
-                    let mut locate = format!("    llg_nba_locate_value({root}, {items});\n");
-                    if let Some(marker) = frame.record_marker(*value, true)? {
-                        locate.push_str(&format!("    llg_nba_locate_marker({marker});\n"));
-                    }
-                    locate
-                }
-                IrValueItemRoot::Element(crate::sim::ir::IrChandleExpr::ContainerElement {
-                    container,
-                    indices,
-                    key: None,
-                    ..
-                }) if matches!(
-                    ctx.model.containers[*container].kind,
-                    IrContainerKind::Dynamic
-                ) =>
-                {
-                    let list = super::indices(frame, owners, indices)?;
-                    format!(
-                        "    llg_nba_locate_element(&{}, {list}, {}, {items});\n",
-                        name(frame, *container)?,
-                        indices.len()
-                    )
-                }
-                IrValueItemRoot::Element(_) => {
-                    return Err("nonblocking item root must be a fixed-array element".into())
-                }
-            }
         }
         IrContainerStmt::DeleteIndex { container, index } => {
             let method = match ctx.model.containers[*container].kind {
@@ -1517,4 +1471,56 @@ impl Frame<'_, '_> {
             Ok(format!("({})", info.cell_address(index)))
         }
     }
+}
+
+/// The call that names the item the next update of a located write targets.
+/// Its operands are values: indices, positions and the addresses of storage.
+pub(in crate::sim::emit_c::owned) fn locate_request(
+    frame: &mut Frame<'_, '_>,
+    root: &IrValueItemRoot,
+    items: &[u32],
+    selects: &[IrItemSelect],
+    owners: &mut Vec<Value>,
+) -> Result<String, String> {
+    let ctx = frame.ctx;
+    let mut list = items.iter().map(u32::to_string).collect::<Vec<_>>();
+    for select in selects {
+        let position = frame.item_position(&select.indices, &select.dimensions)?;
+        list[select.slot] = format!("llg_native_item_step({position})");
+    }
+    let list = list.join(", ");
+    let items = format!("(const uint32_t[]){{ {list} }}, {}", items.len());
+    Ok(match root {
+        IrValueItemRoot::Value(value) => {
+            // An observed record's marker toggles when the write
+            // commits, not now: nothing has changed yet.
+            frame.note_formal_store(*value)?;
+            let root = frame.native_value_read(*value)?;
+            let mut locate = format!("    llg_nba_locate_value({root}, {items});\n");
+            if let Some(marker) = frame.record_marker(*value, true)? {
+                locate.push_str(&format!("    llg_nba_locate_marker({marker});\n"));
+            }
+            locate
+        }
+        IrValueItemRoot::Element(crate::sim::ir::IrChandleExpr::ContainerElement {
+            container,
+            indices,
+            key: None,
+            ..
+        }) if matches!(
+            ctx.model.containers[*container].kind,
+            IrContainerKind::Dynamic
+        ) =>
+        {
+            let list = super::indices(frame, owners, indices)?;
+            format!(
+                "    llg_nba_locate_element(&{}, {list}, {}, {items});\n",
+                name(frame, *container)?,
+                indices.len()
+            )
+        }
+        IrValueItemRoot::Element(_) => {
+            return Err("nonblocking item root must be a fixed-array element".into())
+        }
+    })
 }

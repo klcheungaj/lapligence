@@ -5,6 +5,7 @@ mod expressions;
 mod keys;
 mod statements;
 pub(in crate::sim::emit_c) use keys::key_adapters;
+pub(super) use statements::locate_request;
 
 fn name(frame: &Frame<'_, '_>, index: usize) -> Result<String, String> {
     frame.container_name(index)
@@ -373,8 +374,7 @@ impl Frame<'_, '_> {
         &mut self,
         operation: &IrContainerStmt,
     ) -> Result<(), String> {
-        if let IrContainerStmt::NbaBindOpen | IrContainerStmt::NbaBindClose = operation {
-            self.nba_bound = matches!(operation, IrContainerStmt::NbaBindOpen);
+        if self.update_mark(operation)? {
             return Ok(());
         }
         if let IrContainerStmt::Declare(container) = operation {

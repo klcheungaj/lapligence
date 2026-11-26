@@ -63,6 +63,21 @@ static void llg_fork_group_child_done(llg_fork_group_t* grp) {
     }
 }
 
+static void start_pending_fork_children(llg_proc_t* parent) {
+    if (!parent) return;
+    llg_fork_group_t* pending = parent->pending_fork_groups;
+    parent->pending_fork_groups = NULL;
+    for (llg_fork_group_t* grp = pending; grp; grp = grp->next_g) {
+        if (grp->join_kind != LLG_JOIN_NONE || grp->started) continue;
+        grp->started = 1;
+        for (llg_fork_child_t* child = grp->children; child; child = child->next) {
+            llg_proc_t* child_proc = child->proc;
+            if (!child_proc || child_proc->killed || child_proc->completed) continue;
+            enqueue_region(child_proc, grp->child_region);
+        }
+    }
+}
+
 static llg_fork_group_t* llg_fork_group_new_impl(int32_t join_kind,
                                                   int32_t has_target,
                                                   uint32_t declaration,
@@ -89,23 +104,14 @@ static llg_fork_group_t* llg_fork_group_new_impl(int32_t join_kind,
     if (grp->prev_g) grp->prev_g->next_g = grp;
     else parent->fork_groups = grp;
     parent->fork_groups_tail = grp;
-    if (!parent->pending_fork_groups) parent->pending_fork_groups = grp;
-    return grp;
-}
-
-static void start_pending_fork_children(llg_proc_t* parent) {
-    if (!parent) return;
-    llg_fork_group_t* pending = parent->pending_fork_groups;
-    parent->pending_fork_groups = NULL;
-    for (llg_fork_group_t* grp = pending; grp; grp = grp->next_g) {
-        if (grp->join_kind != LLG_JOIN_NONE || grp->started) continue;
-        grp->started = 1;
-        for (llg_fork_child_t* child = grp->children; child; child = child->next) {
-            llg_proc_t* child_proc = child->proc;
-            if (!child_proc || child_proc->killed || child_proc->completed) continue;
-            enqueue_region(child_proc, grp->child_region);
-        }
+    if (join_kind == LLG_JOIN_NONE) {
+        if (!parent->pending_fork_groups) parent->pending_fork_groups = grp;
+    } else if (parent->pending_fork_groups) {
+        // The fork blocks its parent, so the children of earlier join_none
+        // forks may start, and do so before its own (9.3.2).
+        start_pending_fork_children(parent);
     }
+    return grp;
 }
 
 llg_fork_group_t* llg_fork_group_new(int32_t join_kind) {

@@ -159,27 +159,6 @@ impl Frame<'_, '_> {
         }
     }
 
-    /// Emit `call`, which queues updates and evaluates nothing.
-    pub(super) fn queue_update(&mut self, call: String) {
-        if self.nba_bound {
-            self.line("llg_nba_bind_begin();");
-        }
-        self.line(call);
-        if self.nba_bound {
-            self.line("llg_nba_bind_end();");
-        }
-    }
-
-    /// Emit `call`, which stores, or with `nba` queues updates, and evaluates
-    /// nothing.
-    fn store_or_queue(&mut self, nba: bool, call: String) {
-        if nba {
-            self.queue_update(call);
-        } else {
-            self.line(call);
-        }
-    }
-
     fn statement_body(&mut self, statement: &IrStmt) -> Result<(), String> {
         let cancellation_mark = self.cancellation_mark();
         let nested_mark = self.nested_exits.mark();
@@ -475,8 +454,8 @@ impl Frame<'_, '_> {
                 if binding.automatic {
                     return Err(pending("delayed writes to automatic string storage"));
                 }
-                let value = self.string(rhs)?;
                 let ticks = self.delay(ticks)?;
+                let value = self.string(rhs)?;
                 self.queue_update(format!(
                     "llg_string_nba_after({}, {}, {ticks});",
                     binding.address,
@@ -484,16 +463,28 @@ impl Frame<'_, '_> {
                 ));
                 self.native_discard(value);
             }
+            IrStmt::DelayedChandleAssign { target, rhs, ticks }
+                if self.ctx.model.objects.iter().any(|object| {
+                    object.ty == IrObjectType::Process && object.c_name == *target
+                }) =>
+            {
+                let ticks = self.delay(ticks)?;
+                let value = self.chandle(rhs)?;
+                let value = self.scalar("llg_process_handle_t*", value);
+                self.queue_update(format!(
+                    "llg_process_nba_after(&{target}, {value}, {ticks}, &{target}_llg_dep);"
+                ));
+            }
             IrStmt::DelayedChandleAssign { target, rhs, ticks } => {
                 let binding = self.native_lookup(target, super::native::NativeKind::Chandle)?;
                 if binding.automatic {
                     return Err(pending("delayed writes to automatic chandle storage"));
                 }
+                let ticks = self.delay(ticks)?;
                 let mut value = self.chandle(rhs)?;
-                if self.nba_bound {
+                if self.updates.any() {
                     value = self.scalar("void*", value);
                 }
-                let ticks = self.delay(ticks)?;
                 let marker = super::super::objects::chandle_marker(self.ctx.model, target);
                 self.queue_update(format!(
                     "llg_chandle_nba_after((void**)({}), {value}, {ticks}, {marker});",
@@ -636,9 +627,11 @@ impl Frame<'_, '_> {
                 }
             }
             IrStmt::DelayedAssign { lhs, rhs, ticks } => {
+                // The delay first and the target last, as industry-standard
+                // simulators evaluate them (10.4.2 leaves the order open).
+                let ticks = self.delay(ticks)?;
                 let value = self.expression(rhs)?;
                 let writes = self.prepare_assignment(lhs, value)?;
-                let ticks = self.delay(ticks)?;
                 for (target, value) in writes {
                     self.store(&target, value, true, &ticks)?;
                     self.release_target(target);
@@ -769,6 +762,7 @@ impl Frame<'_, '_> {
                 repeat,
                 action,
                 captures,
+                bound,
                 ..
             } => {
                 // An intra-assignment control captures its RHS and destination
@@ -782,8 +776,9 @@ impl Frame<'_, '_> {
                 let frame = self.name("event_action");
                 let frame = self.publish_captures(&frame, captures);
                 self.line(format!(
-                    "llg_nba_event_assign_when({sources}, {}, {count}, {action}, {frame});",
-                    specs.len()
+                    "llg_nba_event_assign_when({sources}, {}, {count}, {action}, {frame}, {});",
+                    specs.len(),
+                    i32::from(*bound)
                 ));
             }
             IrStmt::EventTrigger { ev } => {

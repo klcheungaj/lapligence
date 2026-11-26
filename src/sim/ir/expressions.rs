@@ -83,11 +83,6 @@ impl IrEnumQuery {
 /// has no dependencies of its own and never suspends.
 #[derive(Clone, Debug, PartialEq)]
 pub enum IrRuntimeQuery {
-    /// Number of times the static named event has been triggered in this run
-    /// (64-bit unsigned two-state). A process that evaluates an event control
-    /// itself compares counts to learn whether the event fired while it was
-    /// suspended on a list that also names value sources.
-    EventTriggerCount(usize),
     /// Whether a live force binding still reads the hidden source signal of an
     /// effectful force site (1-bit unsigned two-state). The site's guard
     /// process re-evaluates the source only while this holds.

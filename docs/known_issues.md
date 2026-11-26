@@ -620,7 +620,8 @@ pops it), or named as the target of a timing-controlled assignment or a
 evaluation); instance class properties of a record type with container
 members (instance properties of records with string, real or handle members
 are one value per object, records of integral leaves are fixed-width
-properties, SIM-011, and static record properties are one shared record); equality of records with an associative member (and conditionals
+properties, SIM-011, and static record properties are stored like package
+records); equality of records with an associative member (and conditionals
 with an ambiguous predicate on such records);
 a run-time selection among more than 4,096 leaves of a module record
 (`NATIVE_MEMBER_SELECT_LIMIT`), and among more than 256 whole records of any
@@ -1593,6 +1594,98 @@ capturing the handle once for read-modify-write forms.
 `tests/fixtures/sim/feature_completion/ki_audit/neg_computed_handle_select_write.sv`
 (`get().b[2] = 1'b1;`, expected `h.b == 8'b00000100`).
 
+## Object expressions in front of static class properties
+
+**Status:** open; found by the sweep of the static-property member fix.
+
+### Symptom
+
+- `objects[next()].count = 1`, `objects[i++].rec.a` and `get().count` name a
+  static property through an object expression that calls a subroutine or
+  assigns. They stop compilation with "the object expression in front of
+  static property ... calls a subroutine or assigns" (or, for a call result,
+  with the error of the form it uses), located at the expression.
+- A method of a queue, dynamic or associative array, string, mailbox,
+  semaphore or process that is a static property of an object of an interface,
+  called through a virtual interface (`v.o.q.push_back(1)`), stops with
+  "unsupported object method receiver". Through the interface instance or the
+  class it works, and so do reads and writes of the property through the
+  virtual interface.
+
+### Cause
+
+The database starts a path into a static property at the property, so nothing
+evaluates the object expression. One without effects needs no evaluation
+(8.8: a static property needs no object); one with effects keeps its path and
+code generation refuses it.
+
+### Intended direction
+
+Evaluate the object expression once, before the operation, for its effects
+only, as computed class handles are.
+
+### Reproduce
+
+`neg_effects.sv` and `neg_interface_queue.sv` in
+`tests/fixtures/sim/feature_completion/ki_static_members/`.
+
+## Members of packed structures in dynamic arrays, queues and associative arrays
+
+**Status:** open.
+
+### Symptom
+
+A member of an element of packed structure type of a dynamic array, queue or
+associative array (`da[i].hi`, `q[0].lo`, `aa["x"].hi++`, of variables and
+class properties alike) stops compilation, located, with "hierarchical
+reference ... is not supported" (an operand) or "cannot resolve hierarchical
+assignment LHS" (a target). Elements of fixed arrays work; read or write the
+whole element instead.
+
+### Cause
+
+A packed element of a container is one value; its read and its lvalue select
+bits and parts of it but not members.
+
+### Intended direction
+
+Project the member onto the element's part select, as for an element of a
+fixed array.
+
+### Reproduce
+
+`typedef struct packed { logic [3:0] hi, lo; } p_t; p_t q[$]; initial begin
+q.push_back(0); q[0].hi = 3; end`
+
+## Fixed arrays of containers with a range that does not start at 0
+
+**Status:** open, a silent wrong result; found while testing static properties.
+
+### Symptom
+
+In a class property (static or not) that is a fixed array of queues, dynamic or
+associative arrays declared with a range such as `[1:0]` or `[2:1]`, a write of
+a whole element (`q[0] = '{1, 2}`, `d[0] = new[2]`), an element of an element
+(`d[0][1] = "z"`) and `foreach` use the position in the array where methods
+(`q[0].push_back`, `size`, `pop_front`) use the index: `q[0] = '{1, 2}` fills
+`q[1]` of a `[1:0]` array.
+
+### Cause
+
+Some paths into a fixed-size container view convert the index to a position by
+the declared range and some take it as the position.
+
+### Intended direction
+
+Convert the index by the range on every path into the view
+(`fixed_view_ranges`).
+
+### Reproduce
+
+`class c; static int q[1:0][$]; endclass initial begin c::q[0] = '{1, 2};
+$display("%p", c::q); end` prints `'{'{1, 2} , '{}}` (the left element, `q[1]`,
+first), not `'{'{}, '{1, 2} }`.
+
 ## Records of the leaf form: two errors a column does not have
 
 **Status:** open (FIN-001 rule 7: records below `LLG_RECORD_COLUMN_MIN_CELLS`
@@ -1771,7 +1864,7 @@ in the private evaluator, and allow helper output effects (about a day).
 
 ## Effectful helpers in runtime-callback evaluators
 
-**Status:** narrowed by RTL-007b; two list forms remain.
+**Status:** narrowed by RTL-007b; one list form remains.
 
 Legal helpers with visible writes, persistent static state or descriptor-array
 formals now run in processes for blocking, intra-assignment, nonblocking and
@@ -1782,9 +1875,7 @@ helper reject there by SV 4.4.2.9).
 ### Symptom
 
 Still rejected: a named event in the same list as such a helper whose
-sensitivity includes unpacked-array, container or string storage, and event
-handles other than declared named events in such a list or as the target of
-such a `->>`. Stores a `$monitor`/`$strobe` helper makes to its own static
+sensitivity includes unpacked-array, container or string storage. Stores a `$monitor`/`$strobe` helper makes to its own static
 storage publish no event, so a hierarchical wait on that storage does not
 wake. A `force` whose right-hand side calls a function that uses a system task
 other than an immediate display task, `$info`, `$warning` or `$error` (for
@@ -1793,20 +1884,17 @@ example `$finish`) is an error.
 ### Cause
 
 The atomic mixed wait has no source form for unpacked-array, container or
-string markers, and the helper process names only declared named events. The
-private Postponed evaluation publishes no change events.
+string markers. The private Postponed evaluation publishes no change events.
 
 ### Intended direction
 
-Give the mixed wait source forms for those markers and event-handle operands;
-publish the private evaluation's static stores.
+Give the mixed wait source forms for those markers; publish the private
+evaluation's static stores.
 
 ### Reproduce
 
 [`neg_named_event_array.sv`](../tests/fixtures/sim/feature_completion/rtl_007b/neg_named_event_array.sv)
-(a named event beside a helper that reads array storage) and
-`tests/fixtures/sim/feature_completion/ki_audit/neg_helper_event_handle.sv`
-(an event handle other than a declared named event in a helper's list),
+(a named event beside a helper that reads array storage),
 [`neg_force_finish_helper.sv`](../tests/fixtures/sim/feature_completion/sim_023/neg_force_finish_helper.sv).
 
 ## Waited `ref` formals with unobservable actuals
@@ -1862,6 +1950,31 @@ Pass a native record's leaf markers with the record value.
 `sim_014/neg_ref_wait_record_property_whole.sv` and
 `neg_ref_wait_record_property_real.sv`;
 `sim_008/record_ref_interface_element_waits.sv` with `-D N=16`.
+
+## Initializers of arrays of events
+
+**Status:** open.
+
+### Symptom
+
+A declaration initializer of a fixed array, dynamic array, queue or associative
+array of events (`event ea[2] = '{a, null}`, `event q[$] = '{a, b}`) stops the
+import: "named-event arrays cannot have declaration initializers" (ELAB-002,
+without a location). Initializers of scalar events and assignments of elements
+work.
+
+### Cause
+
+`CoreDb` records an array of events without an initializer and refuses one.
+
+### Intended direction
+
+Keep the initializer and lower it as assignments of the elements, like that of
+a scalar event (6.8).
+
+### Reproduce
+
+`event a; event ea[2] = '{a, null}; initial $display("%b", ea[0] == a);`
 
 ## Level waits on the identity of an event variable reject
 
@@ -3200,6 +3313,9 @@ these forms remain outside them.
   an array size or a variable before the array size of another object, or that
   names an element at a non-constant index, and a row of a multidimensional array in `inside`. A whole array in
   a constraint is also rejected, as 18.3 requires (S30-D15).
+- A `static rand` property of unpacked structure type rejects at the
+  `randomize()` call (an instance property of the type is solved): its members
+  are separate variables, and the solver feeds one packed value per property.
 - `rand_mode` of one element of a dynamic array or queue of class handles
   rejects, as a task and as a function: only fixed arrays keep a mode per
   element (S30-D16, S30-D17). The function form on a handle that is not a
@@ -3257,7 +3373,9 @@ Nested dynamic arrays and queues (each row an object of a row unit, row sizes in
 
 `tests/fixtures/sim/feature_completion/sim_029/neg_*.sv`,
 `tests/fixtures/sim/feature_completion/sim_030/neg_*.sv` and
-`search_fallback.sv`; `neg_rand_*.sv` and `neg_randomize_event_control.sv` in
+`search_fallback.sv`;
+`tests/fixtures/sim/feature_completion/ki_static_members/neg_random_record.sv`;
+`neg_rand_*.sv` and `neg_randomize_event_control.sv` in
 `tests/fixtures/sim/feature_completion/ki_audit/` (associative arrays of
 handles, with a class or wider index, nested queues, a non-constant
 `solve...before` index, an `inside` row, an element `rand_mode`, a call in an

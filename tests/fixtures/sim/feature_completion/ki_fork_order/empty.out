@@ -1,0 +1,7 @@
+join
+join_any
+join_none
+wait fork
+before child
+child
+end

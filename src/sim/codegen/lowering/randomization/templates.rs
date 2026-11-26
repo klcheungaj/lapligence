@@ -192,6 +192,15 @@ struct ViewSelect {
     prefix: Vec<u32>,
 }
 
+/// A static random property of a class the randomized object does not derive
+/// from: random once an active object of the class is in the problem.
+struct GlobalVar {
+    class: NodeId,
+    index: u32,
+    current: IrExpr,
+    active: IrExpr,
+}
+
 /// Units, arrays and slots of one problem with units.
 pub(super) struct UnitState {
     /// Prefix of the generated locals.
@@ -208,6 +217,8 @@ pub(super) struct UnitState {
     state_vars: Vec<NodeId>,
     /// Static random properties named outside unit 0's variables.
     global_vars: Vec<NodeId>,
+    /// Those that unit 0's class does not declare, as fed.
+    globals: Vec<GlobalVar>,
     /// Array expressions a template form reads (not their storage).
     consumed: HashSet<NodeId>,
     /// Template placeholders created for, and read by, the constraint
@@ -696,6 +707,7 @@ impl Codegen<'_> {
             slot_of: HashMap::new(),
             state_vars: Vec::new(),
             global_vars: Vec::new(),
+            globals: Vec::new(),
             consumed: HashSet::new(),
             created: Vec::new(),
             used: HashSet::new(),
@@ -936,8 +948,8 @@ impl Codegen<'_> {
         Ok(index)
     }
 
-    /// Register a fixed array of packed elements of the call's scope that
-    /// lives in a model array.
+    /// Register a fixed array of packed elements of the call's scope, or of
+    /// a static class property, that lives in a model array.
     fn scope_model_array(
         &mut self,
         path: &str,
@@ -947,7 +959,7 @@ impl Codegen<'_> {
         expr: Option<NodeId>,
         random: bool,
     ) -> Result<Option<u32>, String> {
-        let Some(expr) = expr else {
+        let Some(expr) = expr.or_else(|| self.is_static_property(decl).then_some(decl)) else {
             return Ok(None);
         };
         let (storage, dims, width, signed, two_state) = match self.array_of(expr).cloned() {
@@ -1638,7 +1650,7 @@ impl Codegen<'_> {
         node: NodeId,
     ) -> Result<(u32, IrExpr), String> {
         let lowered = self
-            .lower_expr(path, node)
+            .lower_constraint_value(path, node)
             .map_err(|error| self.rand_error(node, path, &format!("in a constraint: {error}")))?;
         state(builder).used.extend(placeholders_in(&lowered));
         let translated = builder
@@ -1733,7 +1745,11 @@ impl Codegen<'_> {
                 let indices = indices.clone();
                 self.template_select(path, builder, node, &indices)
             }
-            NodeKind::Expr(ExprKind::HierPath { .. }) => self.template_member(path, builder, node),
+            NodeKind::Expr(ExprKind::HierPath { .. }) => {
+                self.template_static(builder, node)?;
+                self.template_member(path, builder, node)
+            }
+            NodeKind::Expr(ExprKind::Ref { .. }) => self.template_static(builder, node),
             NodeKind::Expr(ExprKind::Operation {
                 op: Operation::Inside,
                 operands,
@@ -1956,6 +1972,101 @@ impl Codegen<'_> {
         let member = builder.template(IrRandOp::HVar, signed, width, [reference, var, 0]);
         self.register_template(builder, node, member);
         Ok(())
+    }
+
+    /// A path starts at the static property it goes through, so one of a
+    /// class that only `rand` handles reach is named without them: it is the
+    /// global variable of its class, not state.
+    fn template_static(
+        &mut self,
+        builder: &mut ProblemBuilder,
+        node: NodeId,
+    ) -> Result<(), String> {
+        let decl = match self.kind(node) {
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => *target,
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => match refs.first() {
+                Some(Some(first)) => match self.kind(*first) {
+                    NodeKind::Expr(ExprKind::Ref {
+                        target: Some(target),
+                    }) => *target,
+                    _ => *first,
+                },
+                _ => return Ok(()),
+            },
+            _ => return Ok(()),
+        };
+        if self.db.rand_qualifier(decl) == RandQualifier::None
+            || self.db.array_meta(decl).is_some()
+            || self.is_handle_property(decl)
+            || self
+                .rand_lowering
+                .as_ref()
+                .is_none_or(|lowering| lowering.placeholders.contains_key(&decl))
+        {
+            return Ok(());
+        }
+        let Some(class) = self.static_property_class(decl) else {
+            return Ok(());
+        };
+        let unit = builder.unit as usize;
+        let Some(object) = state(builder).units[unit].object.clone() else {
+            return Ok(());
+        };
+        if !self.rand_handles_reach(builder, class) {
+            return Ok(());
+        }
+        let Some((plan, placeholder)) =
+            self.class_var_plan(builder, decl, &object, &RandSelection::Default, false)?
+        else {
+            return Ok(());
+        };
+        if plan.cyclic.is_some() {
+            builder.set_cyclic(plan.index);
+        }
+        state(builder).global_vars.push(decl);
+        if let Some(lowering) = self.rand_lowering.as_mut() {
+            lowering.placeholders.insert(decl, placeholder);
+        }
+        Ok(())
+    }
+
+    /// Whether an object of `class` can be in the problem besides the
+    /// randomized one.
+    fn rand_handles_reach(&self, builder: &mut ProblemBuilder, class: NodeId) -> bool {
+        let mut pending = state(builder)
+            .slots
+            .iter()
+            .map(|slot| slot.target)
+            .collect::<Vec<_>>();
+        let mut seen = HashSet::new();
+        while let Some(target) = pending.pop() {
+            for case in self.class_cases(target) {
+                if !seen.insert(case) {
+                    continue;
+                }
+                let chain = self.class_chain(case);
+                if chain.contains(&class) {
+                    return true;
+                }
+                for member in chain {
+                    for child in &self.node(member).children {
+                        if self.db.rand_qualifier(*child) == RandQualifier::None {
+                            continue;
+                        }
+                        pending.extend(if self.is_handle_array(*child) {
+                            self.handle_array_class(*child)
+                        } else if self.is_handle_property(*child) {
+                            self.class_node_for_type_expr(*child)
+                        } else {
+                            None
+                        });
+                    }
+                }
+            }
+        }
+        false
     }
 
     /// The global variable of static random property `decl` named through
@@ -2780,14 +2891,27 @@ impl Codegen<'_> {
             let Some(object) = state(builder).units[0].object.clone() else {
                 continue;
             };
-            let Some((plan, _)) =
+            let Some((mut plan, _)) =
                 self.class_var_plan(builder, decl, &object, &RandSelection::Default, false)?
             else {
                 continue;
             };
-            if !root_vars.iter().any(|var| var.index == plan.index) {
-                root_vars.push(plan);
+            if root_vars.iter().any(|var| var.index == plan.index) {
+                continue;
             }
+            let st = state(builder);
+            if let Some(class) = self
+                .static_property_class(decl)
+                .filter(|class| !st.units[0].chain.contains(class))
+            {
+                st.globals.push(GlobalVar {
+                    class,
+                    index: plan.index,
+                    current: plan.current.clone(),
+                    active: std::mem::replace(&mut plan.active, packed_const(0, 1, false)),
+                });
+            }
+            root_vars.push(plan);
         }
         // Non-random properties read through handle array elements are fed
         // like variables, in every unit that has them, and stay inactive.
@@ -3147,6 +3271,18 @@ impl Codegen<'_> {
         }
     }
 
+    /// The class of static random array `decl` when the randomized object's
+    /// class does not declare it and the call does not list it: random once
+    /// an active object of the class is in the problem, like [`GlobalVar`].
+    fn foreign_static_class(&self, st: &UnitState, decl: NodeId) -> Option<NodeId> {
+        let listed = matches!(&st.root, RootMode::List(listed) if listed.contains(&decl));
+        self.static_property_class(decl).filter(|class| {
+            !listed
+                && self.db.rand_qualifier(decl) != RandQualifier::None
+                && !st.units[0].chain.contains(class)
+        })
+    }
+
     /// The storage of `array` for an object read through `object`.
     fn unit_container(&mut self, array: &ArrayInfo, object: Option<&IrChandleExpr>) -> usize {
         match (array.owner, object) {
@@ -3238,6 +3374,10 @@ impl Codegen<'_> {
         let commit_local = format!("{tag}_c");
         let inst = || local_read(&inst_local, 32, true);
         let committed = || local_read(&commit_local, 32, true);
+        let random = || {
+            let at = local_read(&inst_local, 32, true);
+            query(problem, IrRandQuery::Random, Some(at), None, 1, false)
+        };
         let root_leaves = st.root_leaf_count() as u32;
         let mut walk = vec![
             decl32(&unit_local, int_const(0)),
@@ -3361,6 +3501,32 @@ impl Codegen<'_> {
                         then_,
                     ));
                 }
+                for var in &st.globals {
+                    if !unit.chain.contains(&var.class) {
+                        continue;
+                    }
+                    let active = format!("{tag}_a{}", var.index);
+                    let body = vec![
+                        IrStmt::Assign {
+                            lhs: IrLhs::WholeRef {
+                                addr: format!("&{active}"),
+                                width: 1,
+                                signed: false,
+                                two_state: true,
+                                shortreal: false,
+                            },
+                            rhs: var.active.clone(),
+                            nba: false,
+                        },
+                        rand(IrRandStmt::SetVar {
+                            problem,
+                            var: var.index,
+                            value: var.current.clone(),
+                            active: local_read(&active, 1, false),
+                        }),
+                    ];
+                    feed.push(when(random(), body));
+                }
                 for (offset, enabled) in unit.blocks.iter().enumerate() {
                     feed.push(rand(IrRandStmt::ISetBlock {
                         problem,
@@ -3374,12 +3540,27 @@ impl Codegen<'_> {
                     feed.push(self.guarded_leaf(problem, Some(&inst()), leaf, template));
                 }
             }
+            let (mut static_feed, mut unused) = (Vec::new(), Vec::new());
             for (array_index, array) in st.arrays.iter().enumerate() {
-                if !st.unit_has_array(index, array) {
+                let foreign = self.foreign_static_class(&st, array.decl);
+                let reached = index > 0 && foreign.is_some_and(|class| unit.chain.contains(&class));
+                if !reached && !st.unit_has_array(index, array) {
                     continue;
                 }
                 let array_index = array_index as u32;
-                let active = self.unit_active(&st.root, index, array.decl, object)?;
+                let active = if foreign.is_some() && !reached {
+                    packed_const(0, 1, false)
+                } else {
+                    self.unit_active(&st.root, index, array.decl, object)?
+                };
+                // The call's scope holds the array; what an object of its
+                // class adds is that it is random.
+                let inst = || if reached { int_const(0) } else { inst() };
+                let (feed, commit) = if reached {
+                    (&mut static_feed, &mut unused)
+                } else {
+                    (&mut feed, &mut commit)
+                };
                 if let Some((storage, dimensions)) = &array.model {
                     let at = local_read(&counter, 32, true);
                     let cells = (i64::from(array.left) - i64::from(array.right)).abs() + 1;
@@ -3655,6 +3836,9 @@ impl Codegen<'_> {
                     ),
                     body,
                 ));
+            }
+            if !static_feed.is_empty() {
+                feed.push(when(random(), static_feed));
             }
             for (slot_index, slot) in st.slots.iter().enumerate() {
                 if !st.unit_has_slot(index, slot) {

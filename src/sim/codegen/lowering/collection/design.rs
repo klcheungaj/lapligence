@@ -17,7 +17,46 @@ fn contains_unpacked_union(descriptor: &TypeDescriptor) -> bool {
     }
 }
 
+/// System functions that query the type of their operand (20.6, 20.7).
+const DATA_QUERIES: &[&str] = &[
+    "$bits",
+    "$dimensions",
+    "$high",
+    "$increment",
+    "$left",
+    "$low",
+    "$right",
+    "$size",
+    "$typename",
+    "$unpacked_dimensions",
+];
+
 impl<'a> Codegen<'a> {
+    /// The static property `node` selects through an object expression that
+    /// has to be evaluated for its effects (the owned database keeps it in
+    /// the path; any other path starts at the property). The operand of a
+    /// data or array query is not evaluated.
+    fn unevaluated_static_receiver(&self, node: NodeId) -> Option<NodeId> {
+        let NodeKind::Expr(ExprKind::HierPath { refs, .. }) = self.kind(node) else {
+            return None;
+        };
+        let property = refs
+            .iter()
+            .skip(1)
+            .flatten()
+            .copied()
+            .find(|target| self.is_static_property(*target))?;
+        let mut outer = self.node(node).parent;
+        while let Some(parent) = outer {
+            match self.kind(parent) {
+                NodeKind::SysCall { name } if DATA_QUERIES.contains(&name.as_str()) => return None,
+                NodeKind::Expr(_) => outer = self.node(parent).parent,
+                _ => break,
+            }
+        }
+        Some(property)
+    }
+
     /// Walk the instance tree, collecting signals, parameters and gen-scope
     /// paths.  Returns the top module nodes.
     pub(in super::super) fn collect_design(&mut self) -> Result<Vec<NodeId>, String> {
@@ -49,6 +88,16 @@ impl<'a> Codegen<'a> {
                     self.display_name(node)
                 )));
             }
+            if let Some(property) = self.unevaluated_static_receiver(node) {
+                return Err(self.locate_error(
+                    node,
+                    format!(
+                    "the object expression in front of static property `{}` calls a subroutine or \
+                     assigns, which is not supported: name the property through its class",
+                    self.display_name(property)
+                ),
+                ));
+            }
         }
         let mut tops = Vec::new();
         for class in self.db.classes() {
@@ -76,6 +125,7 @@ impl<'a> Codegen<'a> {
         {
             self.collect_parameter_subtree(scope)?;
         }
+        self.collect_static_property_inits()?;
         for top in self.db.tops() {
             let source_name = strip_lib(&self.node(*top).name);
             if source_name.is_empty() {
@@ -306,31 +356,97 @@ impl<'a> Codegen<'a> {
         nid: NodeId,
         seen: &mut HashSet<String>,
     ) -> Result<(), String> {
-        if self.collect_object(path, nid)? {
+        if self.collect_variable(path, nid, seen)? {
             return Ok(());
         }
-        if self.collect_aggregate(path, nid)? {
-            return Ok(());
+        match self.kind(nid) {
+            NodeKind::Param { .. } => self.collect_parameter_value(inst, nid)?,
+            // Specparams declared in a specify block belong to the
+            // module (IEEE 1800-2009 6.20.5); module items and path
+            // delays read them like module-body specparams.
+            NodeKind::Other => {
+                let specparams = self
+                    .node(nid)
+                    .children
+                    .iter()
+                    .copied()
+                    .filter(|child| self.db.specparam(*child).is_some())
+                    .collect::<Vec<_>>();
+                for specparam in specparams {
+                    self.collect_parameter_value(inst, specparam)?;
+                }
+            }
+            // A declaration initializer on an `array_net` (`reg [7:0] m
+            // [0:3] = '{…}` — represented as a
+            // net-decl-assign continuous assignment whose LHS is the
+            // array).  Applied to the array's `ArrayInfo`; the assignment
+            // itself is skipped at emission. A scalar reg initializer is
+            // collected into `scalar_inits`; true nets stay available to
+            // `emit_cont_assign` as continuous drivers.
+            NodeKind::ContAssign { net_decl: true, .. } => {
+                if let Some((arr, vals)) = self.cont_assign_array_init(path, nid)? {
+                    let name = self.node(arr).name.clone();
+                    let ai = self.array_globals.get_mut(&arr).ok_or_else(|| {
+                        format!(
+                            "array initializer for `{name}` in `{path}` references an \
+                             array that was not collected"
+                        )
+                    })?;
+                    if ai.init.is_some() {
+                        return Err(format!(
+                            "array `{name}` in `{path}` has more than one declaration \
+                             initializer"
+                        ));
+                    }
+                    ai.init = Some(vals.clone());
+                    // Keep the deterministic-emission Vec in sync (its
+                    // entry was cloned before the initializer was known).
+                    if let Some(vi) = self.arrays.iter_mut().find(|vi| vi.global == ai.global) {
+                        vi.init = Some(vals);
+                    }
+                } else if self.collect_aggregate_cont_assign_init(path, nid)? {
+                    self.scalar_init_ca.insert(nid);
+                } else if matches!(self.net_decl_target(nid), NetDeclTarget::Variable) {
+                    // Scalar declaration assignments are lowered after
+                    // the complete scope has allocated its signals and
+                    // parameters, so runtime RHS references can resolve
+                    // regardless of declaration order.
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Allocate the storage of variable, net or event `nid` of scope `path`,
+    /// `false` when `nid` declares none of them. Its declaration initializer
+    /// is collected once the scope is complete ([`Self::collect_var_inits`]),
+    /// except that of an object, an array or a container.
+    pub(super) fn collect_variable(
+        &mut self,
+        path: &str,
+        nid: NodeId,
+        seen: &mut HashSet<String>,
+    ) -> Result<bool, String> {
+        if self.collect_object(path, nid)? || self.collect_aggregate(path, nid)? {
+            return Ok(true);
         }
         match self.kind(nid) {
             NodeKind::Array { ty } => {
                 let name = self.node(nid).name.clone();
                 if name.is_empty() || !seen.insert(name.clone()) {
-                    return Ok(());
+                    return Ok(true);
                 }
-                if self.is_virtual_interface_array(nid) || self.is_fixed_handle_array(nid) {
-                    let info = self.container_info(path, &name, nid, ty)?;
-                    self.container_globals.insert(nid, info);
-                    return Ok(());
-                }
-                if !self
-                    .db
-                    .array_meta(nid)
-                    .is_some_and(|meta| matches!(meta.kind(), ArrayKind::Static))
+                if self.is_virtual_interface_array(nid)
+                    || self.is_fixed_handle_array(nid)
+                    || !self
+                        .db
+                        .array_meta(nid)
+                        .is_some_and(|meta| matches!(meta.kind(), ArrayKind::Static))
                 {
                     let info = self.container_info(path, &name, nid, ty)?;
                     self.container_globals.insert(nid, info);
-                    return Ok(());
+                    return Ok(true);
                 }
                 let info = self.array_info(path, &name, nid, ty)?;
                 self.arrays.push(info.clone());
@@ -344,7 +460,7 @@ impl<'a> Codegen<'a> {
             NodeKind::Net { ty, .. } | NodeKind::Var { ty } => {
                 let name = self.node(nid).name.clone();
                 if name.is_empty() || !seen.insert(name.clone()) {
-                    return Ok(());
+                    return Ok(true);
                 }
                 let w = match self.unpacked_tagged_width(nid) {
                     Some(width) => width,
@@ -392,65 +508,10 @@ impl<'a> Codegen<'a> {
                     .or_default()
                     .insert(name, info);
             }
-            NodeKind::Param { .. } => self.collect_parameter_value(inst, nid)?,
-            // Specparams declared in a specify block belong to the
-            // module (IEEE 1800-2009 6.20.5); module items and path
-            // delays read them like module-body specparams.
-            NodeKind::Other => {
-                let specparams = self
-                    .node(nid)
-                    .children
-                    .iter()
-                    .copied()
-                    .filter(|child| self.db.specparam(*child).is_some())
-                    .collect::<Vec<_>>();
-                for specparam in specparams {
-                    self.collect_parameter_value(inst, specparam)?;
-                }
-            }
-            NodeKind::NamedEvent => {
-                self.collect_named_event(path, nid, seen)?;
-            }
-            // A declaration initializer on an `array_net` (`reg [7:0] m
-            // [0:3] = '{…}` — represented as a
-            // net-decl-assign continuous assignment whose LHS is the
-            // array).  Applied to the array's `ArrayInfo`; the assignment
-            // itself is skipped at emission. A scalar reg initializer is
-            // collected into `scalar_inits`; true nets stay available to
-            // `emit_cont_assign` as continuous drivers.
-            NodeKind::ContAssign { net_decl: true, .. } => {
-                if let Some((arr, vals)) = self.cont_assign_array_init(path, nid)? {
-                    let name = self.node(arr).name.clone();
-                    let ai = self.array_globals.get_mut(&arr).ok_or_else(|| {
-                        format!(
-                            "array initializer for `{name}` in `{path}` references an \
-                             array that was not collected"
-                        )
-                    })?;
-                    if ai.init.is_some() {
-                        return Err(format!(
-                            "array `{name}` in `{path}` has more than one declaration \
-                             initializer"
-                        ));
-                    }
-                    ai.init = Some(vals.clone());
-                    // Keep the deterministic-emission Vec in sync (its
-                    // entry was cloned before the initializer was known).
-                    if let Some(vi) = self.arrays.iter_mut().find(|vi| vi.global == ai.global) {
-                        vi.init = Some(vals);
-                    }
-                } else if self.collect_aggregate_cont_assign_init(path, nid)? {
-                    self.scalar_init_ca.insert(nid);
-                } else if matches!(self.net_decl_target(nid), NetDeclTarget::Variable) {
-                    // Scalar declaration assignments are lowered after
-                    // the complete scope has allocated its signals and
-                    // parameters, so runtime RHS references can resolve
-                    // regardless of declaration order.
-                }
-            }
-            _ => {}
+            NodeKind::NamedEvent => self.collect_named_event(path, nid, seen)?,
+            _ => return Ok(false),
         }
-        Ok(())
+        Ok(true)
     }
 
     /// `%m` name of a procedural checker instance, which keeps the named
@@ -694,93 +755,11 @@ impl<'a> Codegen<'a> {
         let mut gseen: HashSet<String> = HashSet::new();
         for c in &self.node(gs).children {
             let nid = *c;
-            if self.collect_object(&gs_path, nid)? {
-                continue;
-            }
-            if self.collect_aggregate(&gs_path, nid)? {
+            if self.collect_variable(&gs_path, nid, &mut gseen)? {
                 continue;
             }
             match self.kind(nid) {
-                NodeKind::Array { ty } => {
-                    let name = self.node(nid).name.clone();
-                    if name.is_empty() || !gseen.insert(name.clone()) {
-                        continue;
-                    }
-                    if self.is_virtual_interface_array(nid)
-                        || self.is_fixed_handle_array(nid)
-                        || !self
-                            .db
-                            .array_meta(nid)
-                            .is_some_and(|meta| matches!(meta.kind(), ArrayKind::Static))
-                    {
-                        let info = self.container_info(&gs_path, &name, nid, ty)?;
-                        self.container_globals.insert(nid, info);
-                        continue;
-                    }
-                    let info = self.array_info(&gs_path, &name, nid, ty)?;
-                    self.arrays.push(info.clone());
-                    self.array_globals.insert(nid, info.clone());
-                    self.scope_array_names
-                        .entry(gs_path.clone())
-                        .or_default()
-                        .insert(name, info);
-                }
-                NodeKind::Var { .. } if self.db.is_clocking_var(nid) => {}
-                NodeKind::Net { ty, .. } | NodeKind::Var { ty } => {
-                    let name = self.node(nid).name.clone();
-                    if name.is_empty() || !gseen.insert(name.clone()) {
-                        continue;
-                    }
-                    let w = match self.unpacked_tagged_width(nid) {
-                        Some(width) => width,
-                        None => self.signal_width(&gs_path, &name, ty)?,
-                    };
-                    let ir = self.model.signals.len();
-                    let info = SignalInfo {
-                        global: if is_real_kind(&ty.kind) {
-                            self.real_global_name(&gs_path, &name)
-                        } else {
-                            self.global_name(&gs_path, &name)
-                        },
-                        width: w,
-                        signed: ty.signed,
-                        two_state: self.db.is_two_state_type(nid) || is_two_state_kind(&ty.kind),
-                        real: is_real_kind(&ty.kind),
-                        shortreal: ty.kind == "shortreal",
-                        net_driver: None,
-                        ir,
-                    };
-                    self.model.signals.push(IrSignal {
-                        fixed_default: None,
-                        c_name: info.global.clone(),
-                        hdl_name: Some(self.waveform_name(nid)),
-                        ty: if info.real {
-                            IrType::Real {
-                                shortreal: info.shortreal,
-                            }
-                        } else {
-                            IrType::Packed {
-                                width: info.width,
-                                signed: info.signed,
-                                two_state: info.two_state,
-                            }
-                        },
-                        net_driver: None,
-                        net_alias: Vec::new(),
-                        alias: None,
-                        omit: false,
-                    });
-                    self.signals.push(info.clone());
-                    self.insert_sig_global(nid, info.clone());
-                    self.scope_sig_names
-                        .entry(gs_path.clone())
-                        .or_default()
-                        .insert(name, info);
-                }
                 NodeKind::Param { .. } => self.collect_parameter_value(gs, nid)?,
-                NodeKind::NamedEvent => {
-                    self.collect_named_event(&gs_path, nid, &mut gseen)?;
-                }
                 NodeKind::ContAssign { net_decl: true, .. } => {
                     if let Some((arr, vals)) = self.cont_assign_array_init(&gs_path, nid)? {
                         let name = self.node(arr).name.clone();

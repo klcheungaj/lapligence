@@ -1259,13 +1259,13 @@ static void test_event_triggered_lifecycle(void) {
     CHECK(lifecycle_triggered_inside_run);
     CHECK(!llg_event_triggered(&lifecycle_event));
     // The trigger count survives the time slot but not reinitialization.
-    CHECK(llg_event_trigger_count(&lifecycle_event) == 1);
+    CHECK(llg_event_trigger_count(lifecycle_event.object) == 1);
     CHECK(llg_event_trigger_count(NULL) == 0);
 
     llg_rt_init();
     CHECK(!llg_event_triggered(&lifecycle_event));
     llg_event_object_reset(&lifecycle_event_object);
-    CHECK(llg_event_trigger_count(&lifecycle_event) == 0);
+    CHECK(llg_event_trigger_count(lifecycle_event.object) == 0);
     llg_rt_cleanup();
 }
 

@@ -11,8 +11,7 @@ use crate::core::db::{MemberVisibility, RandQualifier};
 use crate::sim::ir::{
     IrClassFieldType, IrContainerElement, IrContainerKind, IrObjectType, IrVpiArrayType,
     IrVpiBuiltin, IrVpiClass, IrVpiClassItem, IrVpiClassItemKind, IrVpiDynamic, IrVpiField,
-    IrVpiKey, IrVpiRand, IrVpiShape, IrVpiStatic, IrVpiStaticStorage, IrVpiStorage,
-    IrVpiVisibility,
+    IrVpiKey, IrVpiRand, IrVpiShape, IrVpiStatic, IrVpiStorage, IrVpiVisibility,
 };
 
 /// Nesting of container element types the capture follows; deeper element
@@ -51,7 +50,7 @@ impl Codegen<'_> {
     /// automatic variable has no global storage).
     pub(super) fn vpi_dynamic_storage(&self, model: &IrModel, id: NodeId) -> Option<IrVpiStorage> {
         let parent = self.node(id).parent?;
-        if matches!(self.kind(parent), NodeKind::ClassDef) {
+        if matches!(self.kind(parent), NodeKind::ClassDef) && !self.is_static_property(id) {
             return None;
         }
         match self.kind(id) {
@@ -822,7 +821,7 @@ impl Codegen<'_> {
             };
             names[class_index] = self.node(class).name.clone();
             for child in &self.node(class).children {
-                if let Some(entry) = self.vpi_class_static(model, dynamic, typespecs, *child) {
+                if let Some(entry) = self.vpi_class_static(*child) {
                     statics[class_index].push(entry);
                     continue;
                 }
@@ -892,11 +891,7 @@ impl Codegen<'_> {
                     IrVpiField {
                         name: self.node(*child).name.clone(),
                         shape: dynamic.intern(shape),
-                        rand: match self.db.rand_qualifier(*child) {
-                            RandQualifier::None => IrVpiRand::NotRand,
-                            RandQualifier::Rand => IrVpiRand::Rand,
-                            RandQualifier::RandC => IrVpiRand::RandC,
-                        },
+                        rand: vpi_rand(self.db.rand_qualifier(*child)),
                         visibility: vpi_visibility(self.db.member_visibility(*child)),
                         mode: match self.rand_mode_bits.get(child) {
                             Some(ModeBit::Field(owner, index)) if *owner == class_index => {
@@ -933,7 +928,7 @@ impl Codegen<'_> {
                 continue;
             };
             entry.statics = std::mem::take(&mut statics[*class_index]);
-            entry.full_name = self.vpi_class_full_name(*class, 0);
+            entry.full_name = self.vpi_class_full_name(*class);
             entry.scope = self.vpi_class_scope(*class);
             entry.is_virtual = self
                 .db
@@ -950,115 +945,60 @@ impl Codegen<'_> {
         bodies
     }
 
-    /// A static property of a class (8.9) with its model storage and
-    /// value shape: a packed or real variable, a string or handle, or an
-    /// array of values. `None` for any other declaration (an instance
-    /// property, a static event).
-    fn vpi_class_static(
-        &self,
-        model: &IrModel,
-        dynamic: &mut IrVpiDynamic,
-        typespecs: &mut TypespecTable,
-        child: NodeId,
-    ) -> Option<IrVpiStatic> {
-        let mut dims = Vec::new();
-        let (storage, shape) = if let Some(info) = self.class_static_signals.get(&child) {
-            let descriptor = self.db.type_descriptor(child)?;
-            let shape = if info.real {
-                IrVpiShape::Real {
-                    shortreal: info.shortreal,
-                }
-            } else {
-                self.vpi_packed_shape(
-                    typespecs,
-                    descriptor,
-                    info.width,
-                    info.signed,
-                    info.two_state,
-                )
-            };
-            (IrVpiStaticStorage::Signal(info.ir), shape)
-        } else if let Some(index) = self.class_static_objects.get(&child) {
-            let descriptor = self.db.type_descriptor(child)?;
-            let shape = match model.objects.get(*index)?.ty {
-                IrObjectType::String => IrVpiShape::String,
-                IrObjectType::Chandle | IrObjectType::Semaphore => {
-                    self.vpi_handle_shape(typespecs, descriptor, self.db.declared_typedef(child))?
-                }
-                _ => return None,
-            };
-            (IrVpiStaticStorage::Object(*index), shape)
-        } else if let Some(info) = self.event_globals.get(&child) {
-            (IrVpiStaticStorage::Event(info.ir), IrVpiShape::Event)
-        } else {
-            if self.db.variable_lifetime(child) != crate::core::db::VariableLifetime::Static {
-                return None;
-            }
-            let info = self.container_globals.get(&child)?;
-            let container = model.containers.get(info.ir)?;
-            if container.class_field.is_some() || !container.is_global_storage() {
-                return None;
-            }
-            let descriptor = self.db.type_descriptor(child)?;
-            let shape = if container.initial_size.is_some() {
-                for bounds in self.db.array_meta(child)?.dimensions() {
-                    let (left, right) = (*bounds)?;
-                    dims.push((i64::from(left), i64::from(right)));
-                }
-                self.vpi_static_container_shape(dynamic, typespecs, descriptor, container, true)?
-            } else {
-                self.vpi_container_shape(dynamic, typespecs, descriptor, container, 0)?
-            };
-            (IrVpiStaticStorage::Container(info.ir), shape)
-        };
-        Some(IrVpiStatic {
-            field: IrVpiField {
-                name: self.node(child).name.clone(),
-                shape: dynamic.intern(shape),
-                rand: match self.db.rand_qualifier(child) {
-                    RandQualifier::None => IrVpiRand::NotRand,
-                    RandQualifier::Rand => IrVpiRand::Rand,
-                    RandQualifier::RandC => IrVpiRand::RandC,
-                },
-                visibility: vpi_visibility(self.db.member_visibility(child)),
-                mode: None,
-                is_const: self.db.is_const_variable(child),
-                line: self.node(child).line,
-                file: self.node(child).file().map(str::to_owned),
-            },
-            storage,
-            dims,
+    /// Static property `child` of a class (8.9) with the catalog row of its
+    /// variable; `None` for any other declaration.
+    fn vpi_class_static(&self, child: NodeId) -> Option<IrVpiStatic> {
+        self.is_static_property(child).then(|| IrVpiStatic {
+            row: self.vpi_full_name(child),
+            rand: vpi_rand(self.db.rand_qualifier(child)),
+            visibility: vpi_visibility(self.db.member_visibility(child)),
         })
     }
 
     /// The scope that declares `class` when it is a catalog scope (an
     /// instance, generate scope, package or `$unit`), by catalog key.
     fn vpi_class_scope(&self, class: NodeId) -> Option<String> {
-        let scope = self.db.class_declaring_scope(class)?;
-        (matches!(
+        self.db
+            .class_declaring_scope(class)
+            .filter(|scope| self.vpi_is_class_scope(*scope))
+            .map(|scope| self.vpi_full_name(scope))
+    }
+
+    /// Whether `scope` is a catalog scope that can declare a class.
+    fn vpi_is_class_scope(&self, scope: NodeId) -> bool {
+        matches!(
             self.kind(scope),
             NodeKind::ModuleInst { .. } | NodeKind::GenScope | NodeKind::Package
-        ) || self.is_compilation_unit(scope))
-        .then(|| self.vpi_full_name(scope))
+        ) || self.is_compilation_unit(scope)
+    }
+
+    /// The path of a class definition: its declaring scope's, then one part
+    /// with the class name, a nested class after its outer class and `::`
+    /// (37.10 detail 5).
+    pub(super) fn vpi_class_path(&self, class: NodeId) -> Vec<String> {
+        let mut name = self.node(class).name.clone();
+        let mut scope = self.db.class_declaring_scope(class);
+        while let Some(outer) =
+            scope.filter(|scope| matches!(self.kind(*scope), NodeKind::ClassDef))
+        {
+            name = format!("{}::{name}", self.node(outer).name);
+            scope = self.db.class_declaring_scope(outer);
+        }
+        let mut path = scope
+            .filter(|scope| self.vpi_is_class_scope(*scope))
+            .map_or_else(Vec::new, |scope| self.vpi_path(scope));
+        path.push(name);
+        path
     }
 
     /// `vpiFullName` of a class definition: its declaring scope's full
     /// name, then `.` (`::` after a package, `$unit` or class, 37.10
     /// detail 5) and the class name.
-    fn vpi_class_full_name(&self, class: NodeId, depth: u32) -> String {
-        let name = &self.node(class).name;
-        let Some(scope) = self.db.class_declaring_scope(class) else {
-            return name.clone();
-        };
-        if matches!(self.kind(scope), NodeKind::ClassDef) && depth < MAX_SHAPE_DEPTH {
-            return format!("{}::{name}", self.vpi_class_full_name(scope, depth + 1));
-        }
-        match self.vpi_class_scope(class) {
-            Some(key) if !key.is_empty() => format!("{key}{SEPARATOR}{name}")
-                .replace(&format!("::{SEPARATOR}"), "::")
-                .replace(SEPARATOR, "."),
-            _ => name.clone(),
-        }
+    fn vpi_class_full_name(&self, class: NodeId) -> String {
+        self.vpi_class_path(class)
+            .join(SEPARATOR)
+            .replace(&format!("::{SEPARATOR}"), "::")
+            .replace(SEPARATOR, ".")
     }
 
     /// The objects `vpiImport` of a class method returns (37.12 detail 4):
@@ -1253,6 +1193,14 @@ impl Codegen<'_> {
         }
         let info = self.container_globals.get(&child)?;
         model.containers.get(info.ir)?.class_field
+    }
+}
+
+fn vpi_rand(qualifier: RandQualifier) -> IrVpiRand {
+    match qualifier {
+        RandQualifier::None => IrVpiRand::NotRand,
+        RandQualifier::Rand => IrVpiRand::Rand,
+        RandQualifier::RandC => IrVpiRand::RandC,
     }
 }
 

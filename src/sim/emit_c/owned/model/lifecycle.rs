@@ -540,7 +540,13 @@ pub(in crate::sim::emit_c) fn main(
                 },
             });
         }
-        for array in model.arrays.iter().filter(|array| !array.activation) {
+        // An array without a hierarchical name (a static class property) is in
+        // no waveform, as such a signal.
+        for array in model
+            .arrays
+            .iter()
+            .filter(|array| !array.activation && !array.hdl_name.is_empty())
+        {
             if array.sparse() {
                 tables.render(&registrations, &mut out);
                 registrations.clear();

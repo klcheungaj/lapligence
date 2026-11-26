@@ -59,9 +59,7 @@ impl<'a> Codegen<'a> {
                 }
             }
             let name = self.node(*c).name.clone();
-            if self.initializer_contains_call(init)
-                || self.initializer_has_uncollected_signal_ref(init)
-            {
+            if self.reads_uncollected_storage(init) {
                 // Subroutine metadata and child-instance signal storage are
                 // not complete until collection finishes. Defer only affected
                 // initializers so all others keep their existing order.
@@ -114,6 +112,11 @@ impl<'a> Codegen<'a> {
             .children
             .iter()
             .any(|child| self.initializer_contains_call(*child))
+    }
+
+    /// Whether an initializer must be lowered once collection finished.
+    pub(super) fn reads_uncollected_storage(&self, init: NodeId) -> bool {
+        self.initializer_contains_call(init) || self.initializer_has_uncollected_signal_ref(init)
     }
 
     /// Whether an initializer names a bound variable or net whose signal

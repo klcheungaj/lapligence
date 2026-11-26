@@ -775,13 +775,15 @@ impl Frame<'_, '_> {
     /// The plan judged a run before the statements ahead of it were emitted.
     /// One of those may have bound a name the run reads (only a top-level
     /// declaration is recognized in advance), so check the run again against
-    /// the bindings now in scope.
+    /// the bindings now in scope. A bracket of updates may name temporaries of
+    /// the body.
     fn run_still_outlines(&self, run: &[IrStmt]) -> bool {
-        self.outline.as_ref().is_some_and(|sink| {
-            self.statement_weights(run, sink.depth)
-                .iter()
-                .all(|(_, ok)| *ok)
-        })
+        !self.updates.name_locals()
+            && self.outline.as_ref().is_some_and(|sink| {
+                self.statement_weights(run, sink.depth)
+                    .iter()
+                    .all(|(_, ok)| *ok)
+            })
     }
 
     /// Render `run` as a helper and call it here.
@@ -797,7 +799,7 @@ impl Frame<'_, '_> {
         helper.storage_names = self.storage_names;
         helper.cell_eligibility = self.cell_eligibility.clone();
         helper.slots = self.slots.clone();
-        helper.nba_bound = self.nba_bound;
+        helper.updates.bound = self.updates.bound;
         helper.batch_owner = self.batch_owner.as_ref().map(|_| name.clone());
         helper.outline = Some(sink);
         // A run is no heavier than one run, so nothing inside it splits.

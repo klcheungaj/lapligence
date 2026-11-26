@@ -1,0 +1,19 @@
+record 3 2
+parts 6 3
+nested 1 2 3 45
+copies 9 1 2 1 1
+text zbc 3.5 4 3 ZBC
+format 12 12
+deep in 3.5 8
+cells 5 6 51 11
+loop '{0, 2, 4} 
+lists 2 6 3 5 0
+held 8 2 0
+records 3 2 10 9
+texts ab 2.5 2
+handles 3 7
+ints '{5, 11, 4}  20 3
+table 12 10 '{'{0, 1, 2}, '{10, 11, 12}} 
+reals 3.5 4.0 3.0
+containers 4 3 5 2 6 1
+initial 1 2 3 45 init 1.5 7 '{4, 5, 6} 

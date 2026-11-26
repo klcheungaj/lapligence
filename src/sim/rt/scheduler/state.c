@@ -714,7 +714,7 @@ static void clocking_drive_event_match(llg_event_object_t* event);
 typedef struct llg_deferred_trigger {
     struct llg_deferred_trigger* next;
     struct llg_deferred_trigger* prev;
-    // Binding of an event trigger to its issuer (S09-D8), or NULL.
+    // Binding to the issuer (S09-D8), or NULL.
     llg_bound_update_t* bound;
     llg_event_object_t* target;
     llg_event_assignment_fn action;
@@ -724,6 +724,11 @@ typedef struct llg_deferred_trigger {
     double* real_last;
     int32_t n;
     uint64_t remaining;
+    // A named event of an assignment's control was triggered, and the callback
+    // that takes it runs in `region` after this turn.
+    int32_t occurred;
+    llg_region_t region;
+    llg_region_callback_id_t occurrence;
 } llg_deferred_trigger_t;
 
 // Stochastic analysis queues are a scheduler-owned registry, not container
@@ -996,6 +1001,11 @@ static llg_rt_ctx_t g;
 static void change_flush(void);
 static inline void change_check(void) {
     if (LLG_CO_UNLIKELY(g.change_count)) change_flush();
+}
+
+// Whether there is anything for llg_clocking_forget_signal to forget.
+static inline int32_t changes_watched(void) {
+    return (g.change_rows | g.change_unrowed | g.clocking_count) != 0;
 }
 
 // A check before an output task. Nonzero when the calling process has ended

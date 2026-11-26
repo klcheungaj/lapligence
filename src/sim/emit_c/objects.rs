@@ -287,6 +287,7 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
         | IrChandleExpr::CopyClass { .. }
         | IrChandleExpr::Conditional { .. }
         | IrChandleExpr::EventObject(_)
+        | IrChandleExpr::WaitedEvent(_)
         | IrChandleExpr::QueuePop { .. }
         | IrChandleExpr::EventEntry { .. }
         | IrChandleExpr::NbaHold
@@ -600,6 +601,7 @@ pub(super) fn query(
     signed: bool,
 ) -> Result<String, String> {
     Ok(match query {
+        IrObjectQuery::EventTriggerCount(_) => return Err("event trigger counts require whole-model ownership emission".to_owned()),
         IrObjectQuery::HandleCapture(_) | IrObjectQuery::EventCapture(_) | IrObjectQuery::StringCapture(_) => return Err("opaque captures require whole-model ownership emission".to_owned()),
         IrObjectQuery::StringLen(value) => format!("llg_string_len({})", string(ctx, value)?),
         IrObjectQuery::StringGetc(value, index) => format!(

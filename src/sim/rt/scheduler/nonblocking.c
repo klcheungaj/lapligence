@@ -537,10 +537,22 @@ void llg_chandle_nba_after(void** target, void* value, uint64_t ticks,
                            sv4_t* dependency) {
     llg_nba_t* n = new_nba(ticks);
     if (!n) return;
-    n->is_chandle = 1;
+    n->is_chandle = LLG_NBA_HANDLE;
     n->native.chandle.target = target;
     n->native.chandle.value = value;
     n->native.chandle.dependency = dependency;
+    enqueue_nba(n);
+}
+
+LLG_OUTLYING void llg_process_nba_after(llg_process_handle_t** target,
+                                        llg_process_handle_t* value,
+                                        uint64_t ticks, sv4_t* dependency) {
+    llg_nba_t* n = new_nba(ticks);
+    if (!n) return;
+    n->is_chandle = LLG_NBA_PROCESS;
+    n->native.process.target = target;
+    n->native.process.value = value;
+    n->native.process.dependency = dependency;
     enqueue_nba(n);
 }
 

@@ -473,14 +473,6 @@ impl Frame<'_, '_> {
                 2,
                 false,
             ),
-            IrRuntimeQuery::EventTriggerCount(event) => {
-                let event = self.event_address(&IrEventRef::Static(*event))?;
-                self.value(
-                    format!("sv4_from_u64(llg_event_trigger_count({event}), 64, 0)"),
-                    64,
-                    false,
-                )
-            }
             IrRuntimeQuery::SequenceMatched { endpoint, slot } => self.value(
                 format!(
                     "sv4_from_u64(llg_sequence_matched({endpoint}u, {slot}u) ? 1ULL : 0ULL, 1, 0)"

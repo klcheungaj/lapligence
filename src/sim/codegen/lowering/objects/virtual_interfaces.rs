@@ -275,7 +275,7 @@ impl Codegen<'_> {
         Ok(self.wrap_virtual_interface_nested(path, call, handle, &nested))
     }
 
-    fn virtual_interface_access(
+    pub(super) fn virtual_interface_access(
         &mut self,
         path: &str,
         node: NodeId,

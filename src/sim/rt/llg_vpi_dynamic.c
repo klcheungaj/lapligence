@@ -100,32 +100,17 @@ static const llg_vpi_class_t* dyn_class(uint32_t index) {
     return t && index < t->class_count ? &t->classes[index] : NULL;
 }
 
-/* Property numbers from DYN_STATIC_FIELD on name static properties (8.9):
- * entry `field - DYN_STATIC_FIELD` of the static table, whichever class or
- * object reaches it. */
-#define DYN_STATIC_FIELD 0x40000000u
-
-/* The static property `field` names, or NULL for an instance property. */
-static LLG_OUTLYING const llg_vpi_class_static_t* dyn_static(uint32_t field) {
-    if (field < DYN_STATIC_FIELD || !g_dyn.tables || field - DYN_STATIC_FIELD >= g_dyn.tables->static_count)
-        return NULL;
-    return &g_dyn.tables->statics[field - DYN_STATIC_FIELD];
-}
-
 static const llg_vpi_class_field_t* dyn_field(uint32_t class_index, uint32_t field) {
-    if (field >= DYN_STATIC_FIELD) {
-        const llg_vpi_class_static_t* entry = dyn_static(field);
-        return entry ? &entry->field : NULL;
-    }
     const llg_vpi_class_t* layout = dyn_class(class_index);
     if (!layout || field >= layout->field_count) return NULL;
     return &g_dyn.tables->fields[layout->first_field + field];
 }
 
-/* Static property `k` of class `class_index` (with `inherited`, of its
- * base classes first and then its own, as an object lists them), as a
- * property number, or LLG_VPI_NONE. */
-static LLG_OUTLYING uint32_t dyn_class_static(uint32_t class_index, int32_t inherited, uint32_t k) {
+/* Static property `k` (8.9) of class `class_index` (with `inherited`, of
+ * its base classes first and then its own, as an object lists them), or
+ * NULL. */
+static LLG_OUTLYING const llg_vpi_class_static_t* dyn_class_static(uint32_t class_index, int32_t inherited,
+                                                                  uint32_t k) {
     uint32_t chain[64];
     uint32_t depth = 0;
     for (uint32_t current = class_index; depth < 64u;) {
@@ -137,10 +122,20 @@ static LLG_OUTLYING uint32_t dyn_class_static(uint32_t class_index, int32_t inhe
     }
     for (uint32_t d = depth; d-- > 0;) {
         const llg_vpi_class_t* layout = dyn_class(chain[d]);
-        if (k < layout->static_count) return DYN_STATIC_FIELD + layout->first_static + k;
+        if (k < layout->static_count) return &g_dyn.tables->statics[layout->first_static + k];
         k -= layout->static_count;
     }
-    return LLG_VPI_NONE;
+    return NULL;
+}
+
+/* The static property whose variable is `object` (LLG_VPI_OBJ_CLASS_STATIC),
+ * or NULL. */
+static LLG_OUTLYING const llg_vpi_class_static_t* dyn_static_of(const llg_vpi_model_object_t* object) {
+    if (!object || !(object->flags & LLG_VPI_OBJ_CLASS_STATIC) || !g_dyn.tables) return NULL;
+    uint32_t row = row_of(object);
+    for (uint32_t i = 0; i < g_dyn.tables->static_count; ++i)
+        if (g_dyn.tables->statics[i].row == row) return &g_dyn.tables->statics[i];
+    return NULL;
 }
 
 /* Fields a class inherits: the field count of its base layout. */
@@ -153,8 +148,6 @@ static uint32_t dyn_inherited_fields(uint32_t class_index) {
 /* The class layout that declares field `field` of layout `class_index`
  * (a derived layout lists its base's fields first). */
 static uint32_t dyn_declaring_class(uint32_t class_index, uint32_t field) {
-    const llg_vpi_class_static_t* entry = dyn_static(field);
-    if (entry) return entry->class_index;
     uint32_t classes = g_dyn.tables ? g_dyn.tables->class_count : 0u;
     for (uint32_t guard = 0; guard < classes; ++guard) {
         const llg_vpi_class_t* layout = dyn_class(class_index);
@@ -178,8 +171,7 @@ static int32_t dyn_tables_valid(void) {
     if ((t->shape_count && !t->shapes) || (t->class_count && !t->classes) ||
         (t->field_count && !t->fields) || (t->class_count && (!t->object || !t->field)) ||
         (t->vif_count && !t->vifs) || (t->method_call_count && !t->method_calls) ||
-        (t->member_count && !t->members) || (t->static_count && !t->statics) ||
-        t->static_count >= DYN_STATIC_FIELD)
+        (t->member_count && !t->members) || (t->static_count && !t->statics))
         return 0;
     for (uint32_t i = 0; i < t->method_call_count; ++i) {
         const uint32_t* call = &t->method_calls[3u * i];
@@ -234,14 +226,9 @@ static int32_t dyn_tables_valid(void) {
     }
     for (uint32_t i = 0; i < t->static_count; ++i) {
         const llg_vpi_class_static_t* entry = &t->statics[i];
-        const llg_vpi_shape_t* shape =
-            entry->field.shape < t->shape_count ? &t->shapes[entry->field.shape] : NULL;
-        int32_t fixed = shape && shape->shape == LLG_VPI_SHAPE_CONTAINER &&
-                    shape->array_type == vpiStaticArray;
-        if (!entry->field.name || !shape || !entry->storage || entry->field.mode ||
-            entry->class_index >= t->class_count ||
-            (fixed ? !entry->dims || !entry->dim_count || entry->dim_count > DYN_MAX_DIMS
-                   : entry->dim_count != 0u))
+        if (entry->row >= g_vpi.object_count || entry->class_index >= t->class_count ||
+            entry->rand > vpiRandC || entry->visibility < vpiPublicVis ||
+            entry->visibility > vpiLocalVis)
             return 0;
     }
     for (uint32_t i = 0; i < t->field_count; ++i) {
@@ -491,13 +478,6 @@ static vpiHandle make_property(void* object, uint32_t class_index, uint32_t fiel
     return handle;
 }
 
-/* The handle of static property `field` (a property number from
- * DYN_STATIC_FIELD): one object for the class and every object of it. */
-static LLG_OUTLYING vpiHandle make_static_property(uint32_t field) {
-    const llg_vpi_class_static_t* entry = dyn_static(field);
-    return entry ? make_property(NULL, entry->class_index, field) : NULL;
-}
-
 /* Item `item` of class `class_index` reached from class object `object`: a
  * constraint, whose vpiIsConstraintEnabled and vpiParent are the object's
  * (37.30). The handle tracks the object like a property handle. */
@@ -533,10 +513,6 @@ typedef struct {
  * iterators: `right` holds the frame serial and the field (an element's
  * `aux`, an iterator's `lsb`) the variable's index in its frame. */
 #define DYN_AUTO_ROW (LLG_VPI_NONE - 2u)
-
-/* The `row` of a static property's elements and element iterators: the
- * field (an element's `aux`, an iterator's `lsb`) is the property. */
-#define DYN_STATIC_ROW (LLG_VPI_NONE - 4u)
 
 /* The `row` of an event of a class definition's named event array
  * property (37.25): `aux` holds the property and `right` the class layout.
@@ -574,8 +550,7 @@ static LLG_OUTLYING uint32_t dyn_fixed_dim_count(const dyn_place_t* place) {
      * its shape carries the ranges. */
     if (place->shape->dim_count) return place->shape->dim_count;
     if (place->row == LLG_VPI_NONE) return 0u;
-    if (place->row == DYN_AUTO_ROW || place->row == DYN_STATIC_ROW)
-        return place->dims ? place->dim_count : 0u;
+    if (place->row == DYN_AUTO_ROW) return place->dims ? place->dim_count : 0u;
     const llg_vpi_model_object_t* row = row_object(place->row);
     return row ? row->dim_count : 0u;
 }
@@ -592,8 +567,7 @@ static LLG_OUTLYING void dyn_fixed_dim(const dyn_place_t* place, uint32_t d, int
         *right = place->shape->dims[2u * d + 1u];
         return;
     }
-    const int64_t* dims = place->row == DYN_AUTO_ROW || place->row == DYN_STATIC_ROW
-                              ? place->dims : row_object(place->row)->dims;
+    const int64_t* dims = place->row == DYN_AUTO_ROW ? place->dims : row_object(place->row)->dims;
     *left = dims[2u * d];
     *right = dims[2u * d + 1u];
 }
@@ -663,8 +637,6 @@ static int32_t dyn_is_dying(const void* object) {
 /* The storage of field `field` of a live object, when its slot kind agrees
  * with the field's shape. */
 static void* dyn_field_storage(void* object, uint32_t field, const llg_vpi_shape_t* shape) {
-    const llg_vpi_class_static_t* entry = dyn_static(field);
-    if (entry) return entry->storage;
     uint32_t kind = 0;
     void* storage = g_dyn.tables->field(object, field, &kind);
     if (!storage || !shape) return NULL;
@@ -703,16 +675,6 @@ static int32_t dyn_place(const llg_vpi_slot_t* slot, dyn_place_t* place) {
     place->shape = dyn_shape(field->shape);
     place->name = field->name;
     place->class_index = class_index;
-    const llg_vpi_class_static_t* entry = dyn_static((uint32_t)slot->aux);
-    if (entry) {
-        /* A static property is one variable for the class and its
-         * objects (8.9). */
-        place->storage = entry->storage;
-        place->row = DYN_STATIC_ROW;
-        place->dims = entry->dims;
-        place->dim_count = entry->dim_count;
-        return place->shape != NULL;
-    }
     place->owner = slot->pointer;
     if (slot->pointer) {
         place->storage = dyn_field_storage(slot->pointer, (uint32_t)slot->aux, place->shape);
@@ -734,16 +696,6 @@ static int32_t dyn_container_place(uint32_t row, void* owner, uint32_t field, in
         /* A record automatic is the top of its members' paths. */
         if (!rts_auto_value_place((uint64_t)serial, field, place)) return 0;
         return 1;
-    } else if (row == DYN_STATIC_ROW) {
-        const llg_vpi_class_static_t* entry = dyn_static(field);
-        if (!entry) return 0;
-        place->shape = dyn_shape(entry->field.shape);
-        place->storage = entry->storage;
-        place->row = DYN_STATIC_ROW;
-        place->name = entry->field.name;
-        place->class_index = entry->class_index;
-        place->dims = entry->dims;
-        place->dim_count = entry->dim_count;
     } else if (owner) {
         uint32_t class_index;
         if (!dyn_object_class(owner, &class_index)) return 0;
@@ -1990,7 +1942,7 @@ static int32_t dyn_location(const llg_vpi_slot_t* slot, uint32_t* line, const ch
         case SLOT_DYNELEM:
             if (slot->object == DYN_AUTO_ROW)
                 return rts_auto_location((uint64_t)slot->right, (uint32_t)slot->aux, line, file);
-            if (slot->object == DYN_DEFN_ROW || slot->object == DYN_STATIC_ROW) {
+            if (slot->object == DYN_DEFN_ROW) {
                 field = dyn_field((uint32_t)slot->right, (uint32_t)slot->aux);
             } else if (slot->pointer) {
                 uint32_t class_index;
@@ -2022,7 +1974,7 @@ static uint32_t dyn_constant_scope(const llg_vpi_slot_t* slot) {
         return dyn_class_located_scope(dyn_declaring_class((uint32_t)slot->right, field));
     if (slot->kind != SLOT_DYNELEM) return constant_scope(slot);
     if (slot->object == DYN_AUTO_ROW) return rts_auto_scope((uint64_t)slot->right);
-    if (slot->object == DYN_DEFN_ROW || slot->object == DYN_STATIC_ROW)
+    if (slot->object == DYN_DEFN_ROW)
         return dyn_class_located_scope(dyn_declaring_class((uint32_t)slot->right, field));
     if (slot->pointer) {
         uint32_t class_index;
@@ -2104,9 +2056,6 @@ static vpiHandle dyn_handle(int32_t type, llg_vpi_slot_t* slot, int32_t* handled
                     return rts_auto_handle_by_serial((uint64_t)slot->right, (uint32_t)slot->aux);
                 if (slot->object == DYN_DEFN_ROW)
                     return make_property(NULL, (uint32_t)slot->right, (uint32_t)slot->aux);
-                if (slot->object == DYN_STATIC_ROW)
-                    return make_property(NULL, dyn_declaring_class(0u, (uint32_t)slot->aux),
-                                         (uint32_t)slot->aux);
                 if (!slot->pointer) return object_handle(slot->object);
                 uint32_t class_index;
                 if (!dyn_object_class(slot->pointer, &class_index)) break;
@@ -2120,7 +2069,7 @@ static vpiHandle dyn_handle(int32_t type, llg_vpi_slot_t* slot, int32_t* handled
                 vpi_release_handle(array);
                 return result;
             }
-            if (!slot->pointer && slot->object != DYN_AUTO_ROW && slot->object != DYN_STATIC_ROW &&
+            if (!slot->pointer && slot->object != DYN_AUTO_ROW &&
                 (type == vpiModule || type == vpiInstance || type == vpiScope)) {
                 /* 37.17: an element of a module-level array is declared
                  * where the array is. */
@@ -2190,8 +2139,7 @@ static vpiHandle dyn_handle(int32_t type, llg_vpi_slot_t* slot, int32_t* handled
                                               : NULL;
                 if (type == vpiTypespec && shape->typespec)
                     return typespec_handle(typespec_ref(shape->typespec));
-                if (type == vpiTypespec && !slot->pointer && !slot->span &&
-                    slot->object != DYN_STATIC_ROW) {
+                if (type == vpiTypespec && !slot->pointer && !slot->span) {
                     /* The element type of the array's typespec (37.17). */
                     vpiHandle array = object_handle(slot->object);
                     vpiHandle array_ts = array ? vpi_handle(vpiTypespec, array) : NULL;
@@ -2301,6 +2249,14 @@ static int32_t dyn_field_listed(uint32_t class_index, uint32_t field, int32_t ty
     return !type || shape->type == type;
 }
 
+/* Whether static property `entry` is listed by an iteration for objects of
+ * `type`, as `dyn_field_listed`. */
+static LLG_OUTLYING int32_t dyn_static_listed(const llg_vpi_class_static_t* entry, int32_t type) {
+    int32_t found = g_vpi.objects[entry->row].type;
+    if (found == vpiNamedEvent || found == vpiNamedEventArray) return type == found;
+    return !type || found == type;
+}
+
 /* The properties an iteration lists: the instance properties from field
  * `first` on, then the static properties of the class (with `inherited`,
  * those of its base classes first, as an object lists them). */
@@ -2310,9 +2266,9 @@ static uint32_t dyn_visible_fields(uint32_t class_index, uint32_t first, int32_t
     for (uint32_t i = first; layout && i < layout->field_count; ++i)
         if (dyn_field_listed(class_index, i, type)) ++count;
     for (uint32_t k = 0;; ++k) {
-        uint32_t field = dyn_class_static(class_index, inherited, k);
-        if (field == LLG_VPI_NONE) break;
-        if (dyn_field_listed(class_index, field, type)) ++count;
+        const llg_vpi_class_static_t* entry = dyn_class_static(class_index, inherited, k);
+        if (!entry) break;
+        if (dyn_static_listed(entry, type)) ++count;
     }
     return count;
 }
@@ -2482,24 +2438,6 @@ static LLG_OUTLYING vpiHandle dyn_iterate_member_array(const llg_vpi_slot_t* slo
     dyn_list_t list = {0};
     dyn_collect_leaves(&list, &top, (uint32_t)slot->aux, &level, steps, count);
     return dyn_list_iterator(type, &list);
-}
-
-/* vpiRange of a fixed-size array static property (37.17 detail 4): its
- * declared ranges, leftmost first, located at the property (decision
- * A19-D86). */
-static LLG_OUTLYING vpiHandle dyn_static_ranges(uint32_t field) {
-    const llg_vpi_class_static_t* entry = dyn_static(field);
-    if (!entry || !entry->dim_count) {
-        vpi_error("LLG_VPI_RELATION", "this array has no declared range");
-        return NULL;
-    }
-    llg_vpi_range_origin_t origin = {
-        RANGE_PROPERTY, (uint64_t)entry->class_index << 32 | field, 0u, LLG_VPI_NONE,
-        dyn_class_located_scope(entry->class_index), entry->field.line, entry->field.file };
-    dyn_list_t list = {0};
-    for (uint32_t d = 0; d < entry->dim_count; ++d)
-        dyn_list_push(&list, make_range(&origin, d, entry->dims[2u * d], entry->dims[2u * d + 1u]));
-    return dyn_list_iterator(vpiRange, &list);
 }
 
 /* Append the innermost elements of `level` (a container at depth
@@ -2764,7 +2702,6 @@ static vpiHandle dyn_iterate(int32_t type, llg_vpi_slot_t* slot, int32_t* handle
                 *handled = 0;
                 return NULL;
             }
-            if (place.row == DYN_STATIC_ROW && type == vpiRange) return dyn_static_ranges((uint32_t)slot->aux);
             if (type == vpiRange && place.shape->dim_count && slot->kind == SLOT_PROPERTY) {
                 /* A fixed-size class instance property: the ranges its
                  * shape carries, located at the property (A19-D86). */
@@ -2826,11 +2763,12 @@ static vpiHandle dyn_scan(llg_vpi_slot_t* slot, uint32_t position) {
             }
             /* Then the static properties (dyn_visible_fields). */
             while (layout) {
-                uint32_t field = dyn_class_static(class_index, (int32_t)slot->lsb,
-                                                  (uint32_t)(slot->left - (int64_t)layout->field_count));
-                if (field == LLG_VPI_NONE) break;
+                const llg_vpi_class_static_t* entry =
+                    dyn_class_static(class_index, (int32_t)slot->lsb,
+                                     (uint32_t)(slot->left - (int64_t)layout->field_count));
+                if (!entry) break;
                 ++slot->left;
-                if (dyn_field_listed(class_index, field, slot->aux)) return make_static_property(field);
+                if (dyn_static_listed(entry, slot->aux)) return object_handle(entry->row);
             }
             return NULL;
         }
@@ -2901,13 +2839,26 @@ static PLI_INT64 dyn_size(const dyn_place_t* place, int32_t* ok) {
 }
 
 /* vpiRandType, vpiVisibility and vpiIsRandomized (37.17 details 15, 16
- * and 24) of a dynamic variable or a class property. A variable that is
- * not a class member is public and not random; a property of a class
+ * and 24) of the variable `object` is or is a part of: one that is no class
+ * member is public and not random (decision A19-D36; std::randomize()
+ * leaves a variable's type vpiNotRand). A static property belongs to no
+ * object, so it is not active for randomization. */
+static LLG_OUTLYING PLI_INT32 variable_random_property(int32_t property, const llg_vpi_model_object_t* object) {
+    const llg_vpi_class_static_t* entry = dyn_static_of(object);
+    switch (property) {
+        case vpiRandType: return entry ? entry->rand : vpiNotRand;
+        case vpiVisibility: return entry ? entry->visibility : vpiPublicVis;
+        default: return 0;
+    }
+}
+
+/* The same of a dynamic variable or a class property. A property of a class
  * definition belongs to no object, so it is not active for randomization
  * (decision A19-D36). */
 static PLI_INT64 dyn_random_property(int32_t property, const llg_vpi_slot_t* slot) {
     const llg_vpi_class_field_t* field =
         slot->kind == SLOT_PROPERTY ? dyn_field((uint32_t)slot->right, (uint32_t)slot->aux) : NULL;
+    if (!field && slot->kind == SLOT_OBJECT) return variable_random_property(property, row_object(slot->object));
     if (property == vpiRandType) return field ? field->rand : vpiNotRand;
     if (property == vpiVisibility) return field ? field->visibility : vpiPublicVis;
     if (!field || field->rand == vpiNotRand || !slot->pointer) return 0;
@@ -2953,8 +2904,7 @@ static PLI_INT64 dyn_event_get(int32_t property, const dyn_place_t* place) {
         case vpiArrayMember:
             return 0;
         case vpiAutomatic:
-            /* A static event property is one event of the class. */
-            return place->row != DYN_STATIC_ROW;
+            return 1;
         case vpiAllocScheme:
             return place->owner ? vpiDynamicScheme : vpiOtherScheme;
         default:
@@ -3167,8 +3117,7 @@ static PLI_INT64 dyn_get(int32_t property, llg_vpi_slot_t* slot, int32_t* handle
                     return slot->kind == SLOT_OBJECT &&
                            (g_vpi.objects[slot->object].flags & LLG_VPI_OBJ_MEMBER) != 0;
                 case vpiAutomatic:
-                    /* 37.3.7: a static property is a static variable. */
-                    return slot->kind == SLOT_PROPERTY && place.row != DYN_STATIC_ROW;
+                    return slot->kind == SLOT_PROPERTY;
                 case vpiAllocScheme:
                     return slot->kind == SLOT_PROPERTY && place.owner ? vpiDynamicScheme
                                                                       : vpiOtherScheme;
@@ -3314,19 +3263,6 @@ static LLG_OUTLYING int32_t dyn_name_path(dyn_name_t* name, const llg_vpi_slot_t
     return 1;
 }
 
-/* 37.17 detail 25: the full name of a static property, through its class
- * definition (`top.Packet::Id`), whether a class variable or the class
- * definition reaches it. Owned by the caller; NULL with an error. */
-static LLG_OUTLYING char* dyn_static_full_name(uint32_t field) {
-    const llg_vpi_class_static_t* entry = dyn_static(field);
-    const llg_vpi_class_t* layout = entry ? dyn_class(entry->class_index) : NULL;
-    if (!layout) return NULL;
-    size_t length = strlen(layout->full_name) + 2u + strlen(entry->field.name) + 1u;
-    char* text = (char*)vpi_malloc(length);
-    snprintf(text, length, "%s::%s", layout->full_name, entry->field.name);
-    return text;
-}
-
 /* vpiName (`full` 0) or vpiFullName of an element: the array's name and
  * every index of its path (`q[1]`, `qq[0][1]`, `tb.t.q[1]`); a record
  * member is named by its member name, its full name continues the
@@ -3374,11 +3310,7 @@ static char* dyn_element_name(const llg_vpi_slot_t* slot, int32_t full) {
         return text;
     }
     char* base = NULL;
-    if (!full) {
-        base = NULL;
-    } else if (place.row == DYN_STATIC_ROW) {
-        if (!(base = dyn_static_full_name((uint32_t)slot->aux))) return NULL;
-    } else if (place.row == DYN_AUTO_ROW) {
+    if (full && place.row == DYN_AUTO_ROW) {
         /* An automatic's element: the frame's name, the variable, the index
          * (`tb.t.q[1]`). */
         const char* frame = rts_auto_frame_name((uint64_t)place.serial);
@@ -3428,15 +3360,8 @@ static const char* dyn_get_str(int32_t property, llg_vpi_slot_t* slot, int32_t* 
             if (property == vpiName) return dyn_field((uint32_t)slot->right, (uint32_t)slot->aux)->name;
             if (property == vpiFullName) {
                 /* 37.17 detail 25. */
-                char* text = dyn_static((uint32_t)slot->aux) ? dyn_static_full_name((uint32_t)slot->aux)
-                                                             : NULL;
-                if (!text) {
-                    vpi_error("LLG_VPI_PROPERTY", "a non-static class property has no vpiFullName");
-                    return NULL;
-                }
-                const char* result = dyn_text("%s", text);
-                free(text);
-                return result;
+                vpi_error("LLG_VPI_PROPERTY", "a non-static class property has no vpiFullName");
+                return NULL;
             }
             break;
         case SLOT_DYNELEM:
@@ -3567,11 +3492,8 @@ static void dyn_put_value(llg_vpi_slot_t* slot, p_vpi_value input, int32_t mode)
         vpi_error("LLG_VPI_VALUE", "a property of a class definition has no value (37.27 detail 2)");
         return;
     }
-    const llg_vpi_class_static_t* entry =
-        slot->kind == SLOT_PROPERTY ? dyn_static((uint32_t)slot->aux) : NULL;
     sv4_t* dependency = slot->kind == SLOT_OBJECT && place.row != LLG_VPI_NONE
-                            ? g_vpi.objects[place.row].dependency
-                            : entry ? entry->dependency : NULL;
+                            ? g_vpi.objects[place.row].dependency : NULL;
     dyn_write(place.shape, place.storage, dependency, input);
 }
 
@@ -3656,16 +3578,14 @@ static vpiHandle dyn_property_by_name(void* object, const char* name, size_t len
     }
     /* A static property through an object (37.17 detail 25: `p.Id`); a
      * derived class's declaration hides its base's. */
-    uint32_t found = LLG_VPI_NONE;
+    const llg_vpi_class_static_t* found = NULL;
     for (uint32_t k = 0;; ++k) {
-        uint32_t field = dyn_class_static(class_index, 1, k);
-        if (field == LLG_VPI_NONE) break;
-        const char* candidate = dyn_field(class_index, field)->name;
-        if (strlen(candidate) == length && memcmp(candidate, name, length) == 0) found = field;
+        const llg_vpi_class_static_t* entry = dyn_class_static(class_index, 1, k);
+        if (!entry) break;
+        const char* candidate = g_vpi.objects[entry->row].name;
+        if (strlen(candidate) == length && memcmp(candidate, name, length) == 0) found = entry;
     }
-    return found != LLG_VPI_NONE && (dyn_field_listed(class_index, found, 0) ||
-                                     dyn_field_listed(class_index, found, vpiNamedEvent))
-               ? make_static_property(found) : NULL;
+    return found ? object_handle(found->row) : NULL;
 }
 
 /* The selection of the element of container `place` at `index` (a
@@ -4086,6 +4006,14 @@ static LLG_OUTLYING vpiHandle dyn_walk_suffix(vpiHandle current, vpiHandle keep,
                 int32_t ok;
                 void* object = dyn_class_target(decode_handle(current), &ok);
                 if (ok && object) next = dyn_property_by_name(object, name, (size_t)(p - name));
+                slot = next && *p ? decode_handle(next) : NULL;
+                if (slot && slot->kind == SLOT_OBJECT) {
+                    /* A static property: its variable's name goes on. */
+                    vpiHandle part = lookup_row_suffix(slot->object, p);
+                    vpi_release_handle(next);
+                    if (current != keep) vpi_release_handle(current);
+                    return part;
+                }
             }
             if (!next) {
                 /* A structure kept as one packed value has no member objects. */
@@ -4129,24 +4057,11 @@ static LLG_OUTLYING vpiHandle dyn_walk_suffix(vpiHandle current, vpiHandle keep,
     return current;
 }
 
-/* vpi_handle_by_name of a static property by its full name (37.17 detail
- * 25: `top.Packet::Id`), or of an element or member after it, or of a
- * class method (`top.C::get`); NULL when none has that name. */
-static LLG_OUTLYING vpiHandle dyn_static_by_name(const char* name) {
-    for (uint32_t i = 0; g_dyn.tables && i < g_dyn.tables->static_count; ++i) {
-        char* full = dyn_static_full_name(DYN_STATIC_FIELD + i);
-        if (!full) return NULL;
-        size_t length = strlen(full);
-        int32_t match = strncmp(name, full, length) == 0 &&
-                    (name[length] == '\0' || name[length] == '[' || name[length] == '.');
-        free(full);
-        if (!match) continue;
-        vpiHandle property = make_static_property(DYN_STATIC_FIELD + i);
-        return property ? dyn_walk_suffix(property, NULL, name + length, 0) : NULL;
-    }
-    /* A method by its full name (37.37 detail 5: `top.C::get`). A
-     * parameterized class lists one definition per specialization under
-     * one name (decision A19-D36): the first one answers. */
+/* vpi_handle_by_name of a class method by its full name (37.37 detail 5:
+ * `top.C::get`); NULL when none has that name. A parameterized class lists
+ * one definition per specialization under one name (decision A19-D36): the
+ * first one answers. */
+static LLG_OUTLYING vpiHandle dyn_method_by_name(const char* name) {
     for (uint32_t c = 0; c < dyn_class_count(); ++c) {
         const char* full = dyn_class(c)->full_name;
         size_t length = strlen(full);

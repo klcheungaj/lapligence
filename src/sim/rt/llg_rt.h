@@ -3267,9 +3267,12 @@ void llg_event_trigger(llg_event_t* ev);
 // Return whether the synchronization object was triggered in the current
 // simulation time slot. A null handle is never triggered.
 int32_t llg_event_triggered(const llg_event_t* ev);
-// Number of triggers of the object `ev` currently names since the runtime was
-// initialized. A null handle reports zero. Read-only and allocation-free.
-uint64_t llg_event_trigger_count(const llg_event_t* ev);
+// The object of an event that a wait starts on. A null event reports a null
+// event access, ends the simulation and returns NULL.
+llg_event_object_t* llg_event_waited_object(const llg_event_t* ev);
+// Number of triggers of `object` since the runtime was initialized; zero of
+// null. Read-only and allocation-free.
+uint64_t llg_event_trigger_count(const llg_event_object_t* object);
 /* Make the concurrent assertion just registered (a cover of every match of
  * a sequence instance) the sequence endpoint `index`, numbered from zero in
  * registration order (IEEE 1800-2009 16.9.11, 16.14.5-16.14.6, 9.4.2.4). Each
@@ -3392,11 +3395,13 @@ void llg_nba_event_when(const llg_expr_event_spec_t* specs, int32_t n,
 // issue time. The runtime owns `frame` until the source matches or teardown;
 // `action` submits the detached NBA using the captured frame values. A zero
 // repeat count invokes `action` immediately, without registering a waiter.
+// Triggers of a named event count after the turn they happen in, once for each
+// event. A `bound` one ends with the issuing process until the source matches.
 typedef void (*llg_event_assignment_fn)(llg_frame_t* frame);
 void llg_nba_event_assign_when(const llg_expr_event_spec_t* specs, int32_t n,
                                uint64_t repeat,
                                llg_event_assignment_fn action,
-                               llg_frame_t* frame);
+                               llg_frame_t* frame, int32_t bound);
 // Normalize a packed repeat count without truncating values wider than 64 bits.
 uint64_t llg_repeat_count(sv4_t value);
 
@@ -3674,6 +3679,10 @@ void llg_string_nba_after(llg_string_t* target, llg_string_t value,
                           uint64_t ticks);
 void llg_chandle_nba_after(void** target, void* value, uint64_t ticks,
                            sv4_t* dependency);
+// The same for a process handle variable, which counts a reference to the
+// handle it holds; `value` is pinned (llg_process_pin).
+void llg_process_nba_after(llg_process_handle_t** target, llg_process_handle_t* value,
+                           uint64_t ticks, sv4_t* dependency);
 // Nonblocking write to persistent descriptor-backed array storage (a
 // fixed-array view of string, record or handle elements, SIM-007). The
 // source elements (`count` from storage position `src_start`, or the whole
@@ -3694,9 +3703,9 @@ enum {
 };
 void llg_container_nba_after(int32_t kind, void* target, const void* src, uint64_t ticks);
 // A write that takes its value and selectors now and is queued later
-// (`t <= @(e) v`, SV 9.4.5). Between `open` and `close` every nonblocking
-// write builds its update into the hold, which owns it for the GC and for
-// cleanup. `release` queues them as if issued now, `ticks` later, and ends the
+// (`t <= @(e) v`, SV 9.4.5). Between `open` and `close`, where no other
+// statement runs, every nonblocking write builds its update into the hold,
+// which owns it for the GC and for cleanup. `release` queues them as if issued now, `ticks` later, and ends the
 // hold; a process killed while it waits leaves the hold to cleanup.
 void* llg_nba_hold_new(void);
 void llg_nba_hold_open(void* held);
@@ -3709,7 +3718,8 @@ void llg_nba_bind_end(void);
 // The next NBA queued writes the item at `items` of a value, found when it
 // commits rather than at the address the NBA call names: an element of `array`
 // at `indices` (fixed here), or `root`. Copies its arguments.
-// `llg_nba_locate_end` ends the request if no NBA was queued.
+// `llg_nba_locate_end` ends the request if no NBA was queued; no other
+// statement runs in between.
 void llg_nba_locate_element(struct llg_dyn_value_array_t* array,
                             const sv4_t* indices, size_t index_count,
                             const uint32_t* items, size_t item_count);
