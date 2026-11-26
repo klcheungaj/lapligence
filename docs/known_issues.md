@@ -37,7 +37,9 @@ GCC builds `begin` and `if` nested 4,087 deep. `llg` raises Clang's limit on
 brackets above what a model can nest, but Clang 4,087 `if` levels deep ends
 with a stack overflow of its own (`BUILD-009`; 2,000 levels build). MSVC
 documents a limit of 128 nested blocks (C1061), which also counts an `else if`
-chain; not run.
+chain; not run. The structure and union definitions of coroutine frames stay
+within C11's 63 levels (`emit_c::MAX_NESTED_DEFINITIONS`), which MSVC enforces
+(C1046).
 
 ### Intended direction
 

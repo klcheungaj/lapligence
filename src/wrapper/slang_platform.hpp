@@ -5,6 +5,16 @@
 // names.
 #pragma once
 
+// Slang reports a source nested past its limit, and the wrapper a cancelled
+// compile or an exceeded budget, by throwing; the C entry points catch both.
+// Without exception handling Slang builds its other mode (`#if
+// __cpp_exceptions` in slang/util/Util.h), in which each such report aborts
+// the process, so the build stops here instead. MSVC and clang-cl need /EHsc
+// (build_support/native_cxx.rs).
+#if !__cpp_exceptions
+#error "the Slang frontend and its wrapper need C++ exception handling"
+#endif
+
 // Keeps a function out of its callers: work of some captures only, called
 // from a function that every capture runs often, would otherwise change the
 // code the compiler makes of the caller and cost the captures that skip it.

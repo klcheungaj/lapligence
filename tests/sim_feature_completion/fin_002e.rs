@@ -114,6 +114,118 @@ fn deeply_nested_constructs_build_and_run() {
     );
 }
 
+/// The deepest nesting of structure and union definitions in C `source`,
+/// counting the outermost.
+fn definition_depth(source: &str) -> usize {
+    let bytes = source.as_bytes();
+    let mut open = Vec::new();
+    let (mut depth, mut deepest) = (0usize, 0usize);
+    // After `struct` or `union` and an optional tag, a brace opens a
+    // definition.
+    let (mut definition, mut tag) = (false, false);
+    let mut at = 0;
+    while at < bytes.len() {
+        let byte = bytes[at];
+        if source[at..].starts_with("/*") {
+            at += source[at..].find("*/").map_or(bytes.len(), |end| end + 2);
+            continue;
+        }
+        if source[at..].starts_with("//") {
+            at += source[at..].find('\n').unwrap_or(bytes.len() - at);
+            continue;
+        }
+        if byte == b'"' || byte == b'\'' {
+            at += 1;
+            while at < bytes.len() && bytes[at] != byte {
+                at += if bytes[at] == b'\\' { 2 } else { 1 };
+            }
+            at += 1;
+            (definition, tag) = (false, false);
+            continue;
+        }
+        if byte.is_ascii_alphabetic() || byte == b'_' {
+            let end = source[at..]
+                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .map_or(bytes.len(), |end| at + end);
+            let word = &source[at..end];
+            (definition, tag) = if word == "struct" || word == "union" {
+                (true, true)
+            } else {
+                (definition && tag, false)
+            };
+            at = end;
+            continue;
+        }
+        match byte {
+            b'{' => {
+                open.push(definition);
+                if definition {
+                    depth += 1;
+                    deepest = deepest.max(depth);
+                }
+            }
+            b'}' => {
+                if open.pop() == Some(true) {
+                    depth -= 1;
+                }
+            }
+            _ if byte.is_ascii_whitespace() => {
+                at += 1;
+                continue;
+            }
+            _ => {}
+        }
+        (definition, tag) = (false, false);
+        at += 1;
+    }
+    deepest
+}
+
+/// Blocks nest deeper in `deep_nesting` than C nests definitions on every
+/// compiler (MSVC refuses the 65th level, C1046), so its frame names the
+/// structs that would go past the portable limit; both optimizer modes keep
+/// within it.
+#[test]
+fn deeply_nested_blocks_keep_frames_within_the_portable_definition_depth() {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim")
+        .join(SUITE)
+        .join("deep_nesting.sv");
+    for optimized in [true, false] {
+        let directory = sim_harness::TempDir::new("deep-frames").expect("scratch");
+        let mut command = Command::new(env!("CARGO_BIN_EXE_llg"));
+        command
+            .args(["--gen-only", "--top", "tb", "--out-dir"])
+            .arg(directory.path());
+        if !optimized {
+            command.arg("--no-opt");
+        }
+        let output = sim_harness::run_command(command.arg(&source), Duration::from_secs(120))
+            .expect("generate the deep model");
+        assert!(output.status.success(), "optimized={optimized}: {output:?}");
+        let model =
+            std::fs::read_to_string(directory.path().join("sim/tb/model.c")).expect("model.c");
+        assert!(
+            model.contains("typedef struct {\n    llg_co_frame_t co;\n")
+                && model.contains("} llg_frame_part_0_t;\n"),
+            "optimized={optimized}: no frame names a struct"
+        );
+        let depth = definition_depth(&model);
+        assert!(
+            depth <= llg::sim::emit_c::MAX_NESTED_DEFINITIONS,
+            "optimized={optimized}: definitions nest {depth} deep"
+        );
+    }
+}
+
+#[test]
+fn definition_depth_counts_struct_and_union_definitions_only() {
+    let source = "typedef struct tag { union { struct { int a; } s; } u; } t;\n\
+                  /* struct { { */ int f(void) { if (1) { return sizeof(struct tag); } }\n\
+                  const char* text = \"struct { struct {\";\n";
+    assert_eq!(definition_depth(source), 3);
+}
+
 #[test]
 fn recursive_specializations_that_end_run() {
     sim_cli::run_case_with_args(

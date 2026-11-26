@@ -1265,7 +1265,10 @@ scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test sim_cou
 `quick` inherits `test` with `opt-level = 0`. Cargo's `--profile` and nextest's
 `--cargo-profile` choose the build profile; nextest's `--profile` independently
 chooses runner settings such as concurrency. Run the optimized default for
-repository validation and performance comparisons. These profiles control Rust
+repository validation and performance comparisons. A test holds in every
+profile: frames and inlining differ by more than ten times between `quick` and
+the optimized ones (CI tests `test` and `release`), so a test that needs a
+stack size measures it (`name_chain_tests`) instead of assuming it. These profiles control Rust
 compilation; generated-model optimization and CLI `--no-opt` runs keep their
 existing settings.
 

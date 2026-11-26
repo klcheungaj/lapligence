@@ -436,8 +436,11 @@ the job may inherit its limit. Guard child memory separately.
 
 Each running compile reserves 1 GiB of address space for its stack, of which an
 ordinary design touches under 1 MiB; the address-space limit is the budget plus
-these reservations (one in `llg`, two in `llg_ls`). Under a smaller limit set
-elsewhere (`ulimit -v`, strict overcommit) `llg` reports `HOST-005`.
+these reservations (one in `llg`, two in `llg_ls`). On Linux it also comes on
+top of the address space the process holds untouched when it installs the
+limit, such as the 1 GiB arena its allocator reserves at startup (Linux
+release builds and `llg_ls`). Under a smaller limit set elsewhere (`ulimit -v`, strict overcommit)
+`llg` reports `HOST-005`.
 
 ## Using `llg_ls`
 
