@@ -4324,3 +4324,32 @@ connection of each element to an interface port is.
 
 `interface ifc; int d; endinterface module sub(ifc p[2]); initial #1
 $display("%0d", p[1].d); endmodule module tb; ifc i[2](); sub s(i); endmodule`
+
+## Automatic block variables captured by a fork that runs again
+
+**Status:** open; rejected with a located diagnostic (CODEGEN-001).
+
+### Symptom
+
+An automatic string, class handle, virtual interface, event or record declared
+in a procedural block and read by a `join_none`/`join_any` fork in a loop that
+runs again ("can be live in two activations through a `join_any`/`join_none`
+fork that runs again") is refused, as is a queue, dynamic array or record of a
+subroutine activation that a fork branch reads ("capturing native subroutine
+storage in a fork is not supported (SIM-010)"). Integral and real automatics
+work.
+
+### Cause
+
+Block variables of these types are one model object per declaration, not one
+per activation, and fork frames copy only packed, real and handle slots.
+
+### Intended direction
+
+Give such variables activation storage in the process frame and capture them
+into the fork frame like integral automatics.
+
+### Reproduce
+
+`foreach (q[k]) begin automatic virtual ifc z = q[k]; fork #1 z.n = 30;
+join_none end`
