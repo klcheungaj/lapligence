@@ -145,7 +145,7 @@ fn run_after_db_drop_with_env(
             Some(source_text.as_str())
         );
         let mut models = Vec::new();
-        for optimized in [false, true] {
+        for &optimized in sim_harness::optimizer_modes() {
             let options = if optimized {
                 OptConfig::default()
             } else {
@@ -241,7 +241,7 @@ pub(crate) fn run_case_with_inputs(
     );
     let args = resolve_input_args(suite, inputs, args);
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    for optimized in [false, true] {
+    for &optimized in sim_harness::optimizer_modes() {
         let output = invoke_with_env(suite, fixture, optimized, &args, envs, &[]);
         let label = format!("{suite}/{fixture}, optimized={optimized}, env={envs:?}");
         assert_case_output(output, &label, expected, expected_stderr, &[]);
@@ -464,26 +464,22 @@ pub(crate) fn run_case_sequence(
 }
 
 /// The value backends of [`run_case_checked_matrix`] as child-process
-/// environment controls.
+/// environment controls ([`sim_harness::value_lanes`]).
 pub(crate) fn backend_matrix() -> Vec<(String, Vec<(&'static str, String)>)> {
     let gmp = sim_harness::test_gmp_root();
-    [
-        ("legacy", "portable"),
-        ("compact", "portable"),
-        ("compact", "gmp"),
-    ]
-    .into_iter()
-    .map(|(backend, kernel)| {
-        (
-            format!("{backend}/{kernel}"),
-            vec![
-                ("LLG_DEV_VALUE_BACKEND", backend.to_owned()),
-                ("LLG_DEV_COMPACT_KERNELS", kernel.to_owned()),
-                ("GMP_ROOT", gmp.clone()),
-            ],
-        )
-    })
-    .collect()
+    sim_harness::value_lanes()
+        .into_iter()
+        .map(|(backend, kernel)| {
+            (
+                format!("{backend}/{kernel}"),
+                vec![
+                    ("LLG_DEV_VALUE_BACKEND", backend.to_owned()),
+                    ("LLG_DEV_COMPACT_KERNELS", kernel.to_owned()),
+                    ("GMP_ROOT", gmp.clone()),
+                ],
+            )
+        })
+        .collect()
 }
 
 fn invoke(suite: &str, fixture: &str, optimized: bool) -> Output {
@@ -580,6 +576,10 @@ fn assert_case_output(
     assert_eq!(runtime_stderr, expected_stderr, "{label}");
 }
 
+/// Run one fixture through the public CLI in both optimizer modes on every
+/// value lane ([`sim_harness::value_lanes`]; in a matrix cell only its lane
+/// and mode): each must exit 0 with exactly `expected` on stdout, and all
+/// lanes must print identical stdout and stderr.
 pub(crate) fn run_case_backend_parity(
     suite: &str,
     fixture: &str,
@@ -619,64 +619,60 @@ fn backend_parity(
     status: i32,
 ) {
     let gmp = sim_harness::test_gmp_root();
-    for optimized in [false, true] {
-        let mut controls = envs.to_vec();
-        controls.extend([
-            ("LLG_DEV_VALUE_BACKEND", "legacy"),
-            ("LLG_DEV_COMPACT_KERNELS", "portable"),
-        ]);
-        let legacy = invoke_with_env_and_files(
-            suite,
-            fixture,
-            optimized,
-            args,
-            &controls,
-            &["GMP_ROOT"],
-            files,
-        );
-        let stdout = legacy.stdout.clone();
-        let stderr = legacy.stderr.clone();
-        assert_eq!(
-            legacy.status.code(),
-            Some(status),
-            "{suite}/{fixture}, legacy: {}",
-            String::from_utf8_lossy(&stderr)
-        );
-        // Compared as text so a mismatch prints readable lines.
-        assert_eq!(
-            String::from_utf8_lossy(&stdout),
-            expected,
-            "{suite}/{fixture}, legacy, optimized={optimized}: independent output mismatch"
-        );
-        for kernel in ["portable", "gmp"] {
+    for &optimized in sim_harness::optimizer_modes() {
+        // The first lane (legacy outside a matrix cell) is the reference the
+        // others must match byte for byte, besides the independent output.
+        let mut reference: Option<(String, Output)> = None;
+        for (backend, kernel) in sim_harness::value_lanes() {
             let mut controls = envs.to_vec();
             controls.extend([
-                ("LLG_DEV_VALUE_BACKEND", "compact"),
+                ("LLG_DEV_VALUE_BACKEND", backend),
                 ("LLG_DEV_COMPACT_KERNELS", kernel),
-                ("GMP_ROOT", gmp.as_str()),
             ]);
-            let compact =
-                invoke_with_env_and_files(suite, fixture, optimized, args, &controls, &[], files);
-            let label = format!("{suite}/{fixture}, compact/{kernel}, optimized={optimized}");
+            // Portable kernels never read `GMP_ROOT`; GMP ones get the
+            // selected installation or, empty, the bundled sources.
+            let remove: &[&str] = if kernel == "gmp" {
+                controls.push(("GMP_ROOT", gmp.as_str()));
+                &[]
+            } else {
+                &["GMP_ROOT"]
+            };
+            let output = invoke_with_env_and_files(
+                suite, fixture, optimized, args, &controls, remove, files,
+            );
+            let label = format!("{suite}/{fixture}, {backend}/{kernel}, optimized={optimized}");
             assert_eq!(
-                compact.status.code(),
+                output.status.code(),
                 Some(status),
                 "{label}: {}",
-                String::from_utf8_lossy(&compact.stderr)
+                String::from_utf8_lossy(&output.stderr)
             );
-            assert_eq!(compact.stdout, stdout, "{label}: legacy stdout mismatch");
+            // Compared as text so a mismatch prints readable lines.
             assert_eq!(
-                compact.stdout,
-                expected.as_bytes(),
+                String::from_utf8_lossy(&output.stdout),
+                expected,
                 "{label}: independent output mismatch"
             );
-            assert_eq!(compact.stderr, stderr, "{label}: legacy stderr mismatch");
+            match &reference {
+                None => reference = Some((label, output)),
+                Some((reference_label, reference)) => {
+                    assert_eq!(
+                        output.stdout, reference.stdout,
+                        "{label}: stdout differs from {reference_label}"
+                    );
+                    assert_eq!(
+                        output.stderr, reference.stderr,
+                        "{label}: stderr differs from {reference_label}"
+                    );
+                }
+            }
         }
     }
 }
 
 /// Run one fixture through the public CLI in both optimizer modes on legacy,
-/// compact/portable and compact/GMP values, and
+/// compact/portable and compact/GMP values (in a matrix cell only its lane
+/// and mode, [`sim_harness::matrix_cell`]), and
 /// hand each labeled output to `check`. For outputs that are not a single
 /// exact string: permitted race outcomes, partial orders, or runtime failures
 /// after some output.
@@ -727,12 +723,8 @@ fn checked_matrix(
         "CLI tests require CMake"
     );
     let gmp = sim_harness::test_gmp_root();
-    for optimized in [false, true] {
-        for (backend, kernel) in [
-            ("legacy", "portable"),
-            ("compact", "portable"),
-            ("compact", "gmp"),
-        ] {
+    for &optimized in sim_harness::optimizer_modes() {
+        for (backend, kernel) in sim_harness::value_lanes() {
             let mut controls = envs.to_vec();
             controls.extend([
                 ("LLG_DEV_VALUE_BACKEND", backend),
@@ -793,7 +785,7 @@ pub(crate) fn run_case_with_cli_and_runtime_args(
         llg::sim::build::cmake_available(),
         "CLI tests require CMake"
     );
-    for optimized in [false, true] {
+    for &optimized in sim_harness::optimizer_modes() {
         let output = invoke_with_runtime_args(suite, fixture, optimized, args, runtime_args);
         let label = format!("{suite}/{fixture}, optimized={optimized}");
         assert_case_output(output, &label, expected, expected_stderr, &[]);
@@ -812,7 +804,7 @@ pub(crate) fn run_case_with_args(
         llg::sim::build::cmake_available(),
         "CLI tests require CMake"
     );
-    for optimized in [false, true] {
+    for &optimized in sim_harness::optimizer_modes() {
         let output = invoke_with_args(suite, fixture, optimized, args);
         let label = format!("{suite}/{fixture}, optimized={optimized}");
         assert_case_output(output, &label, expected, expected_stderr, expected_warnings);
@@ -832,7 +824,7 @@ pub(crate) fn run_case_with_files(
         llg::sim::build::cmake_available(),
         "CLI tests require CMake"
     );
-    for optimized in [false, true] {
+    for &optimized in sim_harness::optimizer_modes() {
         let output = invoke_with_files(suite, fixture, optimized, args, files);
         let label = format!("{suite}/{fixture}, optimized={optimized}");
         assert_case_output(output, &label, expected, expected_stderr, expected_warnings);
@@ -852,7 +844,7 @@ pub(crate) fn run_case_with_source_prefix(
         llg::sim::build::cmake_available(),
         "CLI tests require CMake"
     );
-    for optimized in [false, true] {
+    for &optimized in sim_harness::optimizer_modes() {
         let output = invoke_with_source_prefix(suite, fixture, prefix, optimized, args);
         let label = format!("{suite}/{fixture}, optimized={optimized}");
         assert_case_output(output, &label, expected, expected_stderr, expected_warnings);
@@ -872,7 +864,7 @@ pub(crate) fn run_case_with_source_prefix_and_runtime_args(
         llg::sim::build::cmake_available(),
         "CLI tests require CMake"
     );
-    for optimized in [false, true] {
+    for &optimized in sim_harness::optimizer_modes() {
         let output = invoke_with_source_prefix_and_runtime_args(
             suite,
             fixture,
@@ -891,7 +883,7 @@ pub(crate) fn reject_case(suite: &str, fixture: &str, diagnostic: &str) {
 }
 
 pub(crate) fn reject_case_with_args(suite: &str, fixture: &str, diagnostic: &str, args: &[&str]) {
-    for optimized in [false, true] {
+    for &optimized in sim_harness::optimizer_modes() {
         let output = invoke_with_args(suite, fixture, optimized, args);
         let stderr = String::from_utf8_lossy(&output.stderr);
         let seen = observed_output(&output);
@@ -942,7 +934,7 @@ fn reject_case_with_id_text(
         .and_then(|name| name.to_str())
         .unwrap_or(fixture)
         .to_owned();
-    for optimized in [false, true] {
+    for &optimized in sim_harness::optimizer_modes() {
         let output = invoke_with_args(suite, fixture, optimized, &[]);
         let seen = observed_output(&output);
         let label = format!("{suite}/{fixture}, optimized={optimized}");
@@ -979,7 +971,7 @@ pub(crate) fn reject_case_with_exact_stderr(
     expected_stderr: &str,
     args: &[&str],
 ) {
-    for optimized in [false, true] {
+    for &optimized in sim_harness::optimizer_modes() {
         let output = invoke_with_args(suite, fixture, optimized, args);
         let stderr = sim_harness::strip_lint_reports(&output.stderr);
         let seen = observed_output(&output);
@@ -1017,7 +1009,7 @@ pub(crate) fn reject_case_with_error_lines(
         .iter()
         .map(|suffix| format!("error: {source}:{suffix}"))
         .collect();
-    for optimized in [false, true] {
+    for &optimized in sim_harness::optimizer_modes() {
         let out_dir = sim_harness::TempDir::new("reject-out").expect("output directory");
         let out = out_dir.path().to_string_lossy().into_owned();
         let mut full_args: Vec<&str> = args.to_vec();
@@ -1069,7 +1061,7 @@ pub(crate) fn run_case_failing_at_runtime(
     expected: &str,
     diagnostic: &str,
 ) {
-    for optimized in [false, true] {
+    for &optimized in sim_harness::optimizer_modes() {
         let output = invoke_with_runtime_args(suite, fixture, optimized, &[], runtime_args);
         let seen = observed_output(&output);
         let label = format!("{fixture} {runtime_args:?}, optimized={optimized}");
@@ -1094,7 +1086,7 @@ pub(crate) fn run_case_failing_at_runtime_with_args(
     expected: &str,
     diagnostic: &str,
 ) {
-    for optimized in [false, true] {
+    for &optimized in sim_harness::optimizer_modes() {
         let output = invoke_with_runtime_args(suite, fixture, optimized, args, &[]);
         let seen = observed_output(&output);
         let label = format!("{fixture} {args:?}, optimized={optimized}");
@@ -1122,7 +1114,7 @@ pub(crate) fn run_case_stopping_at_runtime(
     id: &str,
     text: &str,
 ) {
-    for optimized in [false, true] {
+    for &optimized in sim_harness::optimizer_modes() {
         let output = invoke_with_runtime_args(suite, fixture, optimized, &[], runtime_args);
         let seen = observed_output(&output);
         let label = format!("{fixture} {runtime_args:?}, optimized={optimized}");
@@ -1145,7 +1137,7 @@ pub(crate) fn reject_case_with_runtime_args(
     diagnostic: &str,
     runtime_args: &[&str],
 ) {
-    for optimized in [false, true] {
+    for &optimized in sim_harness::optimizer_modes() {
         let output = invoke_with_runtime_args(suite, fixture, optimized, &[], runtime_args);
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert_eq!(output.status.code(), Some(1), "{fixture}: {stderr}");

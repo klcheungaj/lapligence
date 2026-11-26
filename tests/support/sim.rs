@@ -692,6 +692,9 @@ pub(crate) struct SimRun {
     pub(crate) model_c: String,
 }
 
+/// Compile `sv` in memory, generate and build its model on the selected value
+/// backend and run it, with default optimization except in a `no-opt` matrix
+/// cell ([`selected_opt_config`]).
 pub(crate) fn run_generated_sim(sv: &str, top: &str, tag: &str) -> Result<SimRun, String> {
     run_generated_sim_inner(sv, top, tag, true)
 }
@@ -705,7 +708,7 @@ pub(crate) fn run_generated_sim_with_files(
     tag: &str,
     files: &[(&str, &str)],
 ) -> Result<SimRun, String> {
-    run_generated_sim_with_files_opts(sv, top, tag, files, &llg::sim::opt::OptConfig::default())
+    run_generated_sim_with_files_opts(sv, top, tag, files, &selected_opt_config())
 }
 
 pub(crate) fn run_generated_sim_with_files_opts(
@@ -735,14 +738,7 @@ fn run_generated_sim_inner(
     require_success: bool,
 ) -> Result<SimRun, String> {
     with_temp_cwd(tag, |dir| {
-        run_generated_sim_in_dir(
-            sv,
-            top,
-            dir,
-            require_success,
-            &[],
-            &llg::sim::opt::OptConfig::default(),
-        )
+        run_generated_sim_in_dir(sv, top, dir, require_success, &[], &selected_opt_config())
     })
 }
 
@@ -876,4 +872,114 @@ pub(crate) fn test_gmp_installation(test: &str) -> Option<std::path::PathBuf> {
         return None;
     }
     Some(root.into())
+}
+
+/// The value lanes (`LLG_DEV_VALUE_BACKEND`, `LLG_DEV_COMPACT_KERNELS`) of
+/// the parity helpers: the legacy reference, compact with portable kernels
+/// and compact with GMP kernels, the only user configuration.
+pub(crate) const VALUE_LANES: [(&str, &str); 3] = [
+    ("legacy", "portable"),
+    ("compact", "portable"),
+    ("compact", "gmp"),
+];
+
+/// Names one cell of the FIN-002 value/optimizer matrix
+/// (`scripts/value_matrix.py`, tests/readme.md#valueoptimizer-matrix) as
+/// `<backend>/<kernel>/<normal|no-opt>`. The runner also sets the matching
+/// `LLG_DEV_*` selectors, which the `llg` children and the library helpers
+/// read; [`matrix_cell`] rejects a disagreement.
+pub(crate) const MATRIX_CELL_ENV: &str = "LLG_TEST_MATRIX_CELL";
+
+/// One value lane in one HDL optimizer mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct MatrixCell {
+    pub(crate) backend: &'static str,
+    pub(crate) kernel: &'static str,
+    pub(crate) optimized: bool,
+}
+
+/// Parse an exact [`MATRIX_CELL_ENV`] value.
+pub(crate) fn parse_matrix_cell(text: &str) -> Result<MatrixCell, String> {
+    let invalid = || {
+        format!(
+            "invalid {MATRIX_CELL_ENV} `{text}`: use <backend>/<kernel>/<normal|no-opt> with a lane of {VALUE_LANES:?}"
+        )
+    };
+    let mut parts = text.split('/');
+    let (Some(backend), Some(kernel), Some(mode), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return Err(invalid());
+    };
+    let &(backend, kernel) = VALUE_LANES
+        .iter()
+        .find(|lane| **lane == (backend, kernel))
+        .ok_or_else(invalid)?;
+    let optimized = match mode {
+        "normal" => true,
+        "no-opt" => false,
+        _ => return Err(invalid()),
+    };
+    Ok(MatrixCell {
+        backend,
+        kernel,
+        optimized,
+    })
+}
+
+/// The matrix cell this test process runs in, or `None` outside the matrix
+/// (the default suite, which runs every lane and both optimizer modes where
+/// a helper iterates them). Panics when the cell is malformed or the value
+/// selection the `llg` driver would make differs from it, so a cell can
+/// never silently run on another backend.
+pub(crate) fn matrix_cell() -> Option<MatrixCell> {
+    static CELL: OnceLock<Option<MatrixCell>> = OnceLock::new();
+    *CELL.get_or_init(|| {
+        let text = std::env::var(MATRIX_CELL_ENV).ok().filter(|text| !text.is_empty())?;
+        let cell = parse_matrix_cell(&text).unwrap_or_else(|error| panic!("{error}"));
+        let lane = sim::value_backend::ValueConfig::parse(cell.backend, cell.kernel)
+            .unwrap_or_else(|error| panic!("{MATRIX_CELL_ENV}: {error}"));
+        let selected = sim::value_backend::ValueConfig::from_env()
+            .unwrap_or_else(|error| panic!("{MATRIX_CELL_ENV}: {error}"));
+        assert_eq!(
+            selected, lane,
+            "{MATRIX_CELL_ENV} `{text}` disagrees with LLG_DEV_VALUE_BACKEND/LLG_DEV_COMPACT_KERNELS"
+        );
+        Some(cell)
+    })
+}
+
+/// The value lanes a parity helper runs: all of [`VALUE_LANES`], or only the
+/// matrix cell's lane.
+pub(crate) fn value_lanes() -> Vec<(&'static str, &'static str)> {
+    match matrix_cell() {
+        Some(cell) => vec![(cell.backend, cell.kernel)],
+        None => VALUE_LANES.to_vec(),
+    }
+}
+
+/// The HDL optimizer modes (`optimized`: default optimization, else
+/// `--no-opt`) a helper that covers both runs: both, or only the matrix
+/// cell's mode.
+pub(crate) fn optimizer_modes() -> &'static [bool] {
+    match matrix_cell() {
+        Some(MatrixCell {
+            optimized: true, ..
+        }) => &[true],
+        Some(MatrixCell {
+            optimized: false, ..
+        }) => &[false],
+        None => &[false, true],
+    }
+}
+
+/// The optimizer configuration of a single-mode helper: default
+/// optimization, or none in a `no-opt` matrix cell.
+pub(crate) fn selected_opt_config() -> sim::opt::OptConfig {
+    match matrix_cell() {
+        Some(MatrixCell {
+            optimized: false, ..
+        }) => sim::opt::OptConfig::none(),
+        _ => sim::opt::OptConfig::default(),
+    }
 }

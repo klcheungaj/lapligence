@@ -1981,7 +1981,8 @@ VPI and waveform execution harnesses honor `LLG_DEV_VALUE_BACKEND` and
 `LLG_DEV_COMPACT_KERNELS`. Direct library/component tests retain explicit or
 default (compact/GMP) configurations; this environment does not change library
 defaults. Run the whole suite against a development reference, for example
-compact portable, using:
+compact portable, using (qualifying a revision on every backend and optimizer
+mode is the [value/optimizer matrix](#valueoptimizer-matrix)):
 
 ```sh
 LLG_DEV_VALUE_BACKEND=compact LLG_DEV_COMPACT_KERNELS=portable CARGO_BUILD_JOBS=6 CMAKE_BUILD_PARALLEL_LEVEL=6 scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test-threads 6 --no-fail-fast
@@ -1995,7 +1996,7 @@ CARGO_BUILD_JOBS=6 CMAKE_BUILD_PARALLEL_LEVEL=6 scripts/run-tests.sh --test-work
 
 These tests force both backends,
 both compact kernels and both HDL optimizer modes independently of the runner's
-selection. VPI requires a Unix shared-library compiler. The matrix covers
+selection, except in a [matrix cell](#valueoptimizer-matrix). VPI requires a Unix shared-library compiler. The matrix covers
 arithmetic destinations, selections, streams, nets/force, NBA capture, VPI and
 waveforms, RTL-001 through RTL-004 fixtures, a 16,777,216-cell array copy/NBA
 fixture and the `sv4_gmp_integration` owner fixtures (scheduler snapshots,
@@ -2011,3 +2012,42 @@ runtime targets once in Release:
 ```sh
 CARGO_BUILD_JOBS=6 CMAKE_BUILD_PARALLEL_LEVEL=6 scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test runtime_value_storage --test-threads 6
 ```
+
+### Value/optimizer matrix
+
+FIN-002 qualifies one revision by running the corpus once per cell of
+{legacy, compact/GMP} x {normal, `--no-opt`}; `--lanes` adds compact/portable as
+a developer cross-check. One command runs every cell, from the repository root
+(locally through the shared-CPU wrapper as `--runner`):
+
+```sh
+python3 scripts/value_matrix.py --output-dir persistence/value-matrix/<revision> -- --test-work-dir /build --cargo-profile quick
+python3 scripts/value_matrix.py --lanes legacy,compact-portable,compact-gmp --output-dir <dir> -- --test-work-dir /build --cargo-profile quick
+python3 -m unittest discover -s scripts -p test_value_matrix.py
+```
+
+Each cell is one nextest run of profile `value-matrix` with
+`LLG_DEV_VALUE_BACKEND`/`LLG_DEV_COMPACT_KERNELS` and
+`LLG_TEST_MATRIX_CELL=<backend>/<kernel>/<normal|no-opt>`. The profile inherits
+the `ci-lsp` filter, the tests that build no model: they run only in the
+compact/GMP normal cell, the other cells run `not default()`. In a cell the
+shared harnesses (`sim_harness::value_lanes`, `optimizer_modes`,
+`selected_opt_config`) run only the cell's lane and optimizer mode: the parity
+helpers still compare with their independent expected output, and the
+single-mode helpers (`run_generated_sim`, `run_sim`) build with `--no-opt`
+semantics in a `no-opt` cell. Suites with their own loops, direct `llg` or
+library calls and explicit `ValueConfig` choices run as written in every cell.
+`sim_harness::matrix_cell` fails a test whose `LLG_DEV_*` selection differs
+from its cell.
+
+The runner refuses an inherited `GMP_ROOT`, `LLG_TEST_GMP_ROOT` or value
+selector (cells qualify the bundled GMP), and fails a cell that did not run,
+had a failed test or did not pass
+`sim_value_backends::matrix::matrix_cell_selection_reaches_the_built_model`,
+which finds the cell's link-guard symbol (`llg_value_<identity>`) in the model
+executable the public CLI built. Runtime-cache entries are keyed by that
+identity and a model only links against its own runtime, so cells cannot share
+a runtime archive; compiler caches key on the preprocessed source, which
+includes the selection. The output directory holds `metadata.tsv` (revision),
+`summary.tsv` (one row per cell with counts and wall time), and per cell its
+log, JUnit report, `groups.tsv` (counts per binary and suite) and failed tests.
