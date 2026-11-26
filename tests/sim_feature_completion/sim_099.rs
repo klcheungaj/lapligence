@@ -481,32 +481,6 @@ fn virtual_interface_array_members() {
     );
 }
 
-/// G1: the array-member forms not dispatched on the bound instance stop
-/// compilation at their position.
-#[test]
-fn virtual_interface_array_member_limits_are_located() {
-    sim_cli::reject_case(
-        SUITE,
-        "neg_vif_array_whole",
-        "neg_vif_array_whole.sv:11:12 unpacked array member `mem` of virtual interface \
-         `bus_if` is supported only through element selects (`mem[i]`, `mem[i][b]`) that are \
-         read or assigned with `=` or `<=`; a whole-array or slice use, or a use in an event \
-         control or wait, is not supported in `tb`",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_vif_array_update",
-        "neg_vif_array_update.sv:10:5 a compound assignment to an element of an unpacked array \
-         member through a virtual interface is not supported in `tb`; use `=` or `<=`",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_vif_array_increment",
-        "neg_vif_array_increment.sv:10:5 this write to an element of an unpacked array member \
-         through a virtual interface is not supported in `tb`; assign it with `=` or `<=`",
-    );
-}
-
 /// Gate-fixes-2 item 1 / IEEE 1800-2009 9.2.2.2.1, 9.4.2.2, 25.9 (S99-D7):
 /// always_comb, always_latch and `@*` follow members read through a
 /// virtual-interface handle to the instance it binds, re-arm when the handle

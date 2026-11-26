@@ -884,8 +884,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Class-property paths, class method calls and direct class-handle reads add
   nothing, not even the handle variable (`h` in `h.x`/`h.f()`/`h == null`)
   (§9.2.2.2.1, decision AB-N2). A member read through a virtual-interface handle (packed
-  members, their selects and elements `v.mem[i]` of unpacked array members,
-  also inside called functions through a module-level handle) waits on the
+  members, their selects, and unpacked members whole, sliced, as elements or
+  as container sizes, also inside called functions through a module-level
+  handle) waits on the
   member of the instance the handle binds, re-armed when the handle is rebound
   (S99-D7); handles the arming process cannot evaluate (function formals,
   vif-array elements) and `v.f()` calls are located errors
@@ -2723,12 +2724,17 @@ These are bounded implementations, not full verification-infrastructure support.
   A write through a handle to a variable declared as an input port of the
   interface is a located compile error (SV §23.3.3.2, decision A21-D7,
   [ki_illegal_port_writes](../tests/fixtures/sim/feature_completion/ki_illegal_port_writes/readme.md)).
-  Elements of unpacked array members (`v.mem[i]`, `v.grid[i][j]`, and their
-  bit, part and indexed part selects) are read and written with `=`, `<=` or
-  `<= #d` through a handle on the array of the instance bound when the access
-  executes; whole-array, slice, compound, increment, output-argument,
-  event-control and wait uses of such a member are located compile-time
-  errors.
+  Unpacked members (fixed arrays of any element type, also of reals,
+  strings and records, queues, dynamic and associative arrays) are used
+  through a handle wherever the member named through the instance can be:
+  values, targets, slices, rows, elements and their selects, updates,
+  container methods, actual arguments of every direction, equality,
+  `inside`, `foreach`, streams, patterns, concatenation items, reports,
+  waits and implicit sensitivity, and blocking, nonblocking, delayed and
+  event-controlled writes. A use names the instance the handle binds where
+  it is evaluated (decision VM-D1); a nonblocking write locates its target
+  at issue (VM-D2), a timed blocking one after its control
+  ([virtual_interfaces](../tests/fixtures/sim/virtual_interfaces/readme.md)).
   Handles held by class objects whose virtual methods use them, sent through
   `mailbox #(virtual ifc)`, passed to timed tasks and captured by fork
   branches execute. Modport expression ports and an interface instance used

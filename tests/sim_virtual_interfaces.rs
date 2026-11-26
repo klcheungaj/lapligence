@@ -5,8 +5,9 @@
 //! arrays, null-handle diagnostics, nominal specialization errors, and
 //! interface instances nested in an interface selected through a handle
 //! (values, deeper paths, instance array elements, modport views,
-//! specializations and null handles). Every executable case runs with and
-//! without optimizer passes.
+//! specializations and null handles), and unpacked members named through a
+//! handle (values, targets, methods, waits and nonblocking writes). Every
+//! executable case runs with and without optimizer passes.
 
 use crate::{sim_cli, sim_harness};
 
@@ -314,5 +315,74 @@ fn interface_array_ports_connect_and_are_values() {
         "virtual_interfaces",
         "neg_interface_array_2d",
         "neg_interface_array_2d.sv:10:9 a multidimensional fixed array in `tb` takes only nested assignment patterns",
+    );
+}
+
+/// Unpacked members used through a handle name the member of the instance
+/// the handle binds where the use is evaluated (SV 25.9).
+#[test]
+fn unpacked_members_are_values_and_targets() {
+    sim_cli::run_case_with_args(
+        "virtual_interfaces",
+        "member_arrays",
+        include_str!("fixtures/sim/virtual_interfaces/member_arrays.out"),
+        "",
+        &["member_arrays.sv:135:13 repeat count in `tb` is not a constant; evaluated at runtime"],
+        // The model takes the C compiler's optimizer, which is not under test,
+        // a minute.
+        &["--model-opt-level", "O1"],
+    );
+    sim_cli::run_case(
+        "virtual_interfaces",
+        "member_array_forms",
+        include_str!("fixtures/sim/virtual_interfaces/member_array_forms.out"),
+        "INFO: member_array_forms.sv:102:5: [SIM-001] (tb @ 7 ns) $finish called\n",
+        &[],
+    );
+}
+
+/// Implicit sensitivity and explicit waits on unpacked members through a
+/// handle follow the instance it binds when the wait arms (SV 9.4.2, 25.9).
+#[test]
+fn unpacked_member_waits_follow_the_bound_instance() {
+    sim_cli::run_case_backend_parity(
+        "virtual_interfaces",
+        "member_array_sensitivity",
+        include_str!("fixtures/sim/virtual_interfaces/member_array_sensitivity.out"),
+        &[],
+        &[],
+    );
+    sim_cli::run_case(
+        "virtual_interfaces",
+        "member_array_waits",
+        include_str!("fixtures/sim/virtual_interfaces/member_array_waits.out"),
+        "INFO: member_array_waits.sv:51:8: [SIM-001] (tb @ 11 ns) $finish called\n",
+        &[],
+    );
+}
+
+/// A timed blocking write locates its target when its control has passed
+/// (SV 10.4.1), through a handle as through a variable; decision VM-D2 has
+/// the nonblocking forms, which locate it at issue.
+#[test]
+fn unpacked_member_timed_writes_locate_their_target_after_the_control() {
+    sim_cli::run_case(
+        "virtual_interfaces",
+        "member_array_timed_blocking",
+        include_str!("fixtures/sim/virtual_interfaces/member_array_timed_blocking.out"),
+        "INFO: member_array_timed_blocking.sv:49:5: [SIM-001] (tb @ 5 ns) $finish called\n",
+        &[],
+    );
+}
+
+#[test]
+fn unpacked_member_of_a_null_handle_fails_at_runtime() {
+    sim_cli::run_case_failing_at_runtime(
+        "virtual_interfaces",
+        "member_array_null",
+        &[],
+        "1 4\n",
+        "member_array_null.sv:17:14 virtual interface access failed: virtual interface member \
+         access",
     );
 }

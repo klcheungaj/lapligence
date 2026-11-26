@@ -2606,8 +2606,7 @@ follow ...": a member read inside a called function through the function's
 handle formal or local (`function f(virtual bus_if b); return b.a;`), a member
 read through an element of a virtual-interface array (`va[1].a`), and an
 interface method call through a handle under `always_comb` (`v.f()`, whose
-body the bound instance selects). Elements of unpacked array members are
-followed only through a virtual-interface variable.
+body the bound instance selects).
 
 ### Cause
 
@@ -2692,12 +2691,39 @@ member has no signal.
 
 ### Intended direction
 
-Native slots in the descriptor, as unpacked members get (the follow-up of
-sim-defects-10 item 3).
+Storage slots in the descriptor, as unpacked members have
+(`IrVirtualInterface::storage`, bound as views).
 
 ### Reproduce
 
 `tests/fixtures/sim/virtual_interfaces/neg_string_member.sv`.
+
+## Unpacked members of an interface type without instances
+
+**Status:** open. Each use rejects with a located diagnostic.
+
+### Symptom
+
+When the design has no instance of an interface type, a use of an unpacked
+member through a virtual interface of that type (`v.a[1] = 3` with
+`int a[4]`) stops compilation at the use (for an element, "cannot resolve
+array base of select `a`"). Such a handle can only be null, so the use
+could only fail at run time, which is what a packed member does.
+
+### Cause
+
+A view of an unpacked member takes its shape from the member's storage in
+an instance of the interface; without one there is no shape.
+
+### Intended direction
+
+Shape the view from the member's declaration and fail at the use as for a
+null handle.
+
+### Reproduce
+
+`interface ifc; int a[4]; endinterface` and
+`module tb; virtual ifc v; initial v.a[1] = 3; endmodule`.
 
 ## Remaining items of unpacked array concatenations
 
@@ -2709,10 +2735,9 @@ As an item of an unpacked array concatenation (SV 10.10): a dense fixed array
 of reals, events or rows (an item of a queue of fixed arrays); a queue or
 dynamic array that is an element of a container (`{qq[1], 0}`, also as one
 element of a queue of queues); an array of rows into a queue of queues
-(`qq = {m, q}` with `int m[2][2]`); an unpacked member through a virtual
-interface; an item of a run-time size into a fixed target of two dimensions,
-a real fixed target or an associative-array element. A whole assignment of
-such an array to a queue (`rq = r2`) rejects too.
+(`qq = {m, q}` with `int m[2][2]`); an item of a run-time size into a fixed
+target of two dimensions, a real fixed target or an associative-array element.
+A whole assignment of such an array to a queue (`rq = r2`) rejects too.
 
 ### Cause
 
