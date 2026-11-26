@@ -123,6 +123,12 @@ impl PositionMap {
         at.into_iter().chain(after)
     }
 
+    /// Whether the analysed text has the character at `position` of the
+    /// current text.
+    pub(crate) fn has_analysed(&self, position: Position) -> bool {
+        self.analysed_character(position).is_some()
+    }
+
     fn analysed_character(&self, position: Position) -> Option<Position> {
         let after = self
             .runs
@@ -186,6 +192,21 @@ impl PositionMap {
         let extended = (start == 0 && self.is_inside_word(range.start))
             || (end == piece.length && self.is_inside_word(range.end));
         (!extended).then_some(range)
+    }
+
+    /// Where a stretch of analysed text that began at `start` begins now, when
+    /// its first character is kept.
+    pub(crate) fn current_start(&self, start: Position) -> Option<Position> {
+        if let Some(run) = self.analysed_run(start.line) {
+            let line = run.current + (start.line - run.analysed);
+            return Some(Position::new(line, start.character));
+        }
+        let piece = self.analysed_piece(start)?;
+        let offset = piece.offset(piece.analysed, start)?;
+        Some(Position::new(
+            piece.current.line,
+            piece.current.character + offset,
+        ))
     }
 
     /// Where a stretch of analysed text that ended at `end` ends now, when its

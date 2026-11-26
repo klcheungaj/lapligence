@@ -1,4 +1,4 @@
-use super::positions::OpenTexts;
+use super::positions::{AnalysedTexts, OpenTexts};
 use super::*;
 use crate::test_paths::host_path as hp;
 use state::ClientOrder;
@@ -660,6 +660,8 @@ fn oversized_compile_job_publishes_limit_and_retains_last_good_snapshot() {
             diagnostics: BTreeMap::new(),
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::new(),
+            diagnosed_analysed_texts: true,
+            input_aliases: HashMap::new(),
             generation: 1,
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
@@ -1155,6 +1157,8 @@ fn commit_job_publishes_fileless_diagnostics_on_an_open_compiled_file() {
             diagnostics: BTreeMap::new(),
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::new(),
+            diagnosed_analysed_texts: true,
+            input_aliases: HashMap::new(),
             generation: 1,
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
@@ -1273,6 +1277,8 @@ fn commit_job_serves_features_from_partial_analyses() {
             diagnostics: BTreeMap::new(),
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::new(),
+            diagnosed_analysed_texts: true,
+            input_aliases: HashMap::new(),
             generation: 1,
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
@@ -1440,6 +1446,8 @@ fn commit_job_publishes_closed_files_and_suppresses_unchanged_payloads() {
             diagnostics: BTreeMap::new(),
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::new(),
+            diagnosed_analysed_texts: true,
+            input_aliases: HashMap::new(),
             generation: 1,
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
@@ -1747,7 +1755,12 @@ fn related_diagnostic_uris_do_not_leak_shadow_paths() {
         data: None,
     }];
 
-    remap_related_diagnostic_uris(&mut diagnostics, &shadow);
+    remap_related_diagnostic_uris(
+        &mut diagnostics,
+        &shadow,
+        &OpenTexts::default(),
+        &HashMap::new(),
+    );
 
     let related = &diagnostics[0].related_information.as_ref().unwrap()[0];
     assert_eq!(
@@ -2277,6 +2290,8 @@ fn watcher_options_cover_config_sources_and_include_deps() {
             diagnostics: BTreeMap::new(),
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::new(),
+            diagnosed_analysed_texts: true,
+            input_aliases: HashMap::new(),
             generation: 0,
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
@@ -2350,6 +2365,8 @@ fn reload_keeps_last_valid_config_on_malformed_reload() {
             diagnostics: BTreeMap::new(),
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::new(),
+            diagnosed_analysed_texts: true,
+            input_aliases: HashMap::new(),
             generation: 0,
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
@@ -2480,6 +2497,8 @@ fn dep_dependents_maps_every_dependent_root() {
             diagnostics: BTreeMap::new(),
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::new(),
+            diagnosed_analysed_texts: true,
+            input_aliases: HashMap::new(),
             generation: 0,
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
@@ -2504,6 +2523,8 @@ fn dep_dependents_maps_every_dependent_root() {
             diagnostics: BTreeMap::new(),
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::new(),
+            diagnosed_analysed_texts: true,
+            input_aliases: HashMap::new(),
             generation: 0,
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
@@ -2697,6 +2718,8 @@ fn two_root_state_with_shared_file(
             diagnostics: BTreeMap::new(),
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::from([(shared.to_path_buf(), vec![diag_a])]),
+            diagnosed_analysed_texts: true,
+            input_aliases: HashMap::new(),
             generation: 1,
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
@@ -2721,6 +2744,8 @@ fn two_root_state_with_shared_file(
             diagnostics: BTreeMap::new(),
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::from([(shared.to_path_buf(), vec![diag_b])]),
+            diagnosed_analysed_texts: true,
+            input_aliases: HashMap::new(),
             generation: 1,
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
@@ -2822,6 +2847,101 @@ fn aggregate_clears_stale_union_when_diagnostics_vanish_everywhere() {
     );
 }
 
+/// Findings leave at the places of the current text: each root's with the text
+/// that root analysed, one on an edited line where the analysis had it, and
+/// the digest stays that of the analysed places, which no edit changes.
+#[test]
+fn sent_diagnostics_follow_the_unsaved_text() {
+    let shared = PathBuf::from(hp("/tmp/llg_agg_a/src/shared.svh"));
+    let shared_uri = Url::from_file_path(&shared).expect("shared uri");
+    let analysed: String = (0..12).map(|n| format!("  w{n:02}xx = x;\n")).collect();
+    let current = format!(
+        "// one\n// two\n{}",
+        analysed.replace("  w04xx = x;", "  w04zz = x;")
+    );
+    let root_a = PathBuf::from(hp("/tmp/llg_agg_a"));
+    let root_b = PathBuf::from(hp("/tmp/llg_agg_b"));
+    let mut state = two_root_state_with_shared_file(
+        &shared,
+        labeled_diagnostic((9, 2), 2, "moved"),
+        labeled_diagnostic((7, 2), 2, "current"),
+    );
+    let edited = labeled_diagnostic((4, 2), 2, "edited line");
+    state
+        .roots
+        .get_mut(&root_a)
+        .expect("root a")
+        .all_diagnostics = BTreeMap::from([(
+        shared.clone(),
+        vec![edited, labeled_diagnostic((9, 2), 2, "moved")],
+    )]);
+    let current = Arc::new(current);
+    state
+        .documents
+        .insert(shared_uri.clone(), Arc::clone(&current));
+    for (root, text) in [(&root_a, Arc::new(analysed)), (&root_b, current)] {
+        state.roots.get_mut(root).expect("root").analysed_texts =
+            Arc::new(AnalysedTexts::from([(shared.clone(), text)]));
+    }
+    let lines = |diagnostics: &[Diagnostic]| -> BTreeSet<(String, u32)> {
+        diagnostics
+            .iter()
+            .map(|diagnostic| (diagnostic.message.clone(), diagnostic.range.start.line))
+            .collect()
+    };
+    let expected = BTreeSet::from([
+        ("edited line".to_owned(), 4),
+        ("moved".to_owned(), 11),
+        ("current".to_owned(), 7),
+    ]);
+
+    let sent = aggregate_shared_publications(&mut state, &BTreeSet::new());
+    let union = &sent
+        .iter()
+        .find(|(uri, _)| uri == &shared_uri)
+        .expect("union")
+        .1;
+    assert_eq!(lines(union), expected);
+    let analysed_union = merge_shared_file_diagnostics(
+        file_entries(
+            &state,
+            &shared,
+            &[root_a.clone(), root_b.clone()],
+            &state.descriptors(),
+        ),
+        &root_names(&state),
+    );
+    assert_eq!(
+        state.published_shared.get(&shared_uri),
+        Some(&diagnostics_digest(&analysed_union))
+    );
+    assert!(aggregate_shared_publications(&mut state, &BTreeSet::new()).is_empty());
+
+    // What a document that opens is sent.
+    assert_eq!(
+        lines(&retained_diagnostics(&mut state, &root_a, &shared)),
+        expected
+    );
+    state.roots.remove(&root_b);
+    let alone = retained_diagnostics(&mut state, &root_a, &shared);
+    assert_eq!(
+        lines(&alone),
+        BTreeSet::from([("edited line".to_owned(), 4), ("moved".to_owned(), 11)])
+    );
+
+    // The texts of an analysis without feature data are not kept.
+    state
+        .roots
+        .get_mut(&root_a)
+        .expect("root a")
+        .diagnosed_analysed_texts = false;
+    let unplaced = retained_diagnostics(&mut state, &root_a, &shared);
+    assert_eq!(
+        lines(&unplaced),
+        BTreeSet::from([("edited line".to_owned(), 4), ("moved".to_owned(), 9)])
+    );
+}
+
 #[test]
 fn source_relative_path_uses_deepest_source_directory_base() {
     let root = temp_root("source_relative");
@@ -2894,6 +3014,8 @@ fn single_root_state(root: &Path, discovered: Vec<PathBuf>) -> BackendState {
             diagnostics: BTreeMap::new(),
             published_digests: BTreeMap::new(),
             all_diagnostics: BTreeMap::new(),
+            diagnosed_analysed_texts: true,
+            input_aliases: HashMap::new(),
             generation: 1,
             pending_parent_id: None,
             scheduler: SchedulerState::default(),

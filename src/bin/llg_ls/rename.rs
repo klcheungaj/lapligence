@@ -12,9 +12,11 @@
 
 use std::collections::HashMap;
 
-use tower_lsp::lsp_types::{Position, Range, TextEdit, Url, WorkspaceEdit};
+use tower_lsp::lsp_types::{Range, TextEdit, Url, WorkspaceEdit};
 
-use crate::features::{declaration_at, identifier_at, references_at_with_options, Analysis};
+use crate::features::{
+    declaration_at, identifier_at, references_at_with_options, token_range, Analysis,
+};
 use llg::core::tokens::TokenInfo;
 
 /// Reserved SystemVerilog keywords (curated IEEE 1800 subset covering the
@@ -198,9 +200,7 @@ fn rename_target<'a>(a: &'a Analysis, file: &str, line: u32, col: u32) -> Option
 pub fn prepare_rename(a: &Analysis, file: &str, line: u32, col: u32) -> Option<(Range, String)> {
     let token = rename_target(a, file, line, col)?;
     let name = token.name.clone()?;
-    let start = Position::new(token.line - 1, token.col - 1);
-    let end = Position::new(token.line - 1, token.col - 1 + name.chars().count() as u32);
-    Some((Range::new(start, end), name))
+    Some((token_range(token), name))
 }
 
 /// An invalid replacement identifier in a rename request.
@@ -290,6 +290,7 @@ mod tests {
     use super::*;
     use crate::test_paths::host_path as hp;
     use llg::core::compile::{CompileOpts, OwnedSource};
+    use tower_lsp::lsp_types::Position;
 
     const REN: &str = concat!(
         "module m(input logic data, output logic data_out);\n",

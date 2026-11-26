@@ -80,12 +80,19 @@ pub(super) struct InputSnapshots {
     pub(super) by_identity: BTreeMap<PathBuf, Arc<String>>,
     /// Exact bytes of the admitted files that are not UTF-8, by identity.
     raw: BTreeMap<PathBuf, Arc<[u8]>>,
+    /// The identities of the admitted paths that differ from them (symbolic
+    /// links), by path.
+    pub(super) aliases: HashMap<PathBuf, PathBuf>,
 }
 
 impl InputSnapshots {
     pub(super) fn insert(&mut self, path: &Path, text: SharedText) {
         self.by_path.insert(path.to_path_buf(), Arc::clone(&text));
-        self.by_identity.insert(input_identity(path), text);
+        let identity = input_identity(path);
+        if identity != path {
+            self.aliases.insert(path.to_path_buf(), identity.clone());
+        }
+        self.by_identity.insert(identity, text);
     }
 
     /// Keep the exact bytes of an admitted file that is not UTF-8.

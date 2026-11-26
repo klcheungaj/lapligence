@@ -31,6 +31,7 @@ struct Tables {
     macro_definitions: Vec<RawMacroDefinition>,
     macro_references: Vec<RawMacroReference>,
     includes: Vec<RawInclude>,
+    declaration_extents: Vec<RawDeclarationExtent>,
 }
 
 impl Tables {
@@ -63,6 +64,7 @@ impl Tables {
             macro_definition_count: self.macro_definitions.len() as u64,
             macro_reference_count: self.macro_references.len() as u64,
             include_count: self.includes.len() as u64,
+            declaration_extent_count: self.declaration_extents.len() as u64,
         }
     }
 }
@@ -124,7 +126,8 @@ fn drive(sink: &RawSink, header: &RawStreamHeader, tables: &Tables, batch: usize
         lexical_targets: lexical_targets,
         macro_definitions: macro_definitions,
         macro_references: macro_references,
-        includes: includes
+        includes: includes,
+        declaration_extents: declaration_extents
     );
     // SAFETY: `context` is the sink's builder.
     unsafe { (sink.end)(context) }

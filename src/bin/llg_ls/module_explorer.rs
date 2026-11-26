@@ -12,11 +12,12 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
-use tower_lsp::lsp_types::Url;
+use tower_lsp::lsp_types::{Position, Url};
 
 use crate::features::{
-    Analysis, ModuleGraphDefinition, ModuleGraphElaboratedType, ModuleGraphGenerateScope,
-    ModuleGraphInstance, ModuleGraphLocation, ModuleGraphPackedRange, ModuleGraphTypeShape,
+    identifier_range, tokens_of, Analysis, ModuleGraphDefinition, ModuleGraphElaboratedType,
+    ModuleGraphGenerateScope, ModuleGraphInstance, ModuleGraphLocation, ModuleGraphPackedRange,
+    ModuleGraphTypeShape,
 };
 use llg::core::elab::Val;
 use llg::core::model::{
@@ -322,6 +323,45 @@ where
 /// multi-workspace response cannot exceed `MAX_INSTANCE_NODES` merely because
 /// each root was individually below its own limit.
 pub(crate) fn snapshot_analysis_with_budget<F>(
+    root_id: &str,
+    analysis: &Analysis,
+    source_map: F,
+    budget: &mut InstanceBudget,
+) -> ExplorerSnapshot
+where
+    F: Fn(&Path) -> Option<PathBuf>,
+{
+    let mut snapshot = analysis_snapshot(root_id, analysis, source_map, budget);
+    widen_escaped_names(analysis, &mut snapshot);
+    snapshot
+}
+
+/// Let the ranges that begin with an escaped identifier cover all of it
+/// ([`identifier_range`]): the model measures names without the backslash.
+fn widen_escaped_names(analysis: &Analysis, snapshot: &mut ExplorerSnapshot) {
+    let mut files: HashMap<String, Option<&[llg::core::tokens::TokenInfo]>> = HashMap::new();
+    visit_places(snapshot, |uri, range| {
+        let (Some(uri), Some(range)) = (uri.as_deref(), range.as_mut()) else {
+            return;
+        };
+        let nodes = match files.get(uri) {
+            Some(nodes) => *nodes,
+            None => {
+                let path = Url::parse(uri).ok().and_then(|uri| uri.to_file_path().ok());
+                let nodes = path.and_then(|path| tokens_of(analysis, path.to_str()?));
+                files.insert(uri.to_owned(), nodes);
+                nodes
+            }
+        };
+        let start = Position::new(range.start_line, range.start_character);
+        let name = identifier_range(nodes, start, "").end;
+        if (range.end_line, range.end_character) < (name.line, name.character) {
+            (range.end_line, range.end_character) = (name.line, name.character);
+        }
+    });
+}
+
+fn analysis_snapshot<F>(
     root_id: &str,
     analysis: &Analysis,
     source_map: F,

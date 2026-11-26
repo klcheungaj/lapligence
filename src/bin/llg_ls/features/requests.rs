@@ -218,8 +218,9 @@ pub(super) fn semantic_file_matches(left: &str, right: &str) -> bool {
     }
 }
 
-/// Names of one edited document that completion offers besides those of the
-/// analysis. The ones declared after them are not offered before a save.
+/// Names (for completion) and declarations (for the outline) of one edited
+/// document that its isolated parse adds to those of the analysis. The ones
+/// declared after them are not offered before a save.
 const MAX_DECLARED_NAMES: usize = 4096;
 
 /// A name that an edited document declares.
@@ -251,25 +252,62 @@ impl DocumentIdentifiers {
     }
 
     pub fn definitions_at(&self, line: u32, col: u32) -> Vec<NamedLocation> {
-        definitions_in(&self.nodes, &self.bindings, line, col)
+        // The parse has the tokens of the document only.
+        let own = self.nodes.first().map(|token| token.file.as_str());
+        let nodes = self.nodes.as_slice();
+        definitions_in(nodes, &self.bindings, line, col, |file| {
+            (Some(file) == own).then_some(nodes)
+        })
+    }
+
+    /// The declarations of the document, in the order of the text: the
+    /// tokens of the declared names, with the kind of each.
+    fn declarations(&self) -> impl Iterator<Item = (&TokenInfo, SymKind, &str)> {
+        self.nodes.iter().filter_map(|token| {
+            let class = tokens::token_class(token.kind);
+            if !class.declaration || class.macro_body || class.undeclared {
+                return None;
+            }
+            let (kind, _) = classify_token(token.kind, true)?;
+            let name = token.name.as_deref().map(clean_name)?;
+            (!name.is_empty()).then_some((token, kind, name))
+        })
+    }
+
+    /// The declarations of the document whose names `new` takes, as outline
+    /// entries: at most [`MAX_DECLARED_NAMES`], and only of the kinds that
+    /// [`document_symbols`] lists wherever they are declared. The parse does
+    /// not tell the scope of the others (a variable of a module is listed, one
+    /// of a package is not), and an entry that the analysis of the saved text
+    /// would not list is wrong.
+    #[allow(deprecated)] // `DocumentSymbol::deprecated` is deprecated in lsp-types
+    pub(crate) fn declaration_symbols(
+        &self,
+        mut new: impl FnMut(Range) -> bool,
+    ) -> Vec<DocumentSymbol> {
+        self.declarations()
+            .filter(|(_, kind, _)| outlined_anywhere(*kind))
+            .filter(|(token, _, _)| new(token_range(token)))
+            .take(MAX_DECLARED_NAMES)
+            .map(|(token, kind, name)| DocumentSymbol {
+                name: name.to_owned(),
+                detail: None,
+                kind: sym_kind_to_lsp(kind),
+                tags: None,
+                deprecated: None,
+                range: token_range(token),
+                selection_range: token_range(token),
+                children: None,
+            })
+            .collect()
     }
 
     /// The names that the document declares, in the order of the text.
     pub(crate) fn declared_names(&self) -> Vec<DeclaredName> {
         let mut seen = HashSet::new();
         let mut names = Vec::new();
-        for token in &self.nodes {
-            let class = tokens::token_class(token.kind);
-            if !class.declaration || class.macro_body || class.undeclared {
-                continue;
-            }
-            let Some((kind, _)) = classify_token(token.kind, true) else {
-                continue;
-            };
-            let Some(name) = token.name.as_deref().map(clean_name) else {
-                continue;
-            };
-            if !name.is_empty() && seen.insert(name) {
+        for (_, kind, name) in self.declarations() {
+            if seen.insert(name) {
                 names.push(DeclaredName {
                     name: name.to_owned(),
                     kind,
@@ -873,22 +911,30 @@ pub struct NamedLocation {
 /// resolve differently, are all returned.
 pub fn definitions_at(a: &Analysis, file: &str, line: u32, col: u32) -> Vec<NamedLocation> {
     match file_tokens(a, file) {
-        Some(file_tokens) => definitions_in(&file_tokens.nodes, &a.bindings, line, col),
+        Some(file_tokens) => definitions_in(&file_tokens.nodes, &a.bindings, line, col, |file| {
+            tokens_of(a, file)
+        }),
         None => Vec::new(),
     }
 }
 
-fn definitions_in(
+/// The definitions of the name at the 0-based position of a file whose tokens
+/// are `nodes`; `tokens_of` has those of the files of the targets, when known.
+fn definitions_in<'a>(
     nodes: &[TokenInfo],
     bindings: &tokens::Bindings,
     line: u32,
     col: u32,
+    tokens_of: impl Fn(&str) -> Option<&'a [TokenInfo]>,
 ) -> Vec<NamedLocation> {
     let Some(token) = tokens::token_at(nodes, line, col) else {
         return Vec::new();
     };
     match bindings.definition(token) {
-        Some(tokens::Definition::Targets(targets)) => targets.iter().map(target_location).collect(),
+        Some(tokens::Definition::Targets(targets)) => targets
+            .iter()
+            .map(|target| target_location(target, tokens_of(&target.file)))
+            .collect(),
         Some(tokens::Definition::Itself) => vec![NamedLocation {
             name: token.name.clone(),
             location: Location {
@@ -906,12 +952,15 @@ fn file_uri(file: &str) -> Url {
 }
 
 /// LSP location for a bound declaration target (already 0-based), spanning
-/// the target name with the same identifier-width convention as
-/// [`entry_location`]; an included file is its start.
-pub(crate) fn target_location(t: &DeclTarget) -> NamedLocation {
+/// the target name ([`identifier_range`] with `nodes`, the tokens of its file);
+/// an included file is its start.
+pub(crate) fn target_location(t: &DeclTarget, nodes: Option<&[TokenInfo]>) -> NamedLocation {
     let start = Position::new(t.line0, t.col0);
     let name = (t.kind != tokens::TARGET_FILE).then(|| t.name.clone());
-    let range = name_range(start, name.as_deref().unwrap_or_default());
+    let range = match &name {
+        Some(name) => identifier_range(nodes, start, name),
+        None => Range::new(start, start),
+    };
     NamedLocation {
         name,
         location: Location {
@@ -921,10 +970,37 @@ pub(crate) fn target_location(t: &DeclTarget) -> NamedLocation {
     }
 }
 
-/// The range of the identifier `name` at `start`.
-pub(crate) fn name_range(start: Position, name: &str) -> Range {
+/// The range of the identifier `name` written at `start` of a file whose tokens
+/// are `nodes`: the one rule for the width of a name. An escaped identifier
+/// (IEEE 1800-2009 5.6.1) is written from a backslash, which the names of
+/// declarations leave out, to the white space that ends it, so its range is
+/// that of its token. Without the tokens, a name that has the backslash counts
+/// it, and one that lacks it is taken as plain.
+pub(crate) fn identifier_range(nodes: Option<&[TokenInfo]>, start: Position, name: &str) -> Range {
+    if let Some(token) = nodes.and_then(|nodes| escaped_token_at(nodes, start)) {
+        return token_range(token);
+    }
     let end = Position::new(start.line, start.character + lsp_name_len(name));
     Range::new(start, end)
+}
+
+/// The escaped identifier among `nodes` that starts at `start`.
+pub(crate) fn escaped_token_at(nodes: &[TokenInfo], start: Position) -> Option<&TokenInfo> {
+    tokens::token_at(nodes, start.line, start.character).filter(|token| {
+        token_range(token).start == start
+            && token
+                .name
+                .as_deref()
+                .is_some_and(|name| name.starts_with('\\'))
+    })
+}
+
+/// The tokens of `file`, named as the analysis names it.
+pub(crate) fn tokens_of<'a>(a: &'a Analysis, file: &str) -> Option<&'a [TokenInfo]> {
+    a.tokens
+        .iter()
+        .find(|tokens| tokens.path == file)
+        .map(|tokens| tokens.nodes.as_slice())
 }
 
 /// Whether `line` has the identifier `name` at the UTF-16 column `start`: plain,
@@ -1031,17 +1107,22 @@ pub fn references_at_with_options(
         })
         .collect();
     references.sort_by(|left, right| left.0.cmp(right.0));
-    out.extend(
-        references
-            .into_iter()
-            .map(|((file, line, col), target)| Location {
-                uri: file_uri(file),
-                range: Range::new(
-                    Position::new(*line, *col),
-                    Position::new(*line, *col + lsp_name_len(&target.name)),
-                ),
-            }),
-    );
+    // Sorted by file: the tokens of one are looked up once.
+    let mut nodes: Option<(&str, Option<&[TokenInfo]>)> = None;
+    for ((file, line, col), target) in references {
+        let file_nodes = match nodes {
+            Some((known, file_nodes)) if known == file => file_nodes,
+            _ => {
+                let file_nodes = tokens_of(a, file);
+                nodes = Some((file, file_nodes));
+                file_nodes
+            }
+        };
+        out.push(Location {
+            uri: file_uri(file),
+            range: identifier_range(file_nodes, Position::new(*line, *col), &target.name),
+        });
+    }
     out
 }
 
@@ -1105,65 +1186,90 @@ pub(super) fn sym_kind_to_lsp(kind: SymKind) -> SymbolKind {
 /// emitted as document children — they surface through completion (after
 /// `pkg::`), hover, and goto-definition instead.
 pub fn document_symbols(a: &Analysis, file: &str) -> Vec<DocumentSymbol> {
+    let nodes = tokens_of(a, file);
     let mut out = Vec::new();
     for m in a.model.modules_in(file) {
-        out.push(module_symbol(a, file, m));
+        out.push(module_symbol(a, file, m, nodes));
     }
     for p in &a.model.packages {
         if p.file.as_deref() == Some(file) {
-            out.push(package_symbol(p));
+            out.push(package_symbol(a, file, p, nodes));
         }
     }
     for c in &a.model.classes {
         if c.file.as_deref() == Some(file) {
-            out.push(class_symbol(a, file, c));
+            out.push(class_symbol(a, file, c, nodes));
         }
     }
     for inst in all_instances(&a.model.top_instances) {
         for f in &inst.funcs {
             if f.file.as_deref() == Some(file) {
-                out.push(func_symbol(f));
+                out.push(func_symbol(a, file, f, nodes));
             }
         }
     }
     out
 }
 
+/// The whole text of the declaration in `file` whose name is at `name`, which
+/// it holds (LSP: `selectionRange` inside `range`). `None` when the analysis
+/// captured none ([`Analysis::decl_extents`]).
+fn declaration_range(a: &Analysis, file: &str, name: Range) -> Option<Range> {
+    let key = (name.start.line + 1, name.start.character + 1);
+    let &(start, end) = a.decl_extents.get(file)?.get(&key)?;
+    let position =
+        |(line, col): (u32, u32)| Position::new(line.saturating_sub(1), col.saturating_sub(1));
+    Some(Range::new(
+        position(start).min(name.start),
+        position(end).max(name.end),
+    ))
+}
+
+/// Whether [`document_symbols`] lists every definition of `kind` in a file.
+fn outlined_anywhere(kind: SymKind) -> bool {
+    matches!(kind, SymKind::Module | SymKind::Package | SymKind::Class)
+}
+
 /// A `DocumentSymbol` for a function/task definition (flat: no argument
 /// children), ranged over the definition name.
 #[allow(deprecated)] // `DocumentSymbol::deprecated` is deprecated in lsp-types
-pub(super) fn func_symbol(f: &FuncDef) -> DocumentSymbol {
+pub(super) fn func_symbol(
+    a: &Analysis,
+    file: &str,
+    f: &FuncDef,
+    nodes: Option<&[TokenInfo]>,
+) -> DocumentSymbol {
     let name = clean_name(&f.name).to_owned();
-    let len = lsp_name_len(&name);
-    let line = f.line.saturating_sub(1);
-    let col = f.col.saturating_sub(1);
-    let range = Range::new(Position::new(line, col), Position::new(line, col + len));
+    let start = Position::new(f.line.saturating_sub(1), f.col.saturating_sub(1));
+    let selection_range = identifier_range(nodes, start, &name);
     DocumentSymbol {
         name,
         detail: Some(func_signature(f)),
         kind: SymbolKind::FUNCTION,
         tags: None,
         deprecated: None,
-        range,
-        selection_range: range,
+        range: declaration_range(a, file, selection_range).unwrap_or(selection_range),
+        selection_range,
         children: None,
     }
 }
 
 #[allow(deprecated)] // `DocumentSymbol::deprecated` is deprecated in lsp-types
-pub(super) fn module_symbol(a: &Analysis, file: &str, m: &ModuleDef) -> DocumentSymbol {
+pub(super) fn module_symbol(
+    a: &Analysis,
+    file: &str,
+    m: &ModuleDef,
+    nodes: Option<&[TokenInfo]>,
+) -> DocumentSymbol {
     let name = clean_name(&m.name).to_owned();
-    let len = lsp_name_len(&name);
-    let start_line = m.line.saturating_sub(1);
-    let start_col = m.col.saturating_sub(1);
-    let range = Range::new(
-        Position::new(start_line, start_col),
-        Position::new(m.end_line.saturating_sub(1), m.end_col.saturating_sub(1)),
-    );
-    let selection_range = Range::new(
-        Position::new(start_line, start_col),
-        Position::new(start_line, start_col + len),
-    );
+    let start = Position::new(m.line.saturating_sub(1), m.col.saturating_sub(1));
+    let selection_range = identifier_range(nodes, start, &name);
+    // A parse-only analysis captures no declaration texts; its definitions end
+    // where the parse found them.
+    let range = declaration_range(a, file, selection_range).unwrap_or_else(|| {
+        let end = Position::new(m.end_line.saturating_sub(1), m.end_col.saturating_sub(1));
+        Range::new(start, end.max(selection_range.end))
+    });
     DocumentSymbol {
         name,
         detail: None,
@@ -1177,20 +1283,23 @@ pub(super) fn module_symbol(a: &Analysis, file: &str, m: &ModuleDef) -> Document
 }
 
 #[allow(deprecated)] // `DocumentSymbol::deprecated` is deprecated in lsp-types
-pub(super) fn package_symbol(p: &PackageDef) -> DocumentSymbol {
+pub(super) fn package_symbol(
+    a: &Analysis,
+    file: &str,
+    p: &PackageDef,
+    nodes: Option<&[TokenInfo]>,
+) -> DocumentSymbol {
     let name = clean_name(&p.name).to_owned();
-    let len = lsp_name_len(&name);
-    let line = p.line.saturating_sub(1);
-    let col = p.col.saturating_sub(1);
-    let range = Range::new(Position::new(line, col), Position::new(line, col + len));
+    let start = Position::new(p.line.saturating_sub(1), p.col.saturating_sub(1));
+    let selection_range = identifier_range(nodes, start, &name);
     DocumentSymbol {
         name,
         detail: None,
         kind: SymbolKind::PACKAGE,
         tags: None,
         deprecated: None,
-        range,
-        selection_range: range,
+        range: declaration_range(a, file, selection_range).unwrap_or(selection_range),
+        selection_range,
         children: None,
     }
 }
@@ -1198,21 +1307,24 @@ pub(super) fn package_symbol(p: &PackageDef) -> DocumentSymbol {
 /// A `DocumentSymbol` for a class definition, ranged over the class name with
 /// its methods and fields as children (see [`class_children`]).
 #[allow(deprecated)] // `DocumentSymbol::deprecated` is deprecated in lsp-types
-pub(super) fn class_symbol(a: &Analysis, file: &str, c: &ClassDef) -> DocumentSymbol {
+pub(super) fn class_symbol(
+    a: &Analysis,
+    file: &str,
+    c: &ClassDef,
+    nodes: Option<&[TokenInfo]>,
+) -> DocumentSymbol {
     let name = clean_name(&c.name).to_owned();
-    let len = lsp_name_len(&name);
-    let line = c.line.saturating_sub(1);
-    let col = c.col.saturating_sub(1);
-    let range = Range::new(Position::new(line, col), Position::new(line, col + len));
+    let start = Position::new(c.line.saturating_sub(1), c.col.saturating_sub(1));
+    let selection_range = identifier_range(nodes, start, &name);
     DocumentSymbol {
         name: name.clone(),
         detail: Some(format!("class {name}")),
         kind: SymbolKind::CLASS,
         tags: None,
         deprecated: None,
-        range,
-        selection_range: range,
-        children: class_children(a, file, c),
+        range: declaration_range(a, file, selection_range).unwrap_or(selection_range),
+        selection_range,
+        children: class_children(a, file, c, nodes),
     }
 }
 
@@ -1223,6 +1335,7 @@ pub(super) fn class_children(
     a: &Analysis,
     file: &str,
     c: &ClassDef,
+    nodes: Option<&[TokenInfo]>,
 ) -> Option<Vec<DocumentSymbol>> {
     let scope = clean_name(&c.name);
     let kids: Vec<DocumentSymbol> = a
@@ -1234,33 +1347,42 @@ pub(super) fn class_children(
                 && d.scope.as_deref() == Some(scope)
                 && matches!(d.kind, SymKind::Function | SymKind::Task | SymKind::Var)
         })
-        .map(child_symbol_from_entry)
+        .map(|d| {
+            let mut method = child_symbol_from_entry(d);
+            if let Some(range) = declaration_range(a, file, method.selection_range) {
+                method.range = range;
+            }
+            method
+        })
         .collect();
     if !kids.is_empty() {
         return Some(kids);
     }
-    class_children_fallback(c, file)
+    class_children_fallback(a, c, file, nodes)
 }
 
 /// Model-based fallback for [`class_children`]: methods (with their
 /// declaration positions) and fields (with their declaration positions).
 #[allow(deprecated)] // `DocumentSymbol::deprecated` is deprecated in lsp-types
-pub(super) fn class_children_fallback(c: &ClassDef, file: &str) -> Option<Vec<DocumentSymbol>> {
+pub(super) fn class_children_fallback(
+    a: &Analysis,
+    c: &ClassDef,
+    file: &str,
+    nodes: Option<&[TokenInfo]>,
+) -> Option<Vec<DocumentSymbol>> {
     if c.file.as_deref() != Some(file) {
         return None;
     }
     let mut kids = Vec::new();
     for m in &c.methods {
         if m.file.as_deref() == Some(file) {
-            kids.push(func_symbol(m));
+            kids.push(func_symbol(a, file, m, nodes));
         }
     }
     for f in &c.fields {
         let name = clean_name(&f.name).to_owned();
-        let len = lsp_name_len(&name);
-        let line = f.line.saturating_sub(1);
-        let col = f.col.saturating_sub(1);
-        let range = Range::new(Position::new(line, col), Position::new(line, col + len));
+        let start = Position::new(f.line.saturating_sub(1), f.col.saturating_sub(1));
+        let range = identifier_range(nodes, start, &name);
         kids.push(DocumentSymbol {
             name,
             detail: Some(format_class_field(f)),
@@ -1465,11 +1587,7 @@ pub(super) fn module_instance_children(
 /// over the instance name, `detail` = instantiated module type.
 #[allow(deprecated)] // `DocumentSymbol::deprecated` is deprecated in lsp-types
 pub(super) fn instance_child_symbol(d: &SymEntry, type_text: Option<&str>) -> DocumentSymbol {
-    let len = lsp_name_len(&d.name);
-    let range = Range::new(
-        Position::new(d.line, d.col),
-        Position::new(d.line, d.col + len),
-    );
+    let range = d.range();
     DocumentSymbol {
         name: d.name.clone(),
         detail: type_text.map(str::to_owned),
@@ -1485,11 +1603,7 @@ pub(super) fn instance_child_symbol(d: &SymEntry, type_text: Option<&str>) -> Do
 /// Build a `DocumentSymbol` for a declaration entry.
 #[allow(deprecated)] // `DocumentSymbol::deprecated` is deprecated in lsp-types
 pub(super) fn child_symbol_from_entry(d: &SymEntry) -> DocumentSymbol {
-    let len = lsp_name_len(&d.name);
-    let range = Range::new(
-        Position::new(d.line, d.col),
-        Position::new(d.line, d.col + len),
-    );
+    let range = d.range();
     DocumentSymbol {
         name: d.name.clone(),
         detail: d.detail.clone(),
@@ -1612,10 +1726,7 @@ pub(super) fn child_symbol(
             let decl_rank = i32::from(!tokens::token_class(n.kind).declaration);
             (decl_rank, n.line, n.col)
         })?;
-    let line = node.line.saturating_sub(1);
-    let col = node.col.saturating_sub(1);
-    let len = lsp_name_len(name);
-    let range = Range::new(Position::new(line, col), Position::new(line, col + len));
+    let range = token_range(node);
     Some(DocumentSymbol {
         name: name.to_owned(),
         detail: None,
@@ -1958,12 +2069,8 @@ pub(super) fn all_instances(insts: &[InstanceModel]) -> Vec<&InstanceModel> {
 
 /// LSP location for an index entry (already 0-based).
 pub(super) fn entry_location(e: &SymEntry) -> Location {
-    let len = lsp_name_len(&e.name);
     Location {
         uri: file_uri(&e.file),
-        range: Range::new(
-            Position::new(e.line, e.col),
-            Position::new(e.line, e.col + len),
-        ),
+        range: e.range(),
     }
 }
