@@ -502,7 +502,9 @@ impl<'a> Codegen<'a> {
                 .copied()
                 .flatten()
                 .filter(|target| self.unpacked_aggregates.contains_key(target)),
-            _ => None,
+            _ => self
+                .assigned_target(node)
+                .and_then(|target| self.unpacked_aggregate_target(target)),
         }
     }
 
@@ -626,7 +628,9 @@ impl<'a> Codegen<'a> {
                     .collect();
                 Some((target, path))
             }
-            _ => None,
+            _ => self
+                .assigned_target(node)
+                .and_then(|target| self.unpacked_path_for_expr(target)),
         }
     }
 

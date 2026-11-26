@@ -672,9 +672,11 @@ impl Codegen<'_> {
     /// The properties among `computed` (evaluated with statement `h`) that
     /// an effect of `h` precedes in evaluation order, each with the operand
     /// its use starts at, as [`Self::uses_after_effects_with`] orders the
-    /// views of interface members. Only an operand lowered as a value
-    /// evaluates a handle of its own: a use that is the statement's target
-    /// or a subroutine actual keeps the statement's handle.
+    /// views of interface members. An operand lowered as a value, an input
+    /// actual among them, evaluates a handle of its own when its lowering
+    /// starts, and an output or inout actual at its place among the actuals
+    /// (decision EO-D3); the statement's target keeps the statement's
+    /// handle, which `late_located_target` places.
     fn receiver_uses_after_effects(
         &self,
         h: NodeId,
@@ -736,17 +738,7 @@ impl Codegen<'_> {
         };
         self.uses_after_effects_with(h, &uses, &path_of)
             .into_iter()
-            .filter(|(_, start)| {
-                Some(*start) != target
-                    && *start != h
-                    && !self.node(*start).parent.is_some_and(|parent| {
-                        matches!(
-                            self.kind(parent),
-                            NodeKind::FuncCall { .. } | NodeKind::MethodCall { .. }
-                        ) && self.call_argument_nodes(parent).contains(start)
-                    })
-                    && !self.copy_out_wrapper_target(*start)
-            })
+            .filter(|(_, start)| Some(*start) != target && *start != h)
             .collect()
     }
 
@@ -786,6 +778,15 @@ impl Codegen<'_> {
             return None;
         }
         self.receiver_roots.remove(&node)
+    }
+
+    /// The handle declarations of operand `node`, which the caller runs
+    /// where the operand's evaluation starts and no lowering of the operand
+    /// repeats.
+    pub(in super::super) fn take_receiver_root(&mut self, node: NodeId) -> Option<Vec<IrStmt>> {
+        let before = self.enter_receiver_root(node)?;
+        self.receiver_roots_lowered.insert(node);
+        Some(before)
     }
 
     /// The operand may be lowered again (a loop condition, a specialization).

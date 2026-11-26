@@ -889,6 +889,16 @@ impl Codegen<'_> {
                 steps
             }
             NodeKind::FuncCall { .. } | NodeKind::MethodCall { .. } => self.call_steps(node),
+            // A set scanned member by member reads its value again for each
+            // comparison, after the members before it (decision EO-D2), so
+            // the value's uses start after an effect.
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::Inside,
+                operands,
+                ..
+            }) if self.inside_reads_value_again(operands) => std::iter::once(OrderStep::Effect)
+                .chain(visit(operands))
+                .collect(),
             _ => visit(children).collect(),
         }
     }

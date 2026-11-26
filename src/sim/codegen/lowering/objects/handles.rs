@@ -384,6 +384,9 @@ impl Codegen<'_> {
             self.note_hoisted_read(node);
             return Ok(value);
         }
+        if let Some(error) = self.nested_assignment_in_place_error(node) {
+            return Err(error);
+        }
         if let Some(operands) = self.enter_call_operands(path, node)? {
             let value = self.lower_chandle(path, node);
             let before = self.leave_call_operands(operands);

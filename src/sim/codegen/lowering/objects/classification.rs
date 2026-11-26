@@ -257,6 +257,10 @@ impl Codegen<'_> {
     }
 
     pub(in super::super) fn is_string_expr(&self, path: &str, node: NodeId) -> bool {
+        // A nested assignment has the type of its target (11.3.6).
+        if let Some(target) = self.nested_assignment_target(node) {
+            return self.is_string_expr(path, target);
+        }
         if self.is_coverage_text(node) {
             return true;
         }
@@ -407,6 +411,9 @@ impl Codegen<'_> {
     /// to be backed by a model-global object. Function formals, automatic
     /// locals, and chandle-returning calls all live in the function context.
     pub(in super::super) fn is_chandle_expr(&self, path: &str, node: NodeId) -> bool {
+        if let Some(target) = self.nested_assignment_target(node) {
+            return self.is_chandle_expr(path, target);
+        }
         if self.class_field_target(node).is_some_and(
             |field| matches!(self.kind(field), NodeKind::Var { ty } if is_handle_kind(&ty.kind)),
         ) {

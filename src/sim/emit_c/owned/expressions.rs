@@ -19,9 +19,7 @@ impl Frame<'_, '_> {
                 {
                     return Err(pending("side-effect-capable evaluator expressions"))
                 }
-                IrExprKind::Sequence(sequence)
-                    if !super::pure_calls::binds_views_only(sequence) =>
-                {
+                IrExprKind::Sequence(sequence) if !sequence.binds_views_only() => {
                     return Err(pending("side-effect-capable evaluator expressions"))
                 }
                 _ => {}

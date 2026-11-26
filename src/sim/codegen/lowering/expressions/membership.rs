@@ -24,6 +24,32 @@ impl<'a> Codegen<'a> {
         let effect = self.contains_evaluation_effect(value);
         let name = format!("_llg_iv{}", value.0);
         if self.is_string_expr(path, value) {
+            // A value with an effect is evaluated once, before the members,
+            // which one query compares in order up to the first match:
+            // without a temporary, whose read each comparison would copy.
+            // A range bound with an effect keeps the chain, which evaluates
+            // a high bound only when the value is not below the low one.
+            if effect
+                && !items.iter().any(|item| {
+                    matches!(
+                        self.kind(*item),
+                        NodeKind::Expr(ExprKind::Operation {
+                            op: Operation::List,
+                            ..
+                        })
+                    ) && self.contains_evaluation_effect(*item)
+                })
+            {
+                return self.with_set_arrays(|this| {
+                    let value = this.lower_string(path, value)?;
+                    let items = this.lower_inside_string_items(path, items)?;
+                    Ok(object_query(
+                        IrObjectQuery::StringInside { value, items },
+                        1,
+                        false,
+                    ))
+                });
+            }
             return self.with_set_arrays(|this| {
                 let lowered = this.lower_string(path, value)?;
                 let (prelude, read) = if effect {
@@ -56,7 +82,11 @@ impl<'a> Codegen<'a> {
         }
         self.with_set_arrays(|this| {
             let lowered = this.lower_expr(path, value)?;
-            let (prelude, read) = if effect || Self::runs_statements(&lowered) {
+            // A value that evaluates the handle it is selected through where
+            // its use starts evaluates it again for each comparison.
+            let (prelude, read) = if effect
+                || (Self::runs_statements(&lowered) && !Self::binds_handles_only(&lowered))
+            {
                 let (width, signed) = (lowered.width, lowered.signed);
                 let declare = IrStmt::DeclLocal {
                     name: name.clone(),
@@ -129,6 +159,18 @@ impl<'a> Codegen<'a> {
             && self.contains_evaluation_effect(item)
     }
 
+    /// Whether a scan of the set `operands` (the value, then the members)
+    /// compares member by member and reads the value again for each
+    /// comparison (decision EO-D2): a member has an effect at its place and
+    /// the value has none of its own.
+    pub(in super::super) fn inside_reads_value_again(&self, operands: &[NodeId]) -> bool {
+        let Some((value, items)) = operands.split_first() else {
+            return false;
+        };
+        items.iter().any(|item| self.in_place_member_effect(*item))
+            && !self.contains_evaluation_effect(*value)
+    }
+
     /// Whether evaluating `value` runs statements (a view binding, a
     /// staged copy), which a copy of it would repeat.
     fn runs_statements(value: &IrExpr) -> bool {
@@ -138,6 +180,30 @@ impl<'a> Codegen<'a> {
             statements |= matches!(expression.kind, IrExprKind::Sequence(_));
         });
         statements
+    }
+
+    /// Whether every statement evaluating `value` runs evaluates a handle
+    /// its use is selected through: binds a view of an interface member or
+    /// declares the computed handle of a class property.
+    fn binds_handles_only(value: &IrExpr) -> bool {
+        let mut probe = value.clone();
+        let mut handles = true;
+        crate::sim::opt::walk_expr_mut(&mut probe, &mut |expression| {
+            if let IrExprKind::Sequence(sequence) = &expression.kind {
+                handles &=
+                    sequence
+                        .statements
+                        .iter()
+                        .all(|statement| match statement.unlocated() {
+                            IrStmt::InterfaceBind(_) => true,
+                            IrStmt::Object(object) => {
+                                matches!(**object, IrObjectStmt::ChandleDeclareLocal(_, Some(_)))
+                            }
+                            _ => false,
+                        });
+            }
+        });
+        handles
     }
 
     /// `h inside {a, q, null}` over handles of one kind: set membership uses
