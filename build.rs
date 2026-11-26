@@ -12,6 +12,8 @@ mod vendor_patches;
 
 #[path = "build_support/compiler_cache.rs"]
 mod compiler_cache;
+#[path = "build_support/native_cxx.rs"]
+mod native_cxx;
 #[path = "build_support/native_lto.rs"]
 mod native_lto;
 
@@ -45,6 +47,7 @@ fn emit_rerun_if_changed() {
         "scripts/sccache.sh",
         "build_support/compiler_cache.rs",
         "build_support/host_platform.rs",
+        "build_support/native_cxx.rs",
         "build_support/native_lto.rs",
         "vendor/slang/CMakeLists.txt",
         "vendor/slang/cmake",
@@ -165,6 +168,9 @@ fn build_slang(manifest_dir: &Path) {
             native_lto::gnu_lto_compile_options(&target_env).join(";"),
         )
         .define("FETCHCONTENT_TRY_FIND_PACKAGE_MODE", "NEVER");
+    for flag in native_cxx::cxx_flags(&target_env) {
+        config.cxxflag(flag);
+    }
     if is_msvc {
         config
             .define("CMAKE_MSVC_RUNTIME_LIBRARY", "MultiThreaded")

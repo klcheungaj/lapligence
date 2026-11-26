@@ -99,6 +99,11 @@ pub(crate) fn run_on_stack<T: Send>(
     })
 }
 
+/// Whether the calling thread is a pipeline thread, whose stack is mapped.
+pub fn on_pipeline() -> bool {
+    FLOOR.get() != 0
+}
+
 /// The address at which a thread has too little stack left to follow another
 /// name. A walk asks for it once and keeps it, because reading the
 /// thread-local at every node of a design would cost more than the walk needs
@@ -168,6 +173,13 @@ mod tests {
         assert!(!StackFloor::current().reached());
         run_pipeline(|| assert!(!StackFloor::current().reached())).expect("pipeline thread");
         assert!(!StackFloor::current().reached());
+    }
+
+    #[test]
+    fn only_a_pipeline_thread_is_on_a_pipeline() {
+        assert!(!on_pipeline());
+        assert!(run_pipeline(on_pipeline).expect("pipeline thread"));
+        assert!(!on_pipeline());
     }
 
     #[test]

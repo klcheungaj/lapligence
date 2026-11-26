@@ -657,6 +657,13 @@ follows; the results of a cancelled analysis are dropped and those of the one
 before it stay. After three cancelled analyses in a row the next one is left to
 finish, so that saving more often than an analysis takes still shows results.
 
+A file that the client opens through a symbolic link, or by the path that a link
+which the analysis reads resolves to, is the open document: results and
+diagnostics name it as the client does, at the places of its current text. A
+compilation unit opened through a link is compiled as the document only, not also
+as the file that discovery found. Which root owns a document, and so reads its
+unsaved text, still follows its path as written.
+
 The server asks for `textDocument/didSave` notifications (without the text). An
 edit made in a client that sends none is analysed when a watched-file event
 reports its write to the disk. Without such events either, only opening and
@@ -679,11 +686,17 @@ The server compares the two texts and asks the analysis about what the user sees
   occur several times among the edited ones.
 - The semantic tokens and definitions of the edited file itself are those of its
   current text. Completion offers the names of the last analysis and up to 4096 that
-  the current text declares, read from its last isolated parse.
+  the current text declares, read from its last isolated parse. The outline also
+  lists up to 4096 modules, packages and classes that only the current text
+  declares, from the same parse.
 - A rename is refused until the save and its analysis.
+- 300 ms after the last edit of a file that the last analysis read, the server
+  sends `llg/moduleExplorerChanged`, so that a client reads the module explorer
+  again at the new places.
 - The server sends no diagnostics on an edit: the editor moves those it shows with
-  the text. Exceptions:
-  [known issues](known_issues.md#diagnostics-of-an-analysis-that-an-edit-overtook-llg_ls).
+  the text. Diagnostics that it sends while a file has unsaved edits (an analysis
+  that ended after an edit, a file that opens) are at the places of the current
+  text; one on text that an edit touched stays at its place in the analysed text.
 
 The comparison is made by the first request after an edit and kept until the next
 one. It looks at 262,144 lines of both texts and above that only at their common

@@ -38,6 +38,7 @@ mod llg_config_cli;
 mod lsp_stdio;
 mod messages_catalog;
 mod model_tests;
+mod native_cxx;
 mod native_lto;
 mod negative_fixture_sweep;
 mod opt_storage_differential;

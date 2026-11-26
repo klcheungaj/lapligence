@@ -20,6 +20,16 @@ pub struct MemoryUsage {
     pub virtual_bytes: Option<u64>,
 }
 
+/// Stacks of pipeline threads: address space reserved without being used as
+/// memory, which an address-space limit comes on top of.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct StackReservations {
+    /// Bytes of the stacks mapped when the limit is installed.
+    pub mapped: u64,
+    /// Bytes of the stacks the process may map after it.
+    pub unmapped: u64,
+}
+
 /// Native enforcement paired with the portable physical-memory watchdog.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EnforcementMode {
@@ -111,11 +121,18 @@ pub fn current_usage() -> Result<MemoryUsage, MemoryError> {
 /// Windows always attempts a Job Object process-commit limit.  Unix installs
 /// `RLIMIT_AS` only when explicitly requested because address space is not the
 /// same as physical memory and allocators may reserve large virtual ranges:
-/// `reserved_address_space` requests it and is the address space the process
-/// reserves without using it, which comes on top of `maximum_bytes`.
+/// `stacks` requests it, and the stacks come on top of `maximum_bytes`.
+///
+/// On Linux the process may also keep every range it holds when the limit is
+/// installed, and maps at most `maximum_bytes` less what is resident then: the
+/// ranges it holds untouched, such as a mapped stack or the 1 GiB arena that
+/// mimalloc reserves at its first allocation (musl builds and `llg_ls`), are
+/// not memory, and counted against the budget they left no room even for the
+/// watchdog's thread. macOS adds only the stacks: its virtual size counts the
+/// shared system libraries.
 pub fn install_native_limit(
     maximum_bytes: u64,
-    reserved_address_space: Option<u64>,
+    stacks: Option<StackReservations>,
 ) -> Result<NativeLimitGuard, MemoryError> {
     if maximum_bytes == 0 {
         return Err(MemoryError::new(
@@ -123,9 +140,7 @@ pub fn install_native_limit(
             io::Error::new(io::ErrorKind::InvalidInput, "memory limit must be nonzero"),
         ));
     }
-    let address_space =
-        reserved_address_space.map(|reserved| maximum_bytes.saturating_add(reserved));
-    let (platform, mode) = platform::install_native_limit(maximum_bytes, address_space)?;
+    let (platform, mode) = platform::install_native_limit(maximum_bytes, stacks)?;
     Ok(NativeLimitGuard {
         _platform: platform,
         mode,
@@ -163,7 +178,7 @@ pub fn terminate_immediately(code: i32) -> ! {
 
 #[cfg(target_os = "linux")]
 mod platform {
-    use super::{capped_rlimit_as, EnforcementMode, MemoryError, MemoryUsage};
+    use super::{capped_rlimit_as, EnforcementMode, MemoryError, MemoryUsage, StackReservations};
     use std::io;
     use std::sync::OnceLock;
 
@@ -299,10 +314,10 @@ mod platform {
     }
 
     pub fn install_native_limit(
-        _maximum_bytes: u64,
-        address_space: Option<u64>,
+        maximum_bytes: u64,
+        stacks: Option<StackReservations>,
     ) -> Result<(NativeGuard, EnforcementMode), MemoryError> {
-        let Some(maximum_bytes) = address_space else {
+        let Some(stacks) = stacks else {
             return Ok((
                 NativeGuard {
                     previous_limit: None,
@@ -310,7 +325,27 @@ mod platform {
                 EnforcementMode::WatchdogOnly,
             ));
         };
-        install_address_space_limit(maximum_bytes)
+        let (virtual_pages, resident_pages) = read_statm_pages()?;
+        let page_size = page_size()?;
+        install_address_space_limit(address_space_limit(
+            maximum_bytes,
+            stacks,
+            virtual_pages.saturating_mul(page_size),
+            resident_pages.saturating_mul(page_size),
+        ))
+    }
+
+    /// The address space of a process that holds `held` bytes of it, of which
+    /// `resident` are memory, under a budget of `maximum_bytes`
+    /// (`super::install_native_limit`). The mapped stacks are part of `held`.
+    pub(super) fn address_space_limit(
+        maximum_bytes: u64,
+        stacks: StackReservations,
+        held: u64,
+        resident: u64,
+    ) -> u64 {
+        held.saturating_add(maximum_bytes.saturating_sub(resident))
+            .saturating_add(stacks.unmapped)
     }
 
     fn install_address_space_limit(
@@ -397,7 +432,7 @@ mod platform {
 
 #[cfg(target_os = "macos")]
 mod platform {
-    use super::{capped_rlimit_as, EnforcementMode, MemoryError, MemoryUsage};
+    use super::{capped_rlimit_as, EnforcementMode, MemoryError, MemoryUsage, StackReservations};
     use std::io;
 
     pub struct NativeGuard {
@@ -442,10 +477,10 @@ mod platform {
     }
 
     pub fn install_native_limit(
-        _maximum_bytes: u64,
-        address_space: Option<u64>,
+        maximum_bytes: u64,
+        stacks: Option<StackReservations>,
     ) -> Result<(NativeGuard, EnforcementMode), MemoryError> {
-        let Some(maximum_bytes) = address_space else {
+        let Some(stacks) = stacks else {
             return Ok((
                 NativeGuard {
                     previous_limit: None,
@@ -453,6 +488,9 @@ mod platform {
                 EnforcementMode::WatchdogOnly,
             ));
         };
+        let maximum_bytes = maximum_bytes
+            .saturating_add(stacks.mapped)
+            .saturating_add(stacks.unmapped);
 
         let mut previous = std::mem::MaybeUninit::<libc::rlimit>::uninit();
         // SAFETY: `previous` is valid writable storage for one `rlimit`.
@@ -517,7 +555,7 @@ mod platform {
 
 #[cfg(windows)]
 mod platform {
-    use super::{EnforcementMode, MemoryError, MemoryUsage};
+    use super::{EnforcementMode, MemoryError, MemoryUsage, StackReservations};
     use std::io;
     use std::mem::{size_of, MaybeUninit};
     use std::ptr;
@@ -606,7 +644,7 @@ mod platform {
 
     pub fn install_native_limit(
         maximum_bytes: u64,
-        _address_space: Option<u64>,
+        _stacks: Option<StackReservations>,
     ) -> Result<(NativeGuard, EnforcementMode), MemoryError> {
         // SAFETY: null security attributes and name request an unnamed Job
         // Object with default security settings.
@@ -727,7 +765,7 @@ mod platform {
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 mod platform {
-    use super::{EnforcementMode, MemoryError, MemoryUsage};
+    use super::{EnforcementMode, MemoryError, MemoryUsage, StackReservations};
     use std::io;
 
     pub struct NativeGuard;
@@ -741,7 +779,7 @@ mod platform {
 
     pub fn install_native_limit(
         _maximum_bytes: u64,
-        _address_space: Option<u64>,
+        _stacks: Option<StackReservations>,
     ) -> Result<(NativeGuard, EnforcementMode), MemoryError> {
         Ok((NativeGuard, EnforcementMode::WatchdogOnly))
     }
@@ -760,7 +798,7 @@ mod platform {
 
 #[cfg(test)]
 mod tests {
-    use super::{current_usage, install_native_limit, EnforcementMode};
+    use super::{current_usage, install_native_limit, EnforcementMode, StackReservations};
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
@@ -771,6 +809,30 @@ mod tests {
         };
         assert_eq!(super::capped_rlimit_as(96, previous), 64);
         assert_eq!(super::capped_rlimit_as(32, previous), 32);
+    }
+
+    /// Under a budget, a process keeps the address space it holds and maps
+    /// the budget less what is resident, plus the stacks it still maps.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn address_space_keeps_what_the_process_holds_untouched() {
+        use super::platform::address_space_limit;
+        const MIB: u64 = 1 << 20;
+        let stacks = StackReservations {
+            mapped: 1024 * MIB,
+            unmapped: 2048 * MIB,
+        };
+        // A mapped 1 GiB stack and a 1 GiB allocator arena, 30 MiB resident.
+        assert_eq!(
+            address_space_limit(512 * MIB, stacks, 2117 * MIB, 30 * MIB),
+            2117 * MIB + 482 * MIB + 2048 * MIB
+        );
+        // A process already over its budget maps nothing new but its stacks.
+        assert_eq!(
+            address_space_limit(16 * MIB, stacks, 2117 * MIB, 30 * MIB),
+            2117 * MIB + 2048 * MIB
+        );
+        assert_eq!(address_space_limit(u64::MAX, stacks, 1, 0), u64::MAX);
     }
 
     #[test]
@@ -815,7 +877,7 @@ mod tests {
             return;
         }
 
-        let guard = install_native_limit(u64::MAX, Some(0))
+        let guard = install_native_limit(u64::MAX, Some(StackReservations::default()))
             .expect("an oversized RLIMIT_AS request is feasible");
         assert_eq!(guard.mode(), EnforcementMode::AddressSpaceAndWatchdog);
 

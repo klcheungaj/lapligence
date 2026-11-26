@@ -200,7 +200,21 @@ MSVC compiler:
   19.29.30036.3 or newer, and the target's own sources keep `/W4 /WX`.
 - C mode lacks `max_align_t` (use `llg_co_max_align_t`). Unnamed enums have an
   `int` underlying type, so brace-initializing a `uint32_t` from an enum ternary
-  narrows (C2397); cast. `<chrono>` warning C4530 without `/EHsc` is harmless.
+  narrows (C2397); cast.
+- C++ needs `/EHsc`, which neither `cl` nor clang-cl enables by default and the
+  `cmake` crate's `CMAKE_CXX_FLAGS` (the `cc` crate's flags) drops from CMake's
+  defaults. Without it Slang builds without exceptions: a source nested past
+  its limit aborted `llg` and `llg_ls` with "internal compiler error:
+  'language constructs are too deeply nested'" (0xC0000409), and the wrapper's
+  exceptions unwound no destructors. Warning C4530 in a C++ unit is that
+  defect. build.rs adds `/EHsc /GR` (`build_support/native_cxx.rs`), and
+  `slang_platform.hpp` stops a build without exceptions on every compiler
+  (`native_cxx::component_the_wrapper_stops_a_build_without_exceptions`).
+- C11 5.2.4.1 guarantees 63 levels of nested structure or union definitions,
+  and MSVC refuses the 65th (C1046 "struct nested too deeply"; GCC and Clang
+  accept more). A coroutine frame nests a `union` and a `struct` per level of
+  sibling blocks, so the emitter names the overlaid structs past
+  `emit_c::MAX_NESTED_DEFINITIONS` (`fin_002e` counts them in `deep_nesting`).
 - Unsequenced operands (`f() | g()`, C11 6.5p3) run in another order than under
   GCC/Clang; sequence calls with side effects as separate statements.
 - `cl` writes diagnostics to stdout: print both streams on failure. Ninja stops
@@ -309,6 +323,15 @@ DPI-C and VPI DLLs:
   user before the cache save.
 - On musl, root `build.rs` and `mimalloc_shim.c` wrap C `malloc`/`free` for every
   binary ([executables](../src/bin/readme.md)).
+- mimalloc (musl builds, and `llg_ls`'s Rust allocations everywhere) reserves
+  a 1 GiB arena at its first allocation. Counted against an address-space
+  limit (`LLG_MEMORY_ADDRESS_SPACE_LIMIT`), that untouched range left no room
+  for the watchdog's thread in the shipped `llg` (CI: HOST-003 "watchdog
+  thread unavailable", `mode=native-only`) and none for further mappings, so
+  on Linux the limit now comes on top of every range the process holds when
+  it installs it (`ffi::process_memory::install_native_limit`). glibc's
+  `GLIBC_TUNABLES=glibc.malloc.top_pad=1073741824` reproduces such a reserve
+  (`sim_memory_guard::llg_address_space_limit_does_not_count_an_allocator_reserve`).
 - On glibc, `llg` keeps its pipeline thread on the process's first heap
   (`ffi::process_memory::share_one_heap`). What a second thread still costs
   there is glibc's locking of slow-path allocations, about 0.5 % of a compile's

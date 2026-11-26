@@ -191,7 +191,11 @@ fn lsp_stdio_requests_answer_at_the_positions_of_the_unsaved_text() {
         .find(|symbol| symbol.0 == "top")
         .expect("top");
     assert_eq!(module.1, position_of(&top, "top(", 0));
-    assert_eq!(start_key(&module.2["start"]), module.1, "{answer}");
+    // The range is the whole declaration, at the places of the edited text.
+    let range = (start_key(&module.2["start"]), start_key(&module.2["end"]));
+    let (line, character) = position_of(&top, "endmodule", 0);
+    let end = (line, character + "endmodule".len() as u64);
+    assert_eq!(range, (position_of(&top, "module top", 0), end), "{answer}");
     for (name, needle) in [
         ("first", "first,"),
         ("second", "second;"),
@@ -373,6 +377,142 @@ fn lsp_stdio_an_edit_cancels_the_parse_of_the_older_text() {
     assert!(
         semantic_token_positions(&tokens).contains(&last),
         "{tokens}"
+    );
+    session.client.shutdown();
+}
+
+/// An escaped identifier (IEEE 1800-2009 5.6.1) is ranged from its backslash to
+/// the white space after it, also at the places of an unsaved edit.
+#[test]
+fn lsp_stdio_escaped_identifiers_are_ranged_whole() {
+    const ESCAPED: &str = "\
+module \\esc!m (input logic \\a+b , output logic q);
+  assign q = \\a+b ;
+endmodule
+module top;
+  logic \\a+b , q;
+  \\esc!m  u (.\\a+b (\\a+b ), .q(q));
+endmodule
+";
+    let mut session = Session::ready("unsaved-escaped", &[("top.sv", ESCAPED)]);
+    session.open("top.sv", ESCAPED);
+    for text in [ESCAPED.to_owned(), format!("// A note.\n\n{ESCAPED}")] {
+        session.change("top.sv", &text);
+        let lines: Vec<&str> = text.lines().collect();
+        let spelled = |range: &Value| -> String {
+            let line = range["start"]["line"].as_u64().expect("line") as usize;
+            let start = range["start"]["character"].as_u64().expect("start") as usize;
+            let end = range["end"]["character"].as_u64().expect("end") as usize;
+            assert_eq!(range["end"]["line"], range["start"]["line"], "{range}");
+            lines[line][start..end].to_owned()
+        };
+        let mut params = session.at("top.sv", &text, "a+b ;", 0);
+        params["context"] = json!({ "includeDeclaration": true });
+        let references = session.ask("textDocument/references", params);
+        let found: Vec<String> = references
+            .as_array()
+            .expect("references")
+            .iter()
+            .map(|location| spelled(&location["range"]))
+            .collect();
+        assert_eq!(found, ["\\a+b", "\\a+b", "\\a+b"], "{references}");
+        let at = session.at("top.sv", &text, "esc!m  u", 0);
+        let definition = session.ask("textDocument/definition", at);
+        assert_eq!(spelled(&definition["range"]), "\\esc!m", "{definition}");
+        let symbols = session.ask("textDocument/documentSymbol", session.document("top.sv"));
+        let module = symbols
+            .as_array()
+            .expect("symbols")
+            .iter()
+            .find(|symbol| symbol["name"] == "esc!m")
+            .expect("the escaped module");
+        assert_eq!(spelled(&module["selectionRange"]), "\\esc!m", "{module}");
+        let explorer = session.ask("llg/moduleExplorer", json!({}));
+        let explored = |range: &Value| {
+            spelled(&json!({
+                "start": { "line": range["startLine"], "character": range["startCharacter"] },
+                "end": { "line": range["endLine"], "character": range["endCharacter"] },
+            }))
+        };
+        let instance = explorer["roots"]
+            .as_array()
+            .expect("roots")
+            .iter()
+            .flat_map(|root| root["children"].as_array().into_iter().flatten())
+            .find(|child| child["instanceName"] == "u")
+            .expect("the instance");
+        assert_eq!(explored(&instance["range"]), "\\esc!m", "{instance}");
+        let module = explorer["modules"]
+            .as_array()
+            .expect("modules")
+            .iter()
+            .find(|module| module["name"] == "esc!m")
+            .expect("the escaped module");
+        assert_eq!(explored(&module["range"]), "\\esc!m", "{module}");
+    }
+    session.client.shutdown();
+}
+
+/// An edit moves the places that the module explorer shows: the client is told
+/// once a burst of edits pauses, and the explorer then answers at the new
+/// places.
+#[test]
+fn lsp_stdio_edits_tell_explorer_clients_once_they_pause() {
+    let mut session = Session::ready("unsaved-explorer", &[("top.sv", TOP), ("sub.sv", SUB)]);
+    session.open("top.sv", TOP);
+    let moved = "event=module_explorer.moved";
+    assert!(session.logged(&[moved]).is_empty());
+    for lines in 1..=3 {
+        let text = format!("{}{TOP}", "// A note.\n".repeat(lines));
+        assert_eq!(session.change("top.sv", &text), "admitted");
+    }
+    session.wait_logged(&[moved], 1);
+    // Longer than the server's delay: no other notice follows.
+    thread::sleep(Duration::from_millis(900));
+    assert_eq!(session.logged(&[moved]).len(), 1);
+    let query = json!({ "query": "no such symbol" });
+    session.ask("workspace/symbol", query);
+    let notices = session
+        .client
+        .notifications
+        .iter()
+        .filter(|message| message["method"] == "llg/moduleExplorerChanged")
+        .count();
+    assert!(notices >= 1, "no llg/moduleExplorerChanged");
+    let explorer = session.ask("llg/moduleExplorer", json!({}));
+    let top = explorer["modules"]
+        .as_array()
+        .expect("modules")
+        .iter()
+        .find(|module| module["name"] == "top")
+        .expect("top");
+    assert_eq!(top["range"]["startLine"], json!(4), "{top}");
+    session.client.shutdown();
+}
+
+/// The outline of an edited document lists the design units that only its
+/// unsaved text declares, at their places, and no declaration whose listing
+/// depends on a scope that the isolated parse does not tell.
+#[test]
+fn lsp_stdio_the_outline_lists_unsaved_design_units() {
+    let mut session = Session::ready("unsaved-outline", &[("top.sv", TOP), ("sub.sv", SUB)]);
+    session.open("top.sv", TOP);
+    let text = format!("// A note.\n{TOP}package fresh_pkg;\n  int fresh_var;\nendpackage\n");
+    assert_eq!(session.change("top.sv", &text), "admitted");
+    let answer = session.ask("textDocument/documentSymbol", session.document("top.sv"));
+    let mut symbols = Vec::new();
+    flatten(&answer, &mut symbols);
+    let found = symbols.iter().find(|symbol| symbol.0 == "fresh_pkg");
+    let found = found.unwrap_or_else(|| panic!("fresh_pkg in {answer}"));
+    assert_eq!(found.1, position_of(&text, "fresh_pkg", 0), "{answer}");
+    let top = symbols
+        .iter()
+        .find(|symbol| symbol.0 == "top")
+        .expect("top");
+    assert_eq!(top.1, position_of(&text, "top(", 0), "{answer}");
+    assert!(
+        symbols.iter().all(|symbol| symbol.0 != "fresh_var"),
+        "{answer}"
     );
     session.client.shutdown();
 }

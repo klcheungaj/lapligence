@@ -277,3 +277,47 @@ fn type_only_detail_helpers_degrade_without_guessing() {
     };
     assert_eq!(signal_type_only(&sig).as_deref(), Some("array logic [7:0]"));
 }
+
+/// The range of a design unit, class or subroutine is its whole declaration,
+/// which holds its name, the selection range.
+#[test]
+fn document_symbols_range_over_whole_declarations() {
+    let text = "\
+package p;
+  class C;
+    function void step(); endfunction
+  endclass : C
+endpackage
+(* keep *) module m(input logic clk);
+  task automatic run();
+  endtask
+endmodule : m
+";
+    let a = analyze_sources(&[("/x/d.sv", text)]);
+    let symbols = document_symbols(&a, hp("/x/d.sv"));
+    let mut found = Vec::new();
+    fn walk<'s>(symbols: &'s [DocumentSymbol], found: &mut Vec<&'s DocumentSymbol>) {
+        for symbol in symbols {
+            found.push(symbol);
+            walk(symbol.children.as_deref().unwrap_or_default(), found);
+        }
+    }
+    walk(&symbols, &mut found);
+    let range = |name: &str| {
+        let symbol = found
+            .iter()
+            .find(|symbol| symbol.name == name)
+            .unwrap_or_else(|| panic!("{name} in {symbols:?}"));
+        let at = |position: Position| (position.line, position.character);
+        let name = (
+            at(symbol.selection_range.start),
+            at(symbol.selection_range.end),
+        );
+        (at(symbol.range.start), at(symbol.range.end), name)
+    };
+    assert_eq!(range("p"), ((0, 0), (4, 10), ((0, 8), (0, 9))));
+    assert_eq!(range("C"), ((1, 2), (3, 14), ((1, 8), (1, 9))));
+    assert_eq!(range("step"), ((2, 4), (2, 37), ((2, 18), (2, 22))));
+    assert_eq!(range("m"), ((5, 0), (8, 13), ((5, 18), (5, 19))));
+    assert_eq!(range("run"), ((6, 2), (7, 9), ((6, 17), (6, 20))));
+}

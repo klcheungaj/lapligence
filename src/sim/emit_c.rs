@@ -23,6 +23,15 @@ pub const LLG_WIDTH_LIMIT: u32 = 1 << 20;
 pub const VALUE_ABI_VERSION: u32 = 4;
 /// Largest width supported by this C backend.
 pub const LLG_MAX_WIDTH: u32 = LLG_WIDTH_LIMIT - 1;
+/// Structure and union definitions that generated C nests in one another,
+/// counting the outermost. C11 5.2.4.1 guarantees "63 levels of nested
+/// structure or union definitions in a single struct-declaration-list";
+/// counted with the outermost definition, the C stays within that however a
+/// compiler counts. MSVC refuses the 65th level (C1046). Only coroutine
+/// frames nest definitions as deep as the source nests blocks: each overlay of
+/// sibling blocks takes a `union` and a `struct`, and a frame names the
+/// overlaid structs that would go deeper (`frame_layout.rs`).
+pub const MAX_NESTED_DEFINITIONS: usize = 63;
 
 /// The legacy fragment APIs cannot represent ordered ownership setup/cleanup.
 /// Whole-model emission uses `owned::Frame` and rejects unmigrated features.
