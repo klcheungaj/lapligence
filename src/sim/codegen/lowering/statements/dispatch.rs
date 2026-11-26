@@ -84,6 +84,18 @@ impl EmitCtx<'_, '_> {
     ) -> (Vec<NodeId>, Option<(NodeId, Vec<NodeId>)>) {
         let operands = self.cg.statement_hoisting_operands(h);
         let hoists = self.cg.hoisted_assignment_nodes(&operands);
+        // The whole variable a simple assignment writes is not read.
+        let target = match self.cg.kind(h) {
+            NodeKind::Stmt(StmtKind::Assign {
+                op: Operation::Assignment,
+                ..
+            }) => operands
+                .first()
+                .copied()
+                .filter(|lhs| matches!(self.cg.kind(*lhs), NodeKind::Expr(ExprKind::Ref { .. }))),
+            _ => None,
+        };
+        let hoists = self.cg.observable_hoists(&operands, target, hoists);
         let note = (!hoists.is_empty()).then(|| (h, hoists.clone()));
         (hoists, std::mem::replace(&mut self.cg.pending_hoists, note))
     }

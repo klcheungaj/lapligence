@@ -16,7 +16,20 @@
 //! condition. An operand that may be skipped or that is evaluated per element
 //! (of `?:`, `&&`, `||`, `->`, `inside`, an array method's `with` clause)
 //! keeps the assignments it holds in place. Increments and decrements run in
-//! place.
+//! place. Where nothing else of the expression reads storage or calls a
+//! subroutine, the assignments run in place, which is the same order.
+//!
+//! A set with a member that has an effect is scanned member by member
+//! (EO-D2, `Codegen::lower_inside_in_order`). An input actual with an effect
+//! before an inout or `ref` actual is evaluated before that actual is copied
+//! in or bound (EO-D3, [`Codegen::early_actuals_until`]). A computed handle a
+//! class property is selected through is evaluated where its use starts, an
+//! element target after the right-hand side and a whole-property one before
+//! it (EO-D4, [`Codegen::source_before_target`],
+//! [`Codegen::target_handle_first`]); the uses after an effect are found by
+//! the walk the views of interface members share
+//! (`Codegen::uses_after_effects_with`). The rules and the forms they leave
+//! out are recorded in `docs/lrm_decisions.md`.
 
 use super::*;
 use crate::sim::ir::{IrObjectStmt, IrStringExpr};
@@ -133,9 +146,9 @@ impl Codegen<'_> {
                 }
                 continue;
             }
-            let operands = self.hoisting_operands(node);
             pending.push((node, true));
-            pending.extend(operands.into_iter().rev().map(|operand| (operand, false)));
+            let operands = self.hoisting_operands(node);
+            pending.extend(operands.iter().rev().map(|operand| (*operand, false)));
         }
         out
     }
@@ -145,7 +158,7 @@ impl Codegen<'_> {
     /// or of an operator that may skip or repeat its operands, the receiver
     /// alone of an array method with a `with` clause, and the target of a
     /// copied-out actual.
-    fn hoisting_operands(&self, node: NodeId) -> Vec<NodeId> {
+    fn hoisting_operands(&self, node: NodeId) -> &[NodeId] {
         match self.kind(node) {
             NodeKind::Stmt(_)
             | NodeKind::Expr(ExprKind::Conditional { .. })
@@ -159,20 +172,22 @@ impl Codegen<'_> {
                     | Operation::OverloadUpdate
                     | Operation::OverloadPostUpdate,
                 ..
-            }) => Vec::new(),
+            }) => &[],
             NodeKind::Expr(ExprKind::Operation { operands, .. }) if self.copy_out_wrapper(node) => {
-                operands.first().copied().into_iter().collect()
+                operands.get(..1).unwrap_or_default()
             }
             NodeKind::MethodCall { receiver, .. } if self.db.method_call_has_with_clause(node) => {
-                receiver.iter().copied().collect()
+                receiver.as_slice()
             }
-            _ => self.node(node).children.clone(),
+            _ => &self.node(node).children,
         }
     }
 
     /// Whether `node` is the assignment from the formal that the frontend
     /// wraps an output or inout actual in (its value is an empty argument).
     fn copy_out_wrapper(&self, node: NodeId) -> bool {
+        // The value is the formal's, converted to the actual's type when
+        // the two differ.
         matches!(
             self.kind(node),
             NodeKind::Expr(ExprKind::Operation {
@@ -180,9 +195,63 @@ impl Codegen<'_> {
                 operands,
                 ..
             }) if operands.get(1).is_some_and(|value| {
-                self.db.semantic_detail(*value) == Some("EmptyArgument")
+                self.db.semantic_detail(self.p30_unwrap_cast(*value)) == Some("EmptyArgument")
             })
         )
+    }
+
+    /// `hoists` (of `operands`) if running them first can be observed:
+    /// something else the operands read or call lies outside one of them.
+    /// `target` is a variable the statement only writes, as is the variable
+    /// an assignment of `hoists` writes. Otherwise they run in place, which
+    /// is the same order.
+    pub(in crate::sim::codegen) fn observable_hoists(
+        &self,
+        operands: &[NodeId],
+        target: Option<NodeId>,
+        hoists: Vec<NodeId>,
+    ) -> Vec<NodeId> {
+        if hoists.is_empty() {
+            return hoists;
+        }
+        let mut pending = operands.to_vec();
+        while let Some(node) = pending.pop() {
+            if Some(node) == target {
+                continue;
+            }
+            let children = &self.node(node).children;
+            match self.kind(node) {
+                NodeKind::Stmt(_)
+                | NodeKind::Expr(
+                    ExprKind::Constant { .. } | ExprKind::DataType | ExprKind::Unbounded,
+                ) => {}
+                NodeKind::Expr(ExprKind::Ref {
+                    target: Some(declaration),
+                }) if matches!(self.kind(*declaration), NodeKind::Param { .. }) => {}
+                NodeKind::Expr(ExprKind::Operation { operands, .. }) if hoists.contains(&node) => {
+                    let written = operands.first().filter(|first| {
+                        matches!(self.kind(**first), NodeKind::Expr(ExprKind::Ref { .. }))
+                    });
+                    pending.extend(operands.iter().filter(|operand| Some(*operand) != written));
+                }
+                NodeKind::Expr(
+                    ExprKind::Ref { .. } | ExprKind::HierPath { .. } | ExprKind::ScopeRef { .. },
+                )
+                | NodeKind::FuncCall { .. }
+                | NodeKind::MethodCall { .. }
+                | NodeKind::SysCall { .. } => {
+                    if hoists
+                        .iter()
+                        .any(|hoist| !self.nesting().contains(*hoist, node))
+                    {
+                        return hoists;
+                    }
+                    pending.extend(children.iter().copied());
+                }
+                _ => pending.extend(children.iter().copied()),
+            }
+        }
+        Vec::new()
     }
 
     /// Whether `node` is the target of a copied-out actual.
@@ -303,7 +372,7 @@ impl Codegen<'_> {
         node: NodeId,
         lower: impl FnOnce(&mut Self) -> Result<IrExpr, String>,
     ) -> Result<IrExpr, String> {
-        let nodes = self.hoisted_assignment_nodes(&[node]);
+        let nodes = self.observable_hoists(&[node], None, self.hoisted_assignment_nodes(&[node]));
         if nodes.is_empty() {
             return lower(self);
         }
@@ -357,25 +426,24 @@ impl Codegen<'_> {
         formals: &[(NodeId, bool)],
         bound: &[BoundArg],
     ) -> Option<usize> {
-        let mut effect = false;
-        let mut last = None;
-        for (idx, (io, _)) in formals.iter().enumerate() {
-            let NodeKind::FuncArg { direction, .. } = self.kind(*io) else {
-                continue;
-            };
-            match direction {
-                DbDirection::Inout | DbDirection::Ref if effect => last = Some(idx),
-                DbDirection::Input
-                    if bound.get(idx).is_some_and(|arg| {
+        let direction = |io: NodeId| match self.kind(io) {
+            NodeKind::FuncArg { direction, .. } => Some(*direction),
+            _ => None,
+        };
+        // Only the inputs before the last inout or `ref` actual matter.
+        let bindings = formals.iter().rposition(|(io, _)| {
+            matches!(direction(*io), Some(DbDirection::Inout | DbDirection::Ref))
+        })?;
+        formals[..bindings]
+            .iter()
+            .enumerate()
+            .any(|(idx, (io, _))| {
+                direction(*io) == Some(DbDirection::Input)
+                    && bound.get(idx).is_some_and(|arg| {
                         !arg.is_default && self.contains_evaluation_effect(arg.expr)
-                    }) =>
-                {
-                    effect = true
-                }
-                _ => {}
-            }
-        }
-        last
+                    })
+            })
+            .then_some(bindings)
     }
 
     /// Evaluate input actual `idx` of a call into temporary `name` when
@@ -501,19 +569,6 @@ impl Codegen<'_> {
 }
 
 impl Codegen<'_> {
-    /// Whether `node` is `root` or lies below it.
-    pub(in crate::sim::codegen) fn below(&self, mut node: NodeId, root: NodeId) -> bool {
-        loop {
-            if node == root {
-                return true;
-            }
-            match self.node(node).parent {
-                Some(parent) => node = parent,
-                None => return false,
-            }
-        }
-    }
-
     /// The target of blocking assignment `h` when the computed handles it
     /// is selected through are evaluated late (decision EO-D4): after the
     /// nested assignments the statement runs first, and for an element
@@ -586,9 +641,7 @@ impl Codegen<'_> {
         let [lhs, rhs] = self.node(h).children.as_slice() else {
             return None;
         };
-        if !self.contains_evaluation_effect(*rhs)
-            || self.computed_receiver_aliases.contains_key(lhs)
-        {
+        if self.computed_receiver_aliases.contains_key(lhs) {
             return None;
         }
         let mut node = *lhs;
@@ -623,7 +676,7 @@ impl Codegen<'_> {
             self.query_descriptor(node).map(|descriptor| &descriptor.shape),
             Some(TypeShape::Opaque { kind }) if kind == "Class"
         );
-        (node != *lhs && computed && class).then_some(node)
+        (node != *lhs && computed && class && self.contains_evaluation_effect(*rhs)).then_some(node)
     }
 
     /// Evaluate handle `node` ([`Self::target_handle_first`]) into a

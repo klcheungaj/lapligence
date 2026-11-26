@@ -70,7 +70,9 @@ before the statement or expression evaluation that uses it; the statement
 then lowers once against the view, as against lexical storage, so code size
 does not grow with the number of instances. A statement that may rebind the
 handle (a call, an assignment operator) reads a handle held in storage again
-at each use; a use through a computed handle (`va[k].a`) that such an effect
+at each use; a use through a computed handle (`va[k].a`, or `ca[k].v.a`,
+whose handle is a class property and so no storage the use can read again,
+decision EO-D4) that such an effect
 precedes in evaluation order gets a view of its own, bound once where the use
 starts (decision VM-D1): an `IrExprKind::Sequence` before a read, before the
 first selector of an element target or actual, which an untimed assignment

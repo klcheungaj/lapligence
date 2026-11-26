@@ -643,7 +643,11 @@ impl Codegen<'_> {
         // A handle that an effect of the statement precedes in evaluation
         // order is evaluated where its use starts (decision EO-D4).
         let placed = self.receiver_uses_after_effects(h, &computed);
-        let late_target = self.late_located_target(h);
+        let late_target = if computed.is_empty() {
+            None
+        } else {
+            self.late_located_target(h)
+        };
         let mut roots = Vec::new();
         for (node, scope) in computed.into_iter().rev() {
             let scope = match placed.iter().find(|(path, _)| *path == node) {
@@ -651,7 +655,7 @@ impl Codegen<'_> {
                     ReceiverScope::Operand(*start)
                 }
                 _ if scope == ReceiverScope::Statement
-                    && late_target.is_some_and(|target| self.below(node, target)) =>
+                    && late_target.is_some_and(|target| self.nesting().contains(target, node)) =>
                 {
                     ReceiverScope::Target
                 }

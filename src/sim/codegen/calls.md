@@ -2,7 +2,10 @@
 
 Capture each input once before dependent defaults. Preserve exact fixed activation
 payloads; automatic locals/returns are independent, static formals/locals/returns
-persist definition-wide. Input/inout copy in per call, output/inout copy out at
+persist definition-wide. Actuals evaluate left to right: an input with a call
+or assignment operator before an inout or `ref` actual is evaluated into a
+temporary first (decision EO-D3, `Codegen::early_actuals_until`), in both the
+statement and the expression call paths. Input/inout copy in per call, output/inout copy out at
 return as an assignment whose selectors, keys and handles are evaluated then
 (decision S13-D1, `TargetSelectors::AtCopyOut`; the emitter resolves the target
 after the callee returns). A whole class property, column-layout record
