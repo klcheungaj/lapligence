@@ -29,8 +29,11 @@ pub(super) struct DocumentRequest {
     served: Option<Served>,
     /// How the committed analysis' positions in the document moved.
     placement: Placement,
-    /// The document's path and the epoch of the committed analysis.
+    /// The analysis' name of the document's file and the epoch of the
+    /// committed analysis.
     pub(super) path: String,
+    /// The document's file, by the path of its URI.
+    real: PathBuf,
     pub(super) epoch: u64,
     pub(super) outcome: &'static str,
     root: RootKey,
@@ -69,6 +72,22 @@ impl DocumentRequest {
         }
     }
 
+    /// The outline of the document, at the places of its current text. An
+    /// edited one adds the declarations of its isolated parse that the
+    /// analysed text lacks.
+    pub(super) fn document_symbols(&self) -> Vec<DocumentSymbol> {
+        let Some(served) = &self.served else {
+            return Vec::new();
+        };
+        let symbols = features::document_symbols(&served.analysis, &self.path);
+        match &self.table {
+            DocumentTable::Isolated(identifiers) => {
+                positions::edited_symbols(&self.placement, symbols, identifiers)
+            }
+            DocumentTable::Committed => positions::current_symbols(&self.placement, symbols),
+        }
+    }
+
     /// The definitions of the name at `position` that the current texts have.
     pub(super) fn definitions_at(
         &self,
@@ -80,7 +99,7 @@ impl DocumentRequest {
                 let places = served.as_ref().map(|served| {
                     let mut places = Places::new(state, served);
                     // Its own targets are those of the text that was parsed.
-                    if let Ok(uri) = Url::from_file_path(&self.path) {
+                    if let Ok(uri) = Url::from_file_path(&self.real) {
                         places.hold_in(uri);
                     }
                     places
@@ -138,6 +157,11 @@ impl Backend {
             let root_key = root.descriptor.root.clone();
             span.set_root(|| root.descriptor.id.clone());
             let served = root.served();
+            // The analysis answers by its own name of the file.
+            let path = served
+                .as_ref()
+                .and_then(|served| state.analysed_name(root, &served.analysis, &real))
+                .unwrap_or(path);
             let epoch = root.analysis_epoch;
             let document = root.open_document(&state.documents, uri, &real);
             let max_file_bytes = root.descriptor.effective_config().analysis.max_file_bytes;
@@ -179,6 +203,7 @@ impl Backend {
                 outcome: "committed",
                 root: root_key,
                 open: document.is_some(),
+                real,
             };
             (request, document, max_file_bytes)
         };
@@ -195,8 +220,7 @@ impl Backend {
         let current = open_document_is_current(&self.state, uri, &text);
         request.settle(isolated, outcome, current);
         if let (false, Some(served)) = (current, &request.served) {
-            let path = Path::new(&request.path);
-            request.placement = self.lock_state().placement(&served.texts, path);
+            request.placement = self.lock_state().placement(&served.texts, &request.real);
         }
         Some(request)
     }
@@ -440,6 +464,7 @@ mod tests {
             outcome: "committed",
             root: RootKey::from("/r"),
             open: true,
+            real: PathBuf::from("/r/a.sv"),
         }
     }
 

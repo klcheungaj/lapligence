@@ -123,6 +123,12 @@ impl PositionMap {
         at.into_iter().chain(after)
     }
 
+    /// Whether the analysed text has the character at `position` of the
+    /// current text.
+    pub(crate) fn has_analysed(&self, position: Position) -> bool {
+        self.analysed_character(position).is_some()
+    }
+
     fn analysed_character(&self, position: Position) -> Option<Position> {
         let after = self
             .runs

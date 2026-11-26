@@ -686,7 +686,9 @@ The server compares the two texts and asks the analysis about what the user sees
   occur several times among the edited ones.
 - The semantic tokens and definitions of the edited file itself are those of its
   current text. Completion offers the names of the last analysis and up to 4096 that
-  the current text declares, read from its last isolated parse.
+  the current text declares, read from its last isolated parse. The outline also
+  lists up to 4096 modules, packages and classes that only the current text
+  declares, from the same parse.
 - A rename is refused until the save and its analysis.
 - 300 ms after the last edit of a file that the last analysis read, the server
   sends `llg/moduleExplorerChanged`, so that a client reads the module explorer

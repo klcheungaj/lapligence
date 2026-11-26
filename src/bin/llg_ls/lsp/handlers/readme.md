@@ -7,8 +7,8 @@ Blocking Slang work and filesystem isolation stay in scheduling/staging.
 - `scheduling`: jobs, debounce, rescans, config reloads and watchers.
 - `inputs`: the files the newest analysis of a root read, and the rules that
   decide from them whether an event starts another one.
-- `identifiers`: the one table that answers a document's semantic-token and
-  definition requests, and the isolated parses behind it.
+- `identifiers`: the one table that answers a document's semantic-token,
+  definition and outline requests, and the isolated parses behind it.
 - `positions`: the texts of the open documents beside those that the committed
   analyses compiled, and the positions between them (`../../position_map.rs`). An
   unedited document shares its text with the analysis, so a pointer comparison tells

@@ -4119,30 +4119,36 @@ Two files that both define `module dup_top;` with
 
 ## Symbol lists of the last analysis (llg_ls)
 
-**Status:** found by FIN-002 step 4 (failure matrix); not fixed. The places of the
+**Status:** found by FIN-002 step 4 (failure matrix); partly fixed. The places of the
 listed symbols follow unsaved edits
-([positions in edited files](config.md#positions-in-edited-files)).
+([positions in edited files](config.md#positions-in-edited-files)), and the outline
+of an edited document also lists the modules, packages and classes that only its
+unsaved text declares.
 
 ### Symptom
 
-`textDocument/documentSymbol`, `workspace/symbol` and `llg/moduleExplorer` list the
-symbols of the last analysis, which an edit does not start. An editor asks for the
-outline after each change, so it lacks a declaration that was typed since the save,
-until the first change after the edit was saved and analysed.
+`textDocument/documentSymbol` lacks the other declarations typed since the save
+(ports, signals, functions, the members of a new class), and `workspace/symbol` and
+`llg/moduleExplorer` lack all of them. After the save and its analysis, an editor
+shows the old outline until it asks again, which it does on its next change.
 
 ### Cause
 
-They answer from `last_good`. Nothing asks the editor to read the outline again after
-the analysis.
+The lists come from `last_good`. The isolated parse of a document gives the names,
+kinds and places of its declarations but not their scopes, which decide whether the
+outline lists one (a variable of a module is listed, one of a package is not). LSP
+3.17 has no request that asks the client to read document symbols again: it has
+refresh requests for semantic tokens, inlay hints, inline values, code lenses and
+diagnostics only.
 
 ### Intended direction
 
-Answer `documentSymbol` for an edited document from its isolated parse, as tokens
-and definitions are, and let a request that follows a save wait for the analysis
-(a notification of the root's commits, with the request's cancellation and a
-bound).
+Give the isolated parse's declarations their scopes, so that the outline lists them
+as the analysis would; and let a `documentSymbol` request that follows a save wait
+for the analysis (a notification of the root's commits, with the request's
+cancellation and a bound).
 
 ### Reproduce
 
-Open a file with a module, send `textDocument/didChange` with another module added
-below it and `textDocument/documentSymbol`.
+Open a file with a module, send `textDocument/didChange` that adds a port to it, and
+`textDocument/documentSymbol`.

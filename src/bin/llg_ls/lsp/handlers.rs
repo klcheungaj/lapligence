@@ -1219,21 +1219,13 @@ impl LanguageServer for Backend {
             crate::logging::LifecycleSpan::request("textDocument/documentSymbol", || {
                 Self::log_uri_identity(&params.text_document.uri)
             });
-        let Some(query) = self.query(&params.text_document.uri, &mut request) else {
+        let uri = &params.text_document.uri;
+        let Some(document) = self.document_request(uri, false, &mut request).await else {
             return Ok(None);
         };
-        let Some(served) = query.served else {
-            return Ok(None);
-        };
-        let Query {
-            path, placement, ..
-        } = query;
-        let symbols = blocking("documentSymbol", move || {
-            let symbols = features::document_symbols(&served.analysis, &path);
-            positions::current_symbols(&placement, symbols)
-        })
-        .await
-        .unwrap_or_default();
+        let symbols = blocking("documentSymbol", move || document.document_symbols())
+            .await
+            .unwrap_or_default();
         if symbols.is_empty() {
             request.complete("no-data", 0);
             Ok(None)

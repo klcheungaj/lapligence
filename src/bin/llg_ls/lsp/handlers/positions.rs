@@ -215,6 +215,16 @@ impl Placement {
         }
     }
 
+    /// Whether the analysed text has the character at `position` of the
+    /// document.
+    fn has_analysed(&self, position: Position) -> bool {
+        match self {
+            Self::Same => true,
+            Self::Edited(pair) => pair.map().has_analysed(position),
+            Self::Unknown => false,
+        }
+    }
+
     /// Where the analysed identifier `name` is now.
     fn current_name(&self, range: Range, name: &str) -> Option<Range> {
         let place = self.current(range)?;
@@ -294,7 +304,12 @@ impl BackendState {
     /// The name by which `analysis`, the last of root `root`, read the file of
     /// open document `path`, when that is another spelling of it: either went
     /// through a symbolic link.
-    fn analysed_name(&self, root: &RootState, analysis: &Analysis, path: &Path) -> Option<String> {
+    pub(super) fn analysed_name(
+        &self,
+        root: &RootState,
+        analysis: &Analysis,
+        path: &Path,
+    ) -> Option<String> {
         let identity = self.documents.aliased(path).map_or(path, PathBuf::as_path);
         let aliases = root
             .input_aliases
@@ -666,6 +681,20 @@ pub(super) fn current_symbols(
         }
     }
     placed
+}
+
+/// The outline of an edited document: the analysis' `symbols` at their places
+/// in the current text ([`current_symbols`]), and beside them the declarations
+/// of the isolated parse of that text whose names the analysed text lacks
+/// ([`features::DocumentIdentifiers::declaration_symbols`]).
+pub(super) fn edited_symbols(
+    placement: &Placement,
+    symbols: Vec<DocumentSymbol>,
+    identifiers: &features::DocumentIdentifiers,
+) -> Vec<DocumentSymbol> {
+    let mut symbols = current_symbols(placement, symbols);
+    symbols.extend(identifiers.declaration_symbols(|range| !placement.has_analysed(range.start)));
+    symbols
 }
 
 /// The symbols that match `query`, once per place.

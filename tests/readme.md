@@ -902,8 +902,10 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
 - `lsp_stdio/unsaved_positions.rs`: every request about documents with unsaved
   edits answers at the positions of the visible text or not at all; cached answers
   survive an edit above them, an edit cancels the isolated parse of the older
-  text, and a burst of edits sends one `llg/moduleExplorerChanged`. `lsp/handlers/positions/tests.rs` compares random edits with a server in the
-  same process that analysed the edited text.
+  text, a burst of edits sends one `llg/moduleExplorerChanged`, and the outline
+  lists the design units of the unsaved text. `lsp/handlers/positions/tests.rs`
+  compares random edits with a server in the same process that analysed the
+  edited text.
 - Failed compiles keep last-good navigation. Non-syntax errors with surviving data
   keep features; syntax-broken roots keep declaration symbols/hover where
   possible, fatal-only roots do not. Watched fixes upgrade analysis. A

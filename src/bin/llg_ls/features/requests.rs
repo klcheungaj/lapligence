@@ -218,8 +218,9 @@ pub(super) fn semantic_file_matches(left: &str, right: &str) -> bool {
     }
 }
 
-/// Names of one edited document that completion offers besides those of the
-/// analysis. The ones declared after them are not offered before a save.
+/// Names (for completion) and declarations (for the outline) of one edited
+/// document that its isolated parse adds to those of the analysis. The ones
+/// declared after them are not offered before a save.
 const MAX_DECLARED_NAMES: usize = 4096;
 
 /// A name that an edited document declares.
@@ -259,22 +260,54 @@ impl DocumentIdentifiers {
         })
     }
 
+    /// The declarations of the document, in the order of the text: the
+    /// tokens of the declared names, with the kind of each.
+    fn declarations(&self) -> impl Iterator<Item = (&TokenInfo, SymKind, &str)> {
+        self.nodes.iter().filter_map(|token| {
+            let class = tokens::token_class(token.kind);
+            if !class.declaration || class.macro_body || class.undeclared {
+                return None;
+            }
+            let (kind, _) = classify_token(token.kind, true)?;
+            let name = token.name.as_deref().map(clean_name)?;
+            (!name.is_empty()).then_some((token, kind, name))
+        })
+    }
+
+    /// The declarations of the document whose names `new` takes, as outline
+    /// entries: at most [`MAX_DECLARED_NAMES`], and only of the kinds that
+    /// [`document_symbols`] lists wherever they are declared. The parse does
+    /// not tell the scope of the others (a variable of a module is listed, one
+    /// of a package is not), and an entry that the analysis of the saved text
+    /// would not list is wrong.
+    #[allow(deprecated)] // `DocumentSymbol::deprecated` is deprecated in lsp-types
+    pub(crate) fn declaration_symbols(
+        &self,
+        mut new: impl FnMut(Range) -> bool,
+    ) -> Vec<DocumentSymbol> {
+        self.declarations()
+            .filter(|(_, kind, _)| outlined_anywhere(*kind))
+            .filter(|(token, _, _)| new(token_range(token)))
+            .take(MAX_DECLARED_NAMES)
+            .map(|(token, kind, name)| DocumentSymbol {
+                name: name.to_owned(),
+                detail: None,
+                kind: sym_kind_to_lsp(kind),
+                tags: None,
+                deprecated: None,
+                range: token_range(token),
+                selection_range: token_range(token),
+                children: None,
+            })
+            .collect()
+    }
+
     /// The names that the document declares, in the order of the text.
     pub(crate) fn declared_names(&self) -> Vec<DeclaredName> {
         let mut seen = HashSet::new();
         let mut names = Vec::new();
-        for token in &self.nodes {
-            let class = tokens::token_class(token.kind);
-            if !class.declaration || class.macro_body || class.undeclared {
-                continue;
-            }
-            let Some((kind, _)) = classify_token(token.kind, true) else {
-                continue;
-            };
-            let Some(name) = token.name.as_deref().map(clean_name) else {
-                continue;
-            };
-            if !name.is_empty() && seen.insert(name) {
+        for (_, kind, name) in self.declarations() {
+            if seen.insert(name) {
                 names.push(DeclaredName {
                     name: name.to_owned(),
                     kind,
@@ -1176,6 +1209,11 @@ pub fn document_symbols(a: &Analysis, file: &str) -> Vec<DocumentSymbol> {
         }
     }
     out
+}
+
+/// Whether [`document_symbols`] lists every definition of `kind` in a file.
+fn outlined_anywhere(kind: SymKind) -> bool {
+    matches!(kind, SymKind::Module | SymKind::Package | SymKind::Class)
 }
 
 /// A `DocumentSymbol` for a function/task definition (flat: no argument

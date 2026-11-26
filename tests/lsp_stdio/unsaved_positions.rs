@@ -485,3 +485,30 @@ fn lsp_stdio_edits_tell_explorer_clients_once_they_pause() {
     assert_eq!(top["range"]["startLine"], json!(4), "{top}");
     session.client.shutdown();
 }
+
+/// The outline of an edited document lists the design units that only its
+/// unsaved text declares, at their places, and no declaration whose listing
+/// depends on a scope that the isolated parse does not tell.
+#[test]
+fn lsp_stdio_the_outline_lists_unsaved_design_units() {
+    let mut session = Session::ready("unsaved-outline", &[("top.sv", TOP), ("sub.sv", SUB)]);
+    session.open("top.sv", TOP);
+    let text = format!("// A note.\n{TOP}package fresh_pkg;\n  int fresh_var;\nendpackage\n");
+    assert_eq!(session.change("top.sv", &text), "admitted");
+    let answer = session.ask("textDocument/documentSymbol", session.document("top.sv"));
+    let mut symbols = Vec::new();
+    flatten(&answer, &mut symbols);
+    let found = symbols.iter().find(|symbol| symbol.0 == "fresh_pkg");
+    let found = found.unwrap_or_else(|| panic!("fresh_pkg in {answer}"));
+    assert_eq!(found.1, position_of(&text, "fresh_pkg", 0), "{answer}");
+    let top = symbols
+        .iter()
+        .find(|symbol| symbol.0 == "top")
+        .expect("top");
+    assert_eq!(top.1, position_of(&text, "top(", 0), "{answer}");
+    assert!(
+        symbols.iter().all(|symbol| symbol.0 != "fresh_var"),
+        "{answer}"
+    );
+    session.client.shutdown();
+}
