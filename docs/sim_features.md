@@ -398,8 +398,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
   Module and static subroutine native records accept untimed/delayed NBAs,
   including records with container members (decision S07-D5), continuous
   assignments and conditional merges (SIM-004). Fixed arrays of strings, class/chandle
-  handles and native records are fixed-size views of the recursive container
-  runtime in module, static, subroutine and port storage: run-time selects,
+  handles, native records and queues, dynamic or associative arrays (`int
+  q[2][$]`) are fixed-size views of the recursive container
+  runtime in module, static, subroutine and port storage, with any declared
+  range: run-time selects,
   slices, patterns, whole copies, equality, ambiguous conditional merges and
   untimed or `#delay` NBAs act on owned elements, and on members of elements
   (decision S07-D4); event controls and bit/part selects reach those members,
@@ -1231,7 +1233,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   null and comparison execute. Nonblocking triggers name their event at issue
   and do not suspend the issuer; `.triggered` holds for the time step and is
   false for null (S14-D9); waiting on a null event ends the run (S14-D8);
-  scalar declaration initializers (an event or `null`) execute in every scope;
+  scalar declaration initializers (an event or `null`) execute in every scope,
+  and initializers of module, package and class event arrays assign their
+  elements; event arrays declared in subroutines, and fixed ones in procedural
+  blocks, are located errors (known issue);
   events test false only when null; `wait_order` lets its
   first event use the triggered state, and a failure without an `else` is a
   run-time error that ends the run at once, without final procedures
