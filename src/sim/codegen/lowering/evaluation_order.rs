@@ -104,27 +104,27 @@ impl Codegen<'_> {
     /// operands of an expression statement, a returned value, the condition
     /// of an `if` without `&&&`, a `case` selector and a `repeat` count. A
     /// loop condition is hoisted per evaluation by its loop.
-    pub(in crate::sim::codegen) fn statement_hoisting_operands(&self, h: NodeId) -> Vec<NodeId> {
+    pub(in crate::sim::codegen) fn statement_hoisting_operands(&self, h: NodeId) -> &[NodeId] {
         let children = &self.node(h).children;
         match self.kind(h) {
-            NodeKind::Stmt(StmtKind::Assign { .. }) => children.iter().take(2).copied().collect(),
-            NodeKind::Stmt(StmtKind::Return { value }) => value.iter().copied().collect(),
+            NodeKind::Stmt(StmtKind::Assign { .. }) => &children[..children.len().min(2)],
+            NodeKind::Stmt(StmtKind::Return { value }) => value.as_slice(),
             NodeKind::Stmt(StmtKind::IfElse { predicate, .. }) => {
                 match predicate.clauses.as_slice() {
-                    [clause] if clause.pattern.is_none() => vec![clause.expression],
-                    _ => Vec::new(),
+                    [clause] if clause.pattern.is_none() => {
+                        std::slice::from_ref(&clause.expression)
+                    }
+                    _ => &[],
                 }
             }
-            NodeKind::Stmt(StmtKind::Case { .. }) => {
-                children.first().copied().into_iter().collect()
-            }
-            NodeKind::Stmt(StmtKind::Repeat { cond, .. }) => vec![*cond],
-            NodeKind::FuncCall { .. } | NodeKind::MethodCall { .. } => children.clone(),
+            NodeKind::Stmt(StmtKind::Case { .. }) => children.get(..1).unwrap_or_default(),
+            NodeKind::Stmt(StmtKind::Repeat { cond, .. }) => std::slice::from_ref(cond),
+            NodeKind::FuncCall { .. } | NodeKind::MethodCall { .. } => children,
             NodeKind::SysCall { name } if !super::statements::deferred_display_task(name) => {
-                children.clone()
+                children
             }
-            NodeKind::Expr(ExprKind::Operation { operands, .. }) => operands.clone(),
-            _ => Vec::new(),
+            NodeKind::Expr(ExprKind::Operation { operands, .. }) => operands,
+            _ => &[],
         }
     }
 
@@ -134,6 +134,17 @@ impl Codegen<'_> {
         &self,
         operands: &[NodeId],
     ) -> Vec<NodeId> {
+        // Most statements hold none: find one before ordering them.
+        let mut pending = operands.to_vec();
+        loop {
+            let Some(node) = pending.pop() else {
+                return Vec::new();
+            };
+            if self.hoistable_assignment(node) {
+                break;
+            }
+            pending.extend_from_slice(self.hoisting_operands(node));
+        }
         let mut out = Vec::new();
         // Post-order, left to right: an assignment after those its own
         // operands hold. `true` marks a node whose operands are done.
