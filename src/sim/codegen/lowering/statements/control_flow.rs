@@ -52,7 +52,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
         cond_node: NodeId,
         body_node: NodeId,
     ) -> Result<Vec<IrStmt>, String> {
-        let cond = self.cg.lower_boolean_expr(&self.path, cond_node)?;
+        let cond = self.lower_loop_condition(cond_node)?;
         let brk = self.new_label("bk");
         let cont = self.new_label("ct");
         self.ctrl.push(CtrlScope::Loop {
@@ -772,10 +772,20 @@ impl EmitCtx<'_, '_> {
 
             let path = &self.path;
             let condition = self.cg.with_set_arrays(|cg| {
+                let items = cg.lower_inside_items(path, &item.exprs)?;
+                // An item with an effect at its place compares in member
+                // order (decision EO-D2).
+                if item
+                    .exprs
+                    .iter()
+                    .any(|expression| cg.in_place_member_effect(*expression))
+                {
+                    return Codegen::inside_in_order(path, &selector_read, items);
+                }
                 Ok(IrExpr::new(
                     IrExprKind::Inside {
                         value: Box::new(selector_read.clone()),
-                        items: cg.lower_inside_items(path, &item.exprs)?,
+                        items,
                     },
                     1,
                     false,
@@ -938,7 +948,7 @@ impl EmitCtx<'_, '_> {
             });
         }
         let init_stmts = self.lower_for_initializers(&init)?;
-        let cond_ir = self.cg.lower_boolean_expr(&self.path, cond)?;
+        let cond_ir = self.lower_loop_condition(cond)?;
         let (body_stmts, brk) = self.lower_loop_body(body)?;
         let incr_stmts = self.lower_for_steps(&incr)?;
         // `continue` must run the increment before the condition test: its
@@ -968,14 +978,28 @@ impl EmitCtx<'_, '_> {
         item: NodeId,
         lower: impl FnOnce(&mut Self) -> Result<IrStmt, String>,
     ) -> Result<IrStmt, String> {
-        let Some(mut statements) = self.cg.stage_interface_views(&self.path, item, false)? else {
-            return lower(self);
-        };
-        let lowered = lower(self);
-        let ended = self.cg.end_interface_views();
-        statements.push(lowered?);
-        ended?;
-        Ok(IrStmt::Block(statements))
+        // The item runs its nested assignments first, as a statement does
+        // (decision EO-D1).
+        let (hoists, outer_hoists) = self.begin_hoisting(item);
+        let staged = self.cg.stage_interface_views(&self.path, item, false);
+        let lowered = staged.and_then(|staged| {
+            let lowered =
+                self.lower_hoisted(&hoists, |ctx| lower(ctx).map(|statement| vec![statement]));
+            let Some(mut statements) = staged else {
+                return lowered;
+            };
+            let ended = self.cg.end_interface_views();
+            statements.extend(lowered?);
+            ended?;
+            Ok(vec![IrStmt::Block(statements)])
+        });
+        self.cg.pending_hoists = outer_hoists;
+        let mut lowered = lowered?;
+        Ok(if lowered.len() == 1 {
+            lowered.remove(0)
+        } else {
+            IrStmt::Block(lowered)
+        })
     }
 
     fn lower_for_initializers(&mut self, init: &[NodeId]) -> Result<Vec<IrStmt>, String> {

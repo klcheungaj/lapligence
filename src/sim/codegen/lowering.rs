@@ -292,6 +292,7 @@ fn sorted_node_set(nodes: &HashSet<NodeId>) -> Vec<NodeId> {
 mod assertion_context;
 mod clocking_context;
 mod delays;
+mod evaluation_order;
 mod initialization;
 mod nesting;
 mod net_delay_layout;
@@ -1419,6 +1420,10 @@ enum ReceiverScope {
     Operand(NodeId),
     /// Below a nested statement, which is prepared on its own.
     Body,
+    /// Of the target of an assignment, evaluated after the nested
+    /// assignments the statement runs first and, for an element target,
+    /// after the right-hand side (decision EO-D4).
+    Target,
 }
 
 #[derive(Clone, Copy)]
@@ -2024,6 +2029,14 @@ struct Codegen<'a> {
     hoisted_values: HashMap<NodeId, HoistedValue>,
     /// The source node of the statement's hoisted value.
     hoisted_source: Option<NodeId>,
+    /// Nested assignment operators that run before the other operands of
+    /// their expression (decision EO-D1), with whether a lowering has read
+    /// the value each left (`Codegen::hoist_assignments`).
+    hoisted_assignments: HashMap<NodeId, bool>,
+    /// The statement being prepared and the nested assignments it will run
+    /// before its other operands, for the evaluation-order walks of its
+    /// stagings.
+    pending_hoists: Option<(NodeId, Vec<NodeId>)>,
     /// Whether any container element type holds a record with a queue or
     /// dynamic-array member (or nests a container), so expressions may need
     /// read-only element staging; false keeps the scan off every other
@@ -2338,6 +2351,10 @@ struct Codegen<'a> {
     computed_receiver_aliases: HashMap<NodeId, ReceiverAlias>,
     /// Declarations of the computed handles of the statement being lowered.
     receiver_prelude: Vec<IrStmt>,
+    /// Declarations of the computed handles of the target of the
+    /// assignment being lowered that it locates late
+    /// ([`ReceiverScope::Target`]).
+    target_receivers: Vec<IrStmt>,
     /// Declarations of computed handles of operands evaluated lazily or
     /// repeatedly, run at each evaluation of the operand.
     receiver_roots: HashMap<NodeId, Vec<IrStmt>>,
@@ -2790,6 +2807,8 @@ impl<'a> Codegen<'a> {
             no_called_selectors: std::cell::Cell::new(false),
             hoisted_values: HashMap::new(),
             hoisted_source: None,
+            hoisted_assignments: HashMap::new(),
+            pending_hoists: None,
             element_staging_possible: false,
             deferred_display_args: false,
             deferred_prelude: Vec::new(),
@@ -2893,6 +2912,7 @@ impl<'a> Codegen<'a> {
             computed_receivers: HashMap::new(),
             computed_receiver_aliases: HashMap::new(),
             receiver_prelude: Vec::new(),
+            target_receivers: Vec::new(),
             receiver_roots: HashMap::new(),
             call_operand_scope: None,
             call_operand_prelude: None,
@@ -3773,6 +3793,10 @@ struct EmitCtx<'c, 'a> {
     /// through a computed handle (decision VM-D1): they run after the
     /// control, where the target is located, in the write's scope.
     placed_target_bindings: Vec<IrStmt>,
+    /// The computed handles of the element target of the assignment being
+    /// lowered, which it evaluates after its right-hand side (decision
+    /// EO-D4, [`Codegen::source_before_target`]).
+    late_target_receivers: Vec<IrStmt>,
     /// Exact process kind for the root process being lowered. Nested
     /// function/task contexts leave this unset; it distinguishes plain
     /// `always @*` from the SystemVerilog implicit-sensitivity forms.

@@ -78,6 +78,9 @@ enum StagedBinding {
 enum OrderStep {
     /// Evaluate the node.
     Visit(NodeId),
+    /// Run a nested assignment that the statement runs before its other
+    /// operands (decision EO-D1); its own place reads the value it left.
+    Hoisted(NodeId),
     /// The effect of an enclosing node has happened.
     Effect,
     /// A called subroutine copies its formal out to this actual.
@@ -160,7 +163,7 @@ impl Codegen<'_> {
         }
         let mut written = Vec::new();
         self.interface_view_writes(root, &mut written);
-        let refresh = refresh || self.may_rebind_handles(root);
+        let refresh = refresh || self.has_evaluation_effect(root);
         let placed = if refresh {
             self.uses_after_effects(root, &uses)
         } else {
@@ -347,7 +350,7 @@ impl Codegen<'_> {
         };
         if let Some(handle) = lowered
             .as_ref()
-            .filter(|handle| !Self::rearmable_handle(handle))
+            .filter(|handle| !self.read_again_at_use(handle))
         {
             let (view, binding) =
                 self.new_interface_view(path, node, &target, slot, handle.clone(), false)?;
@@ -372,6 +375,25 @@ impl Codegen<'_> {
         }
         views.push((node, view.clone()));
         Ok(Some((view, StagedBinding::Before(binding))))
+    }
+
+    /// Whether a binding with `refresh` reads `handle` again as each use
+    /// runs: a handle held in storage. A handle property of an object is
+    /// read again only when its object's handle is (decision EO-D4): the
+    /// property of a computed handle (`ca[k].v`) is not storage the use can
+    /// read again, so a use after an effect binds a view of its own.
+    fn read_again_at_use(&self, handle: &IrChandleExpr) -> bool {
+        match handle {
+            IrChandleExpr::LocalRead(name) => match self.model.native_access(name) {
+                Some((_, access)) => self.read_again_at_use(&access.receiver),
+                None => true,
+            },
+            IrChandleExpr::Required { handle, .. }
+            | IrChandleExpr::VirtualInterfaceNested { handle, .. } => {
+                self.read_again_at_use(handle)
+            }
+            other => Self::rearmable_handle(other),
+        }
     }
 
     /// Undo what a staging that failed added.
@@ -723,61 +745,6 @@ impl Codegen<'_> {
         Ok(Some(after_statements(bindings, value)))
     }
 
-    /// Whether evaluating `root` may rebind a handle before a use: it calls
-    /// a subroutine or holds an assignment operator below its root.
-    fn may_rebind_handles(&self, root: NodeId) -> bool {
-        // A called subroutine at the root runs before its output actuals
-        // are copied out.
-        let mut pending: Vec<NodeId> = match self.kind(root) {
-            NodeKind::FuncCall { .. } | NodeKind::MethodCall { .. } => vec![root],
-            _ => self.node(root).children.clone(),
-        };
-        while let Some(node) = pending.pop() {
-            if matches!(self.kind(node), NodeKind::Stmt(_)) {
-                continue;
-            }
-            if self.rebinding_effect(node) {
-                return true;
-            }
-            pending.extend(self.node(node).children.iter().copied());
-        }
-        false
-    }
-
-    /// Whether `node`, once its operands are evaluated, may rebind a handle:
-    /// a call of a user subroutine or an assignment operator.
-    fn rebinding_effect(&self, node: NodeId) -> bool {
-        match self.kind(node) {
-            NodeKind::FuncCall {
-                callee: Some(callee),
-                ..
-            }
-            | NodeKind::MethodCall {
-                callee: Some(callee),
-                ..
-            } => matches!(self.kind(*callee), NodeKind::FuncTask { .. }),
-            NodeKind::Expr(ExprKind::Operation { op, assignment, .. }) => {
-                *assignment || Self::assignment_operator(*op)
-            }
-            _ => false,
-        }
-    }
-
-    /// Whether `op` writes its first operand: an assignment, an increment or
-    /// a decrement, or an overloaded update.
-    pub(in crate::sim::codegen) fn assignment_operator(op: Operation) -> bool {
-        matches!(
-            op,
-            Operation::Assignment
-                | Operation::PostIncrement
-                | Operation::PreIncrement
-                | Operation::PostDecrement
-                | Operation::PreDecrement
-                | Operation::OverloadUpdate
-                | Operation::OverloadPostUpdate
-        )
-    }
-
     /// The member paths among `uses` that a rebinding effect of `root`
     /// precedes in evaluation order, each with the node its use starts at:
     /// the outermost select or method call of the member path, or the path
@@ -786,23 +753,48 @@ impl Codegen<'_> {
     /// assignment locates an element target after its right-hand side (SV
     /// 10.4.1, and after its control when it has one), a compound one and a
     /// whole-member target before it. Effects inside a use (in its handle or
-    /// its selects) do not precede it.
+    /// its selects) do not precede it. Nested assignments the statement
+    /// runs first (decision EO-D1) come before everything else, and one
+    /// that already ran is a plain read.
     fn uses_after_effects(&self, root: NodeId, uses: &[NodeId]) -> Vec<(NodeId, NodeId)> {
+        self.uses_after_effects_with(root, uses, &|node| self.use_member_path(node))
+    }
+
+    /// [`Self::uses_after_effects`] for the uses `path_of` maps a node to
+    /// (the path a use starting at that node names), shared by the handles
+    /// of class properties (decision EO-D4).
+    pub(super) fn uses_after_effects_with(
+        &self,
+        root: NodeId,
+        uses: &[NodeId],
+        path_of: &dyn Fn(NodeId) -> Option<NodeId>,
+    ) -> Vec<(NodeId, NodeId)> {
         let mut seen: Vec<NodeId> = Vec::new();
         let mut placed = Vec::new();
         let mut effect = false;
+        let first = match &self.pending_hoists {
+            Some((statement, nodes)) if *statement == root => nodes.clone(),
+            _ => Vec::new(),
+        };
         let mut pending = vec![OrderStep::Visit(root)];
+        pending.extend(first.iter().rev().map(|node| OrderStep::Hoisted(*node)));
         while let Some(step) = pending.pop() {
             let node = match step {
                 OrderStep::Effect => {
                     effect = true;
                     continue;
                 }
+                OrderStep::Visit(node)
+                    if first.contains(&node) || self.hoisted_assignments.contains_key(&node) =>
+                {
+                    continue;
+                }
+                OrderStep::Hoisted(node) => node,
                 // The target of an element actual is located again at the
                 // copy-out, as any copied-out actual's is (SV 13.5), after
                 // the call.
                 OrderStep::CopyOut(actual) => {
-                    if let Some(path) = self.use_member_path(actual) {
+                    if let Some(path) = path_of(actual) {
                         if path != actual
                             && uses.contains(&path)
                             && !placed.iter().any(|(placed, _)| *placed == path)
@@ -817,7 +809,7 @@ impl Codegen<'_> {
             if node != root && matches!(self.kind(node), NodeKind::Stmt(_)) {
                 continue;
             }
-            if let Some(path) = self.use_member_path(node) {
+            if let Some(path) = path_of(node) {
                 if uses.contains(&path) && !seen.contains(&path) {
                     seen.push(path);
                     if effect {
@@ -834,7 +826,7 @@ impl Codegen<'_> {
             ) {
                 for actual in self.call_argument_nodes(node) {
                     let actual = self.unwrap_output_actual(actual);
-                    if self.use_member_path(actual) == Some(actual)
+                    if path_of(actual) == Some(actual)
                         && uses.contains(&actual)
                         && !seen.contains(&actual)
                     {
@@ -910,7 +902,7 @@ impl Codegen<'_> {
             NodeKind::MethodCall { receiver, .. } => *receiver,
             _ => None,
         };
-        let copied = if self.rebinding_effect(call) {
+        let copied = if self.evaluation_effect(call) {
             self.copied_out_actuals(call)
         } else {
             Vec::new()
@@ -926,7 +918,7 @@ impl Codegen<'_> {
                 *child
             }));
         }
-        if self.rebinding_effect(call) {
+        if self.evaluation_effect(call) {
             steps.push(OrderStep::Effect);
             steps.extend(
                 copied
@@ -1054,6 +1046,10 @@ impl Codegen<'_> {
     /// their own, and so does the `with` clause of an array method, which
     /// runs in a callback of its own.
     fn collect_interface_view_uses(&self, node: NodeId, out: &mut Vec<NodeId>) {
+        // A nested assignment that already ran is read from its temporary.
+        if self.hoisted_assignments.contains_key(&node) {
+            return;
+        }
         if self.names_member_through_handle(node) {
             out.push(node);
         }

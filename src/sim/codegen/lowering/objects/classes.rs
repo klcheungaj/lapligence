@@ -1,6 +1,7 @@
 //! Classes.
 
 use super::*;
+use crate::sim::codegen::lowering::collection::data_query;
 use crate::IdSet;
 
 impl Codegen<'_> {
@@ -639,14 +640,114 @@ impl Codegen<'_> {
                 }
             }
         }
+        // A handle that an effect of the statement precedes in evaluation
+        // order is evaluated where its use starts (decision EO-D4).
+        let placed = self.receiver_uses_after_effects(h, &computed);
+        let late_target = if computed.is_empty() {
+            None
+        } else {
+            self.late_located_target(h)
+        };
         let mut roots = Vec::new();
         for (node, scope) in computed.into_iter().rev() {
+            let scope = match placed.iter().find(|(path, _)| *path == node) {
+                Some((_, start)) if scope == ReceiverScope::Statement => {
+                    ReceiverScope::Operand(*start)
+                }
+                _ if scope == ReceiverScope::Statement
+                    && late_target.is_some_and(|target| self.nesting().contains(target, node)) =>
+                {
+                    ReceiverScope::Target
+                }
+                _ => scope,
+            };
             // A statement of its own is prepared when it is lowered.
             if scope != ReceiverScope::Body {
                 self.qualify_computed_receiver(path, h, node, scope, &mut roots)?;
             }
         }
         Ok(roots)
+    }
+
+    /// The properties among `computed` (evaluated with statement `h`) that
+    /// an effect of `h` precedes in evaluation order, each with the operand
+    /// its use starts at, as [`Self::uses_after_effects_with`] orders the
+    /// views of interface members. Only an operand lowered as a value
+    /// evaluates a handle of its own: a use that is the statement's target
+    /// or a subroutine actual keeps the statement's handle.
+    fn receiver_uses_after_effects(
+        &self,
+        h: NodeId,
+        computed: &[(NodeId, ReceiverScope)],
+    ) -> Vec<(NodeId, NodeId)> {
+        let uses: Vec<NodeId> = computed
+            .iter()
+            .filter(|(_, scope)| *scope == ReceiverScope::Statement)
+            .map(|(node, _)| *node)
+            .collect();
+        let hoists = matches!(&self.pending_hoists, Some((statement, _)) if *statement == h);
+        if uses.is_empty() || !(hoists || self.has_evaluation_effect(h)) {
+            return Vec::new();
+        }
+        let path_of = |node: NodeId| {
+            let mut current = node;
+            loop {
+                if uses.contains(&current) {
+                    return Some(current);
+                }
+                current = match self.kind(current) {
+                    // A select of a property names the property's declaration
+                    // as its base and holds the path as its first operand.
+                    NodeKind::Expr(
+                        ExprKind::ArraySelect { base, .. }
+                        | ExprKind::BitSelect { base, .. }
+                        | ExprKind::PartSelect { base, .. }
+                        | ExprKind::IndexedPartSelect { base, .. },
+                    ) if !matches!(self.kind(*base), NodeKind::Expr(_)) => {
+                        *self.node(current).children.first()?
+                    }
+                    NodeKind::Expr(
+                        ExprKind::ArraySelect { base, .. }
+                        | ExprKind::BitSelect { base, .. }
+                        | ExprKind::PartSelect { base, .. }
+                        | ExprKind::IndexedPartSelect { base, .. }
+                        | ExprKind::MemberSelect { base, .. },
+                    ) => *base,
+                    NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+                        match refs.first().copied().flatten() {
+                            Some(first) if matches!(self.kind(first), NodeKind::Expr(_)) => first,
+                            _ => return None,
+                        }
+                    }
+                    NodeKind::SysCall { name } if data_query(name) => {
+                        *self.node(current).children.first()?
+                    }
+                    NodeKind::MethodCall {
+                        receiver: Some(receiver),
+                        ..
+                    } => *receiver,
+                    _ => return None,
+                };
+            }
+        };
+        let target = match self.kind(h) {
+            NodeKind::Stmt(StmtKind::Assign { .. }) => self.node(h).children.first().copied(),
+            _ => None,
+        };
+        self.uses_after_effects_with(h, &uses, &path_of)
+            .into_iter()
+            .filter(|(_, start)| {
+                Some(*start) != target
+                    && *start != h
+                    && !self.node(*start).parent.is_some_and(|parent| {
+                        matches!(
+                            self.kind(parent),
+                            NodeKind::FuncCall { .. } | NodeKind::MethodCall { .. }
+                        ) && self.call_argument_nodes(parent).contains(start)
+                    })
+                    && !self.copy_out_wrapper_target(*start)
+            })
+            .collect()
     }
 
     /// Whether `receiver` is a plain handle read all the way down: a handle
@@ -882,6 +983,7 @@ impl Codegen<'_> {
                     }
                     self.receiver_roots.entry(root).or_default().push(declare);
                 }
+                ReceiverScope::Target => self.target_receivers.push(declare),
                 _ => self.receiver_prelude.push(declare),
             }
             let local = IrChandleExpr::LocalRead(name);

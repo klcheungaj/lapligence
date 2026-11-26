@@ -46,10 +46,18 @@ impl EmitCtx<'_, '_> {
         // temporary, then the target's views are bound and the target is
         // written, as a timed blocking assignment does around its control.
         // No control runs, so the process does not wait.
+        // So is an element target whose computed handles an effect of the
+        // right-hand side precedes (decision EO-D4): they are evaluated
+        // after it, before the views.
         if (force_blocking || blocking) && op == Operation::Assignment {
-            if let Some(bindings) = self.cg.take_placed_interface_bindings(lhs) {
+            let receivers = std::mem::take(&mut self.late_target_receivers);
+            let views = self.cg.take_placed_interface_bindings(lhs);
+            if views.is_some() || !receivers.is_empty() {
                 let saw_wait = self.saw_wait;
-                self.placed_target_bindings = bindings;
+                self.placed_target_bindings = receivers
+                    .into_iter()
+                    .chain(views.unwrap_or_default())
+                    .collect();
                 let lowered = self.lower_blocking_timed_assignment(h, lhs, rhs, Vec::new());
                 self.saw_wait = saw_wait;
                 return lowered.map(IrStmt::Block);

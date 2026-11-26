@@ -545,12 +545,9 @@ impl<'a> Codegen<'a> {
             }
         }
         if let Some(HoistedValue::Packed(name, width, signed)) = self.hoisted_value(h) {
-            return Ok(Some(IrExpr::new(
-                IrExprKind::LocalRead(name.clone()),
-                *width,
-                *signed,
-                None,
-            )));
+            let value = IrExpr::new(IrExprKind::LocalRead(name.clone()), *width, *signed, None);
+            self.note_hoisted_read(h);
+            return Ok(Some(value));
         }
         if self.checker_sampling {
             if let Some(value) = self.checker_formal_read(scope_path, h)? {

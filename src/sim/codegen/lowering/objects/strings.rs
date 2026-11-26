@@ -45,7 +45,9 @@ impl Codegen<'_> {
     /// [`Self::lower_string`] before its failure is located.
     fn lower_string_unlocated(&mut self, path: &str, node: NodeId) -> Result<IrStringExpr, String> {
         if let Some(HoistedValue::String(name)) = self.hoisted_value(node) {
-            return Ok(IrStringExpr::LocalRead(name.clone()));
+            let value = IrStringExpr::LocalRead(name.clone());
+            self.note_hoisted_read(node);
+            return Ok(value);
         }
         if let Some(value) = self
             .inline_string_key_read(node)

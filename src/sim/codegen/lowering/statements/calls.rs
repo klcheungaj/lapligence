@@ -774,7 +774,24 @@ impl EmitCtx<'_, '_> {
         let mut record_in_args = Vec::new();
         // Open-array formals bound below to storage of the actual's type.
         let mut open_storage = vec![false; formals.len()];
+        // Inputs evaluated before the copy-ins and bindings after them
+        // (decision EO-D3).
+        let until = self.cg.early_actuals_until(formals, bound);
+        let mut early: Vec<Option<IrCallArg>> = (0..formals.len()).map(|_| None).collect();
         for (idx, (io, is_out)) in formals.iter().enumerate() {
+            if let Some((statement, actual)) = self.cg.early_input_actual(
+                &self.path,
+                formals,
+                bound,
+                idx,
+                until,
+                &mut arg_irs,
+                format!("_llg_ea{}_{idx}", h.0),
+            )? {
+                before.push(statement);
+                early[idx] = Some(actual.argument());
+                continue;
+            }
             // A DPI-C open-array formal whose actual crosses in storage of
             // its own type (outside the payload, or a dynamic array or
             // queue): the call's specialization has a formal of that type.
@@ -1240,9 +1257,15 @@ impl EmitCtx<'_, '_> {
                 }
             };
             let tname = format!("_a{}_{}", h.0, idx);
-            let init_ir = self
-                .cg
-                .lower_call_temp_init_from_expr(*io, &bound[idx], actual_read)?;
+            let mut init_ir =
+                self.cg
+                    .lower_call_temp_init_from_expr(*io, &bound[idx], actual_read)?;
+            // Copied in at its place among the actuals (decision EO-D3).
+            if until.is_some_and(|until| idx < until) {
+                init_ir = init_ir.map(|init| {
+                    Codegen::early_copy_in(init, format!("_llg_ec{}_{idx}", h.0), &mut before)
+                });
+            }
             temps.push((tname.clone(), idx, init_ir));
             copyouts.push((lh, tname.clone(), bound[idx].width, bound[idx].signed));
             arg_irs[idx] = Some(IrExpr::new(
@@ -1254,6 +1277,10 @@ impl EmitCtx<'_, '_> {
             out_args.push(IrCallArg::OutAddr(format!("&{tname}")));
         }
         for (idx, (io, is_out)) in formals.iter().enumerate() {
+            if let Some(argument) = early[idx].take() {
+                in_args.push((idx, argument));
+                continue;
+            }
             if open_storage[idx]
                 || self.cg.fixed_formal_array(*io).is_some()
                 || self.cg.is_native_declaration(*io)

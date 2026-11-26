@@ -648,6 +648,46 @@ fn vm_d1_handle_read_at_use() {
     );
 }
 
+/// EO-D1 / IEEE 1800-2009 11.4.2: an assignment operator nested in an
+/// expression runs before the other operands of the full expression.
+#[test]
+fn eo_d1_nested_assignment_first() {
+    run_decision(
+        "EO-D1_nested_assignment_first",
+        include_str!("fixtures/sim/lrm_decisions/EO-D1_nested_assignment_first.out"),
+    );
+}
+
+/// EO-D2 / IEEE 1800-2009 11.4.13: a set with a member that has an effect
+/// is scanned member by member, reading the value before each member.
+#[test]
+fn eo_d2_inside_member_order() {
+    run_decision(
+        "EO-D2_inside_member_order",
+        include_str!("fixtures/sim/lrm_decisions/EO-D2_inside_member_order.out"),
+    );
+}
+
+/// EO-D3 / IEEE 1800-2009 13.5: actuals are evaluated left to right, an
+/// inout actual copied in and a `ref` actual bound at its place.
+#[test]
+fn eo_d3_actuals_in_order() {
+    run_decision(
+        "EO-D3_actuals_in_order",
+        include_str!("fixtures/sim/lrm_decisions/EO-D3_actuals_in_order.out"),
+    );
+}
+
+/// EO-D4 / IEEE 1800-2009 10.4.1, 11.4.2: a computed handle a class property
+/// is selected through is evaluated where the use starts.
+#[test]
+fn eo_d4_class_handle_at_use() {
+    run_decision(
+        "EO-D4_class_handle_at_use",
+        include_str!("fixtures/sim/lrm_decisions/EO-D4_class_handle_at_use.out"),
+    );
+}
+
 /// VM-D2 / IEEE 1800-2009 10.4.2: an event-controlled nonblocking write
 /// through a virtual interface locates its target at issue.
 #[test]

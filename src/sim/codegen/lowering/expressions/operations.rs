@@ -607,6 +607,14 @@ impl<'a> Codegen<'a> {
                 this.lower_handle_inside(scope_path, *value_node, item_nodes)
             });
         }
+        // A member with an effect at its place: compare in member order
+        // (decision EO-D2).
+        if item_nodes
+            .iter()
+            .any(|item| self.in_place_member_effect(*item))
+        {
+            return self.lower_inside_in_order(scope_path, *value_node, item_nodes);
+        }
         if self.is_string_expr(scope_path, *value_node) {
             return self.with_set_arrays(|this| {
                 let value = this.lower_string(scope_path, *value_node)?;

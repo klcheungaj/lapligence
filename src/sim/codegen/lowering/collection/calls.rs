@@ -390,7 +390,24 @@ impl<'a> Codegen<'a> {
         let mut record_in_args = Vec::new();
         // Open-array formals bound below to storage of the actual's type.
         let mut open_storage = vec![false; formals.len()];
+        // Inputs evaluated before the copy-ins and bindings after them
+        // (decision EO-D3).
+        let until = self.early_actuals_until(formals, bound);
+        let mut early: Vec<Option<IrCallArg>> = (0..formals.len()).map(|_| None).collect();
         for (idx, (io, is_out)) in formals.iter().enumerate() {
+            if let Some((statement, actual)) = self.early_input_actual(
+                scope_path,
+                formals,
+                bound,
+                idx,
+                until,
+                &mut arg_irs,
+                format!("_llg_ea{}_{idx}", h.0),
+            )? {
+                copies.before.push(statement);
+                early[idx] = Some(actual.argument());
+                continue;
+            }
             if bound[idx].is_event {
                 let (address, argument) =
                     self.event_call_argument(scope_path, name, *io, *is_out, bound[idx].expr)?;
@@ -644,13 +661,29 @@ impl<'a> Codegen<'a> {
                     });
                     continue;
                 }
-                let (argument, formal_read) =
+                let (mut argument, formal_read) =
                     self.packed_output_temp(scope_path, h, idx, *io, callee_inst, &bound[idx])?;
+                // Copied in at its place among the actuals (decision EO-D3).
+                if let (true, IrCallArg::OutTemp { init, .. }) =
+                    (until.is_some_and(|until| idx < until), &mut argument)
+                {
+                    if let Some(value) = init.take() {
+                        *init = Some(Box::new(Self::early_copy_in(
+                            *value,
+                            format!("_llg_ec{}_{idx}", h.0),
+                            &mut copies.before,
+                        )));
+                    }
+                }
                 arg_irs[idx] = Some(formal_read);
                 out_args.push(argument);
             }
         }
         for (idx, (io, is_out)) in formals.iter().enumerate() {
+            if let Some(argument) = early[idx].take() {
+                in_args.push((idx, argument));
+                continue;
+            }
             if bound[idx].is_event
                 || open_storage[idx]
                 || self.fixed_formal_array(*io).is_some()

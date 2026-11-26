@@ -10,6 +10,9 @@ type Around = (Vec<IrStmt>, Vec<IrStmt>);
 struct StatementEntry {
     /// Computed handles of the statement's operands, set before it.
     receivers: Vec<IrStmt>,
+    /// Computed handles of its target that it locates late
+    /// ([`ReceiverScope::Target`]).
+    target_receivers: Vec<IrStmt>,
     receiver_roots: Vec<NodeId>,
     /// The enclosing statement's preludes.
     saved: Option<Vec<IrStmt>>,
@@ -53,12 +56,118 @@ impl EmitCtx<'_, '_> {
                 })
                 .map(|statement| vec![statement]);
         }
-        let entry = self.enter_statement(h)?;
+        // Nested assignments of the operands run first (decision EO-D1); the
+        // stagings' evaluation-order walks see them there.
+        let (hoists, outer_hoists) = self.begin_hoisting(h);
+        let mut entry = match self.enter_statement(h) {
+            Ok(entry) => entry,
+            Err(error) => {
+                self.cg.pending_hoists = outer_hoists;
+                return Err(error);
+            }
+        };
+        let targets = std::mem::take(&mut entry.target_receivers);
         let lowered = match (&entry.interface_views, &entry.staged) {
             (Some(Err(_)), _) | (_, Some(Err(_))) => Ok(Vec::new()),
-            _ => self.lower_stmt_operations(h),
+            _ => self.lower_hoisted(&hoists, |ctx| ctx.lower_located_target(h, targets)),
         };
+        self.cg.pending_hoists = outer_hoists;
         self.leave_statement(h, entry, lowered)
+    }
+
+    /// The nested assignments statement `h` runs before its other operands
+    /// (decision EO-D1), noted for the evaluation-order walks of its
+    /// stagings, and the note it replaced, which the caller restores.
+    pub(super) fn begin_hoisting(
+        &mut self,
+        h: NodeId,
+    ) -> (Vec<NodeId>, Option<(NodeId, Vec<NodeId>)>) {
+        let operands = self.cg.statement_hoisting_operands(h);
+        let hoists = self.cg.hoisted_assignment_nodes(operands);
+        // The whole variable a simple assignment writes is not read.
+        let target = match self.cg.kind(h) {
+            NodeKind::Stmt(StmtKind::Assign {
+                op: Operation::Assignment,
+                ..
+            }) => operands
+                .first()
+                .copied()
+                .filter(|lhs| matches!(self.cg.kind(*lhs), NodeKind::Expr(ExprKind::Ref { .. }))),
+            _ => None,
+        };
+        let hoists = self.cg.observable_hoists(operands, target, hoists);
+        let note = (!hoists.is_empty()).then(|| (h, hoists.clone()));
+        (hoists, std::mem::replace(&mut self.cg.pending_hoists, note))
+    }
+
+    /// Run the nested assignments `hoists`, then the statements `lower`
+    /// produces, which read the values the assignments left.
+    pub(super) fn lower_hoisted(
+        &mut self,
+        hoists: &[NodeId],
+        lower: impl FnOnce(&mut Self) -> Result<Vec<IrStmt>, String>,
+    ) -> Result<Vec<IrStmt>, String> {
+        if hoists.is_empty() {
+            return lower(self);
+        }
+        let path = self.path.clone();
+        let lowered = self
+            .cg
+            .hoist_assignments(&path, hoists)
+            .and_then(|mut statements| {
+                statements.extend(lower(self)?);
+                Ok(statements)
+            });
+        let ended = self.cg.end_hoisted_assignments(hoists);
+        let statements = lowered?;
+        ended?;
+        Ok(vec![IrStmt::Block(statements)])
+    }
+
+    /// Lower assignment `h` with the computed handles of its target that it
+    /// locates late (decision EO-D4): an element target after its
+    /// right-hand side, which the assignment lowering evaluates first, any
+    /// other one before the statement, after its nested assignments.
+    fn lower_located_target(
+        &mut self,
+        h: NodeId,
+        targets: Vec<IrStmt>,
+    ) -> Result<Vec<IrStmt>, String> {
+        if let Some(handle) = self.cg.target_handle_first(h) {
+            let path = self.path.clone();
+            let declare = self.cg.hoist_target_handle(&path, handle);
+            let lowered = declare.and_then(|declare| {
+                let mut statements = targets;
+                statements.push(declare);
+                statements.extend(self.lower_stmt_operations(h)?);
+                Ok(vec![IrStmt::Block(statements)])
+            });
+            let ended = self.cg.end_target_handle(handle);
+            let lowered = lowered?;
+            ended?;
+            return Ok(lowered);
+        }
+        if targets.is_empty() {
+            return self.lower_stmt_operations(h);
+        }
+        if self.cg.source_before_target(h).is_none() {
+            let mut statements = targets;
+            statements.extend(self.lower_stmt_operations(h)?);
+            return Ok(vec![IrStmt::Block(statements)]);
+        }
+        self.late_target_receivers = targets;
+        let lowered = self.lower_stmt_operations(h);
+        // A target that another path located would read handles never set.
+        if !std::mem::take(&mut self.late_target_receivers).is_empty() && lowered.is_ok() {
+            return Err(self.cg.locate_error(
+                h,
+                format!(
+                    "the target of this assignment in `{}` is selected through a computed handle that its right-hand side may change, in a form that is not supported; assign the value to a variable first",
+                    self.path
+                ),
+            ));
+        }
+        lowered
     }
 
     /// Set the operand state statement `h` lowers under. Nested statements
@@ -68,6 +177,7 @@ impl EmitCtx<'_, '_> {
         let outer_receivers = std::mem::take(&mut self.cg.receiver_prelude);
         let receiver_roots = self.cg.qualify_class_containers(&self.path, h);
         let receivers = std::mem::replace(&mut self.cg.receiver_prelude, outer_receivers);
+        let target_receivers = std::mem::take(&mut self.cg.target_receivers);
         let receiver_roots = receiver_roots?;
         // Container operands that cannot be built inside an expression are
         // built just before a statement that evaluates its operands once;
@@ -172,6 +282,7 @@ impl EmitCtx<'_, '_> {
         };
         Ok(StatementEntry {
             receivers,
+            target_receivers,
             receiver_roots,
             saved,
             saved_mailbox,
@@ -192,6 +303,7 @@ impl EmitCtx<'_, '_> {
     ) -> Result<Vec<IrStmt>, String> {
         let StatementEntry {
             receivers,
+            target_receivers: _,
             receiver_roots,
             saved,
             saved_mailbox,
@@ -870,13 +982,21 @@ impl EmitCtx<'_, '_> {
     }
 
     fn lower_while(&mut self, cond: NodeId, body: NodeId) -> Result<Vec<IrStmt>, String> {
-        let c = self.cg.lower_boolean_expr(&self.path, cond)?;
+        let c = self.lower_loop_condition(cond)?;
         let (body, brk) = self.lower_loop_body(body)?;
         // `continue` lands on the back edge (the condition test):
         // its label sits at the END of the body (lower_loop_body).
         let mut out = vec![IrStmt::While { cond: c, body }];
         out.extend(brk);
         Ok(out)
+    }
+
+    /// A loop condition, which runs its nested assignments first at each
+    /// evaluation (decision EO-D1).
+    pub(super) fn lower_loop_condition(&mut self, cond: NodeId) -> Result<IrExpr, String> {
+        let path = self.path.clone();
+        self.cg
+            .lower_hoisting_expression(&path, cond, |cg| cg.lower_boolean_expr(&path, cond))
     }
 
     fn lower_repeat(&mut self, cond: NodeId, body: NodeId) -> Result<Vec<IrStmt>, String> {
