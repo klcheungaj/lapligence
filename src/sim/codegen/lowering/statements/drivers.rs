@@ -500,17 +500,8 @@ impl Codegen<'_> {
             if targets.is_empty() {
                 continue;
             }
-            // A constant names the variable or element it writes itself. A
-            // constant of a part or an element, and a run-once driver below,
-            // are rows only for a continuous assignment: other synthetic
-            // processes (assertion action blocks, initializers) are no
-            // driver a release re-establishes.
-            let continuous = is_continuous_assignment(process);
-            let action = match constant_driver(&self.model, process).filter(|(target, action)| {
-                continuous
-                    || !(matches!(target, IrRedriveTarget::Element(..))
-                        || matches!(action, IrRedriveAction::ConstantBits { .. }))
-            }) {
+            // A constant names the variable or element it writes itself.
+            let action = match constant_driver(&self.model, process) {
                 Some((target, action)) => {
                     targets = vec![target];
                     Some(action)
@@ -523,7 +514,6 @@ impl Codegen<'_> {
             // no process left to wake: a VPI release runs its statements
             // (a call or a real value; a packed constant is a data row).
             let run_once = vpi_release
-                && continuous
                 && matches!(process.shape, IrShape::RunOnce)
                 && matches!(action, Some(IrRedriveAction::Evaluate(_)));
             let in_place = run_once
@@ -646,13 +636,6 @@ fn plain_variable(model: &IrModel, signal: usize) -> Option<(u32, bool)> {
         } if plain_signal(signal) && signal.is_variable() => Some((width, two_state)),
         _ => None,
     }
-}
-
-/// Whether `process` is a continuous assignment (`assign`, a net
-/// declaration assignment, a port connection link), which every lowering
-/// labels `<scope>.assign` or marks as a port link.
-fn is_continuous_assignment(process: &IrProcess) -> bool {
-    process.port_link || process.label.ends_with(".assign")
 }
 
 /// A continuous driver that writes one packed constant to a plain packed
@@ -1030,23 +1013,34 @@ mod tests {
 
     #[test]
     fn only_continuous_assignments_are_rerun_by_a_release() {
+        let model = model_with(vec![packed("var", 8, None)]);
+        // Each process writes the variable once: a run-once synthetic
+        // process, whatever its label says.
         let process = |label: &str| {
             IrProcess::new(
                 "p".to_owned(),
                 label.to_owned(),
                 IrShape::RunOnce,
                 Vec::new(),
-                Vec::new(),
+                vec![IrStmt::Assign {
+                    lhs: IrLhs::Whole(0),
+                    rhs: constant(1, 8, false),
+                    nba: false,
+                }],
             )
         };
-        assert!(is_continuous_assignment(&process("tb.u.assign")));
-        // An assertion action block and a declaration initializer are
-        // run-once synthetic processes too, but no continuous driver.
-        assert!(!is_continuous_assignment(&process("tb.assertion[72].pass")));
-        assert!(!is_continuous_assignment(&process("tb.declaration_init.0")));
-        let mut link = process("tb.u.port");
-        link.port_link = true;
-        assert!(is_continuous_assignment(&link));
+        let targets = |process: &IrProcess| process.redrive_targets(&model, &process.body);
+        let driven = vec![IrRedriveTarget::Signal(0)];
+        // An assertion action block and a declaration initializer are no
+        // continuous driver, nor is a process only its label calls one.
+        assert!(targets(&process("tb.assertion[72].pass")).is_empty());
+        assert!(targets(&process("tb.declaration_init.0")).is_empty());
+        assert!(targets(&process("tb.u.assign")).is_empty());
+        assert_eq!(
+            targets(&process("tb.u.ca").into_continuous_assignment()),
+            driven
+        );
+        assert_eq!(targets(&process("tb.u.link").into_port_link()), driven);
     }
 
     #[test]

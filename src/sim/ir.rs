@@ -162,7 +162,8 @@ mod processes;
 #[cfg(test)]
 pub(in crate::sim) use processes::continuous_writes;
 pub use processes::{
-    IrPreFn, IrProcess, IrProcessKind, IrRedrive, IrRedriveAction, IrRedriveTarget, IrShape,
+    IrContinuousDriver, IrPreFn, IrProcess, IrProcessKind, IrRedrive, IrRedriveAction,
+    IrRedriveTarget, IrShape,
 };
 mod functions;
 pub(in crate::sim) use functions::{dimension_size, CALLBACK_CALL_DEPTH, CALLBACK_INLINED_CALLS};

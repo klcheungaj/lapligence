@@ -228,9 +228,21 @@ pub struct IrProcess {
     /// runtime calls directly (sequence match-item calls), so its coroutine
     /// descriptor is unreferenced.
     pub(in crate::sim) callback_host: bool,
-    /// A port connection link: its constants come from the instance's
-    /// connection (selected actual bits), not from its module's code.
-    pub(in crate::sim) port_link: bool,
+    /// The continuous assignment this process is, if it is one: the driver
+    /// a release re-establishes (IEEE 1800-2009 10.6.2). A port connection
+    /// link's constants come from the instance's connection (selected
+    /// actual bits), not from its module's code.
+    pub(in crate::sim) continuous: Option<IrContinuousDriver>,
+}
+
+/// The continuous assignment a synthetic process lowers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrContinuousDriver {
+    /// A continuous assignment or a net declaration assignment (10.3),
+    /// with or without a delay.
+    Assignment,
+    /// A port connection, which implies a continuous assignment (23.3.3).
+    PortLink,
 }
 
 impl IrProcess {
@@ -313,7 +325,7 @@ impl IrProcess {
             checker: false,
             origin,
             callback_host: false,
-            port_link: false,
+            continuous: None,
         }
     }
 
@@ -327,14 +339,26 @@ impl IrProcess {
         self.callback_host
     }
 
-    /// Mark this process as a port connection link (see [`IrProcess::port_link`]).
+    /// Mark this process as a continuous assignment or a net declaration
+    /// assignment (see [`IrProcess::continuous`]).
+    pub(in crate::sim) fn into_continuous_assignment(mut self) -> Self {
+        self.continuous = Some(IrContinuousDriver::Assignment);
+        self
+    }
+
+    /// Mark this process as a port connection link (see [`IrProcess::continuous`]).
     pub(in crate::sim) fn into_port_link(mut self) -> Self {
-        self.port_link = true;
+        self.continuous = Some(IrContinuousDriver::PortLink);
         self
     }
 
     pub fn port_link(&self) -> bool {
-        self.port_link
+        self.continuous == Some(IrContinuousDriver::PortLink)
+    }
+
+    /// Whether this process is a continuous assignment of either kind.
+    pub fn continuous(&self) -> bool {
+        self.continuous.is_some()
     }
 
     pub fn c_name(&self) -> &str {
@@ -430,7 +454,7 @@ pub enum IrRedriveAction {
 /// executes no release never runs one.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrRedrive {
-    /// The driver's `IrProcess::label` and `IrProcess::port_link`: they
+    /// The driver's `IrProcess::label` and `IrProcess::port_link()`: they
     /// decide how the instances of one module share an `Evaluate` function.
     pub(in crate::sim) label: String,
     pub(in crate::sim) port_link: bool,
@@ -445,16 +469,18 @@ pub struct IrRedrive {
 impl IrProcess {
     /// The variables (not nets) and arrays this continuous driver assigns
     /// in `statements` (its body, wherever that is kept): the storage whose
-    /// release re-establishes it. Continuous assignments and port links are
-    /// the synthetic evaluate-then-wait and run-once processes; any other
-    /// process has none.
+    /// release re-establishes it. Only a continuous assignment or a port
+    /// link ([`IrProcess::continuous`]) has any, as an evaluate-then-wait
+    /// or run-once process: other synthetic processes (assertion action
+    /// blocks, initializers, unconnected-port defaults) write variables the
+    /// way procedures do, so a release keeps the forced value of what they
+    /// write until their next write (10.6.2).
     pub(in crate::sim) fn redrive_targets<'a>(
         &self,
         model: &IrModel,
         statements: impl IntoIterator<Item = &'a IrStmt>,
     ) -> Vec<IrRedriveTarget> {
-        if self.kind != IrProcessKind::Synthetic
-            || !matches!(self.shape, IrShape::RunOnce | IrShape::SensLoop { .. })
+        if !self.continuous() || !matches!(self.shape, IrShape::RunOnce | IrShape::SensLoop { .. })
         {
             return Vec::new();
         }

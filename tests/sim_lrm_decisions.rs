@@ -7013,6 +7013,14 @@ fn cs_d3_release_takes_driven_value() {
 }
 
 #[test]
+fn cs_d3_release_keeps_action_block_writes() {
+    run_decision(
+        "CS-D3_release_keeps_action_block_writes",
+        include_str!("fixtures/sim/lrm_decisions/CS-D3_release_keeps_action_block_writes.out"),
+    );
+}
+
+#[test]
 fn cs_d6_waiters_at_final_procedures() {
     run_decision(
         "CS-D6_waiters_at_final_procedures",
@@ -7043,6 +7051,15 @@ fn cs_d4_vpi_release_constant_parts() {
         "CS-D4_vpi_release_constant_parts",
         &["task $d4c(int enable)"],
         include_str!("fixtures/sim/lrm_decisions/CS-D4_vpi_release_constant_parts.out"),
+    );
+}
+
+#[test]
+fn cs_d4_vpi_release_keeps_action_block_writes() {
+    run_vpi_decision(
+        "CS-D4_vpi_release_keeps_action_block_writes",
+        &["task $d4a(int enable)"],
+        include_str!("fixtures/sim/lrm_decisions/CS-D4_vpi_release_keeps_action_block_writes.out"),
     );
 }
 

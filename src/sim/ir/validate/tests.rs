@@ -175,7 +175,7 @@ fn rejects_out_of_bounds_signal_reference() {
             reason: "validation fixture".to_owned(),
         },
         callback_host: false,
-        port_link: false,
+        continuous: None,
     });
     model.spawns.push("proc".to_string());
 
@@ -798,7 +798,7 @@ fn severity_origin_limits_the_level() {
                 reason: "validation fixture".to_owned(),
             },
             callback_host: false,
-            port_link: false,
+            continuous: None,
         });
         model.spawns.push("proc".to_string());
         model.validate()
@@ -1802,7 +1802,7 @@ fn force_dependencies_must_name_persistent_fixed_arrays() {
                 reason: "validation fixture".to_owned(),
             },
             callback_host: false,
-            port_link: false,
+            continuous: None,
         });
         model.spawns.push("proc".to_string());
         model
@@ -1858,7 +1858,7 @@ fn runtime_queries_name_existing_storage_with_their_fixed_shape() {
                 reason: "validation fixture".to_owned(),
             },
             callback_host: false,
-            port_link: false,
+            continuous: None,
         });
         model.spawns.push("proc".to_string());
         model

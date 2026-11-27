@@ -212,7 +212,7 @@ fn model_with(body: Vec<IrStmt>, signals: Vec<IrSignal>) -> IrModel {
                 reason: "optimizer fixture".to_owned(),
             },
             callback_host: false,
-            port_link: false,
+            continuous: None,
         }],
         redrives: Vec::new(),
         init_steps: Vec::new(),

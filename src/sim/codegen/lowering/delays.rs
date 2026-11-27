@@ -60,16 +60,19 @@ impl<'a> Codegen<'a> {
         let body = scatter(read);
         let fn_name = self.new_fn_name(path, "ca");
         let origin = self.origin(source);
-        self.model.processes.push(IrProcess::new_with_origin(
-            fn_name,
-            format!("{}.assign", self.source_path(path)),
-            IrShape::SensLoop {
-                reads: vec![IrDependency::Scalar(c_name)],
-            },
-            Vec::new(),
-            body,
-            origin,
-        ));
+        self.model.processes.push(
+            IrProcess::new_with_origin(
+                fn_name,
+                format!("{}.assign", self.source_path(path)),
+                IrShape::SensLoop {
+                    reads: vec![IrDependency::Scalar(c_name)],
+                },
+                Vec::new(),
+                body,
+                origin,
+            )
+            .into_continuous_assignment(),
+        );
         Ok(IrStmt::InertialAssign {
             lhs: IrLhs::Whole(shadow),
             rhs: value,
