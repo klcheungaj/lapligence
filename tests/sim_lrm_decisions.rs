@@ -2109,6 +2109,14 @@ fn s09_d12_final_procedure_order() {
 }
 
 #[test]
+fn s09_d12_final_procedure_hierarchy() {
+    run_decision(
+        "S09-D12_final_procedure_hierarchy",
+        include_str!("fixtures/sim/lrm_decisions/S09-D12_final_procedure_hierarchy.out"),
+    );
+}
+
+#[test]
 fn s27_d1_load_wakes_changed_words() {
     run_decision(
         "S27-D1_load_wakes_changed_words",

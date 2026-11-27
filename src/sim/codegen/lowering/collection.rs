@@ -33,6 +33,7 @@ mod design;
 mod dpi;
 mod dynamic_reads;
 mod events;
+mod final_order;
 mod fixed_calls;
 mod fixed_defaults;
 mod fixed_patterns;

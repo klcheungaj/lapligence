@@ -1,0 +1,27 @@
+bus 6
+bus 14
+bus 74
+tb
+tb.loop[0]
+tb.loop[1]
+cap 2
+cap 8
+leaf 4
+leaf 90
+leaf 91
+mid 1
+mid 1 g
+mid 1 g.inner
+leaf 11
+leaf 12
+leaf 13
+mid 7
+mid 7 g
+mid 7 g.inner
+leaf 71
+leaf 72
+leaf 73
+host 5
+cap 56
+prog 3
+prog 55

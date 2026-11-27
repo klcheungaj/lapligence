@@ -12,7 +12,7 @@
 // order of their instantiations, each the same way (the top first, then its
 // hierarchy depth first). A final procedure that calls $finish ends the
 // simulation, so the ones after it do not run (L11279-11280).
-// Final procedures in generate blocks and programs are outside this case.
+// Generate blocks, interfaces and programs: S09-D12_final_procedure_hierarchy.
 `timescale 1ns/1ns
 module leaf(input int id);
   final $display("leaf %0d", id);
