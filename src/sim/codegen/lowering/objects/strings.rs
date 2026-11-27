@@ -450,17 +450,31 @@ impl Codegen<'_> {
                         out_args.push(argument);
                         continue;
                     }
-                    self.ensure_string_actual_writable(path, bound[idx].expr)?;
-                    let writeback = self.lower_string_actual_address(path, bound[idx].expr)?;
-                    let init = matches!(
+                    let copy_in = matches!(
                         self.kind(*io),
                         NodeKind::FuncArg {
                             direction: DbDirection::Inout,
                             ..
                         }
-                    )
-                    .then(|| self.lower_string(path, bound[idx].expr))
-                    .transpose()?;
+                    );
+                    // A string element of a container copies out like a
+                    // packed one (decision EO-D3).
+                    if let Some((prelude, address, store)) = self.string_element_copy_out(
+                        path,
+                        bound[idx].expr,
+                        copy_in,
+                        &format!("_stout_{}_{idx}", node.0),
+                    )? {
+                        copies.before.extend(prelude);
+                        copies.after.push(store);
+                        out_args.push(IrCallArg::StringOutAddr(address));
+                        continue;
+                    }
+                    self.ensure_string_actual_writable(path, bound[idx].expr)?;
+                    let writeback = self.lower_string_actual_address(path, bound[idx].expr)?;
+                    let init = copy_in
+                        .then(|| self.lower_string(path, bound[idx].expr))
+                        .transpose()?;
                     let (storage_addr, storage_read) = self
                         .static_string_formals
                         .get(&(self.inst, *io))

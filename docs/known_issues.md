@@ -817,20 +817,21 @@ With `typedef struct { int q[$]; int v; } r_t; r_t rq[$];` and a function
 - a queue or dynamic-array member of a record element read whole in place
   after a call by an operand other than an array item of a concatenation
   assigned to a queue or dynamic array, a `%p` argument of a display task or
-  `$sformatf`, or an actual of a container formal names the element the
-  statement selected when it started: an array equality
-  `x = bump() + (rq[k].q == t)` reads `rq[0].q`, the reference `rq[1].q`
-  (the forms named follow EO-D4);
+  `$sformatf`, an actual of a container formal, an operand of an equality or
+  an alternative of a conditional operator assigned to a queue or dynamic
+  array names the element the statement selected when it started: a
+  streaming concatenation `x = bump() + int'({>>{rq[k].q}})` reads
+  `rq[0].q`, the reference `rq[1].q` (the forms named follow EO-D4);
 - a nested assignment whose target is a string, a handle, an unpacked value,
   a container element or a class property select is rejected in an operand
   that `?:`, `&&`, `||`, `->`, `inside` or an array method's `with` clause may
   skip or repeat (`s2 = c ? (s = "a") : "b"`), with its location, and so is
   a nested assignment to an unpacked value selected with a call or an
   assignment in any operand (`x = ((ua[f()] = ub) == ub)`);
-- a string element of a queue, dynamic or associative array as an output or
-  inout actual of a call inside an expression (`s = {f(q[0]), "!"}` with
-  `output string x`) is rejected (SIM-008); a call statement serves it, and an
-  expression call serves packed and real elements.
+- a string element of a nested queue (`sq[0][1]`) as an output or inout
+  actual is rejected (SIM-008), in a call statement and inside an expression;
+  a string element of a one-dimensional queue, dynamic or associative array
+  is served in both (`s = {f(q[0]), "!"}`, EO-D3).
 
 ### Cause
 
@@ -840,7 +841,8 @@ statement evaluates once, before the statement runs, or where its use starts
 when an effect precedes that use and its lowering binds it there: a packed,
 real or string read (`lower_expr`, `lower_string`), a concatenation item, a
 `%p` argument or a container actual. Other lowerings of a whole member have
-no such point. Nested assignments with such targets have only the statement
+no such point. A string element of a nested queue has no copy-out form.
+Nested assignments with such targets have only the statement
 form, which runs where the full expression runs its nested assignments
 first.
 
@@ -857,8 +859,8 @@ neighbours are rows of
 `tests/fixtures/sim/expression_mutations/nested_assignment_skipped_operand.sv`;
 the call-selected unpacked target rejects in
 `tests/fixtures/sim/feature_completion/ki_audit/neg_nested_assignment_unpacked_call_target.sv`;
-the string element actual in
-`tests/fixtures/sim/feature_completion/sim_008/neg_expression_element_output.sv`.
+a string element of a nested queue as the output actual of a task call
+(`t(sq[0][0])` with `output string o`).
 
 ## Remaining forms of unpacked-array container elements and multidimensional class properties (SIM-011, SIM-027)
 

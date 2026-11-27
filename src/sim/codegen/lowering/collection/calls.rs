@@ -382,9 +382,10 @@ impl<'a> Codegen<'a> {
     /// Lower the actuals of a function call used as a value, in the C
     /// parameter order: address arguments, then inputs. `copies` receives
     /// the statements the caller runs around the call: those staging record
-    /// actuals that are no record storage and, with `element_copies`, those
-    /// of a handle or string element bound to an output formal. Without
-    /// `element_copies` such an element has no storage to pass.
+    /// actuals that are no record storage, those of a packed, real or string
+    /// element bound to an output formal and, with `element_copies`, those
+    /// of a handle element. Without `element_copies` a handle element has no
+    /// storage to pass.
     #[allow(clippy::too_many_arguments)]
     pub(in super::super) fn lower_call_arguments(
         &mut self,
@@ -678,19 +679,33 @@ impl<'a> Codegen<'a> {
             }
             if *is_out {
                 if bound[idx].string {
-                    self.ensure_string_actual_writable(scope_path, bound[idx].expr)?;
-                    let tname = format!("_st{}_{}", h.0, idx);
-                    let writeback =
-                        self.lower_string_actual_address(scope_path, bound[idx].expr)?;
-                    let init = matches!(
+                    let copy_in = matches!(
                         self.kind(*io),
                         NodeKind::FuncArg {
                             direction: DbDirection::Inout,
                             ..
                         }
-                    )
-                    .then(|| self.lower_string(scope_path, bound[idx].expr))
-                    .transpose()?;
+                    );
+                    // A string element of a container copies out like a
+                    // packed one (decision EO-D3).
+                    if let Some((prelude, address, store)) = self.string_element_copy_out(
+                        scope_path,
+                        bound[idx].expr,
+                        copy_in,
+                        &format!("_stout_{}_{idx}", h.0),
+                    )? {
+                        copies.before.extend(prelude);
+                        copies.after.push(store);
+                        out_args.push(IrCallArg::StringOutAddr(address));
+                        continue;
+                    }
+                    self.ensure_string_actual_writable(scope_path, bound[idx].expr)?;
+                    let tname = format!("_st{}_{}", h.0, idx);
+                    let writeback =
+                        self.lower_string_actual_address(scope_path, bound[idx].expr)?;
+                    let init = copy_in
+                        .then(|| self.lower_string(scope_path, bound[idx].expr))
+                        .transpose()?;
                     let (storage_addr, storage_read) = self
                         .static_string_formals
                         .get(&(callee_inst, *io))

@@ -2013,6 +2013,11 @@ struct Codegen<'a> {
     /// statement precedes (decision EO-D4), through
     /// `placed_interface_bindings`.
     placed_member_starts: Vec<NodeId>,
+    /// The placed member bindings that an alternative of a conditional
+    /// operator assigned to a queue or dynamic array ran, by alternative,
+    /// for its further lowerings (`ContainerConditional`); cleared with
+    /// `placed_member_starts`.
+    repeated_member_bindings: HashMap<NodeId, Vec<IrStmt>>,
     /// The located error of a placed member binding that the lowering of its
     /// start node did not run, reported by the statement being lowered.
     unplaced_member: Option<String>,
@@ -2809,6 +2814,7 @@ impl<'a> Codegen<'a> {
             mailbox_statement_prelude: None,
             staged_element_members: HashMap::new(),
             placed_member_starts: Vec::new(),
+            repeated_member_bindings: HashMap::new(),
             unplaced_member: None,
             staged_nested_elements: HashMap::new(),
             inner_stagings: Vec::new(),

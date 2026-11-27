@@ -1,0 +1,12 @@
+eq x=11
+ne x=10
+case eq x=11
+case ne x=10
+dynamic eq x=11
+eq before x=10
+inside x=11
+cond t='{3} 
+cond else t='{3} 
+cond nested t='{3} 
+cond dynamic u='{0, 0} 
+cond no call t='{1, 2}  k=0
