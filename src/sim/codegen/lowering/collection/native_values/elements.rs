@@ -2365,7 +2365,8 @@ impl Codegen<'_> {
     /// that runs the bindings placed at it (`lower_expr`).
     fn lowers_packed_value(&self, node: NodeId) -> bool {
         matches!(
-            self.query_descriptor(node).map(|descriptor| &descriptor.shape),
+            self.query_descriptor(node)
+                .map(|descriptor| &descriptor.shape),
             Some(TypeShape::PackedAtom { .. } | TypeShape::Real { .. })
         )
     }
