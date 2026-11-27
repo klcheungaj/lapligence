@@ -17,6 +17,11 @@ writer, timing and flip-flop violations reject independently of lint. Ordinary
 `always` remains a procedural loop with cooperative, source-located back-edge
 budgets, not a comb/run-once replacement.
 
+Final procedures spawn after the run in the order of decision S09-D12:
+`collection/final_order.rs` walks the active instance tree once the processes
+are lowered (interfaces, then modules, then programs) and orders the lowered
+finals; their emission order, and that of every other process, is unchanged.
+
 Preserve program-instance origin and Reactive launch (initials, generate-scope
 initials and continuous assignments of a program), rejecting prohibited program
 members (also inside program generate scopes) before lowering; `$exit` admission

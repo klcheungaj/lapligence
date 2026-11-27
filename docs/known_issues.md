@@ -4424,6 +4424,8 @@ listed symbols follow unsaved edits
 ([positions in edited files](config.md#positions-in-edited-files)), and the outline
 of an edited document also lists the modules, packages and classes that only its
 unsaved text declares.
+`lsp_stdio::unsaved_positions::lsp_stdio_symbol_lists_answer_from_the_last_analysis`
+pins the behaviour described here.
 
 ### Symptom
 

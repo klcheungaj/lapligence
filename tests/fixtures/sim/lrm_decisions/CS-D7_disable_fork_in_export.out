@@ -1,0 +1,16 @@
+[1] export runs in the caller: 1
+[2] child W ends
+[2] export waited for the caller's child
+c: export returned 0
+[2] after wait fork in the export
+[3] export after disable fork
+c: export returned 0
+[3] after disable fork in the export
+[9] after disable fork in a task
+[15] export after disable fork
+c: export returned 0
+[15] after the export's own child
+[21] export after disable fork
+c: export returned 0
+[21] branch after the export
+[22] sibling survived

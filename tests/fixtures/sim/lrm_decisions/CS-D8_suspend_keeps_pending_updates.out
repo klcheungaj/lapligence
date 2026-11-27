@@ -1,0 +1,15 @@
+[10] e1
+[10] e0
+[11] suspended x=1 h=1 sp=1 SUSPENDED
+[12] ee
+[15] e5
+[16] suspended x=2 h=1 sp=1 SUSPENDED
+[21] resumed x=2 h=1 sp=1 WAITING
+[26] resumed x=2 h=1 sp=1 WAITING
+[40] e1
+[40] e0
+[41] suspended x=3 h=3 sp=3 SUSPENDED
+[42] ee
+[45] e5
+[46] suspended x=4 h=3 sp=3 SUSPENDED
+[51] resumed x=4 h=3 sp=3 WAITING

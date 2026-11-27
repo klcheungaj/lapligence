@@ -2436,7 +2436,7 @@ impl<'a> Codegen<'a> {
         }
         self.model.processes.push(process);
         if is_final {
-            self.final_procs.push(fn_name);
+            self.final_procs.push((proc, fn_name));
         }
         Ok(())
     }

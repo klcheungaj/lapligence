@@ -2129,6 +2129,14 @@ fn s09_d12_final_procedure_order() {
 }
 
 #[test]
+fn s09_d12_final_procedure_hierarchy() {
+    run_decision(
+        "S09-D12_final_procedure_hierarchy",
+        include_str!("fixtures/sim/lrm_decisions/S09-D12_final_procedure_hierarchy.out"),
+    );
+}
+
+#[test]
 fn s27_d1_load_wakes_changed_words() {
     run_decision(
         "S27-D1_load_wakes_changed_words",
@@ -7033,6 +7041,22 @@ fn cs_d6_waiters_at_final_procedures() {
     run_decision(
         "CS-D6_waiters_at_final_procedures",
         include_str!("fixtures/sim/lrm_decisions/CS-D6_waiters_at_final_procedures.out"),
+    );
+}
+
+#[test]
+fn cs_d7_disable_fork_in_export() {
+    run_dpi_decision(
+        "CS-D7_disable_fork_in_export",
+        include_str!("fixtures/sim/lrm_decisions/CS-D7_disable_fork_in_export.out"),
+    );
+}
+
+#[test]
+fn cs_d8_suspend_keeps_pending_updates() {
+    run_decision(
+        "CS-D8_suspend_keeps_pending_updates",
+        include_str!("fixtures/sim/lrm_decisions/CS-D8_suspend_keeps_pending_updates.out"),
     );
 }
 

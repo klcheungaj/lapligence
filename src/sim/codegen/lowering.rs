@@ -982,7 +982,8 @@ fn lower_model_with(
     // Final-block processes render like any other but spawn into the
     // post-simulation phase: they run after `llg_rt_run` returns, not at
     // t=0.
-    let final_names = std::mem::take(&mut cg.final_procs);
+    let final_procs = std::mem::take(&mut cg.final_procs);
+    let final_names = cg.order_final_procedures(&tops, final_procs)?;
     let assertion_action_procs = std::mem::take(&mut cg.assertion_action_procs);
     // SV 9.2.2.2.1: always_comb/always_latch evaluate once at time zero
     // after every initial and always procedure has started, so a reader
@@ -2453,10 +2454,10 @@ struct Codegen<'a> {
     sdf: Option<Box<collection::SdfState>>,
     /// SDF log files and their contents.
     sdf_logs: Vec<(String, String)>,
-    /// Final-block process function names (`ProcessKind::Final`), in
-    /// emission order — spawned into [`IrModel::final_spawns`] instead of
-    /// the t=0 spawn list.
-    final_procs: Vec<String>,
+    /// Final-block processes (`ProcessKind::Final`) and their function
+    /// names, in emission order; `collection/final_order.rs` orders them into
+    /// [`IrModel::final_spawns`] instead of the t=0 spawn list.
+    final_procs: Vec<(NodeId, String)>,
     /// `always` procedures whose statement is an event control
     /// (`always @(e) s`), in emission order. They start before every other
     /// time-zero process so they already wait when time-zero values settle.
