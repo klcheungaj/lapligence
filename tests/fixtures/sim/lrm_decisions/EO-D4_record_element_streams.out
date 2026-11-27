@@ -1,0 +1,7 @@
+stream x=13
+reverse x=c000000a
+bytes y=443d
+before x=11
+concat w=0000000a00000003
+cond yes
+twice x=16

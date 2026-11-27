@@ -2345,11 +2345,10 @@ impl Codegen<'_> {
 
     /// The node a read of the member that `node` names starts at, when an
     /// effect of statement `h` precedes that read: the outermost select,
-    /// method call, query or equality of the member, as the uses of class
-    /// properties through computed handles are placed (decision EO-D4), or
-    /// the member
-    /// itself read whole in place by a lowering that binds it there
-    /// ([`Self::binds_whole_member_read`]).
+    /// method call, query, equality or cast of a streaming concatenation of
+    /// the member, as the uses of class properties through computed handles
+    /// are placed (decision EO-D4), or the member itself read whole in place
+    /// by a lowering that binds it there ([`Self::binds_whole_member_read`]).
     fn member_use_start(&self, h: NodeId, node: NodeId) -> Option<NodeId> {
         let path_of = |use_node: NodeId| {
             let mut current = use_node;
@@ -2397,6 +2396,20 @@ impl Codegen<'_> {
                         .children
                         .iter()
                         .map(|operand| self.p30_unwrap_cast(*operand))
+                        .find(|operand| *operand == node)?,
+                    // A streaming concatenation of the member read whole
+                    // starts at the cast that converts it to a packed value.
+                    NodeKind::Expr(ExprKind::Cast { operand, .. })
+                        if matches!(
+                            self.kind(self.p30_unwrap_cast(*operand)),
+                            NodeKind::Expr(ExprKind::Streaming { .. })
+                        ) =>
+                    {
+                        self.p30_unwrap_cast(*operand)
+                    }
+                    NodeKind::Expr(ExprKind::Streaming { streams, .. }) => streams
+                        .iter()
+                        .map(|stream| self.p30_unwrap_cast(stream.value))
                         .find(|operand| *operand == node)?,
                     _ => return None,
                 };

@@ -756,6 +756,14 @@ fn eo_d4_record_element_whole_operands() {
     );
 }
 
+#[test]
+fn eo_d4_record_element_streams() {
+    run_decision(
+        "EO-D4_record_element_streams",
+        include_str!("fixtures/sim/lrm_decisions/EO-D4_record_element_streams.out"),
+    );
+}
+
 /// VM-D2 / IEEE 1800-2009 10.4.2: an event-controlled nonblocking write
 /// through a virtual interface locates its target at issue.
 #[test]
