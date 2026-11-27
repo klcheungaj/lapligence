@@ -68,7 +68,10 @@ activation container of the member's shape, which `IrStmt::InterfaceBind`
 points at the descriptor storage slot of the instance the handle binds, once
 before the statement or expression evaluation that uses it; the statement
 then lowers once against the view, as against lexical storage, so code size
-does not grow with the number of instances. A statement that may rebind the
+does not grow with the number of instances. A view takes its shape from an
+instance's storage, or, for an interface type without instances, whose
+handles are always null, from storage made from the member's declaration
+(`IrVirtualInterface::templates`), which no binding names. A statement that may rebind the
 handle (a call, an assignment operator) reads a handle held in storage again
 at each use; a use through a computed handle (`va[k].a`, or `ca[k].v.a`,
 whose handle is a class property and so no storage the use can read again,

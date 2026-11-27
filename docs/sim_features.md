@@ -786,10 +786,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   String and native-record value ports carry independent copies, including an
   output driven by a child `assign` (SIM-004). An input string port also
   takes an element of a string array (`.se(arr[1])`) or any string
-  expression, followed when it changes
+  expression, followed when it changes, and an output string port drives
+  such an element, stored as by an assignment each time the port changes
   ([sim_004](../tests/fixtures/sim/feature_completion/sim_004/readme.md));
-  an output or inout string port connected to such an element rejects
-  ([known issue](known_issues.md#output-string-ports-connected-to-array-elements)).
+  VPI gives the element as the high connection (A19-D95).
   Output targets also written procedurally or by another port, invalid output
   expressions, language-illegal chandle ports (SV §6.14), record ports with a
   chandle or built-in semaphore, mailbox or process member
@@ -1989,12 +1989,13 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   actual. A string-returning function called in an expression copies out its
   packed output and inout formals as other expression calls do
   ([ki_uvm_run](../tests/fixtures/sim/feature_completion/ki_uvm_run/readme.md)).
-  A function with a packed result called in an expression copies out an
-  element of a queue, dynamic or associative array when it returns, before
-  the rest of the expression (decision EO-D3,
+  A function with a packed, real or string result called in an expression
+  copies out a packed or real element of a queue, dynamic or associative
+  array when it returns, before the rest of the expression, and evaluates an
+  input with an effect before a later inout actual is copied in (decision
+  EO-D3,
   [sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md));
-  a string-returning one rejects such an actual
-  ([known issue](known_issues.md#operand-order-of-record-elements-of-queues-and-dynamic-arrays)).
+  a string element as such an actual rejects (a call statement takes it).
   V §§10.2–10.3; SV §§13.3–13.5 **[1995/2001/SV-2005]**.
 - 🟦 **Automatic/reentrant and finite zero-time calls** — Per-activation
   storage, finite recursion, local named-block exits, selected copy-out and
@@ -2782,9 +2783,9 @@ These are bounded implementations, not full verification-infrastructure support.
   it is evaluated (decision VM-D1); a nonblocking write locates its target
   at issue (VM-D2), a timed blocking one after its control
   ([virtual_interfaces](../tests/fixtures/sim/virtual_interfaces/readme.md)).
-  Through a handle of an interface type the design never instantiates, an
-  unpacked member is a located compile error
-  ([known issue](known_issues.md#unpacked-members-of-an-interface-type-without-instances)).
+  Through a handle of an interface type the design never instantiates,
+  which is always null, an unpacked member compiles and its first use ends
+  the run, as a null handle's does.
   Handles held by class objects whose virtual methods use them, sent through
   `mailbox #(virtual ifc)`, passed to timed tasks and captured by fork
   branches execute. Modport expression ports and an interface instance used

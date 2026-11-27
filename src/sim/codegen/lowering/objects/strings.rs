@@ -1,11 +1,15 @@
 //! Strings.
 
 use super::*;
+use crate::sim::codegen::lowering::collection::CallElementCopies;
 
 impl Codegen<'_> {
     /// `value` after `statements`, which run as the predicate of a
     /// conditional that always selects it.
-    fn string_after_statements(statements: Vec<IrStmt>, value: IrStringExpr) -> IrStringExpr {
+    pub(super) fn string_after_statements(
+        statements: Vec<IrStmt>,
+        value: IrStringExpr,
+    ) -> IrStringExpr {
         if statements.is_empty() {
             return value;
         }
@@ -40,6 +44,29 @@ impl Codegen<'_> {
         }
         self.lower_string_unlocated(path, node)
             .map_err(|error| self.locate_error(node, error))
+    }
+
+    /// A string call operand after the statements `copies` runs before it,
+    /// and, with copy-outs after it, the call's value held in a temporary
+    /// while they store the elements its actuals name (SV 13.5.2, decision
+    /// EO-D3).
+    fn string_call_operand(
+        &mut self,
+        path: &str,
+        copies: CallElementCopies,
+        call: IrStringExpr,
+    ) -> IrStringExpr {
+        let CallElementCopies { mut before, after } = copies;
+        if after.is_empty() {
+            return Self::string_after_statements(before, call);
+        }
+        let name = self.new_fn_name(path, "string_call");
+        before.push(IrStmt::DeclString {
+            name: name.clone(),
+            init: Some(call),
+        });
+        before.extend(after);
+        Self::string_after_statements(before, IrStringExpr::LocalRead(name))
     }
 
     /// [`Self::lower_string`] before its failure is located.
@@ -232,9 +259,27 @@ impl Codegen<'_> {
             // the temporaries of record arguments that are no record storage.
             let mut record_out_args = Vec::new();
             let mut record_in_args = Vec::new();
-            let mut record_before = Vec::new();
+            // The statements before the call (record temporaries, inputs
+            // evaluated early) and after it (element copy-outs).
+            let mut copies = CallElementCopies::default();
             let mut record_after = Vec::new();
+            // Inputs evaluated before the copy-ins and bindings after them
+            // (decision EO-D3).
+            let until = self.early_actuals_until(&formals, &bound);
             for (idx, (io, is_out)) in formals.iter().enumerate() {
+                if let Some((statement, actual)) = self.early_input_actual(
+                    path,
+                    &formals,
+                    &bound,
+                    idx,
+                    until,
+                    &mut arg_irs,
+                    format!("_llg_ea{}_{idx}", node.0),
+                )? {
+                    copies.before.push(statement);
+                    in_args.push(actual.argument());
+                    continue;
+                }
                 if self.record_declaration(*io) {
                     let address = *is_out || self.is_ref_formal(*io);
                     let mut columns = self
@@ -242,7 +287,7 @@ impl Codegen<'_> {
                             path,
                             *io,
                             bound[idx].expr,
-                            Some((&mut record_before, &mut record_after)),
+                            Some((&mut copies.before, &mut record_after)),
                         )?
                         .into_iter();
                     let first = columns
@@ -278,6 +323,12 @@ impl Codegen<'_> {
                     continue;
                 }
                 if self.is_subroutine_container(*io) {
+                    // A member of a record element read after an effect is
+                    // bound after the actuals before it (decisions EO-D3,
+                    // EO-D4).
+                    if let Some(bindings) = self.take_placed_interface_bindings(bound[idx].expr) {
+                        copies.before.extend(bindings);
+                    }
                     let argument =
                         self.container_call_argument(path, *io, bound[idx].expr, None, None)?;
                     // `ref` formals pass by address with the outputs.
@@ -373,15 +424,28 @@ impl Codegen<'_> {
                     });
                 } else if *is_out {
                     if !bound[idx].string {
-                        let (argument, formal_read) = self.packed_output_temp(
+                        let (mut argument, formal_read) = self.packed_output_temp(
                             path,
                             node,
                             idx,
                             *io,
                             callee_inst,
                             &bound[idx],
-                            None,
+                            &mut copies,
                         )?;
+                        // Copied in at its place among the actuals (decision
+                        // EO-D3).
+                        if let (true, IrCallArg::OutTemp { init, .. }) =
+                            (until.is_some_and(|until| idx < until), &mut argument)
+                        {
+                            if let Some(value) = init.take() {
+                                *init = Some(Box::new(Self::early_copy_in(
+                                    *value,
+                                    format!("_llg_ec{}_{idx}", node.0),
+                                    &mut copies.before,
+                                )));
+                            }
+                        }
                         arg_irs[idx] = Some(formal_read);
                         out_args.push(argument);
                         continue;
@@ -432,31 +496,13 @@ impl Codegen<'_> {
             out_args.extend(record_out_args);
             out_args.extend(in_args);
             out_args.extend(record_in_args);
-            let typed = out_args.iter().any(|arg| {
-                matches!(arg, IrCallArg::Val(value) if value.is_real())
-                    || matches!(
-                        arg,
-                        IrCallArg::StringVal(_)
-                            | IrCallArg::FixedValue(_)
-                            | IrCallArg::FixedArray(_)
-                            | IrCallArg::EventVal(_)
-                            | IrCallArg::EventAddr(_)
-                            | IrCallArg::EventSlot(_)
-                            | IrCallArg::ChandleVal(_)
-                            | IrCallArg::ChandleAddr(_)
-                            | IrCallArg::ChandleRefAddr(_)
-                            | IrCallArg::StringOutAddr(_)
-                            | IrCallArg::StringRefAddr { .. }
-                            | IrCallArg::ElementRef(_)
-                            | IrCallArg::StringOutTemp { .. }
-                            | IrCallArg::NativeValue(_)
-                            | IrCallArg::NativeRefBound
-                            | IrCallArg::NativeCall { .. }
-                            | IrCallArg::Container(_)
-                            | IrCallArg::NativeLeaves { .. }
-                    )
-            });
-            if !typed {
+            // Only packed inputs pass by value through the plain string
+            // call; any other argument (a real, an address, a copy-out
+            // temporary) takes the typed call.
+            let typed = out_args
+                .iter()
+                .any(|arg| !matches!(arg, IrCallArg::Val(value) if !value.is_real()));
+            if !typed && copies.before.is_empty() && copies.after.is_empty() {
                 let args = out_args
                     .into_iter()
                     .map(|arg| match arg {
@@ -481,7 +527,7 @@ impl Codegen<'_> {
                 depth: parse_depth(&self.depth_arg),
                 vpi_call: self.vpi_call_origin(node),
             };
-            return Ok(Self::string_after_statements(record_before, call));
+            return Ok(self.string_call_operand(path, copies, call));
         }
         if let Some(index) = self.object_of(path, node) {
             if self.model.objects[index].ty == IrObjectType::String {

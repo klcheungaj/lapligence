@@ -608,35 +608,6 @@ Materialize such a parameter as constant model storage when it is read whole.
 `neg_string_copy.sv` and `neg_record_element.sv` in
 `tests/fixtures/sim/feature_completion/ki_unpacked_parameters/`.
 
-## Output string ports connected to array elements
-
-**Status:** open; an input string port takes an element of a string array
-or any string expression (SIM-004).
-
-### Symptom
-
-An output string port connected to an element of a fixed string array
-(`.so(arr[1])`) is rejected at code generation with its location
-(CODEGEN-009); the industry-standard simulator drives the element. An
-element of a queue, dynamic or associative array is no legal output
-connection (the port implies a continuous assignment, which SV 6.21
-forbids for elements of dynamically sized variables) and rejects with the
-same error; an inout port cannot have a variable type (SV 23.3.3.2).
-
-### Cause
-
-An output string link stores into string object storage; an element of a
-string array has no object of its own for the link to drive.
-
-### Intended direction
-
-Drive the element through the array's element store from the child's
-string, as an input link reads it through `lower_string`.
-
-### Reproduce
-
-`tests/fixtures/sim/feature_completion/ki_audit/neg_string_port_fixed_element.sv`.
-
 ## Native record values outside by-value subroutine storage
 
 **Status:** open; SIM-003 implements descriptor-backed native records for
@@ -844,40 +815,39 @@ With `typedef struct { int q[$]; int v; } r_t; r_t rq[$];` and a function
 `bump()` that sets `k = 1`:
 
 - a queue or dynamic-array member of a record element read whole in place
-  after a call in the same statement (a concatenation item, a `%p`
-  argument, an actual after an effect of its own call), or read as a string
-  or unpacked value (`rq[k].tags[0]` of a string queue), names the element
-  the statement selected when it started: `t = {bumpq(), rq[k].q}` and
-  `x = total(bump(), rq[k].q)` read `rq[0].q`, the reference `rq[1].q`
-  (a packed or real method, query or select of the member, and a whole
-  actual of a call the effect precedes, follow EO-D4);
+  after a call by an operand other than an array item of a concatenation
+  assigned to a queue or dynamic array, a `%p` argument of a display task or
+  `$sformatf`, or an actual of a container formal names the element the
+  statement selected when it started: an array equality
+  `x = bump() + (rq[k].q == t)` reads `rq[0].q`, the reference `rq[1].q`
+  (the forms named follow EO-D4);
 - a nested assignment whose target is a string, a handle, an unpacked value,
   a container element or a class property select is rejected in an operand
   that `?:`, `&&`, `||`, `->`, `inside` or an array method's `with` clause may
   skip or repeat (`s2 = c ? (s = "a") : "b"`), with its location, and so is
   a nested assignment to an unpacked value selected with a call or an
   assignment in any operand (`x = ((ua[f()] = ub) == ub)`);
-- an output or inout actual of a string-returning function called in an
-  expression that names an element of a queue, dynamic or associative array,
-  or of any function whose result is not packed, is rejected (it is supported
-  where the call is a statement, and for a function with a packed result).
+- a string element of a queue, dynamic or associative array as an output or
+  inout actual of a call inside an expression (`s = {f(q[0]), "!"}` with
+  `output string x`) is rejected (SIM-008); a call statement serves it, and an
+  expression call serves packed and real elements.
 
 ### Cause
 
 A queue or dynamic-array member of a record element of a queue or dynamic
 array is bound in place, through an access of the element that the
 statement evaluates once, before the statement runs, or where its use starts
-when that use is a packed or real method, query, select or call an effect
-precedes, which `lower_expr` lowers; a whole member read in place and a
-string or unpacked read have no such lowering that binds it. An
-element actual's copy-out is a statement after the call, which a
-string-valued or unpacked call result has no sequence for. Nested assignments with such targets have only the statement form,
-which runs where the full expression runs its nested assignments first.
+when an effect precedes that use and its lowering binds it there: a packed,
+real or string read (`lower_expr`, `lower_string`), a concatenation item, a
+`%p` argument or a container actual. Other lowerings of a whole member have
+no such point. Nested assignments with such targets have only the statement
+form, which runs where the full expression runs its nested assignments
+first.
 
 ### Intended direction
 
-Bind a whole member read in place where the container lowering of that
-read starts, as the select and method forms are (EO-D4).
+Bind a whole member read in place where the remaining lowerings of that read
+start, as the forms above are (EO-D4).
 
 ### Reproduce
 
@@ -886,7 +856,9 @@ neighbours are rows of
 `tests/fixtures/sim/lrm_decisions/EO-D4_handle_actuals_staged_targets.sv` and
 `tests/fixtures/sim/expression_mutations/nested_assignment_skipped_operand.sv`;
 the call-selected unpacked target rejects in
-`tests/fixtures/sim/feature_completion/ki_audit/neg_nested_assignment_unpacked_call_target.sv`.
+`tests/fixtures/sim/feature_completion/ki_audit/neg_nested_assignment_unpacked_call_target.sv`;
+the string element actual in
+`tests/fixtures/sim/feature_completion/sim_008/neg_expression_element_output.sv`.
 
 ## Remaining forms of unpacked-array container elements and multidimensional class properties (SIM-011, SIM-027)
 
@@ -2837,38 +2809,6 @@ Storage slots in the descriptor, as unpacked members have
 ### Reproduce
 
 `tests/fixtures/sim/virtual_interfaces/neg_string_member.sv`.
-
-## Unpacked members of an interface type without instances
-
-**Status:** open. Each use rejects with a located diagnostic ("unpacked
-member `a` of virtual interface `ifc` is not supported when the design has no
-instance of its interface type").
-
-### Symptom
-
-When the design has no instance of an interface type, a use of an unpacked
-member through a virtual interface of that type (`v.a[1] = 3` with
-`int a[4]`) stops compilation at the use. Such a handle can only be null, so
-the use could only fail at run time, which is what a packed member does and
-what the reference does ("uninitialized virtual interface object" at the
-use, after `(v == null) ? 1 : v.a[0]` and `$size(v.a)` have run).
-
-### Cause
-
-A view of an unpacked member takes its shape (an array or container of the
-model) from the member's storage in an instance of the interface, and the
-binding of a view, including the emitted callback fallback, names the
-storage of a bound instance; without one there is neither.
-
-### Intended direction
-
-Shape the view from the member's declaration (a storage template on the
-virtual-interface descriptor), let the binding of a descriptor without
-instances fail as for a null handle, and drop the error.
-
-### Reproduce
-
-`tests/fixtures/sim/virtual_interfaces/neg_member_array_no_instance.sv`.
 
 ## Remaining items of unpacked array concatenations
 

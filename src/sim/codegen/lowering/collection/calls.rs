@@ -14,7 +14,7 @@ impl<'a> Codegen<'a> {
     /// The caller-side temporary of a packed output or inout formal bound in
     /// an expression call `call` (copy-out at the return, decision S13-D1),
     /// with the read of the formal's storage that later defaults observe.
-    /// With `copies`, an actual naming a whole element of a queue, dynamic or
+    /// An actual naming a whole packed or real element of a queue, dynamic or
     /// associative array copies out into a caller local that a statement of
     /// `copies.after` stores into the element, located there again (SV
     /// 13.5.2, decision EO-D3).
@@ -27,7 +27,7 @@ impl<'a> Codegen<'a> {
         io: NodeId,
         callee_inst: NodeId,
         bound_arg: &BoundArg,
-        copies: Option<&mut CallElementCopies>,
+        copies: &mut CallElementCopies,
     ) -> Result<(IrCallArg, IrExpr), String> {
         let tname = format!("_t{}_{}", call.0, idx);
         let read_actual = matches!(
@@ -51,20 +51,19 @@ impl<'a> Codegen<'a> {
         let tag = format!("{}_{idx}", call.0);
         let element = self.container_element_path(bound_arg.expr).is_some()
             || self.associative_string_element(bound_arg.expr).is_some();
-        let element_writeback = match copies {
-            Some(copies) if element => self
-                .container_element_writeback(
-                    scope_path,
-                    bound_arg.expr,
-                    &tag,
-                    read_actual,
-                    TargetSelectors::AtCopyOut,
-                )?
-                .map(|(writeback, read)| (writeback, read, copies)),
-            _ => None,
+        let element_writeback = if element {
+            self.container_element_writeback(
+                scope_path,
+                bound_arg.expr,
+                &tag,
+                read_actual,
+                TargetSelectors::AtCopyOut,
+            )?
+        } else {
+            None
         };
         let (wb, actual_read, selector_inits) = match element_writeback {
-            Some((mut writeback, read, copies)) => {
+            Some((mut writeback, read)) => {
                 let local = format!("_sco{tag}");
                 let (width, signed) = (bound_arg.width, bound_arg.signed);
                 copies.before.extend(writeback.take_prelude());
@@ -474,6 +473,11 @@ impl<'a> Codegen<'a> {
                 continue;
             }
             if self.is_subroutine_container(*io) {
+                // A member of a record element read after an effect is bound
+                // after the actuals before it (decisions EO-D3, EO-D4).
+                if let Some(bindings) = self.take_placed_interface_bindings(bound[idx].expr) {
+                    copies.before.extend(bindings);
+                }
                 let argument =
                     self.container_call_argument(scope_path, *io, bound[idx].expr, None, None)?;
                 // `ref` formals pass by address with the outputs.
@@ -713,7 +717,7 @@ impl<'a> Codegen<'a> {
                     *io,
                     callee_inst,
                     &bound[idx],
-                    Some(&mut *copies),
+                    copies,
                 )?;
                 // Copied in at its place among the actuals (decision EO-D3).
                 if let (true, IrCallArg::OutTemp { init, .. }) =

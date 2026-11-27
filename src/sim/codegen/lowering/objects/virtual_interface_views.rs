@@ -757,17 +757,22 @@ impl Codegen<'_> {
     /// runs first (decision EO-D1) come before everything else, and one
     /// that already ran is a plain read.
     fn uses_after_effects(&self, root: NodeId, uses: &[NodeId]) -> Vec<(NodeId, NodeId)> {
-        self.uses_after_effects_with(root, uses, &|node| self.use_member_path(node))
+        self.uses_after_effects_with(root, uses, &|node| self.use_member_path(node), true)
     }
 
     /// [`Self::uses_after_effects`] for the uses `path_of` maps a node to
     /// (the path a use starting at that node names), shared by the handles
-    /// of class properties (decision EO-D4).
+    /// of class properties and the members of record elements (decision
+    /// EO-D4). With `whole_actuals_at_call`, a whole member passed to a
+    /// subroutine is used when the call starts; without, at its place among
+    /// the actuals, as the reference simulator reads a member of a record
+    /// element.
     pub(in crate::sim::codegen) fn uses_after_effects_with(
         &self,
         root: NodeId,
         uses: &[NodeId],
         path_of: &dyn Fn(NodeId) -> Option<NodeId>,
+        whole_actuals_at_call: bool,
     ) -> Vec<(NodeId, NodeId)> {
         let mut seen: Vec<NodeId> = Vec::new();
         let mut placed = Vec::new();
@@ -820,10 +825,12 @@ impl Codegen<'_> {
             // A whole member passed to a subroutine is bound when the call
             // starts, before its other actuals, as the reference simulator
             // does; the call's own lowering binds it.
-            if matches!(
-                self.kind(node),
-                NodeKind::FuncCall { .. } | NodeKind::MethodCall { .. }
-            ) {
+            if whole_actuals_at_call
+                && matches!(
+                    self.kind(node),
+                    NodeKind::FuncCall { .. } | NodeKind::MethodCall { .. }
+                )
+            {
                 for actual in self.call_argument_nodes(node) {
                     let actual = self.unwrap_output_actual(actual);
                     if path_of(actual) == Some(actual)
@@ -1210,33 +1217,32 @@ impl Codegen<'_> {
                     })
             })
         else {
-            // Without an instance of the interface type, an unpacked member
-            // has no storage to give a view its shape (docs/known_issues.md).
+            // Without an instance of the interface type, every handle is
+            // null; the views of an unpacked member take their shape from
+            // storage shaped from its declaration, which no binding names.
             let declaration = match self.kind(node) {
                 NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs.last().copied().flatten(),
                 _ => None,
             };
-            let unpacked = declaration.is_some_and(|declaration| {
+            let unpacked = declaration.filter(|declaration| {
                 matches!(
-                    self.query_descriptor(declaration)
+                    self.query_descriptor(*declaration)
                         .map(|descriptor| &descriptor.shape),
                     Some(TypeShape::FixedArray { .. } | TypeShape::Container { .. })
                 )
             });
-            if unpacked
-                && !self
-                    .virtual_interface_instances
-                    .values()
-                    .any(|(owner, _)| *owner == descriptor)
-            {
-                return Err(self.locate_error(
-                    node,
-                    format!(
-                        "unpacked member `{}` of virtual interface `{}` is not supported when \
-                         the design has no instance of its interface type, in `{path}`",
-                        target.member, target.spelling
-                    ),
-                ));
+            if let Some(declaration) = unpacked.filter(|_| {
+                self.model.virtual_interfaces[descriptor]
+                    .instances
+                    .is_empty()
+            }) {
+                let template = self
+                    .interface_storage_template(descriptor, declaration)
+                    .map_err(|error| self.locate_error(node, error))?;
+                let interface = &mut self.model.virtual_interfaces[descriptor];
+                interface.storage.push(target.member.clone());
+                interface.templates.push(template);
+                return Ok(Some(interface.storage.len() - 1));
             }
             return Ok(None);
         };
@@ -1289,9 +1295,7 @@ impl Codegen<'_> {
     ) -> Result<(InterfaceView, IrStmt), String> {
         let descriptor = target.descriptor;
         let source = self.model.virtual_interfaces[descriptor]
-            .instances
-            .iter()
-            .find_map(|instance| instance.storage.get(slot).copied().flatten())
+            .slot_storage(slot)
             .ok_or_else(|| {
                 format!(
                     "unpacked member `{}` of virtual interface `{}` has no storage",

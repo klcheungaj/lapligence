@@ -502,13 +502,6 @@ fn vpi_function_called_from_a_static_initializer_runs_its_delayed_put() {
 fn closing_audit_container_forms_are_located_limits() {
     sim_cli::reject_case_with_id(
         SUITE,
-        "neg_string_port_fixed_element",
-        "CODEGEN-009",
-        Some("9:9"),
-        "object port `tb.u.so` connects to a non-object actual",
-    );
-    sim_cli::reject_case_with_id(
-        SUITE,
         "neg_packed_member_queue_read",
         "CODEGEN-001",
         Some("10:20"),

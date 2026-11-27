@@ -733,6 +733,17 @@ fn eo_d4_record_element_members_after_calls() {
     );
 }
 
+/// EO-D4: a queue or dynamic-array member of a record element read whole in
+/// place, or through a string element, after a call names the element
+/// selected after it.
+#[test]
+fn eo_d4_record_element_whole_and_string_reads() {
+    run_decision(
+        "EO-D4_record_element_whole_and_string_reads",
+        include_str!("fixtures/sim/lrm_decisions/EO-D4_record_element_whole_and_string_reads.out"),
+    );
+}
+
 /// VM-D2 / IEEE 1800-2009 10.4.2: an event-controlled nonblocking write
 /// through a virtual interface locates its target at issue.
 #[test]
@@ -3785,6 +3796,15 @@ fn a19_d95_port_directions_and_reference_objects() {
         include_str!(
             "fixtures/sim/lrm_decisions/A19-D95_port_directions_and_reference_objects.out"
         ),
+    );
+}
+
+#[test]
+fn a19_d95_string_element_connections() {
+    run_vpi_decision(
+        "A19-D95_string_element_connections",
+        &["task $pp()", "task $ps()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D95_string_element_connections.out"),
     );
 }
 

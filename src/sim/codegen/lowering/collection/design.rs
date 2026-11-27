@@ -1,6 +1,7 @@
 //! Design.
 
 use super::*;
+use crate::sim::ir::IrInterfaceStorage;
 use crate::sim::legacy_unsupported::LegacyFamily;
 
 fn contains_unpacked_union(descriptor: &TypeDescriptor) -> bool {
@@ -423,6 +424,53 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
+    /// Whether array declaration `nid` is stored as a container: a queue,
+    /// dynamic or associative array, or a fixed array of handles or native
+    /// elements; any other array is fixed-array storage.
+    fn declares_container_storage(&self, nid: NodeId) -> bool {
+        self.is_virtual_interface_array(nid)
+            || self.is_fixed_handle_array(nid)
+            || !self
+                .db
+                .array_meta(nid)
+                .is_some_and(|meta| matches!(meta.kind(), ArrayKind::Static))
+    }
+
+    /// Storage shaped from unpacked member declaration `declaration` of an
+    /// interface type without instances, for descriptor `descriptor`
+    /// (`IrVirtualInterface::templates`): model storage, as an instance's
+    /// member is, under a name of its own, but without a waveform or VPI
+    /// name and without the member's initializer, which no handle can
+    /// observe.
+    pub(in super::super) fn interface_storage_template(
+        &mut self,
+        descriptor: usize,
+        declaration: NodeId,
+    ) -> Result<IrInterfaceStorage, String> {
+        let NodeKind::Array { ty } = self.kind(declaration) else {
+            return Err(format!(
+                "unpacked interface member `{}` is no array declaration",
+                self.node(declaration).name
+            ));
+        };
+        let ty = ty.clone();
+        let name = self.node(declaration).name.clone();
+        let path = format!("llg_vif_template_{descriptor}");
+        let storage = if self.declares_container_storage(declaration) {
+            let info = self.container_info(&path, &name, declaration, &ty)?;
+            self.container_initializers
+                .retain(|(node, _)| *node != declaration);
+            IrInterfaceStorage::Container(info.ir)
+        } else {
+            let info = self.array_info(&path, &name, declaration, &ty)?;
+            self.array_initializers
+                .retain(|(node, _)| *node != declaration);
+            self.model.arrays[info.ir].hdl_name.clear();
+            IrInterfaceStorage::Array(info.ir)
+        };
+        Ok(storage)
+    }
+
     /// Allocate the storage of variable, net or event `nid` of scope `path`,
     /// `false` when `nid` declares none of them. Its declaration initializer
     /// is collected once the scope is complete ([`Self::collect_var_inits`]),
@@ -442,13 +490,7 @@ impl<'a> Codegen<'a> {
                 if name.is_empty() || !seen.insert(name.clone()) {
                     return Ok(true);
                 }
-                if self.is_virtual_interface_array(nid)
-                    || self.is_fixed_handle_array(nid)
-                    || !self
-                        .db
-                        .array_meta(nid)
-                        .is_some_and(|meta| matches!(meta.kind(), ArrayKind::Static))
-                {
+                if self.declares_container_storage(nid) {
                     let info = self.container_info(path, &name, nid, ty)?;
                     self.container_globals.insert(nid, info);
                     return Ok(true);

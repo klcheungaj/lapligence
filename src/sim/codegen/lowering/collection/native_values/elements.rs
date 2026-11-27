@@ -2303,11 +2303,10 @@ impl Codegen<'_> {
 
     /// The node a read of the member that `node` names starts at, when an
     /// effect of statement `h` precedes that read: the outermost select,
-    /// method call or query of the member, or the call it is an actual of,
-    /// as the uses of class properties through computed handles are placed
-    /// (decision EO-D4). A whole member read in place (a concatenation item,
-    /// a formatted argument) has no such node and keeps the binding before
-    /// the statement.
+    /// method call or query of the member, as the uses of class properties
+    /// through computed handles are placed (decision EO-D4), or the member
+    /// itself read whole in place by a lowering that binds it there
+    /// ([`Self::binds_whole_member_read`]).
     fn member_use_start(&self, h: NodeId, node: NodeId) -> Option<NodeId> {
         let path_of = |use_node: NodeId| {
             let mut current = use_node;
@@ -2345,20 +2344,88 @@ impl Codegen<'_> {
                 };
             }
         };
-        self.uses_after_effects_with(h, &[node], &path_of)
+        self.uses_after_effects_with(h, &[node], &path_of, false)
             .into_iter()
             .map(|(_, start)| start)
             .find(|start| {
                 *start != h
-                    && self.lowers_packed_value(*start)
-                    && (*start != node
-                        || matches!(
-                            self.kind(*start),
-                            NodeKind::FuncCall { .. }
-                                | NodeKind::MethodCall { .. }
-                                | NodeKind::Expr(ExprKind::ArraySelect { .. })
-                        ))
+                    && ((*start == node && self.binds_whole_member_read(h, node))
+                        || ((self.lowers_packed_value(*start)
+                            || self.lowers_string_select(*start))
+                            && (*start != node
+                                || matches!(
+                                    self.kind(*start),
+                                    NodeKind::FuncCall { .. }
+                                        | NodeKind::MethodCall { .. }
+                                        | NodeKind::Expr(ExprKind::ArraySelect { .. })
+                                ))))
             })
+    }
+
+    /// Whether the member `node` names, read whole in place by statement
+    /// `h`, is lowered where its read starts by a lowering that runs the
+    /// bindings placed at it: an array item of an unpacked array
+    /// concatenation assigned to a queue or dynamic array
+    /// (`lower_container_concat_into`), a `%p` argument of a display task or
+    /// `$sformatf` (`lower_pattern_arg`), or an input actual of a container
+    /// formal (the calls' `container_call_argument`), which a call takes
+    /// after the actuals before it (decision EO-D3).
+    fn binds_whole_member_read(&self, h: NodeId, node: NodeId) -> bool {
+        let Some(parent) = self.node(node).parent else {
+            return false;
+        };
+        match self.kind(parent) {
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::Concat,
+                ..
+            }) => {
+                let assigned = matches!(self.kind(h), NodeKind::Stmt(StmtKind::Assign { .. }))
+                    && self
+                        .node(h)
+                        .children
+                        .get(1)
+                        .is_some_and(|rhs| self.p30_unwrap_cast(*rhs) == parent)
+                    && self
+                        .node(h)
+                        .children
+                        .first()
+                        .and_then(|lhs| self.container_of(*lhs))
+                        .is_some_and(|target| {
+                            !self.is_fixed_view(target.ir)
+                                && !matches!(
+                                    self.model.containers[target.ir].kind,
+                                    IrContainerKind::Associative { .. }
+                                )
+                        });
+                assigned
+                    && self.unpacked_concat_items(parent).is_some_and(|items| {
+                        items.iter().any(|item| item.node == node && item.array)
+                    })
+            }
+            NodeKind::SysCall { name } => {
+                matches!(
+                    name.as_str(),
+                    "$display"
+                        | "$displayb"
+                        | "$displayh"
+                        | "$displayo"
+                        | "$write"
+                        | "$writeb"
+                        | "$writeh"
+                        | "$writeo"
+                        | "$sformatf"
+                )
+            }
+            NodeKind::FuncCall { .. } | NodeKind::MethodCall { .. } => {
+                self.call_argument_nodes(parent).contains(&node)
+                    && matches!(
+                        self.query_descriptor(node)
+                            .map(|descriptor| &descriptor.shape),
+                        Some(TypeShape::Container { .. })
+                    )
+            }
+            _ => false,
+        }
     }
 
     /// Whether `node` is lowered as a packed or real value, the lowering
@@ -2369,6 +2436,18 @@ impl Codegen<'_> {
                 .map(|descriptor| &descriptor.shape),
             Some(TypeShape::PackedAtom { .. } | TypeShape::Real { .. })
         )
+    }
+
+    /// Whether `start` is an element select of a member that is lowered as
+    /// a string value, the lowering that runs the bindings placed at it
+    /// (`lower_string`).
+    fn lowers_string_select(&self, start: NodeId) -> bool {
+        matches!(
+            self.kind(start),
+            NodeKind::Expr(ExprKind::ArraySelect { .. })
+        ) && self
+            .query_descriptor(start)
+            .is_some_and(|descriptor| descriptor.shape == TypeShape::String)
     }
 
     /// Drop the member bindings placed at start nodes (`member_use_start`)

@@ -114,6 +114,12 @@ impl Codegen<'_> {
                     &mut statements,
                 )?);
             }
+            // A member of a record element read after an effect of the
+            // statement is bound here, after the items before it (decision
+            // EO-D4).
+            if let Some(bindings) = self.take_placed_interface_bindings(item.node) {
+                statements.extend(bindings);
+            }
             let mut array = self
                 .concat_array_source(path, dst, item.node, cells, &mut statements)
                 .map_err(|error| self.locate_error(item.node, error))?;

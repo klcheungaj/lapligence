@@ -30,14 +30,21 @@ impl Frame<'_, '_> {
         let site = c_string_literal(&binding.site);
         // Where a failed access cannot leave (a callback), a use through an
         // unbound view reports and reads the storage of the first instance,
-        // which has the view's shape, while the run ends.
+        // or the template of a descriptor without instances, which has the
+        // view's shape, while the run ends.
         if self.failed_access_exit().is_none() {
-            let fallback =
-                &self.ctx.model.virtual_interfaces[binding.interface].instances[0].c_name;
-            let base = format!(
-                "llg_vif_valid({storage}, &{fallback}.storage[{}], {site})",
-                binding.slot
-            );
+            let fallback = match self.ctx.model.virtual_interfaces[binding.interface]
+                .instances
+                .first()
+            {
+                Some(instance) => format!("&{}.storage[{}]", instance.c_name, binding.slot),
+                None => format!(
+                    "&{}[{}]",
+                    crate::sim::emit_c::model::template_storage_name(binding.interface),
+                    binding.slot
+                ),
+            };
+            let base = format!("llg_vif_valid({storage}, {fallback}, {site})");
             return self.bind_view(binding.view, &base, None);
         }
         // A use checks the binding before its line runs; a use bound again

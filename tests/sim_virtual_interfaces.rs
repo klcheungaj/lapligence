@@ -401,12 +401,24 @@ fn unpacked_member_of_a_null_handle_fails_at_runtime() {
     );
 }
 
+/// Without an instance of the interface type, every handle is null: the
+/// unpacked members compile and the first use ends the run (25.9).
 #[test]
-fn unpacked_member_of_an_interface_type_without_instances_is_rejected() {
-    sim_cli::reject_case(
+fn unpacked_members_of_an_interface_type_without_instances_fail_at_runtime() {
+    sim_cli::run_case_failing_at_runtime(
         "virtual_interfaces",
-        "neg_member_array_no_instance",
-        "neg_member_array_no_instance.sv:15:8 unpacked member `a` of virtual interface `ifc` is not \
-         supported when the design has no instance of its interface type, in `tb`",
+        "member_array_no_instance",
+        &[],
+        "1 7 4 128\n2\n",
+        "member_array_no_instance.sv:24:8 virtual interface access failed: virtual interface \
+         member access",
+    );
+    sim_cli::run_case_failing_at_runtime(
+        "virtual_interfaces",
+        "member_container_no_instance",
+        &[],
+        "start 0\nforeach 6\n",
+        "member_container_no_instance.sv:15:5 virtual interface access failed: virtual \
+         interface member access",
     );
 }

@@ -1786,9 +1786,10 @@ impl Codegen<'_> {
         if after.is_empty() {
             return Ok(Self::record_sequence(before, call));
         }
-        if call.is_real() || call.width == 0 {
+        // A real result is held in a real local (width 0) as a packed one is.
+        if call.width == 0 && !call.is_real() {
             return Err(format!(
-                "an output record argument that is no record storage, or an output or inout actual naming a queue, dynamic or associative array element, in `{path}` is supported only when the call's result is packed"
+                "an output record argument that is no record storage, or an output or inout actual naming a queue, dynamic or associative array element, in `{path}` is supported only when the call has a result"
             ));
         }
         let name = self.new_fn_name(path, "record_call");

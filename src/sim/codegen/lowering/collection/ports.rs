@@ -1643,6 +1643,33 @@ impl<'a> Codegen<'a> {
                 );
                 return Ok(true);
             }
+            // An output string port drives an element of an array of
+            // strings as a continuous assignment of the port to it
+            // (23.3.3.2): each change of the child's string stores it
+            // through the element's ordinary assignment.
+            (Some(child), None)
+                if direction == DbDirection::Output
+                    && self.model.objects[child].ty == IrObjectType::String =>
+            {
+                let instance = self.inst;
+                let statement =
+                    EmitCtx::new(self, parent_path.to_owned(), instance, "0", None, false)
+                        .lower_assignment_operands(
+                            actual,
+                            internal,
+                            true,
+                            Operation::Assignment,
+                            false,
+                        )?;
+                self.emit_link_process(
+                    parent_path,
+                    child_path,
+                    port,
+                    vec![IrDependency::Object(child)],
+                    statement,
+                );
+                return Ok(true);
+            }
             (Some(_), None) | (None, Some(_)) => {
                 return Err(format!(
                     "object port `{}` connects to a non-object actual in `{child_path}`",

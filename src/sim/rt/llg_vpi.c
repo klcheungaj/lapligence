@@ -2109,9 +2109,10 @@ static vpiHandle make_aux_slot(llg_vpi_slot_kind_t kind, uint32_t row, uint32_t 
  * element it names, else a constant or expression handle of its own. */
 /* 37.14 detail 3: a port connected to a constant element select of an array
  * of strings or handles, or of a queue, dynamic or associative array (`arr[1]`,
- * `q[0]`), has that element object as its high connection, the object its
- * name finds (decision A19-D95). NULL for any other connection, and while the
- * element does not exist. */
+ * `q[0]`, `m[1][0]` with every index of a fixed array of more dimensions), has
+ * that element object as its high connection, the object its name finds
+ * (decision A19-D95). NULL for any other connection, and while the element
+ * does not exist. */
 static vpiHandle dynamic_element_conn(uint32_t index) {
     const llg_vpi_code_t* node = code_at(code_visible(index));
     if (!node || node->type != vpiVarSelect || !(node->flags & LLG_VPI_CODE_CONSTANT)) return NULL;
@@ -2120,18 +2121,20 @@ static vpiHandle dynamic_element_conn(uint32_t index) {
     if (!array || !(array->flags & LLG_VPI_CODE_ALIAS) || array->object < 0) return NULL;
     const llg_vpi_model_object_t* object = row_object((uint32_t)array->object);
     if (!object || !(object->flags & LLG_VPI_OBJ_DYNAMIC)) return NULL;
-    uint32_t selected = LLG_VPI_NONE;
+    /* The limit of vpi_handle_by_multi_index. */
+    int64_t values[16];
+    uint32_t count = 0;
     for (uint32_t i = 0; i < node->count; ++i) {
         if (g_vpi.code->nodes[node->first + i].role != vpiIndex) continue;
-        if (selected != LLG_VPI_NONE) return NULL;
-        selected = node->first + i;
+        if (count == 16u || !code_index(node->first + i, &values[count], 0) ||
+            values[count] < INT32_MIN || values[count] > INT32_MAX)
+            return NULL;
+        ++count;
     }
-    int64_t value;
-    if (selected == LLG_VPI_NONE || !code_index(selected, &value, 0) || value < INT32_MIN ||
-        value > INT32_MAX)
-        return NULL;
-    vpiHandle element =
-        dyn_handle_by_index(decode_handle(object_handle((uint32_t)array->object)), (PLI_INT32)value);
+    if (count == 0) return NULL;
+    llg_vpi_slot_t* slot = decode_handle(object_handle((uint32_t)array->object));
+    vpiHandle element = count == 1 ? dyn_handle_by_index(slot, (PLI_INT32)values[0])
+                                   : dyn_handle_by_multi_index(slot, values, count);
     /* A missing element leaves the expression object, without an error. */
     if (!element) g_vpi.error_pending = 0;
     return element;

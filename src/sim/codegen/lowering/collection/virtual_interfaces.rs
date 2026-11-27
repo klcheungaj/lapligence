@@ -1201,6 +1201,7 @@ impl<'a> Codegen<'a> {
             events: Vec::new(),
             nested: Vec::new(),
             storage: Vec::new(),
+            templates: Vec::new(),
         });
         for (view, members) in view_members {
             self.virtual_interface_views

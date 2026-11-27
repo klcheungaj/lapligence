@@ -144,10 +144,15 @@ fn callback_safe_expression(expr: &IrExpr, result: Option<usize>) -> Result<(), 
     }
 }
 
-/// Whether `expr` binds views of interface members before its value, as
-/// the first index of a use bound where it starts does (decision VM-D1).
+/// Whether `expr` binds views of interface members or element members
+/// before its value, as the first index of a use bound where it starts does
+/// (decisions VM-D1, EO-D4).
 pub(super) fn binds_views(expr: &IrExpr) -> bool {
-    matches!(&expr.kind, IrExprKind::Sequence(sequence) if sequence.binds_views_only())
+    matches!(&expr.kind, IrExprKind::Sequence(sequence) if sequence.statements.iter().all(|statement| {
+        matches!(statement.unlocated(), IrStmt::InterfaceBind(_))
+            || matches!(statement.unlocated(), IrStmt::Container(bind)
+                if matches!(bind.as_ref(), crate::sim::ir::IrContainerStmt::BindElement { .. }))
+    }))
 }
 
 fn callback_effect(statement: &IrStmt) -> String {

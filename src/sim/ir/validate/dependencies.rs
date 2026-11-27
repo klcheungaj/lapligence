@@ -105,11 +105,14 @@ impl Validator<'_> {
             }
             _ => false,
         };
-        if interface
-            .instances
-            .iter()
-            .filter_map(|instance| instance.storage.get(binding.slot).copied().flatten())
-            .any(|storage| !same_shape(storage))
+        // A descriptor without instances shapes its views from a template.
+        if interface.slot_storage(binding.slot).is_none()
+            || interface
+                .instances
+                .iter()
+                .filter_map(|instance| instance.storage.get(binding.slot).copied().flatten())
+                .chain(interface.templates.get(binding.slot).copied())
+                .any(|storage| !same_shape(storage))
         {
             return self.fail(
                 path,
@@ -159,8 +162,7 @@ impl Validator<'_> {
             .virtual_interfaces
             .get(interface)
             .filter(|interface| slot < interface.storage.len())
-            .and_then(|interface| interface.instances.first())
-            .and_then(|instance| instance.storage.get(slot).copied().flatten())
+            .and_then(|interface| interface.slot_storage(slot))
         else {
             return self.fail(path, "interface storage reference is out of bounds");
         };

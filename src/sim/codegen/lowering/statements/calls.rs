@@ -815,6 +815,11 @@ impl EmitCtx<'_, '_> {
                 continue;
             }
             if self.cg.is_subroutine_container(*io) {
+                // A member of a record element read after an effect is bound
+                // after the actuals before it (decisions EO-D3, EO-D4).
+                if let Some(bindings) = self.cg.take_placed_interface_bindings(bound[idx].expr) {
+                    before.extend(bindings);
+                }
                 let argument = self.cg.container_call_argument(
                     &self.path,
                     *io,
