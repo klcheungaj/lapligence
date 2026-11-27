@@ -779,38 +779,33 @@ With `typedef struct { int q[$]; int v; } r_t; r_t rq[$];` and a function
 `bump()` that sets `k = 1`:
 
 - a queue or dynamic-array member of a record element read whole in place
-  after a call in the same statement (a concatenation item, a `%p`
-  argument, an actual after an effect of its own call), or read as a string
-  or unpacked value (`rq[k].tags[0]` of a string queue), names the element
-  the statement selected when it started: `t = {bumpq(), rq[k].q}` and
-  `x = total(bump(), rq[k].q)` read `rq[0].q`, the reference `rq[1].q`
-  (a packed or real method, query or select of the member, and a whole
-  actual of a call the effect precedes, follow EO-D4);
+  after a call by an operand other than an array item of a concatenation
+  assigned to a queue or dynamic array, a `%p` argument of a display task or
+  `$sformatf`, or an actual of a container formal names the element the
+  statement selected when it started: an array equality
+  `x = bump() + (rq[k].q == t)` reads `rq[0].q`, the reference `rq[1].q`
+  (the forms named follow EO-D4);
 - a nested assignment whose target is a string, a handle, an unpacked value,
   a container element or a class property select is rejected in an operand
   that `?:`, `&&`, `||`, `->`, `inside` or an array method's `with` clause may
-  skip or repeat (`s2 = c ? (s = "a") : "b"`), with its location;
-- an output or inout actual of a string-returning function called in an
-  expression that names an element of a queue, dynamic or associative array,
-  or of any function whose result is not packed, is rejected (it is supported
-  where the call is a statement, and for a function with a packed result).
+  skip or repeat (`s2 = c ? (s = "a") : "b"`), with its location.
 
 ### Cause
 
 A queue or dynamic-array member of a record element of a queue or dynamic
 array is bound in place, through an access of the element that the
 statement evaluates once, before the statement runs, or where its use starts
-when that use is a packed or real method, query, select or call an effect
-precedes, which `lower_expr` lowers; a whole member read in place and a
-string or unpacked read have no such lowering that binds it. An
-element actual's copy-out is a statement after the call, which a
-string-valued or unpacked call result has no sequence for. Nested assignments with such targets have only the statement form,
-which runs where the full expression runs its nested assignments first.
+when an effect precedes that use and its lowering binds it there: a packed,
+real or string read (`lower_expr`, `lower_string`), a concatenation item, a
+`%p` argument or a container actual. Other lowerings of a whole member have
+no such point. Nested assignments with such targets have only the statement
+form, which runs where the full expression runs its nested assignments
+first.
 
 ### Intended direction
 
-Bind a whole member read in place where the container lowering of that
-read starts, as the select and method forms are (EO-D4).
+Bind a whole member read in place where the remaining lowerings of that read
+start, as the forms above are (EO-D4).
 
 ### Reproduce
 

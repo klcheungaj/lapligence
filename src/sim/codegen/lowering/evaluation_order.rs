@@ -786,7 +786,8 @@ impl Codegen<'_> {
         };
         // Only the inputs before the last inout or `ref` actual matter, or
         // before an output actual selected through a computed handle that
-        // the call evaluates at its place (decision EO-D4).
+        // the call evaluates at its place, or before a member of a record
+        // element bound at its place among the actuals (decision EO-D4).
         let bindings =
             formals
                 .iter()
@@ -796,6 +797,10 @@ impl Codegen<'_> {
                     Some(DbDirection::Output) => bound.get(idx).is_some_and(|arg| {
                         self.receiver_roots
                             .contains_key(&self.unwrap_output_actual(arg.expr))
+                    }),
+                    Some(DbDirection::Input) => bound.get(idx).is_some_and(|arg| {
+                        self.is_subroutine_container(*io)
+                            && self.placed_interface_bindings.contains_key(&arg.expr)
                     }),
                     _ => false,
                 })?;

@@ -1,0 +1,20 @@
+concat k=1 t='{10, 1, 2, 3} 
+concat dynamic t='{10, 0, 0, 0, 0} 
+concat before t='{1, 10} 
+concat two t='{10, 1, 2, 3, 1} 
+p 10 '{1, 2, 3} 
+w 10 '{1, 2, 3} 
+sformatf 10 '{1, 2, 3} 
+p before '{1}  10
+actual x=16
+dynamic actual x=14
+tshow 10 '{1, 2, 3} 
+string function s=16
+two calls x=22
+outside x=17
+string concat s=<bb
+s 10 bb
+compare x=1
+string actual x=12
+len x=12
+index s=a k=1

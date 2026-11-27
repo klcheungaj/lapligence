@@ -757,17 +757,22 @@ impl Codegen<'_> {
     /// runs first (decision EO-D1) come before everything else, and one
     /// that already ran is a plain read.
     fn uses_after_effects(&self, root: NodeId, uses: &[NodeId]) -> Vec<(NodeId, NodeId)> {
-        self.uses_after_effects_with(root, uses, &|node| self.use_member_path(node))
+        self.uses_after_effects_with(root, uses, &|node| self.use_member_path(node), true)
     }
 
     /// [`Self::uses_after_effects`] for the uses `path_of` maps a node to
     /// (the path a use starting at that node names), shared by the handles
-    /// of class properties (decision EO-D4).
+    /// of class properties and the members of record elements (decision
+    /// EO-D4). With `whole_actuals_at_call`, a whole member passed to a
+    /// subroutine is used when the call starts; without, at its place among
+    /// the actuals, as the reference simulator reads a member of a record
+    /// element.
     pub(in crate::sim::codegen) fn uses_after_effects_with(
         &self,
         root: NodeId,
         uses: &[NodeId],
         path_of: &dyn Fn(NodeId) -> Option<NodeId>,
+        whole_actuals_at_call: bool,
     ) -> Vec<(NodeId, NodeId)> {
         let mut seen: Vec<NodeId> = Vec::new();
         let mut placed = Vec::new();
@@ -820,10 +825,12 @@ impl Codegen<'_> {
             // A whole member passed to a subroutine is bound when the call
             // starts, before its other actuals, as the reference simulator
             // does; the call's own lowering binds it.
-            if matches!(
-                self.kind(node),
-                NodeKind::FuncCall { .. } | NodeKind::MethodCall { .. }
-            ) {
+            if whole_actuals_at_call
+                && matches!(
+                    self.kind(node),
+                    NodeKind::FuncCall { .. } | NodeKind::MethodCall { .. }
+                )
+            {
                 for actual in self.call_argument_nodes(node) {
                     let actual = self.unwrap_output_actual(actual);
                     if path_of(actual) == Some(actual)

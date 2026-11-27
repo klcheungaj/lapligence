@@ -736,7 +736,7 @@ impl Codegen<'_> {
             NodeKind::Stmt(StmtKind::Assign { .. }) => self.node(h).children.first().copied(),
             _ => None,
         };
-        self.uses_after_effects_with(h, &uses, &path_of)
+        self.uses_after_effects_with(h, &uses, &path_of, true)
             .into_iter()
             .filter(|(_, start)| Some(*start) != target && *start != h)
             .collect()

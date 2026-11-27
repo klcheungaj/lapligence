@@ -68,7 +68,17 @@ impl Codegen<'_> {
                             .to_owned(),
                     )
                 })?;
-                return Ok(pattern(IrPatternSource::Container(container.ir)));
+                // A member of a record element read after an effect of the
+                // statement is bound where the argument is read (decision
+                // EO-D4).
+                let bindings = self.take_placed_interface_bindings(node);
+                let text = pattern(IrPatternSource::Container(container.ir));
+                return Ok(match (bindings, text) {
+                    (Some(bindings), IrDisplayArg::Text(text)) => {
+                        IrDisplayArg::Text(Self::string_after_statements(bindings, text))
+                    }
+                    (_, text) => text,
+                });
             }
             _ => {}
         }
