@@ -581,6 +581,33 @@ the flattening cost, a 5,000-cell `int` array passed through a packed formal
 with `--gen-only`, then measure `model.c`.
 
 
+## Whole parameter arrays of strings or reals
+
+**Status:** open. Each form rejects with a located diagnostic.
+
+### Symptom
+
+A fixed array parameter that holds strings or reals is read by element or
+member, printed by `%p` and, as a structure that constant selectors reach,
+copied whole; a copy of the whole array (`x = SA` with
+`parameter string SA[2]`), of a slice (`s = SA[0:1]`), and of a structure
+with such members that a run-time index selects (`r = RR[i]`) reject.
+
+### Cause
+
+Such a parameter is read through its elaborated value element by element;
+a whole-array copy, a slice and a run-time selected structure have no such
+lowering.
+
+### Intended direction
+
+Materialize such a parameter as constant model storage when it is read whole.
+
+### Reproduce
+
+`neg_string_copy.sv` and `neg_record_element.sv` in
+`tests/fixtures/sim/feature_completion/ki_unpacked_parameters/`.
+
 ## Output string ports connected to array elements
 
 **Status:** open; an input string port takes an element of a string array
@@ -827,7 +854,9 @@ With `typedef struct { int q[$]; int v; } r_t; r_t rq[$];` and a function
 - a nested assignment whose target is a string, a handle, an unpacked value,
   a container element or a class property select is rejected in an operand
   that `?:`, `&&`, `||`, `->`, `inside` or an array method's `with` clause may
-  skip or repeat (`s2 = c ? (s = "a") : "b"`), with its location;
+  skip or repeat (`s2 = c ? (s = "a") : "b"`), with its location, and so is
+  a nested assignment to an unpacked value selected with a call or an
+  assignment in any operand (`x = ((ua[f()] = ub) == ub)`);
 - an output or inout actual of a string-returning function called in an
   expression that names an element of a queue, dynamic or associative array,
   or of any function whose result is not packed, is rejected (it is supported
@@ -855,7 +884,9 @@ read starts, as the select and method forms are (EO-D4).
 The forms above in a module with `rq` filled by `push_back`; the supported
 neighbours are rows of
 `tests/fixtures/sim/lrm_decisions/EO-D4_handle_actuals_staged_targets.sv` and
-`tests/fixtures/sim/expression_mutations/nested_assignment_skipped_operand.sv`.
+`tests/fixtures/sim/expression_mutations/nested_assignment_skipped_operand.sv`;
+the call-selected unpacked target rejects in
+`tests/fixtures/sim/feature_completion/ki_audit/neg_nested_assignment_unpacked_call_target.sv`.
 
 ## Remaining forms of unpacked-array container elements and multidimensional class properties (SIM-011, SIM-027)
 
@@ -1428,6 +1459,34 @@ needs them.
 `tests/fixtures/sim/feature_completion/sim_017/neg_assoc_message.sv`,
 `neg_array_variable.sv`, `neg_array_variable_get.sv` and
 `neg_case_expression.sv`.
+
+## Process control of the static initialization process
+
+**Status:** open; llg limitation of decision S13-D7.
+
+### Symptom
+
+`kill()`, `suspend()` or `resume()` of the process `process::self()` returns
+while a static declaration initializer runs is a run-time error ("process::kill
+of the process running static initialization is not supported (llg
+limitation)") that does nothing; the run goes on. Industry-standard behaviour
+ends the initializer on `kill`.
+
+### Cause
+
+The initialization process is a handle for `self()` and its random state
+only: static initialization runs before any process starts (SV 6.8), outside
+a process the scheduler could end or suspend.
+
+### Intended direction
+
+Run the initializers of each initialization scope as a process of their own
+if a design needs to end or suspend them.
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/ki_uvm_run/process_self_static_kill.sv`
+(`ki_uvm_run::process_self_static_kill`).
 
 ## Rejected process-handle forms
 
@@ -2080,8 +2139,9 @@ nested containers, elements of them and container-valued calls execute
 ### Symptom
 
 These legal `inside` set items reject with explicit diagnostics: a slice of an
-element of a container of containers (`x inside {qq[0][0:1]}`) and a conditional
-expression with such an element as an operand.
+element of a container of containers (`x inside {qq[0][0:1]}`), a conditional
+expression with such an element as an operand, and a member that calls a
+function in a set of class handles (`h inside {g, mk()}`).
 
 ### Cause
 
@@ -2098,7 +2158,8 @@ The addressed-container operand for the two forms.
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/sim_019/neg_inside_nested_slice.sv`;
-`tests/fixtures/sim/feature_completion/ki_audit/neg_inside_conditional_nested.sv`.
+`tests/fixtures/sim/feature_completion/ki_audit/neg_inside_conditional_nested.sv`
+and `neg_inside_handle_call_member.sv`.
 
 ## Waits on storage without a change notification
 
@@ -2669,6 +2730,35 @@ reads per bound instance.
 ### Reproduce
 
 `tests/fixtures/sim/feature_completion/sim_099/neg_vif_sensitivity_*.sv`.
+
+## Generate blocks of an interface through virtual interfaces
+
+**Status:** open. Each use rejects with a located diagnostic (CODEGEN-001).
+
+### Symptom
+
+A member of a generate block of an interface, named through a virtual
+interface (`vo.g.x = 1` with `if (1) begin : g logic x; end` in the
+interface), stops compilation with "generate block `g` of an interface is not
+supported through a virtual interface". The interface's own members, the
+interface instances nested in it and the member through the instance
+(`o.g.x`) work. SV 25.9 makes every component of the interface instance
+available through the virtual interface.
+
+### Cause
+
+The virtual interface descriptor holds the interface's own members and the
+table of its nested interface instances; a generate block's scope has
+neither.
+
+### Intended direction
+
+Give the descriptor the members of the interface's generate blocks, as named
+by their block paths.
+
+### Reproduce
+
+`tests/fixtures/sim/virtual_interfaces/nested_generate_rejected.sv`.
 
 ## Arrays of interface instances of several dimensions as values
 
@@ -3736,7 +3826,10 @@ with no error status, as for a name that denotes nothing (S42-D11):
   `cbAssign`/`cbDeassign` (procedural `assign`/`deassign` is rejected,
   decision A20-D9), `cbUnresolvedSystf` (every system call is resolved when
   the model is generated) and the save, restart, reset and interactive
-  reasons (no such features). `cbError` reports run-time error reports, not
+  reasons (no such features); `cbSizeChange` on a fixed array of queues,
+  dynamic or associative arrays, on a class property or a string var, and with
+  a value format other than `vpiSuppressVal` (decision A19-D91: llg does not
+  watch the resizes of those). `cbError` reports run-time error reports, not
   compile errors (decision A20-D20); `cbSignal` catches the signal with the
   C `signal()` handler, replacing the model's own;
 - the `vpiForce`/`vpiRelease` handle of a `cbForce`/`cbRelease` callback has

@@ -633,3 +633,24 @@ fn closing_audit_served_forms_run() {
         include_str!("../fixtures/sim/feature_completion/ki_audit/closing_served_forms.out");
     sim_cli::run_case_backend_parity(SUITE, "closing_served_forms", expected, &[], &[]);
 }
+
+/// Two located limits of sections added since the X1 audit whose messages
+/// no section named: a nested assignment to an unpacked value selected with
+/// a call, and a handle set member that calls a function.
+#[test]
+fn closing_audit_operand_and_handle_set_forms_are_located_limits() {
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_nested_assignment_unpacked_call_target",
+        "CODEGEN-001",
+        Some("13:11"),
+        "an assignment operator to an unpacked value selected with a call or an assignment in an operand of an expression in `tb` is not supported",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_inside_handle_call_member",
+        "CODEGEN-009",
+        Some("12:21"),
+        "handle inside set in `tb` must list handle variables, properties, elements, arrays or null without side effects",
+    );
+}

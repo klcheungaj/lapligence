@@ -76,6 +76,8 @@ Clause lines quote `docs/specification/SystemVerilog-1800-2009.txt`.
 | `neg_vif_event_no_instance` | Event forms through virtual interfaces | 25.9 L44893-44895: "it has the value null before it is initialized. Attempting to use a null virtual interface shall result in a fatal run-time error."; the trigger is guarded, and the design has no instance of the interface. |
 | `neg_class_event_array_actual` | Event forms through virtual interfaces | 13.5.2 L19103-19104, as above; the actual is an element of an event array property. |
 | `neg_randomize_continuous` | Constrained randomization limits | 18.6.1 L30394-30397: "Every class has a built-in randomize() virtual method, declared as follows: virtual function int randomize();". The text names no rule for a method call in a continuous assignment; 6.21 L7008-7010 ("References to automatic variables and elements or members of dynamic variables shall be limited to procedural blocks.") may make the form illegal. Either way it rejects. |
+| `neg_nested_assignment_unpacked_call_target` | Operand order of record elements of queues and dynamic arrays | 11.3.6 L14455: "An expression can include a blocking assignment, provided it does not have a timing control."; the target is a row of an unpacked array selected with a call. |
+| `neg_inside_handle_call_member` | Set membership items outside packed storage | 11.4.13 L15376-15377: "The inside operator uses the equality ( == ) operator on nonintegral expressions to perform the comparison."; the left operand and the members are class handles, one of them a function result. |
 
 `computed_handle_element` is a positive case: the elements of an unpacked
 array property of a computed handle, which the known issues listed as
