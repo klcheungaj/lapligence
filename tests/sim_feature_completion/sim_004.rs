@@ -191,44 +191,50 @@ fn illegal_native_targets_stay_rejected() {
 /// An output port connection is a continuous assignment (23.3.3.2), which
 /// elements of dynamically sized variables do not take (6.21): every kind
 /// of port and container, a select inside a concatenation and a variable
-/// index reject at the element.
+/// index reject at the element. The frontend already rejects the reference
+/// to the element outside procedural code (6.21); with that rule lowered to
+/// a warning, the write is still an error.
 #[test]
 fn output_ports_to_dynamic_elements_are_illegal() {
-    let illegal = |port: &str| {
-        format!(
-            "output port `{port}` of `tb.c` is connected to an element of a queue, dynamic or \
-             associative array, which is illegal: the connection is a continuous assignment \
-             (IEEE 1800-2009 23.3.3.2), and elements of dynamically sized variables shall not be \
-             written with continuous assignments (6.21)"
-        )
-    };
+    let reference = "cannot refer to an element or member of a dynamic type outside of a \
+                     procedural context (IEEE 1800-2009 6.21";
     sim_cli::reject_case_with_id(
         SUITE,
         "neg_output_string_queue_element",
-        "CODEGEN-002",
+        "SLANG-DynamicNotProcedural",
         Some("15:16"),
-        &illegal("so"),
+        reference,
     );
     sim_cli::reject_case_with_id(
         SUITE,
         "neg_output_packed_dynamic_element",
-        "CODEGEN-002",
+        "SLANG-DynamicNotProcedural",
         Some("12:20"),
-        &illegal("po"),
+        reference,
     );
     sim_cli::reject_case_with_id(
         SUITE,
         "neg_output_real_associative_element",
-        "CODEGEN-002",
+        "SLANG-DynamicNotProcedural",
         Some("10:16"),
-        &illegal("ro"),
+        reference,
     );
     sim_cli::reject_case_with_id(
         SUITE,
         "neg_output_variable_queue_element",
-        "CODEGEN-002",
+        "SLANG-DynamicNotProcedural",
         Some("11:16"),
-        &illegal("po"),
+        reference,
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_output_queue_element_reads_allowed",
+        "CODEGEN-002",
+        Some("14:16"),
+        "output port `so` of `tb.c` is connected to an element of a queue, dynamic or \
+         associative array, which is illegal: the connection is a continuous assignment \
+         (IEEE 1800-2009 23.3.3.2), and elements of dynamically sized variables shall not be \
+         written with continuous assignments (6.21)",
     );
 }
 

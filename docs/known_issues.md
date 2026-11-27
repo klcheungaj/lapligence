@@ -1476,8 +1476,9 @@ These legal forms are rejected with explicit diagnostics:
 - an output or inout process formal bound to a process variable in a
   function call inside an expression;
 - `try_get`/`try_peek` of a mailbox into a process variable;
-- `status()` inside a `wait` condition, an event expression, an `@*`
-  sensitivity body or a continuous assignment;
+- `status()` inside a `wait` condition, an event expression or an `@*`
+  sensitivity body (in a continuous assignment the call is illegal, 6.21,
+  and rejects in the frontend: `ki_continuous_dynamic_reads`);
 - `suspend()` inside a function body.
 
 An `always_comb` body that reads `status()` runs: its sensitivity holds
@@ -1512,7 +1513,7 @@ process from a function with a run-time check for self-suspension.
 `neg_process_ref_property.sv`, `neg_process_ref_member.sv`,
 `neg_process_output_expression.sv`, `neg_process_try_get.sv`,
 `neg_process_status_wait.sv`, `neg_process_status_event.sv`,
-`neg_process_status_implicit.sv`, `neg_process_status_continuous.sv` and
+`neg_process_status_implicit.sv` and
 `neg_process_suspend_function.sv`; the served forms are in
 `process_handle_forms.sv`.
 
@@ -3519,9 +3520,10 @@ these forms remain outside them.
   Every object a randomize call reaches evaluates its own functions, also
   objects of the randomized class and the randomized object reached again
   through a ring, and a scalar handle receiver (`next.f(x)`) works.
-- A `randomize()` call in a `wait` condition, an event control or outside
-  procedural code (a continuous assignment) rejects; one in a declaration
-  initializer runs.
+- A `randomize()` call in a `wait` condition or an event control rejects;
+  one in a declaration initializer runs. In a continuous assignment the call
+  is illegal (6.21) and rejects in the frontend
+  (`ki_continuous_dynamic_reads`).
 - When the exact model and rejection sampling both exceed their budgets, the
   CDCL search returns a legal solution that is not uniformly distributed
   (S29-D10), against 18.5.9 L30013-30014; the fallbacks also ignore dist
@@ -3565,12 +3567,11 @@ Nested dynamic arrays and queues (each row an object of a row unit, row sizes in
 `tests/fixtures/sim/feature_completion/sim_030/neg_*.sv` and
 `search_fallback.sv`;
 `tests/fixtures/sim/feature_completion/ki_static_members/neg_random_record.sv`;
-`neg_rand_*.sv`, `neg_randomize_event_control.sv` and
-`neg_randomize_continuous.sv` in
+`neg_rand_*.sv` and `neg_randomize_event_control.sv` in
 `tests/fixtures/sim/feature_completion/ki_audit/` (associative arrays of
 handles, with a class or wider index, nested queues, a non-constant
 `solve...before` index, an `inside` row, an element `rand_mode`, a call in an
-event control, a call in a continuous assignment);
+event control);
 `tests/fixtures/sim/lrm_decisions/S29-D10_search_not_uniform.sv`.
 
 ## Legacy constructs unsupported by design

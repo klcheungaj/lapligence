@@ -1,5 +1,5 @@
-// status() in a continuous assignment: a located limit (docs/known_issues.md,
-// rejected process-handle forms).
+// status() in a net declaration assignment: a method of the process object
+// a class handle names, which 6.21 limits to procedural blocks.
 module tb;
   process p;
   wire done = (p != null) && (p.status() == process::FINISHED);

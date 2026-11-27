@@ -17,7 +17,7 @@ module tb;
     endfunction
 
     always_comb fixed_observed = fixed[0];
-    assign copy_observed = dynamic_copy[0];
+    always_comb copy_observed = dynamic_copy[0];
 
     always @(dynamic_values[0]) begin
         value_changes = value_changes + 1;

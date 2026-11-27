@@ -413,6 +413,9 @@ mod ki_timescale_option;
 #[path = "sim_feature_completion/ki_illegal_port_writes.rs"]
 mod ki_illegal_port_writes;
 
+#[path = "sim_feature_completion/ki_continuous_dynamic_reads.rs"]
+mod ki_continuous_dynamic_reads;
+
 #[test]
 fn component_fixture_integrity() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));

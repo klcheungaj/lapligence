@@ -1,9 +1,9 @@
 0 se=one
-0 sq=q0
+0 sv=f0
 0 sc=x-y
 1 se=uno
-2 sq=q1
-3 sq=Q1
+2 sv=f1
+3 sv=F1
 4 sc=z-y
 5 sd=seven len=5
 7 sd=siete len=5

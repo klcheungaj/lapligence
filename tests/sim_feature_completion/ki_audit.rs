@@ -221,13 +221,6 @@ fn process_handle_ref_output_and_status_forms_are_located_limits() {
         Some("6:10"),
         status,
     );
-    sim_cli::reject_case_with_id(
-        SUITE,
-        "neg_process_status_continuous",
-        "CODEGEN-001",
-        Some("5:8"),
-        status,
-    );
 }
 
 /// Formerly listed as rejected: `ref` process formals bound to array and
@@ -601,13 +594,6 @@ fn closing_audit_event_and_randomize_forms_are_located_limits() {
         "CODEGEN-001",
         Some("13:7"),
         "an element of an event array of a class object or a virtual interface as an output, inout or ref event actual is not supported in `tb`",
-    );
-    sim_cli::reject_case_with_id(
-        SUITE,
-        "neg_randomize_continuous",
-        "CODEGEN-001",
-        Some("9:14"),
-        "a randomize call used as a value is not supported in a wait condition, an event control or outside procedural code",
     );
 }
 

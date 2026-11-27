@@ -1078,6 +1078,10 @@ struct Capture {
         }
       }
     }
+    else if (original.code == diag::DynamicNotProcedural) {
+      // Name the rules the reference breaks (its severity is set at capture).
+      message += " (IEEE 1800-2009 6.21; 25.9 for a virtual interface)";
+    }
     chargeRecord(output, sizeof(LlgSlangDiagnostic));
     output.diagnostics.push_back({
         provider,
@@ -12875,6 +12879,15 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
   // frontend patch): each element is a handle upcast (8.15). `-Werror`
   // restores the error.
   engine.setSeverity(diag::DerivedClassArrayAssignment, DiagnosticSeverity::Warning);
+  // IEEE 1800-2009 6.21 limits references to elements and members of dynamic
+  // variables (class properties, queues, dynamic and associative arrays,
+  // strings) to procedural blocks, and 25.9 the components of a virtual
+  // interface to procedural statements. The frontend only warns about such a
+  // reference in a continuous context (a continuous assignment, a net
+  // declaration assignment, a port connection, a gate terminal, a delay, a
+  // procedural continuous assignment), which the simulator would otherwise
+  // run as if it were legal.
+  engine.setSeverity(diag::DynamicNotProcedural, DiagnosticSeverity::Error);
   Diagnostics pragmaDiagnostics = engine.setMappingsFromPragmas();
   for (const Diagnostic& diagnostic : pragmaDiagnostics)
     compilationClient->issue(engine, diagnostic);
