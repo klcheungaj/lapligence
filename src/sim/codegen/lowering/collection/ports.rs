@@ -1851,6 +1851,21 @@ impl<'a> Codegen<'a> {
                 }
                 continue;
             };
+            if direction == DbDirection::Output {
+                if let Some(element) = self.dynamic_element_write(actual) {
+                    return Err(self.locate_error(
+                        element,
+                        format!(
+                            "output port `{}` of `{child_path}` is connected to an element of a \
+                             queue, dynamic or associative array, which is illegal: the connection \
+                             is a continuous assignment (IEEE 1800-2009 23.3.3.2), and elements of \
+                             dynamically sized variables shall not be written with continuous \
+                             assignments (6.21)",
+                            self.node(port).name
+                        ),
+                    ));
+                }
+            }
             if let (None, Some(internal)) = (low, self.db.port_internal_expression(port)) {
                 self.emit_port_expression_link(
                     parent_path,
@@ -1974,6 +1989,39 @@ impl<'a> Codegen<'a> {
             )?;
         }
         Ok(())
+    }
+
+    /// The select in output actual `node` (also an operand of a
+    /// concatenation) that writes an element or member of an element of a
+    /// queue, dynamic or associative array, whatever its index.
+    fn dynamic_element_write(&self, node: NodeId) -> Option<NodeId> {
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Cast { operand, .. }) => self.dynamic_element_write(*operand),
+            NodeKind::Expr(
+                ExprKind::BitSelect { base, .. }
+                | ExprKind::PartSelect { base, .. }
+                | ExprKind::IndexedPartSelect { base, .. }
+                | ExprKind::ArraySelect { base, .. }
+                | ExprKind::MemberSelect { base, .. },
+            ) => {
+                let dynamic = self.query_descriptor(*base).is_some_and(|descriptor| {
+                    matches!(descriptor.shape, TypeShape::Container { .. })
+                });
+                if dynamic {
+                    Some(node)
+                } else {
+                    self.dynamic_element_write(*base)
+                }
+            }
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::Concat,
+                operands,
+                ..
+            }) => operands
+                .iter()
+                .find_map(|operand| self.dynamic_element_write(*operand)),
+            _ => None,
+        }
     }
 
     /// A port whose port expression selects or concatenates internal signals

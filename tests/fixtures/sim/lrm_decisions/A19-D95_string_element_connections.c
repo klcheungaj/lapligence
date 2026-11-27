@@ -15,10 +15,12 @@ static void show(const char* label, vpiHandle h) {
     (void)failed();
     vpi_printf(" %s=%d:%s", label, (int)vpi_get(vpiType, h), name ? name : "NULL");
     s_vpi_value v;
-    v.format = vpiStringVal;
+    int text = vpi_get(vpiType, h) == vpiStringVar;
+    v.format = text ? vpiStringVal : vpiIntVal;
     vpi_get_value(h, &v);
     if (failed()) vpi_printf("(no value)");
-    else vpi_printf("[%s]", v.value.str);
+    else if (text) vpi_printf("[%s]", v.value.str);
+    else vpi_printf("[%d]", (int)v.value.integer);
     /* An element's vpiParent is its array; a module variable's is not tested. */
     if (strcmp(label, "high")) return;
     vpiHandle parent = vpi_handle(vpiParent, h);
@@ -46,12 +48,12 @@ static PLI_INT32 ps(PLI_BYTE8* data) {
     vpiHandle module = vpi_handle_by_name((PLI_BYTE8*)"tb.c", NULL);
     vpiHandle it = vpi_iterate(vpiPort, module), port;
     while (it && (port = vpi_scan(it)) != NULL) {
-        if (strcmp(vpi_get_str(vpiName, port), "sq")) continue;
+        if (strcmp(vpi_get_str(vpiName, port), "sm")) continue;
         s_vpi_value v;
         v.format = vpiStringVal;
         v.value.str = (PLI_BYTE8*)"vpi";
         vpi_put_value(vpi_handle(vpiLowConn, port), &v, NULL, vpiNoDelay);
-        vpi_printf("put sq%s\n", failed() ? " (error)" : "");
+        vpi_printf("put sm%s\n", failed() ? " (error)" : "");
         vpi_free_object(it);
         break;
     }
