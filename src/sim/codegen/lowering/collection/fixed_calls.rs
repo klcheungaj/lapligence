@@ -69,6 +69,65 @@ impl Codegen<'_> {
         }
     }
 
+    /// A lexical array of the shape of a fixed-array element of container
+    /// storage: `dimensions` of packed cells, or of real cells (`width` 0).
+    pub(in super::super) fn row_activation_array(
+        &mut self,
+        dimensions: &[(i32, i32)],
+        element: &IrContainerElement,
+    ) -> Result<ArrayInfo, String> {
+        let (width, signed, two_state, real, shortreal) = match *element {
+            IrContainerElement::Packed {
+                width,
+                signed,
+                two_state,
+            } => (width, signed, two_state, false, false),
+            IrContainerElement::Real { shortreal } => (0, false, false, true, shortreal),
+            _ => return Err("fixed activation array needs packed or real cells".into()),
+        };
+        let total = dimensions
+            .iter()
+            .try_fold(1u64, |total, (left, right)| {
+                total.checked_mul(i64::from(*left).abs_diff(i64::from(*right)) + 1)
+            })
+            .ok_or("fixed activation array is too large")?;
+        let ir = self.model.arrays.len();
+        let name = format!("_llg_fixed_{ir}");
+        let info = ArrayInfo {
+            global: name.clone(),
+            elem_width: width,
+            signed,
+            real,
+            shortreal,
+            is_net: false,
+            dims: dimensions.to_vec(),
+            init: None,
+            ir,
+        };
+        self.model.arrays.push(crate::sim::ir::IrArray {
+            cell_names: crate::sim::ir::IrCellNames::Indexed,
+            activation: true,
+            descriptor: false,
+            net: None,
+            net_elements: Vec::new(),
+            element_default: None,
+            initial_cells: None,
+            element_uninitialized: None,
+            c_name: name,
+            hdl_name: String::new(),
+            elem_width: width,
+            signed,
+            two_state,
+            real,
+            shortreal,
+            dims: dimensions.to_vec(),
+            total,
+            sampled_image: false,
+            bound: false,
+        });
+        Ok(info)
+    }
+
     pub(in super::super) fn fixed_activation_array(
         &mut self,
         node: NodeId,

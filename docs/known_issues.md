@@ -2815,11 +2815,12 @@ As an item of an unpacked array concatenation (SV 10.10): a dense fixed array
 of reals, events or rows (an item of a queue of fixed arrays); an array of
 rows into a queue of queues (`qq = {m, q}` with `int m[2][2]`); an item of a
 run-time size into a fixed target of two dimensions (`m = {rows, r2}` with
-`int rows[$][2]`), a real fixed target or a fixed-array element of an
-associative array (the last with an internal-invariant id, CODEGEN-006). A
-whole assignment of such an array to a queue (`rq = r2`) rejects too. A queue
-or dynamic array that is an element of a container is an item that works
-(`{qq[1], 0}`, also into a queue of queues).
+`int rows[$][2]`) or a real fixed target, also when the target is a
+fixed-array element of a container. A whole assignment of such an array to a
+queue (`rq = r2`) rejects too. A queue or dynamic array that is an element of
+a container is an item that works (`{qq[1], 0}`, also into a queue of
+queues), and so is an item of a run-time size into a fixed-array element of
+packed cells (`fa[1] = {q, 0}` with `int fa[int][3]`).
 
 ### Cause
 

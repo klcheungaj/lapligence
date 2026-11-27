@@ -969,6 +969,48 @@ impl Codegen<'_> {
         ))))
     }
 
+    /// `row = {q, 0}`, `row = q` and the other sources of a fixed array of
+    /// packed or real cells that no array variable holds, for a native row value:
+    /// assigned to a lexical array of the row's shape as to a fixed-array
+    /// variable (with its run-time size check, SV 7.6), then stored whole.
+    /// `None` for another row type or a source no fixed-array lowering
+    /// takes.
+    pub(in crate::sim::codegen) fn native_row_from_value(
+        &mut self,
+        path: &str,
+        value: usize,
+        source: NodeId,
+    ) -> Result<Option<IrStmt>, String> {
+        let ty = self.model.native_values[value].ty;
+        let IrContainerElement::FixedArray {
+            dimensions,
+            element,
+        } = self.model.native_types[ty].clone()
+        else {
+            return Ok(None);
+        };
+        if !matches!(
+            *element,
+            IrContainerElement::Packed { .. } | IrContainerElement::Real { .. }
+        ) {
+            return Ok(None);
+        }
+        let array = self.row_activation_array(&dimensions, &element)?;
+        let ir = array.ir;
+        let Some(fill) = self.lower_fixed_into_lexical(path, array, source)? else {
+            return Ok(None);
+        };
+        Ok(Some(IrStmt::Block(vec![
+            IrStmt::FixedArrayDeclare(ir),
+            fill,
+            IrStmt::Container(Box::new(IrContainerStmt::FixedToValueItem {
+                array: ir,
+                root: IrValueItemRoot::Value(value),
+                items: Vec::new(),
+            })),
+        ])))
+    }
+
     /// The locator of a whole element as a transfer root; a `write` locator
     /// creates a missing associative entry and publishes the store.
     fn element_row_root(

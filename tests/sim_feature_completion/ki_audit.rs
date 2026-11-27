@@ -558,13 +558,6 @@ fn closing_audit_container_forms_are_located_limits() {
     );
     sim_cli::reject_case_with_id(
         SUITE,
-        "neg_concat_associative_fixed_element",
-        "CODEGEN-006",
-        Some("7:5"),
-        "native record assignment in `tb` has no record source",
-    );
-    sim_cli::reject_case_with_id(
-        SUITE,
         "neg_real_array_to_queue",
         "CODEGEN-003",
         Some("7:10"),
@@ -625,6 +618,15 @@ fn closing_audit_served_forms_run() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/ki_audit/closing_served_forms.out");
     sim_cli::run_case_backend_parity(SUITE, "closing_served_forms", expected, &[], &[]);
+}
+
+/// Fixed-array elements of containers take the sources of a fixed-array
+/// variable; expected values are derived by hand in the readme.
+#[test]
+fn closing_audit_fixed_elements_take_concatenations() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/ki_audit/concat_into_fixed_elements.out");
+    sim_cli::run_case_backend_parity(SUITE, "concat_into_fixed_elements", expected, &[], &[]);
 }
 
 /// Two located limits of sections added since the X1 audit whose messages
