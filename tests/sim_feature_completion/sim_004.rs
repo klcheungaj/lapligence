@@ -80,6 +80,14 @@ fn input_string_ports_follow_element_and_expression_actuals() {
 }
 
 #[test]
+fn output_string_ports_drive_array_elements() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_004/string_element_output_links.out");
+    sim_cli::run_case_backend_parity(SUITE, "string_element_output_links", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "string_element_output_links", expected);
+}
+
+#[test]
 fn continuous_assignments_drive_strings_and_string_records() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_004/native_continuous.out");
     sim_cli::run_case_backend_parity(SUITE, "native_continuous", expected, &[], &[]);
@@ -172,6 +180,11 @@ fn illegal_native_targets_stay_rejected() {
         SUITE,
         "neg_string_continuous_conflict",
         "has both a continuous assignment",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_string_inout_element_port",
+        "'arr' cannot be connected to 'inout' port (only nets are allowed)",
     );
 }
 

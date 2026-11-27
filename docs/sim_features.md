@@ -786,10 +786,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   String and native-record value ports carry independent copies, including an
   output driven by a child `assign` (SIM-004). An input string port also
   takes an element of a string array (`.se(arr[1])`) or any string
-  expression, followed when it changes
+  expression, followed when it changes, and an output string port drives
+  such an element, stored as by an assignment each time the port changes
   ([sim_004](../tests/fixtures/sim/feature_completion/sim_004/readme.md));
-  an output or inout string port connected to such an element rejects
-  ([known issue](known_issues.md#output-string-ports-connected-to-array-elements)).
+  VPI gives the element as the high connection (A19-D95).
   Output targets also written procedurally or by another port, invalid output
   expressions, language-illegal chandle ports (SV §6.14), record ports with a
   chandle or built-in semaphore, mailbox or process member

@@ -3789,6 +3789,15 @@ fn a19_d95_port_directions_and_reference_objects() {
 }
 
 #[test]
+fn a19_d95_string_element_connections() {
+    run_vpi_decision(
+        "A19-D95_string_element_connections",
+        &["task $pp()", "task $ps()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D95_string_element_connections.out"),
+    );
+}
+
+#[test]
 fn a19_d12_expression_values() {
     run_vpi_decision(
         "A19-D12_expression_values",
