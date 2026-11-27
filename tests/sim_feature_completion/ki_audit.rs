@@ -495,3 +495,141 @@ fn vpi_function_called_from_a_static_initializer_runs_its_delayed_put() {
         },
     );
 }
+
+/// FIN-001 closing audit: forms of sections added since the X1 audit that
+/// had no test. Each stays a located compile-time limit.
+#[test]
+fn closing_audit_container_forms_are_located_limits() {
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_string_port_fixed_element",
+        "CODEGEN-009",
+        Some("9:9"),
+        "object port `tb.u.so` connects to a non-object actual",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_packed_member_queue_read",
+        "CODEGEN-001",
+        Some("10:20"),
+        "hierarchical reference `hi` is not supported",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_packed_member_dynamic_write",
+        "CODEGEN-002",
+        Some("10:5"),
+        "cannot resolve hierarchical assignment LHS `lo`",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_packed_member_assoc_increment",
+        "CODEGEN-002",
+        Some("10:5"),
+        "cannot resolve hierarchical assignment LHS `hi`",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_concat_real_array_item",
+        "CODEGEN-009",
+        Some("7:10"),
+        "resizable container assignment in `tb` requires a compatible array",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_concat_event_array_item",
+        "CODEGEN-009",
+        Some("7:10"),
+        "resizable container assignment in `tb` requires a compatible array",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_concat_rows_into_nested_queue",
+        "CODEGEN-003",
+        Some("8:11"),
+        "unpacked array concatenation item in `tb` is an array whose elements are not of the element type of the target",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_concat_queue_rows_into_fixed",
+        "CODEGEN-003",
+        Some("9:10"),
+        "dynamic or queue array to fixed unpacked-array assignment in `tb` requires a runtime-compatible fixed size",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_concat_real_fixed_target",
+        "CODEGEN-003",
+        Some("7:11"),
+        "dynamic or queue array to fixed unpacked-array assignment in `tb` requires a runtime-compatible fixed size",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_concat_associative_fixed_element",
+        "CODEGEN-006",
+        Some("7:5"),
+        "native record assignment in `tb` has no record source",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_real_array_to_queue",
+        "CODEGEN-003",
+        Some("7:10"),
+        "bit-stream cast destination requires a packed container element",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_inside_conditional_nested",
+        "CODEGEN-009",
+        Some("10:35"),
+        "resizable container assignment in `tb` requires a compatible array",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_chandle_key_find_index",
+        "CODEGEN-003",
+        Some("8:9"),
+        "array method `find_index` in `tb` currently requires packed source and destination elements",
+    );
+}
+
+#[test]
+fn closing_audit_event_and_randomize_forms_are_located_limits() {
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_vif_event_queue_trigger",
+        "CODEGEN-002",
+        Some("14:8"),
+        "cannot resolve named event expression",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_vif_event_no_instance",
+        "CODEGEN-002",
+        Some("10:20"),
+        "cannot resolve named event expression",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_class_event_array_actual",
+        "CODEGEN-002",
+        Some("13:7"),
+        "an element of an event array of a class object or a virtual interface cannot be an output, inout or ref event actual",
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_randomize_continuous",
+        "CODEGEN-001",
+        Some("9:14"),
+        "a randomize call used as a value is not supported in a wait condition, an event control or outside procedural code",
+    );
+}
+
+/// Forms the known issues listed as rejected that run; expected values are
+/// derived by hand in the readme.
+#[test]
+fn closing_audit_served_forms_run() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/ki_audit/closing_served_forms.out");
+    sim_cli::run_case_backend_parity(SUITE, "closing_served_forms", expected, &[], &[]);
+}

@@ -41,6 +41,15 @@ chain; not run. The structure and union definitions of coroutine frames stay
 within C11's 63 levels (`emit_c::MAX_NESTED_DEFINITIONS`), which MSVC enforces
 (C1046).
 
+### Cause
+
+Each level repeats what encloses it in its output: the indentation of
+`model.c`, scope and hierarchical names, the path of a frame field and the
+database's dimensions and select indices of every part of a type or select
+(the last column above), so their size, and the walks over them, grow with
+the square of the depth. Slang's own analysis stops calls nested in call
+arguments, and C compilers stop at their own nesting limits.
+
 ### Intended direction
 
 Emitting a chain of `else if` without nesting its arms would keep it below
@@ -579,10 +588,13 @@ or any string expression (SIM-004).
 
 ### Symptom
 
-An output or inout string port connected to an element of a fixed, queue,
-dynamic or associative string array (`.so(arr[1])`) is rejected at code
-generation with its location (CODEGEN-009); the industry-standard simulator
-drives the element.
+An output string port connected to an element of a fixed string array
+(`.so(arr[1])`) is rejected at code generation with its location
+(CODEGEN-009); the industry-standard simulator drives the element. An
+element of a queue, dynamic or associative array is no legal output
+connection (the port implies a continuous assignment, which SV 6.21
+forbids for elements of dynamically sized variables) and rejects with the
+same error; an inout port cannot have a variable type (SV 23.3.3.2).
 
 ### Cause
 
@@ -596,8 +608,7 @@ string, as an input link reads it through `lower_string`.
 
 ### Reproduce
 
-`module c(output string so); initial so = "out"; endmodule` instantiated
-as `c u(.so(arr[1]))` with `string arr[2]`.
+`tests/fixtures/sim/feature_completion/ki_audit/neg_string_port_fixed_element.sv`.
 
 ## Native record values outside by-value subroutine storage
 
@@ -1633,8 +1644,8 @@ Give locator results a handle queue form.
 
 `tests/fixtures/sim/feature_completion/sim_006/neg_class_key_builtin.sv`,
 `neg_nested_key_type.sv` and `neg_class_key_item_index.sv`;
-`tests/fixtures/sim/feature_completion/ki_audit/neg_class_key_find_index.sv`
-and `neg_class_key_call_compound.sv`.
+`tests/fixtures/sim/feature_completion/ki_audit/neg_class_key_find_index.sv`,
+`neg_class_key_call_compound.sv` and `neg_chandle_key_find_index.sv`.
 
 ## Selects of properties of computed class handles
 
@@ -1712,10 +1723,11 @@ only, as computed class handles are.
 ### Symptom
 
 A member of an element of packed structure type of a dynamic array, queue or
-associative array (`da[i].hi`, `q[0].lo`, `aa["x"].hi++`, of variables and
-class properties alike) stops compilation, located, with "hierarchical
-reference ... is not supported" (an operand) or "cannot resolve hierarchical
-assignment LHS" (a target). Elements of fixed arrays work; read or write the
+associative array variable (`da[i].hi`, `q[0].lo`, `aa["x"].hi++`) stops
+compilation, located, with "hierarchical reference ... is not supported" (an
+operand) or "cannot resolve hierarchical assignment LHS" (a target). Elements
+of fixed arrays, and of such containers held in class properties
+(`h.q[0].lo`, `h.da[1].lo = 5`, `h.aa["x"].hi++`), work; read or write the
 whole element instead.
 
 ### Cause
@@ -1730,8 +1742,10 @@ fixed array.
 
 ### Reproduce
 
-`typedef struct packed { logic [3:0] hi, lo; } p_t; p_t q[$]; initial begin
-q.push_back(0); q[0].hi = 3; end`
+`neg_packed_member_queue_read.sv`, `neg_packed_member_dynamic_write.sv` and
+`neg_packed_member_assoc_increment.sv` in
+`tests/fixtures/sim/feature_completion/ki_audit/`; the class-property forms
+run in `closing_served_forms.sv` there.
 
 ## Records of the leaf form: two errors a column does not have
 
@@ -2083,7 +2097,8 @@ The addressed-container operand for the two forms.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_019/neg_inside_nested_slice.sv`.
+`tests/fixtures/sim/feature_completion/sim_019/neg_inside_nested_slice.sv`;
+`tests/fixtures/sim/feature_completion/ki_audit/neg_inside_conditional_nested.sv`.
 
 ## Waits on storage without a change notification
 
@@ -2662,8 +2677,9 @@ reads per bound instance.
 ### Symptom
 
 An array of interface instances with two or more dimensions, or a port of such a
-type, as a value (`v = i` with `virtual ifc v[2][2]`), and a row of one
-(`v[0] = i[1]`). A pattern of the elements works.
+type, as a value (`v = i` with `virtual ifc v[2][2]`). A pattern of the
+elements works, and so does a row of one (`v[0] = i[1]`,
+`ki_audit/closing_served_forms.sv`).
 
 ### Cause
 
@@ -2701,7 +2717,10 @@ Give event arrays indexed slots in the descriptor.
 
 ### Reproduce
 
-`tests/fixtures/sim/virtual_interfaces/neg_event_array_actual.sv`.
+`tests/fixtures/sim/virtual_interfaces/neg_event_array_actual.sv`;
+`neg_vif_event_queue_trigger.sv`, `neg_vif_event_no_instance.sv` and
+`neg_class_event_array_actual.sv` in
+`tests/fixtures/sim/feature_completion/ki_audit/`.
 
 ## String and handle members through virtual interfaces
 
@@ -2768,12 +2787,14 @@ instances fail as for a null handle, and drop the error.
 ### Symptom
 
 As an item of an unpacked array concatenation (SV 10.10): a dense fixed array
-of reals, events or rows (an item of a queue of fixed arrays); a queue or
-dynamic array that is an element of a container (`{qq[1], 0}`, also as one
-element of a queue of queues); an array of rows into a queue of queues
-(`qq = {m, q}` with `int m[2][2]`); an item of a run-time size into a fixed
-target of two dimensions, a real fixed target or an associative-array element.
-A whole assignment of such an array to a queue (`rq = r2`) rejects too.
+of reals, events or rows (an item of a queue of fixed arrays); an array of
+rows into a queue of queues (`qq = {m, q}` with `int m[2][2]`); an item of a
+run-time size into a fixed target of two dimensions (`m = {rows, r2}` with
+`int rows[$][2]`), a real fixed target or a fixed-array element of an
+associative array (the last with an internal-invariant id, CODEGEN-006). A
+whole assignment of such an array to a queue (`rq = r2`) rejects too. A queue
+or dynamic array that is an element of a container is an item that works
+(`{qq[1], 0}`, also into a queue of queues).
 
 ### Cause
 
@@ -2787,8 +2808,10 @@ container element as a queue source.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_006/array_concatenation.sv` holds
-the supported forms; the forms above reject at the item.
+`tests/fixtures/sim/feature_completion/sim_006/array_concatenation.sv` and
+`ki_audit/closing_served_forms.sv` hold the supported forms; the forms above
+reject at the item: `neg_concat_*.sv` and `neg_real_array_to_queue.sv` in
+`tests/fixtures/sim/feature_completion/ki_audit/`.
 
 ## Modport expression ports through virtual interfaces
 
@@ -3465,7 +3488,8 @@ these forms remain outside them.
   objects of the randomized class and the randomized object reached again
   through a ring, and a scalar handle receiver (`next.f(x)`) works.
 - A `randomize()` call in a `wait` condition, an event control or outside
-  procedural code rejects.
+  procedural code (a continuous assignment) rejects; one in a declaration
+  initializer runs.
 - When the exact model and rejection sampling both exceed their budgets, the
   CDCL search returns a legal solution that is not uniformly distributed
   (S29-D10), against 18.5.9 L30013-30014; the fallbacks also ignore dist
@@ -3509,11 +3533,13 @@ Nested dynamic arrays and queues (each row an object of a row unit, row sizes in
 `tests/fixtures/sim/feature_completion/sim_030/neg_*.sv` and
 `search_fallback.sv`;
 `tests/fixtures/sim/feature_completion/ki_static_members/neg_random_record.sv`;
-`neg_rand_*.sv` and `neg_randomize_event_control.sv` in
+`neg_rand_*.sv`, `neg_randomize_event_control.sv` and
+`neg_randomize_continuous.sv` in
 `tests/fixtures/sim/feature_completion/ki_audit/` (associative arrays of
 handles, with a class or wider index, nested queues, a non-constant
 `solve...before` index, an `inside` row, an element `rand_mode`, a call in an
-event control); `tests/fixtures/sim/lrm_decisions/S29-D10_search_not_uniform.sv`.
+event control, a call in a continuous assignment);
+`tests/fixtures/sim/lrm_decisions/S29-D10_search_not_uniform.sv`.
 
 ## Legacy constructs unsupported by design
 

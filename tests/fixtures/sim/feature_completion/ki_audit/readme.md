@@ -59,6 +59,23 @@ Clause lines quote `docs/specification/SystemVerilog-1800-2009.txt`.
 | `neg_randomize_event_control` | Constrained randomization limits | 18.6.1 L30402-30403: "The randomize() method returns 1 if it successfully sets all the random variables and objects to valid values; otherwise, it returns 0."; 13.4 L18775-18777, as above, forbids only calls with output, inout or ref arguments in an event expression. |
 | `neg_prefix_increment_container_member` | UVM example differences | 11.4.2 L14496-14498: "SystemVerilog includes the C increment and decrement assignment operators ++i, --i, i++, and i--. These do not need parentheses when used in expressions." |
 | `neg_clocking_block_sequence` | UVM example differences | 16.17 L27651-27655: "No explicit clocking event is allowed in any property or sequence declaration within the clocking block. All sequence and property declarations within the clocking block are treated as though the clocking event of the clocking block had been written explicitly as the leading clocking event." |
+| `neg_string_port_fixed_element` | Output string ports connected to array elements | 23.3.3.2 L41483-41485: "An output port can be connected to a variable (or a concatenation) of a compatible data type. A continuous assignment shall be implied when a variable is connected to the output port of an instance."; 6.5 L4654-4655: "elements of a structure or array can be assigned with multiple continuous assignments, provided that each element is covered by no more than a single continuous assignment." |
+| `neg_packed_member_queue_read` | Members of packed structures in dynamic arrays, queues and associative arrays | 7.2.1 L7696-7697: "A packed structure is a mechanism for subdividing a vector into subfields, which can be conveniently accessed as members."; the structure is an element of a queue. |
+| `neg_packed_member_dynamic_write` | Members of packed structures in dynamic arrays, queues and associative arrays | 7.2.1 L7696-7697, as above; the member of a dynamic-array element is an assignment target. |
+| `neg_packed_member_assoc_increment` | Members of packed structures in dynamic arrays, queues and associative arrays | 7.2.1 L7696-7697, as above; the member of an associative-array element is incremented (11.4.2). |
+| `neg_concat_real_array_item` | Remaining items of unpacked array concatenations | 10.10 L13838-13840: "An item whose self-determined type is an unpacked array whose slowest-varying dimension’s element type is assignment compatible with the element type of the target array shall represent as many elements as exist in that item"; the item is a fixed array of reals. |
+| `neg_concat_event_array_item` | Remaining items of unpacked array concatenations | 10.10 L13838-13840, as above; the item is a fixed array of events. |
+| `neg_concat_rows_into_nested_queue` | Remaining items of unpacked array concatenations | 10.10 L13838-13840, as above; the rows of `m` are the elements of the item and the target's elements are queues of `int`, which a fixed row is assignment compatible with (7.6 L8423-8424). |
+| `neg_concat_queue_rows_into_fixed` | Remaining items of unpacked array concatenations | 10.10 L13838-13840, as above; a queue of rows is an item of a fixed target of two dimensions, and the size of the result equals the target's. |
+| `neg_concat_real_fixed_target` | Remaining items of unpacked array concatenations | 10.10 L13838-13840, as above; a queue of reals is an item of a fixed real target. |
+| `neg_concat_associative_fixed_element` | Remaining items of unpacked array concatenations | 10.10 L13817-13819: "The target of such assignment-like context shall be an array whose slowest-varying dimension is an unpacked fixed-size, queue or dynamic dimension."; the target is a fixed-array element of an associative array. The id is the internal-invariant family, not the limit one. |
+| `neg_real_array_to_queue` | Remaining items of unpacked array concatenations | 7.6 L8422-8424: "dynamic array or queue, or a slice of such an array, shall be assignment compatible with any other such array or slice if all the following conditions are satisfied: [...] The element types of source and target shall be equivalent." |
+| `neg_inside_conditional_nested` | Set membership items outside packed storage | 11.4.13 L15366-15367: "If an expression in the list is an unpacked array, its elements are traversed by descending into the array until reaching a singular value."; the expression is a conditional whose arms are queues. |
+| `neg_chandle_key_find_index` | Class-keyed associative arrays have explicit gaps | 7.12.1 L9280, as above; the array is indexed by chandles (7.8.5 L8709-8710: "This includes all of the dynamically sized types as legal index types."). |
+| `neg_vif_event_queue_trigger` | Event forms through virtual interfaces | 25.9 L44892-44893: "A virtual interface shall be initialized before referencing a component of the virtual interface"; the component is an element of an event queue of the interface. |
+| `neg_vif_event_no_instance` | Event forms through virtual interfaces | 25.9 L44893-44895: "it has the value null before it is initialized. Attempting to use a null virtual interface shall result in a fatal run-time error."; the trigger is guarded, and the design has no instance of the interface. |
+| `neg_class_event_array_actual` | Event forms through virtual interfaces | 13.5.2 L19103-19104, as above; the actual is an element of an event array property. |
+| `neg_randomize_continuous` | Constrained randomization limits | 18.6.1 L30394-30397: "Every class has a built-in randomize() virtual method, declared as follows: virtual function int randomize();". The text names no rule for a method call in a continuous assignment; 6.21 L7008-7010 ("References to automatic variables and elements or members of dynamic variables shall be limited to procedural blocks.") may make the form illegal. Either way it rejects. |
 
 `computed_handle_element` is a positive case: the elements of an unpacked
 array property of a computed handle, which the known issues listed as
@@ -106,3 +123,19 @@ L18996-18997 ("Implementations shall issue an error either at compile time or
 run time when these provisions have not been met."), as for S13-D5, but
 matures at time 1, so the run prints `x=5 y=7` (as the industry-standard
 behaviour does). A fix of the known issue updates the expected output.
+
+`closing_served_forms` is a positive case for forms the known issues listed as
+rejected (FIN-001 closing audit). Unpacked array concatenation items that are
+elements of a queue of queues represent their elements (10.10 L13838-13840, as
+above): `qq[1]` is `'{2, 3}`, so `{qq[1], 0}` into a queue is `2 3 0`, into a
+dynamic array `{qq[1], 4}` is `2 3 4` and into `int f3[3]` `{qq[1], 5}` is
+`2 3 5`; `{qq[1], s}` into the queue of queues has the two elements `'{2, 3}`
+and `'{7}`; `{s, 8}` into the queue element `aq[1]` is `7 8`; `{t, t}` into
+`int m[2][2]` with `t = '{6, 8}` gives two rows `6 8` (7.6 L8423-8424, as
+above, for each queue item as one row). Members of packed structure elements
+of class-property containers are subfields (7.2.1 L7696-7697, as above):
+`8'h56` with `hi = 9` is `96` and its `lo` is `6`; `8'h00` with `lo = 5` is
+`05`; `8'h21` with `hi++` is `31`. A row of `ifc i[2][2]` is a value of
+`virtual ifc v[2]` and of a row of `virtual ifc g[2][2]` (25.9 L44892,
+"interface variable can thus represent different interface instances"):
+`i[1][0].n = 4` and `i[1][1].n = 5`, so `4 5 4 5`.
