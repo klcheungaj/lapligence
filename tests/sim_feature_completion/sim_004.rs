@@ -194,24 +194,42 @@ fn illegal_native_targets_stay_rejected() {
 /// index reject at the element.
 #[test]
 fn output_ports_to_dynamic_elements_are_illegal() {
-    let text = "is connected to an element of a queue, dynamic or associative array, which is \
-                illegal: the connection is a continuous assignment (IEEE 1800-2009 23.3.3.2), and \
-                elements of dynamically sized variables shall not be written with continuous \
-                assignments (6.21)";
-    for (fixture, location, port) in [
-        ("neg_output_string_queue_element", "15:16", "so"),
-        ("neg_output_packed_dynamic_element", "12:20", "po"),
-        ("neg_output_real_associative_element", "10:16", "ro"),
-        ("neg_output_variable_queue_element", "11:16", "po"),
-    ] {
-        sim_cli::reject_case_with_id(
-            SUITE,
-            fixture,
-            "CODEGEN-002",
-            Some(location),
-            &format!("output port `{port}` of `tb.c` {text}"),
-        );
-    }
+    let illegal = |port: &str| {
+        format!(
+            "output port `{port}` of `tb.c` is connected to an element of a queue, dynamic or \
+             associative array, which is illegal: the connection is a continuous assignment \
+             (IEEE 1800-2009 23.3.3.2), and elements of dynamically sized variables shall not be \
+             written with continuous assignments (6.21)"
+        )
+    };
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_output_string_queue_element",
+        "CODEGEN-002",
+        Some("15:16"),
+        &illegal("so"),
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_output_packed_dynamic_element",
+        "CODEGEN-002",
+        Some("12:20"),
+        &illegal("po"),
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_output_real_associative_element",
+        "CODEGEN-002",
+        Some("10:16"),
+        &illegal("ro"),
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_output_variable_queue_element",
+        "CODEGEN-002",
+        Some("11:16"),
+        &illegal("po"),
+    );
 }
 
 #[test]
