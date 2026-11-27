@@ -516,3 +516,68 @@ fn lsp_stdio_the_outline_lists_unsaved_design_units() {
     );
     session.client.shutdown();
 }
+
+/// The symbol lists answer from the last analysis (known issue "Symbol lists
+/// of the last analysis (llg_ls)"): until the save and its analysis the
+/// outline lacks the declarations that the unsaved text adds inside a module,
+/// and `workspace/symbol` and the module explorer lack every new one. Asked
+/// again after the analysis, all three list them.
+#[test]
+fn lsp_stdio_symbol_lists_answer_from_the_last_analysis() {
+    let mut session = Session::ready("unsaved-lists", &[("top.sv", TOP), ("sub.sv", SUB)]);
+    session.open("top.sv", TOP);
+    let text = format!("{}module extra;\nendmodule\n", edited().0);
+    assert_eq!(session.change("top.sv", &text), "admitted");
+    let lists = |session: &mut Session| {
+        let answer = session.ask("textDocument/documentSymbol", session.document("top.sv"));
+        let mut outline = Vec::new();
+        flatten(&answer, &mut outline);
+        let outline: Vec<String> = outline.into_iter().map(|symbol| symbol.0).collect();
+        let workspace: Vec<String> = ["fresh", "extra"]
+            .into_iter()
+            .flat_map(|query| {
+                let answer = session.ask("workspace/symbol", json!({ "query": query }));
+                answer.as_array().cloned().unwrap_or_default()
+            })
+            .filter_map(|symbol| symbol["name"].as_str().map(str::to_owned))
+            .collect();
+        let explorer = session.ask("llg/moduleExplorer", json!({}));
+        let modules: Vec<String> = explorer["modules"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|module| module["name"].as_str().map(str::to_owned))
+            .collect();
+        (outline, workspace, modules)
+    };
+    let (outline, workspace, modules) = lists(&mut session);
+    // The isolated parse adds the new module to the outline, not the signal,
+    // whose listing depends on its scope.
+    assert!(outline.iter().any(|name| name == "extra"), "{outline:?}");
+    assert!(outline.iter().all(|name| name != "fresh"), "{outline:?}");
+    assert!(outline.iter().any(|name| name == "first"), "{outline:?}");
+    assert!(workspace.is_empty(), "{workspace:?}");
+    assert!(modules.iter().all(|name| name != "extra"), "{modules:?}");
+    assert!(modules.iter().any(|name| name == "top"), "{modules:?}");
+
+    session.write("top.sv", &text);
+    session.save("top.sv");
+    let at = session.at("top.sv", &text, "first", 0);
+    let deadline = Instant::now() + POLL_TIMEOUT;
+    while session.stale_rename(&at) {
+        assert!(Instant::now() < deadline, "no analysis after the save");
+        thread::sleep(Duration::from_millis(20));
+    }
+    let (outline, workspace, modules) = lists(&mut session);
+    assert!(
+        outline.iter().any(|name| name == "fresh") && outline.iter().any(|name| name == "extra"),
+        "{outline:?}"
+    );
+    assert!(
+        workspace.iter().any(|name| name == "fresh")
+            && workspace.iter().any(|name| name == "extra"),
+        "{workspace:?}"
+    );
+    assert!(modules.iter().any(|name| name == "extra"), "{modules:?}");
+    session.client.shutdown();
+}
