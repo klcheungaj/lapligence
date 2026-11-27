@@ -505,7 +505,8 @@ fn driver_model(count: usize, catalog: bool) -> IrModel {
                 ),
                 nba: false,
             }],
-        );
+        )
+        .into_continuous_assignment();
         process.origin = crate::sim::semantic::Origin::Synthetic {
             reason: "one source process".to_owned(),
         };
