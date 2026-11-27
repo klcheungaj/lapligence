@@ -15,6 +15,8 @@
 // IEEE 1800-2009 9.7 (L12616-12617): "RUNNING means the process is currently
 // running (not in a blocking statement)." / "WAITING means the process is
 // waiting in a blocking statement."
+// The second final procedure reads what the first left; they run in source
+// order (decision S09-D12).
 module tb;
   class payload;
     int v;

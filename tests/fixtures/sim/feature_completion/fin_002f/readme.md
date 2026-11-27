@@ -16,7 +16,9 @@ not decide are left out; they are listed here.
 ## Cancellation
 
 `cancel_calls`, `cancel_expressions`, `cancel_final`, `cancel_sequences` and
-`cancel_regions` are the industry-standard behaviour. Left out: `disable` of a
+`cancel_regions` are the industry-standard behaviour. `cancel_final`, `cancel_regions`
+and `cancel_dpi` have several final procedures: they run in the order of
+decision S09-D12 (9.2.3 leaves the order to the implementation). Left out: `disable` of a
 block, such as the one of a `final` procedure, from a function it calls or from
 the function of a coverpoint expression:
 

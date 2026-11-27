@@ -1,0 +1,9 @@
+tb a
+tb b
+mid 1 a
+mid 1 b
+leaf 11
+leaf 12
+leaf 13
+mid 2 a
+mid 2 b
