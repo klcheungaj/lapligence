@@ -394,6 +394,10 @@ pub enum IrRedriveTarget {
     /// An array variable (index into [`super::IrModel::arrays`]): the row
     /// serves a release of any element.
     Array(usize),
+    /// One element of a dense array variable: the array and the element's
+    /// linear cell (dimensions in declaration order, each from its left
+    /// bound). The row serves a release of that element only.
+    Element(usize, u64),
 }
 
 /// How a released variable takes the value of one continuous driver again.
@@ -405,8 +409,13 @@ pub enum IrRedriveAction {
     /// The driver's assignment statements, run once in the releasing
     /// process: for `release` statements only.
     Evaluate(Vec<IrStmt>),
-    /// `target = constant`: a packed constant of the variable's width.
+    /// `target = constant`: a packed constant of the variable's (or the
+    /// element's) width.
     Constant(IrConst),
+    /// `target[lsb +: value.width] = value`: a packed constant written to
+    /// some bits of the variable or element (a constant part, bit, member or
+    /// element-select driver); the other bits keep their value.
+    ConstantBits { lsb: u32, value: IrConst },
     /// A delayed driver: the value it last committed to the bits it drives
     /// is assigned again; a pending update matures as scheduled.
     Committed,
@@ -416,8 +425,8 @@ pub enum IrRedriveAction {
 /// 10.6.2): releasing one of `targets` performs `action` in place, so the
 /// variable has the driven value when the release returns. `Evaluate` rows
 /// serve `release` statements; a release through `vpi_put_value` wakes the
-/// driver's process instead (the emitter's process rows) and uses the other
-/// actions as they are. Nothing waits on or tracks a redrive; a model that
+/// driver's process instead (the emitter's process rows), runs a `run_once`
+/// row, and uses the other actions as they are. Nothing waits on or tracks a redrive; a model that
 /// executes no release never runs one.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrRedrive {
@@ -427,6 +436,10 @@ pub struct IrRedrive {
     pub(in crate::sim) port_link: bool,
     pub(in crate::sim) targets: Vec<IrRedriveTarget>,
     pub(in crate::sim) action: IrRedriveAction,
+    /// An `Evaluate` row of a run-once driver in a model a VPI application
+    /// may release: the driver's process has ended, so a release through
+    /// VPI runs the statements in place too.
+    pub(in crate::sim) run_once: bool,
 }
 
 impl IrProcess {

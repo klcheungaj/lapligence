@@ -1,0 +1,8 @@
+start: v=15 b=63 c=95 m=52 n=15 s=51 a0=31 a1=09 g=15 h=c5
+start: u=9c e=17 t=00011000 x=f1 y=33 r=2.500000
+forced: v=aa b=aa c=aa m=aa n=aa s=aa a0=aa a1=aa g=aa h=aa
+forced: u=aa e=aa t=10101010 x=aa y=aa r=7.250000
+released: v=15 b=63 c=95 m=52 n=15 s=51 a0=31 a1=09 g=15 h=c5
+released: u=9c e=17 t=00011000 x=f1 y=33 r=2.500000
+operand: v=25 b=85 c=95 m=92 n=25 s=52 a0=42 a1=09 g=25 h=09
+operand: u=95 e=27 t=00101000 x=c2 y=43 r=2.500000

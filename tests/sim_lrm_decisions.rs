@@ -7018,6 +7018,15 @@ fn cs_d4_vpi_release_reestablishes_assignment() {
 }
 
 #[test]
+fn cs_d4_vpi_release_constant_parts() {
+    run_vpi_decision(
+        "CS-D4_vpi_release_constant_parts",
+        &["task $d4c(int enable)"],
+        include_str!("fixtures/sim/lrm_decisions/CS-D4_vpi_release_constant_parts.out"),
+    );
+}
+
+#[test]
 fn tn_d1_typename_spacing() {
     run_decision(
         "TN-D1_typename_spacing",

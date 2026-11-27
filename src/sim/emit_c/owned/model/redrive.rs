@@ -1,6 +1,6 @@
 //! Redrive rows: the continuous drivers a release re-establishes, as const
 //! tables the runtime searches by storage address. `IrModel::redrives` give
-//! the rows that act in place (a copy, a constant, a delayed driver's
+//! the rows that act in place (a copy, a constant or constant bits, a delayed driver's
 //! committed value, or one plain C function per driver a `release`
 //! statement names); in a catalog model the final processes give the rows
 //! that wake a driver for a release through VPI.
@@ -39,6 +39,11 @@ fn target_storage(model: &IrModel, target: IrRedriveTarget) -> Option<(String, u
                 if array.sparse() { 0 } else { array.total },
                 stride,
             ))
+        }
+        IrRedriveTarget::Element(array, cell) => {
+            let array = model.arrays.get(array)?;
+            (array_storage(array).is_some() && !array.sparse() && !array.real && cell < array.total)
+                .then(|| (format!("&{}[{cell}]", array.c_name), 1, "sizeof(sv4_t)"))
         }
     }
 }
@@ -169,15 +174,26 @@ pub(in crate::sim::emit_c) fn redrive_tables(
                 whole.extend(redrive.targets.iter().copied());
                 ("LLG_REDRIVE_COPY", null(), packed)
             }
-            IrRedriveAction::Constant(constant) => {
-                // Value, X and Z limbs of the variable's width, in that order.
+            IrRedriveAction::Constant(constant)
+            | IrRedriveAction::ConstantBits {
+                value: constant, ..
+            } => {
+                // Value, X and Z limbs of the variable's width, in that order;
+                // bits of a variable start with their offset and width.
                 let count = constant.width.div_ceil(64) as usize;
                 let column = |limbs: &[u64]| {
                     (0..count)
                         .map(|limb| limbs.get(limb).copied().unwrap_or(0))
                         .collect::<Vec<_>>()
                 };
-                let mut words = column(&constant.bits);
+                let (action, mut words) = match redrive.action {
+                    IrRedriveAction::ConstantBits { lsb, .. } => (
+                        "LLG_REDRIVE_BITS",
+                        vec![u64::from(lsb), u64::from(constant.width)],
+                    ),
+                    _ => ("LLG_REDRIVE_LIMBS", Vec::new()),
+                };
+                words.extend(column(&constant.bits));
                 words.extend(column(&constant.x));
                 words.extend(column(&constant.z));
                 let next = limb_tables.len();
@@ -194,14 +210,21 @@ pub(in crate::sim::emit_c) fn redrive_tables(
                     ));
                     name
                 });
-                whole.extend(redrive.targets.iter().copied());
-                ("LLG_REDRIVE_LIMBS", null(), name.clone())
+                if action == "LLG_REDRIVE_LIMBS" {
+                    whole.extend(redrive.targets.iter().copied());
+                }
+                (action, null(), name.clone())
             }
             IrRedriveAction::Committed => ("LLG_REDRIVE_COMMITTED", null(), null()),
             IrRedriveAction::Evaluate(_) => {
                 let name = redrive_function(index);
                 let (evaluate, operand) = shared.get(&name).cloned().unwrap_or((name, null()));
-                ("LLG_REDRIVE_EVALUATE", evaluate, operand)
+                let action = if redrive.run_once {
+                    "LLG_REDRIVE_RUN_ONCE"
+                } else {
+                    "LLG_REDRIVE_EVALUATE"
+                };
+                (action, evaluate, operand)
             }
         };
         for (storage, cells, stride) in rows {

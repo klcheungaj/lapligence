@@ -539,7 +539,25 @@ fn record_leaves(model: &IrModel, lhs: &IrLhs) -> bool {
 /// The electrical signal of the net-array cell at constant `indices`.
 fn net_array_cell(model: &IrModel, array: usize, indices: &[IrExpr]) -> Option<usize> {
     let array = model.arrays.get(array)?;
-    if !array.is_net() || indices.len() != array.dims.len() {
+    if !array.is_net() {
+        return None;
+    }
+    let linear = constant_array_cell(array, indices)?;
+    array
+        .net_elements
+        .iter()
+        .find_map(|(element, signal)| (*element == linear).then_some(*signal))
+}
+
+/// The linear cell of `array` that constant `indices` (one per dimension)
+/// select: dimensions in declaration order, each counted from its left
+/// bound, as the emitter lays the cells out. `None` for a run-time or
+/// out-of-range index.
+pub(super) fn constant_array_cell(
+    array: &crate::sim::ir::IrArray,
+    indices: &[IrExpr],
+) -> Option<u64> {
+    if indices.len() != array.dims.len() {
         return None;
     }
     let mut linear = 0u64;
@@ -557,10 +575,7 @@ fn net_array_cell(model: &IrModel, array: usize, indices: &[IrExpr]) -> Option<u
         let extent = (left - right).unsigned_abs() + 1;
         linear = linear.checked_mul(extent)?.checked_add(offset as u64)?;
     }
-    array
-        .net_elements
-        .iter()
-        .find_map(|(element, signal)| (*element == linear).then_some(*signal))
+    Some(linear)
 }
 
 /// Validate the force/release target shape shared by lowering and emission.

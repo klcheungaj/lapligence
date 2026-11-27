@@ -2463,19 +2463,16 @@ re-establishes the continuous assignments of the released variable
 
 ### Symptom
 
-- A driver that evaluates an expression (`assign v = a + b;`, a port
-  connection with an expression) delivers its value when it runs later in
-  the same time step. A read in the calling process right after the VPI
-  release, and the `value_p` of that call, still see the forced value; a
-  read after the process suspends, in a later region or by `$strobe`, sees
-  the driven one. Some simulators deliver the value before the call returns
-  (4.7 allows both). A `release` statement, and a VPI release of a variable
-  that a port connection copies, a whole-variable constant assignment or a
-  delayed assignment drives, deliver at once.
-- A constant continuous assignment to a part select or an array element of
-  a variable (`assign v[3:0] = 4'd5;`, `assign a[1] = 8'd9;`) is not
-  re-established by a VPI release: those bits keep the forced value. A
-  `release` statement re-establishes them.
+A driver that evaluates an expression (`assign v = a + b;`, a port
+connection with an expression) delivers its value when it runs later in the
+same time step. A read in the calling process right after the VPI release,
+and the `value_p` of that call, still see the forced value; a read after the
+process suspends, in a later region or by `$strobe`, sees the driven one.
+Some simulators deliver the value before the call returns (4.7 allows
+both). A `release` statement, and a VPI release of a variable that a port
+connection copies, a constant (whole, or a constant part, bit, member or
+element of it) or a run-once assignment of a call or a real value drives,
+or a delayed assignment, deliver at once.
 
 ### Cause
 
@@ -2485,24 +2482,22 @@ statements as generated code, one function per distinct driver body, which
 every such model would compile whether or not it ever releases; instead the
 model carries const tables that name the driver process of each variable,
 and the release wakes it like a change of one of its operands. A constant
-assignment runs once and leaves no process to wake; only a whole-variable
-constant has a data row.
+assignment runs once and leaves no process to wake: it has a data row (the
+constant's limbs, with a bit range for a part of a variable or an element),
+and a run-once assignment that is not a packed constant (a function call
+with constant arguments, a real value) keeps its statements.
 
 ### Intended direction
 
-Constant drivers of parts and elements can become data rows (the constant's
-limbs with a bit range, a row per element). In-place evaluation for VPI
-would need the driver's statements without generated code per driver, for
-example running the suspended driver process inside the release.
+In-place evaluation for VPI would need the driver's statements without
+generated code per driver, for example running the suspended driver
+process inside the release.
 
 ### Reproduce
 
 `vpi_release_reestablishes` in
 [fin_002](../tests/fixtures/sim/feature_completion/fin_002/readme.md) for
-the scheduled value (`at the releases` against `end of the time step`). For
-the constant part: force and release `v` through VPI with
-`logic [7:0] v; assign v[3:0] = 4'd5; assign v[7:4] = in[3:0];`; the low
-four bits keep the forced value.
+the scheduled value (`at the releases` against `end of the time step`).
 
 ## Operator-overload update values on oversized or native targets
 
