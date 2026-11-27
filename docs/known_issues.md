@@ -572,6 +572,33 @@ the flattening cost, a 5,000-cell `int` array passed through a packed formal
 with `--gen-only`, then measure `model.c`.
 
 
+## Output string ports connected to array elements
+
+**Status:** open; an input string port takes an element of a string array
+or any string expression (SIM-004).
+
+### Symptom
+
+An output or inout string port connected to an element of a fixed, queue,
+dynamic or associative string array (`.so(arr[1])`) is rejected at code
+generation with its location (CODEGEN-009); the industry-standard simulator
+drives the element.
+
+### Cause
+
+An output string link stores into string object storage; an element of a
+string array has no object of its own for the link to drive.
+
+### Intended direction
+
+Drive the element through the array's element store from the child's
+string, as an input link reads it through `lower_string`.
+
+### Reproduce
+
+`module c(output string so); initial so = "out"; endmodule` instantiated
+as `c u(.so(arr[1]))` with `string arr[2]`.
+
 ## Native record values outside by-value subroutine storage
 
 **Status:** open; SIM-003 implements descriptor-backed native records for
