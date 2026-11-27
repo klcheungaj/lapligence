@@ -987,8 +987,8 @@ impl EmitCtx<'_, '_> {
         })?;
         let target = self.cg.event_target_of(target).ok_or_else(|| {
             format!(
-                "cannot resolve named event expression `{}` in `{}`",
-                self.cg.node(h).name,
+                "a trigger of named event expression `{}` in `{}` is not supported",
+                self.cg.message_text(target, &self.cg.node(h).name),
                 self.path
             )
         })?;

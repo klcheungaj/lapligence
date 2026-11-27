@@ -952,8 +952,9 @@ impl<'a> Codegen<'a> {
                         self.locate_error(
                             h,
                             format!(
-                                "cannot resolve array base of select `{}` in `{scope_path}`",
-                                self.node(base).name
+                                "select `{}` in `{scope_path}` is not supported: llg cannot \
+                                 resolve its array base",
+                                self.message_text(h, &self.node(base).name)
                             ),
                         )
                     })
@@ -1464,9 +1465,8 @@ impl<'a> Codegen<'a> {
             }
         }
         Err(format!(
-            "hierarchical reference `{}` is not supported (in `{scope_path}`): {:?}",
-            self.node(h).name,
-            self.kind(h)
+            "hierarchical reference `{}` is not supported (in `{scope_path}`)",
+            self.message_text(h, &self.node(h).name)
         ))
     }
 

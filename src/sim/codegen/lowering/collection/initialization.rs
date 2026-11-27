@@ -872,9 +872,9 @@ impl<'a> Codegen<'a> {
                     .or_else(|_| self.eval_decl_value(*operand).and_then(decl_value_to_const))
                     .map_err(|_| {
                         format!(
-                            "array `{name}` in `{path}`: initializer element is not a \
-                             supported constant expression ({:?})",
-                            self.kind(*operand)
+                            "array `{name}` in `{path}`: initializer element `{}` is not \
+                             a supported constant expression",
+                            self.message_text(*operand, "?")
                         )
                     })
             })

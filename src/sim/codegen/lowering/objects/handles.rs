@@ -740,9 +740,8 @@ impl Codegen<'_> {
             return Ok(nested);
         }
         Err(format!(
-            "chandle values can only be copied from chandle or null (node {:?} `{}` in `{path}`)",
-            self.kind(node),
-            self.node(node).name
+            "chandle values can only be copied from chandle or null (`{}` in `{path}`)",
+            self.message_text(node, &self.node(node).name)
         ))
     }
 }

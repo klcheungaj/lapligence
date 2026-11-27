@@ -135,7 +135,7 @@ fn unsupported_reads_of_unpacked_parameters_are_located() {
     sim_cli::reject_case(
         SUITE,
         "neg_string_copy",
-        "neg_string_copy.sv:5:9 resizable container assignment in `tb` requires a compatible array",
+        "neg_string_copy.sv:5:9: [CODEGEN-001] resizable container assignment in `tb` from `SA` is not supported",
     );
     sim_cli::reject_case(
         SUITE,

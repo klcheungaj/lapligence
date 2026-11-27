@@ -365,8 +365,7 @@ impl<'a> Codegen<'a> {
                         }
                         _ => {
                             return Err(format!(
-                                "resizable container element write in `{path}` requires a directly represented scalar element: {:?}",
-                                self.model.containers[container.ir].element
+                                "resizable container element write in `{path}` requires a directly represented scalar element"
                             ))
                         }
                     }
@@ -683,8 +682,8 @@ impl<'a> Codegen<'a> {
             }
             self.reject_native_row_copy(path, rhs)?;
             return Err(format!(
-                "resizable container assignment in `{path}` requires a compatible array (got {:?})",
-                self.kind(rhs)
+                "resizable container assignment in `{path}` from `{}` is not supported",
+                self.message_text(rhs, "this source")
             ));
         };
         Ok(IrStmt::Container(Box::new(IrContainerStmt::Copy {

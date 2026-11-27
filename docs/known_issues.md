@@ -946,7 +946,8 @@ targets, and queue a whole-container commit for nonblocking unpacks.
 
 - A field of a packed member of an unpacked structure that also has a string
   or real member (`us.p.lo`, where `p` is packed and `us` has a `string`
-  member) is rejected with `cannot resolve hierarchical assignment LHS`. Plain
+  member) is rejected with "hierarchical assignment target ... is not
+  supported". Plain
   assignments to this form are rejected in the same way. The whole member
   (`us.p`) and structures without string or real members work.
 - A character of a string (`s[0]`) as a destination is rejected explicitly.
@@ -1756,7 +1757,8 @@ only, as computed class handles are.
 A member of an element of packed structure type of a dynamic array, queue or
 associative array variable (`da[i].hi`, `q[0].lo`, `aa["x"].hi++`) stops
 compilation, located, with "hierarchical reference ... is not supported" (an
-operand) or "cannot resolve hierarchical assignment LHS" (a target). Elements
+operand) or "hierarchical assignment target ... is not supported" (a
+target), both CODEGEN-001. Elements
 of fixed arrays, and of such containers held in class properties
 (`h.q[0].lo`, `h.da[1].lo = 5`, `h.aa["x"].hi++`), work; read or write the
 whole element instead.
@@ -1787,7 +1789,8 @@ cells use the leaf form).
 
 Below 16 cells, two forms that a column accepts stop compilation. A constant
 select beyond a `string` or handle member array (`r.s[20] = "x"` with
-`string s[8]`) reports "cannot resolve array base of select", where SV 7.4.6
+`string s[8]`) reports "select ... is not supported: llg cannot resolve its
+array base", where SV 7.4.6
 reads the default and writes nothing. A whole record with a class handle member
 assigned to a member element (`r.a[5] = x` with `e_t a[8]`) reports "assignment
 between incompatible unpacked aggregate types".
@@ -4166,7 +4169,8 @@ in a `--config` file) generation continues.
 
 **Symptom.** `v = ++t["a"].count["x"];`, where `t` is an associative array
 of class handles and `count` an associative array property, stops generation
-with "cannot resolve array base of select `count`". The statement forms
+with "select `t["a"].count["x"]` ... is not supported: llg cannot resolve
+its array base". The statement forms
 `t["a"].count["x"]++;` and plain reads and writes work.
 
 **Intended direction.** Lower the prefix-increment expression through the

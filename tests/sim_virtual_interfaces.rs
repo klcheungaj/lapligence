@@ -292,7 +292,7 @@ fn event_array_element_as_a_reference_actual_is_located() {
     sim_cli::reject_case(
         "virtual_interfaces",
         "neg_event_array_actual",
-        "neg_event_array_actual.sv:11:18: [CODEGEN-002] an element of an event array of a class object or a virtual interface",
+        "neg_event_array_actual.sv:11:18: [CODEGEN-001] an element of an event array of a class object or a virtual interface",
     );
 }
 

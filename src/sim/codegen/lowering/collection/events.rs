@@ -683,7 +683,7 @@ impl<'a> Codegen<'a> {
             return Err(self.locate_error(
                 access,
                 format!(
-                    "an element of an event array of a class object or a virtual interface cannot be an output, inout or ref event actual in `{path}`"
+                    "an element of an event array of a class object or a virtual interface as an output, inout or ref event actual is not supported in `{path}`"
                 ),
             ));
         }

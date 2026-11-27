@@ -1324,9 +1324,9 @@ impl EmitCtx<'_, '_> {
                     } else {
                         let target = self.cg.event_target_of(bound[idx].expr).ok_or_else(|| {
                             format!(
-                                "event actual for formal `{}` is not a named event (node kind: {:?})",
-                                self.cg.node(*io).name,
-                                self.cg.kind(bound[idx].expr)
+                                "event actual `{}` for formal `{}` is not a named event",
+                                self.cg.message_text(bound[idx].expr, "?"),
+                                self.cg.node(*io).name
                             )
                         })?;
                         self.cg.event_ref_of(&target, &self.path)?
