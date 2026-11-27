@@ -1,4 +1,4 @@
-// Operand order of record elements of queues and dynamic arrays: a nested
+// Nested assignments in operands that may be skipped: a nested
 // assignment to an unpacked value selected with a call, in an operand.
 module tb;
   int ua[2][2];

@@ -188,7 +188,9 @@ impl Codegen<'_> {
 
     /// An element of string storage bound through a caller temporary whose
     /// value is stored after the callee returns, like
-    /// [`Self::handle_element_copy_out`].
+    /// [`Self::handle_element_copy_out`]: an element of a queue, dynamic or
+    /// associative array, or of one nested in such an element (`sq[k][i]`).
+    /// The store locates the element again when it runs (SV 13.5.2).
     pub(in super::super) fn string_element_copy_out(
         &mut self,
         path: &str,
@@ -200,7 +202,7 @@ impl Codegen<'_> {
             .element_select(self.string_actual_operand(node))
             .map(|(container, index)| (container.ir, index));
         let Some((container, index)) = selected else {
-            return Ok(None);
+            return self.nested_string_element_copy_out(path, node, copy_in, temporary);
         };
         if !self.model.containers[container].element.is_string() {
             return Ok(None);
@@ -219,6 +221,44 @@ impl Codegen<'_> {
                 index: self.lower_container_top_index(path, container, index)?,
                 value,
             },
+        };
+        let init = copy_in.then(|| self.lower_string(path, node)).transpose()?;
+        Ok(Some((
+            vec![IrStmt::DeclString {
+                name: temporary.to_owned(),
+                init,
+            }],
+            format!("&{temporary}"),
+            IrStmt::Container(Box::new(store)),
+        )))
+    }
+
+    /// [`Self::string_element_copy_out`] of a string element below a nested
+    /// queue or dynamic array (`sq[k][i]`), stored by its index path as an
+    /// assignment to it is.
+    fn nested_string_element_copy_out(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        copy_in: bool,
+        temporary: &str,
+    ) -> Result<Option<(Vec<IrStmt>, String, IrStmt)>, String> {
+        let Some((container, indices)) =
+            self.container_element_path(self.string_actual_operand(node))
+        else {
+            return Ok(None);
+        };
+        if indices.len() < 2
+            || !self
+                .container_element_type(container, indices.len())
+                .is_some_and(|element| element.is_string())
+        {
+            return Ok(None);
+        }
+        let store = IrContainerStmt::SetNestedString {
+            container,
+            indices: self.lower_container_path_indices(path, container, indices)?,
+            value: IrStringExpr::LocalRead(temporary.to_owned()),
         };
         let init = copy_in.then(|| self.lower_string(path, node)).transpose()?;
         Ok(Some((

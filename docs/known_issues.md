@@ -803,7 +803,7 @@ the pin held by the formal (SIM-008); fork capture pins (SIM-010).
 
 `tests/fixtures/sim/feature_completion/sim_006/neg_*.sv`.
 
-## Operand order of record elements of queues and dynamic arrays
+## Nested assignments in operands that may be skipped
 
 **Status:** open for the forms below; the other operand orders of
 [EO-D1 to EO-D4](lrm_decisions.md#operand-evaluation-order-operand-order)
@@ -811,56 +811,28 @@ follow the industry-standard simulator.
 
 ### Symptom
 
-With `typedef struct { int q[$]; int v; } r_t; r_t rq[$];` and a function
-`bump()` that sets `k = 1`:
-
-- a queue or dynamic-array member of a record element read whole in place
-  after a call by an operand other than an array item of a concatenation
-  assigned to a queue or dynamic array, a `%p` argument of a display task or
-  `$sformatf`, an actual of a container formal, an operand of an equality or
-  an alternative of a conditional operator assigned to a queue or dynamic
-  array names the element the statement selected when it started: a
-  streaming concatenation `x = bump() + int'({>>{rq[k].q}})` reads
-  `rq[0].q`, the reference `rq[1].q` (the forms named follow EO-D4);
-- a nested assignment whose target is a string, a handle, an unpacked value,
-  a container element or a class property select is rejected in an operand
-  that `?:`, `&&`, `||`, `->`, `inside` or an array method's `with` clause may
-  skip or repeat (`s2 = c ? (s = "a") : "b"`), with its location, and so is
-  a nested assignment to an unpacked value selected with a call or an
-  assignment in any operand (`x = ((ua[f()] = ub) == ub)`);
-- a string element of a nested queue (`sq[0][1]`) as an output or inout
-  actual is rejected (SIM-008), in a call statement and inside an expression;
-  a string element of a one-dimensional queue, dynamic or associative array
-  is served in both (`s = {f(q[0]), "!"}`, EO-D3).
+A nested assignment whose target is a string, a handle, an unpacked value,
+a container element or a class property select is rejected in an operand
+that `?:`, `&&`, `||`, `->`, `inside` or an array method's `with` clause may
+skip or repeat (`s2 = c ? (s = "a") : "b"`), with its location, and so is a
+nested assignment to an unpacked value selected with a call or an
+assignment in any operand (`x = ((ua[f()] = ub) == ub)`).
 
 ### Cause
 
-A queue or dynamic-array member of a record element of a queue or dynamic
-array is bound in place, through an access of the element that the
-statement evaluates once, before the statement runs, or where its use starts
-when an effect precedes that use and its lowering binds it there: a packed,
-real or string read (`lower_expr`, `lower_string`), a concatenation item, a
-`%p` argument or a container actual. Other lowerings of a whole member have
-no such point. A string element of a nested queue has no copy-out form.
-Nested assignments with such targets have only the statement
-form, which runs where the full expression runs its nested assignments
-first.
+Nested assignments with such targets have only the statement form, which
+runs where the full expression runs its nested assignments first.
 
 ### Intended direction
 
-Bind a whole member read in place where the remaining lowerings of that read
-start, as the forms above are (EO-D4).
+Give these targets an expression form that runs where the operand is
+evaluated, as packed targets have.
 
 ### Reproduce
 
-The forms above in a module with `rq` filled by `push_back`; the supported
-neighbours are rows of
-`tests/fixtures/sim/lrm_decisions/EO-D4_handle_actuals_staged_targets.sv` and
-`tests/fixtures/sim/expression_mutations/nested_assignment_skipped_operand.sv`;
-the call-selected unpacked target rejects in
-`tests/fixtures/sim/feature_completion/ki_audit/neg_nested_assignment_unpacked_call_target.sv`;
-a string element of a nested queue as the output actual of a task call
-(`t(sq[0][0])` with `output string o`).
+`tests/fixtures/sim/expression_mutations/nested_assignment_skipped_operand.sv`
+holds the supported neighbours; the call-selected unpacked target rejects in
+`tests/fixtures/sim/feature_completion/ki_audit/neg_nested_assignment_unpacked_call_target.sv`.
 
 ## Remaining forms of unpacked-array container elements and multidimensional class properties (SIM-011, SIM-027)
 

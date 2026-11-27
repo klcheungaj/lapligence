@@ -25,6 +25,9 @@ fn container_elements_receive_output_and_inout_copy_out() {
         &[],
         &[],
     );
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_008/nested_string_element_output.out");
+    sim_cli::run_case_backend_parity(SUITE, "nested_string_element_output", expected, &[], &[]);
 }
 
 #[test]

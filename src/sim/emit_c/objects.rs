@@ -74,9 +74,8 @@ pub(super) fn string(ctx: &RCtx<'_>, value: &IrStringExpr) -> Result<String, Str
                 crate::sim::ir::IrContainerKind::Dynamic => "llg_dyn_value_get_nested_string",
                 crate::sim::ir::IrContainerKind::Queue { .. } =>
                     "llg_queue_value_get_nested_string",
-                crate::sim::ir::IrContainerKind::Associative { .. } => {
-                    return Err("nested associative string read requires a key-aware path".into());
-                }
+                crate::sim::ir::IrContainerKind::Associative { .. } =>
+                    "llg_assoc_value_get_nested_integral_string",
             },
             ctx.model.containers[*container].c_name,
             render_indices(ctx, indices)?,

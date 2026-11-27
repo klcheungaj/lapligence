@@ -1442,7 +1442,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   string, a handle, an unpacked value, a container element or a class
   property select rejects in an operand that `?:`, `&&`, `||`, `->`, `inside`
   or a `with` clause may skip or repeat
-  ([known issue](known_issues.md#operand-order-of-record-elements-of-queues-and-dynamic-arrays)).
+  ([known issue](known_issues.md#nested-assignments-in-operands-that-may-be-skipped)).
   Non-lvalues, continuous/port mutation expressions and unsupported
   aggregates reject. SV §§11.3.6, 11.4.1–11.4.2 **[SV-2005]**.
 - 🟦 **Wildcard equality** — `==?`/`!=?` treat RHS X/Z as wildcards. Remaining
@@ -1998,12 +1998,13 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   packed output and inout formals as other expression calls do
   ([ki_uvm_run](../tests/fixtures/sim/feature_completion/ki_uvm_run/readme.md)).
   A function with a packed, real or string result called in an expression
-  copies out a packed or real element of a queue, dynamic or associative
-  array when it returns, before the rest of the expression, and evaluates an
-  input with an effect before a later inout actual is copied in (decision
-  EO-D3,
+  copies out a packed, real or string element of a queue, dynamic or
+  associative array when it returns, before the rest of the expression, and
+  evaluates an input with an effect before a later inout actual is copied in
+  (decision EO-D3,
   [sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md));
-  a string element as such an actual rejects (a call statement takes it).
+  a string element of a queue or dynamic array nested in such an element
+  (`sq[0][1]`) copies out the same way, in a call statement too.
   V §§10.2–10.3; SV §§13.3–13.5 **[1995/2001/SV-2005]**.
 - 🟦 **Automatic/reentrant and finite zero-time calls** — Per-activation
   storage, finite recursion, local named-block exits, selected copy-out and

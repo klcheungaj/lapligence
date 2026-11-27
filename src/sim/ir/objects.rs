@@ -1050,14 +1050,19 @@ impl IrStringExpr {
                         "nested string container read has an invalid index path",
                     ));
                 }
-                if !matches!(
+                // An integral-keyed associative array is read by its key
+                // path like a packed nested element; a string key has no
+                // index path.
+                if matches!(
                     container.kind,
-                    super::containers::IrContainerKind::Dynamic
-                        | super::containers::IrContainerKind::Queue { .. }
+                    super::containers::IrContainerKind::Associative {
+                        key: super::containers::IrAssocKey::String
+                    }
                 ) {
                     return Err(super::IrValidationError::new(
                         "string",
-                        "nested string container read requires a dynamic array or queue",
+                        "nested string container read requires a dynamic array, a queue or \
+                         an integral-keyed associative array",
                     ));
                 }
                 Ok(())
