@@ -1,0 +1,7 @@
+[1] p=SUSPENDED q=SUSPENDED n=0
+[1] p resumed st=RUNNING
+[1] after resume p=WAITING n=1
+[2] q resumed
+[2] q=FINISHED
+[4] p after #3
+[7] p=FINISHED

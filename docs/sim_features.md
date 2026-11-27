@@ -2886,7 +2886,8 @@ These are bounded implementations, not full verification-infrastructure support.
   (S13-D7). `resume()` resensitizes a process suspended on an
   event control (an occurrence while it is suspended is not delivered), and
   completes a wait condition that became true or a delay that transpired.
-  A process suspended in semaphore `get` or mailbox `get`/`peek`/`put` keeps
+  A process that suspends itself stops at the call and continues after it on
+  `resume()` (decision CS-D8). A process suspended in semaphore `get` or mailbox `get`/`peek`/`put` keeps
   its queue place and stays a candidate for keys, messages or space; it takes
   them while suspended and continues on `resume()` (decision AB-N1). Disabling the named block that forms a whole fork branch ends
   that process `KILLED`; a disabled block followed by more statements does not

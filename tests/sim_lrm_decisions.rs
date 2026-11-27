@@ -7061,6 +7061,14 @@ fn cs_d8_suspend_keeps_pending_updates() {
 }
 
 #[test]
+fn cs_d8_self_suspend_stops_at_the_call() {
+    run_decision(
+        "CS-D8_self_suspend_stops_at_the_call",
+        include_str!("fixtures/sim/lrm_decisions/CS-D8_self_suspend_stops_at_the_call.out"),
+    );
+}
+
+#[test]
 fn cs_d5_release_of_delayed_driver() {
     run_decision(
         "CS-D5_release_of_delayed_driver",
