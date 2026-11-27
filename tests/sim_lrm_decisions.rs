@@ -2113,6 +2113,14 @@ fn s09_d11_event_controlled_updates() {
 }
 
 #[test]
+fn s09_d12_final_procedure_order() {
+    run_decision(
+        "S09-D12_final_procedure_order",
+        include_str!("fixtures/sim/lrm_decisions/S09-D12_final_procedure_order.out"),
+    );
+}
+
+#[test]
 fn s27_d1_load_wakes_changed_words() {
     run_decision(
         "S27-D1_load_wakes_changed_words",

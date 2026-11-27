@@ -122,6 +122,11 @@ passes it.
 | `f` | `r` after it changes |
 | `handle`, `wait` | the time at which the waited value appears |
 
+Several processes print at one time (`event`, `edge`, `wait` and `y` at 4), so
+the suite compares the lines of one time as a set. 4.7 L3465-3466: "One source
+of nondeterminism is the fact that active events can be taken off the Active or
+Reactive event region and processed in any order."
+
 ## Task diamonds
 
 `task_diamonds.sv`: the same with tasks, whose frames embed the frame of the
