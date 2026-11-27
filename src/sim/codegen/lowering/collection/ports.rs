@@ -2366,14 +2366,17 @@ impl Codegen<'_> {
     ) -> Result<(), String> {
         let fn_name = self.new_fn_name(parent_path, "unconnected");
         let origin = self.origin(port);
-        self.model.processes.push(IrProcess::new_with_origin(
-            fn_name,
-            format!("{child_path}.unconnected"),
-            IrShape::RunOnce,
-            Vec::new(),
-            body,
-            origin,
-        ));
+        self.model.processes.push(
+            IrProcess::new_with_origin(
+                fn_name,
+                format!("{child_path}.unconnected"),
+                IrShape::RunOnce,
+                Vec::new(),
+                body,
+                origin,
+            )
+            .into_unconnected_drive(),
+        );
         Ok(())
     }
 }

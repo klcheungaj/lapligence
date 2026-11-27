@@ -247,6 +247,9 @@ pub enum IrContinuousDriver {
     /// where llg admits one there (the grammar names a net), which it then
     /// drives as a continuous assignment does.
     Primitive,
+    /// The pull an omitted input port receives under `` `unconnected_drive``
+    /// (IEEE 1364-2001 19.9), which drives the formal as a pull source would.
+    UnconnectedDrive,
 }
 
 impl IrProcess {
@@ -354,6 +357,13 @@ impl IrProcess {
     /// [`IrProcess::continuous`]).
     pub(in crate::sim) fn into_primitive_output(mut self) -> Self {
         self.continuous = Some(IrContinuousDriver::Primitive);
+        self
+    }
+
+    /// Mark this process as the `` `unconnected_drive`` pull of an omitted
+    /// input port (see [`IrProcess::continuous`]).
+    pub(in crate::sim) fn into_unconnected_drive(mut self) -> Self {
+        self.continuous = Some(IrContinuousDriver::UnconnectedDrive);
         self
     }
 
@@ -480,11 +490,11 @@ pub struct IrRedrive {
 impl IrProcess {
     /// The variables (not nets) and arrays this continuous driver assigns
     /// in `statements` (its body, wherever that is kept): the storage whose
-    /// release re-establishes it. Only a continuous assignment, a port link
-    /// or a primitive output ([`IrProcess::continuous`]) has any, as an
-    /// evaluate-then-wait
-    /// or run-once process: other synthetic processes (assertion action
-    /// blocks, initializers, unconnected-port defaults) write variables the
+    /// release re-establishes it. Only a continuous driver (a continuous
+    /// assignment, a port link, a primitive output or an
+    /// `` `unconnected_drive`` pull, [`IrProcess::continuous`]) has any, as
+    /// an evaluate-then-wait or run-once process: other synthetic processes
+    /// (assertion action blocks, initializers) write variables the
     /// way procedures do, so a release keeps the forced value of what they
     /// write until their next write (10.6.2).
     pub(in crate::sim) fn redrive_targets<'a>(

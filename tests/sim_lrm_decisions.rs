@@ -7104,6 +7104,15 @@ fn cs_d4_vpi_release_keeps_action_block_writes() {
 }
 
 #[test]
+fn cs_d4_vpi_release_keeps_unconnected_port() {
+    run_vpi_decision(
+        "CS-D4_vpi_release_keeps_unconnected_port",
+        &["task $d4u(int enable)"],
+        include_str!("fixtures/sim/lrm_decisions/CS-D4_vpi_release_keeps_unconnected_port.out"),
+    );
+}
+
+#[test]
 fn tn_d1_typename_spacing() {
     run_decision(
         "TN-D1_typename_spacing",

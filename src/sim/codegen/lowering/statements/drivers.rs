@@ -1045,6 +1045,10 @@ mod tests {
             targets(&process("tb.g[output0]").into_primitive_output()),
             driven
         );
+        assert_eq!(
+            targets(&process("tb.u.unconnected").into_unconnected_drive()),
+            driven
+        );
     }
 
     #[test]
