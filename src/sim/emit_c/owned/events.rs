@@ -331,7 +331,8 @@ impl Frame<'_, '_> {
                 slot,
                 part,
             } => {
-                let real = self.ctx.model.virtual_interfaces[interface].instances[0].storage[slot]
+                let real = self.ctx.model.virtual_interfaces[interface]
+                    .slot_storage(slot)
                     .is_some_and(|storage| {
                         matches!(storage, crate::sim::ir::IrInterfaceStorage::Array(array)
                             if self.ctx.model.arrays[array].real)

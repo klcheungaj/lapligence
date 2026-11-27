@@ -24,6 +24,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod interfaces;
+pub(in crate::sim::emit_c) use interfaces::template_storage_name;
 use interfaces::{
     function_return_type, render_virtual_interface_call_bodies,
     render_virtual_interface_call_prototypes, render_virtual_interface_runtime,

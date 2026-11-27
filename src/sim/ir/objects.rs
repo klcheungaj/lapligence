@@ -177,6 +177,22 @@ pub struct IrVirtualInterface {
     /// `v.q.size()`, `v.a[i]`). A slot is added only when a use names the
     /// member, so descriptors without such uses keep their layout.
     pub(in crate::sim) storage: Vec<String>,
+    /// For a descriptor without instances, storage of each slot shaped from
+    /// the member's declaration: the shape the views of its bindings take,
+    /// and what a use that cannot leave reads while a null handle ends the
+    /// run. No handle of the descriptor binds it.
+    pub(in crate::sim) templates: Vec<IrInterfaceStorage>,
+}
+
+impl IrVirtualInterface {
+    /// The storage that gives slot `slot` its shape: an instance's, else
+    /// the template of a descriptor without instances.
+    pub(in crate::sim) fn slot_storage(&self, slot: usize) -> Option<IrInterfaceStorage> {
+        match self.instances.first() {
+            Some(instance) => instance.storage.get(slot).copied().flatten(),
+            None => self.templates.get(slot).copied(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

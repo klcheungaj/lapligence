@@ -1217,33 +1217,32 @@ impl Codegen<'_> {
                     })
             })
         else {
-            // Without an instance of the interface type, an unpacked member
-            // has no storage to give a view its shape (docs/known_issues.md).
+            // Without an instance of the interface type, every handle is
+            // null; the views of an unpacked member take their shape from
+            // storage shaped from its declaration, which no binding names.
             let declaration = match self.kind(node) {
                 NodeKind::Expr(ExprKind::HierPath { refs, .. }) => refs.last().copied().flatten(),
                 _ => None,
             };
-            let unpacked = declaration.is_some_and(|declaration| {
+            let unpacked = declaration.filter(|declaration| {
                 matches!(
-                    self.query_descriptor(declaration)
+                    self.query_descriptor(*declaration)
                         .map(|descriptor| &descriptor.shape),
                     Some(TypeShape::FixedArray { .. } | TypeShape::Container { .. })
                 )
             });
-            if unpacked
-                && !self
-                    .virtual_interface_instances
-                    .values()
-                    .any(|(owner, _)| *owner == descriptor)
-            {
-                return Err(self.locate_error(
-                    node,
-                    format!(
-                        "unpacked member `{}` of virtual interface `{}` is not supported when \
-                         the design has no instance of its interface type, in `{path}`",
-                        target.member, target.spelling
-                    ),
-                ));
+            if let Some(declaration) = unpacked.filter(|_| {
+                self.model.virtual_interfaces[descriptor]
+                    .instances
+                    .is_empty()
+            }) {
+                let template = self
+                    .interface_storage_template(descriptor, declaration)
+                    .map_err(|error| self.locate_error(node, error))?;
+                let interface = &mut self.model.virtual_interfaces[descriptor];
+                interface.storage.push(target.member.clone());
+                interface.templates.push(template);
+                return Ok(Some(interface.storage.len() - 1));
             }
             return Ok(None);
         };
@@ -1296,9 +1295,7 @@ impl Codegen<'_> {
     ) -> Result<(InterfaceView, IrStmt), String> {
         let descriptor = target.descriptor;
         let source = self.model.virtual_interfaces[descriptor]
-            .instances
-            .iter()
-            .find_map(|instance| instance.storage.get(slot).copied().flatten())
+            .slot_storage(slot)
             .ok_or_else(|| {
                 format!(
                     "unpacked member `{}` of virtual interface `{}` has no storage",

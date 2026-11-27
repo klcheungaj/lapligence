@@ -245,7 +245,31 @@ pub(super) fn render_virtual_interface_runtime(model: &IrModel, out: &mut String
             members.join(", ")
         ));
     }
+    // The storage slots of a descriptor without instances, which a use that
+    // cannot leave reads while its null handle ends the run; unreferenced
+    // where no such use exists.
+    for (interface_id, interface) in model.virtual_interfaces.iter().enumerate() {
+        if interface.templates.is_empty() {
+            continue;
+        }
+        let slots = interface
+            .templates
+            .iter()
+            .map(|storage| storage_slot(model, Some(*storage)))
+            .collect::<Vec<_>>();
+        out.push_str(&format!(
+            "static LLG_MAYBE_UNUSED llg_vif_storage_t {}[] = {{ {} }};\n",
+            template_storage_name(interface_id),
+            slots.join(", ")
+        ));
+    }
     out.push('\n');
+}
+
+/// The C name of the template storage slots of descriptor `interface`
+/// (`IrVirtualInterface::templates`).
+pub(in crate::sim::emit_c) fn template_storage_name(interface: usize) -> String {
+    format!("llg_vif_template_storage_{interface}")
 }
 
 /// The most storage slots of one interface descriptor.
