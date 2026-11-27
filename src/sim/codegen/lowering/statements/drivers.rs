@@ -500,8 +500,17 @@ impl Codegen<'_> {
             if targets.is_empty() {
                 continue;
             }
-            // A constant names the variable or element it writes itself.
-            let action = match constant_driver(&self.model, process) {
+            // A constant names the variable or element it writes itself. A
+            // constant of a part or an element, and a run-once driver below,
+            // are rows only for a continuous assignment: other synthetic
+            // processes (assertion action blocks, initializers) are no
+            // driver a release re-establishes.
+            let continuous = is_continuous_assignment(process);
+            let action = match constant_driver(&self.model, process).filter(|(target, action)| {
+                continuous
+                    || !(matches!(target, IrRedriveTarget::Element(..))
+                        || matches!(action, IrRedriveAction::ConstantBits { .. }))
+            }) {
                 Some((target, action)) => {
                     targets = vec![target];
                     Some(action)
@@ -514,6 +523,7 @@ impl Codegen<'_> {
             // no process left to wake: a VPI release runs its statements
             // (a call or a real value; a packed constant is a data row).
             let run_once = vpi_release
+                && continuous
                 && matches!(process.shape, IrShape::RunOnce)
                 && matches!(action, Some(IrRedriveAction::Evaluate(_)));
             let in_place = run_once
@@ -636,6 +646,13 @@ fn plain_variable(model: &IrModel, signal: usize) -> Option<(u32, bool)> {
         } if plain_signal(signal) && signal.is_variable() => Some((width, two_state)),
         _ => None,
     }
+}
+
+/// Whether `process` is a continuous assignment (`assign`, a net
+/// declaration assignment, a port connection link), which every lowering
+/// labels `<scope>.assign` or marks as a port link.
+fn is_continuous_assignment(process: &IrProcess) -> bool {
+    process.port_link || process.label.ends_with(".assign")
 }
 
 /// A continuous driver that writes one packed constant to a plain packed
@@ -1009,6 +1026,27 @@ mod tests {
             redrive_action(&model, &driver(computed.clone())),
             Some(IrRedriveAction::Evaluate(computed))
         );
+    }
+
+    #[test]
+    fn only_continuous_assignments_are_rerun_by_a_release() {
+        let process = |label: &str| {
+            IrProcess::new(
+                "p".to_owned(),
+                label.to_owned(),
+                IrShape::RunOnce,
+                Vec::new(),
+                Vec::new(),
+            )
+        };
+        assert!(is_continuous_assignment(&process("tb.u.assign")));
+        // An assertion action block and a declaration initializer are
+        // run-once synthetic processes too, but no continuous driver.
+        assert!(!is_continuous_assignment(&process("tb.assertion[72].pass")));
+        assert!(!is_continuous_assignment(&process("tb.declaration_init.0")));
+        let mut link = process("tb.u.port");
+        link.port_link = true;
+        assert!(is_continuous_assignment(&link));
     }
 
     #[test]
