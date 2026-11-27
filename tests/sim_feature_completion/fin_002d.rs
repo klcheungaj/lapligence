@@ -1,7 +1,7 @@
 //! FIN-002 step 4: the allocation failure matrix on generated models.
 //!
 //! Each `alloc_*` fixture exercises one runtime subsystem. Its model is
-//! built once with the allocation fault injection of
+//! built once per optimizer mode with the allocation fault injection of
 //! `src/sim/rt/llg_alloc_fault.h` (`--cflags -DLLG_ALLOC_FAULT`) and then
 //! run once per chosen allocation request with that request failing
 //! (`LLG_ALLOC_FAULT=<n>`). Every such run must end in one of the defined
@@ -246,143 +246,167 @@ fn check(
     );
 }
 
+/// Builds one fixture: the optimizer mode and the `llg` arguments. The tests
+/// call `sim_cli` themselves, with the name of their fixture.
+type Build = fn(bool, &[&str]) -> (sim_harness::TempDir, Output);
+
+/// Build `fixture` with the fault injection and `args` in each optimizer mode
+/// and [`check`] each model.
+fn check_each_mode(
+    fixture: &str,
+    args: &[&str],
+    run_args: &[&str],
+    expected: &str,
+    also: Also,
+    build: Build,
+) {
+    let cflags = fault_cflags();
+    let mut arguments = vec!["--cflags", cflags.as_str()];
+    arguments.extend_from_slice(args);
+    for &optimized in sim_harness::optimizer_modes() {
+        let built = build(optimized, &arguments);
+        let label = format!("{fixture}, optimized={optimized}");
+        check(&label, built, run_args, expected, also);
+    }
+}
+
 #[test]
 fn allocation_failure_values() {
-    let cflags = fault_cflags();
-    let built =
-        sim_cli::run_case_keeping_dir(SUITE, "alloc_values", true, &["--cflags", &cflags], &[]);
-    check(
+    check_each_mode(
         "alloc_values",
-        built,
+        &[],
         &[],
         expected!("alloc_values"),
         Also::Nothing,
+        |optimized, arguments| {
+            sim_cli::run_case_keeping_dir(SUITE, "alloc_values", optimized, arguments, &[])
+        },
     );
 }
 
 #[test]
 fn allocation_failure_strings() {
-    let cflags = fault_cflags();
-    let built =
-        sim_cli::run_case_keeping_dir(SUITE, "alloc_strings", true, &["--cflags", &cflags], &[]);
-    check(
+    check_each_mode(
         "alloc_strings",
-        built,
+        &[],
         &[],
         expected!("alloc_strings"),
         Also::Nothing,
+        |optimized, arguments| {
+            sim_cli::run_case_keeping_dir(SUITE, "alloc_strings", optimized, arguments, &[])
+        },
     );
 }
 
 #[test]
 fn allocation_failure_containers() {
-    let cflags = fault_cflags();
-    let built =
-        sim_cli::run_case_keeping_dir(SUITE, "alloc_containers", true, &["--cflags", &cflags], &[]);
-    check(
+    check_each_mode(
         "alloc_containers",
-        built,
+        &[],
         &[],
         expected!("alloc_containers"),
         Also::Nothing,
+        |optimized, arguments| {
+            sim_cli::run_case_keeping_dir(SUITE, "alloc_containers", optimized, arguments, &[])
+        },
     );
 }
 
 #[test]
 fn allocation_failure_classes_and_collector() {
-    let cflags = fault_cflags();
-    let built =
-        sim_cli::run_case_keeping_dir(SUITE, "alloc_classes", true, &["--cflags", &cflags], &[]);
-    check(
+    check_each_mode(
         "alloc_classes",
-        built,
+        &[],
         &[],
         expected!("alloc_classes"),
         Also::Nothing,
+        |optimized, arguments| {
+            sim_cli::run_case_keeping_dir(SUITE, "alloc_classes", optimized, arguments, &[])
+        },
     );
 }
 
 #[test]
 fn allocation_failure_processes_and_frames() {
-    let cflags = fault_cflags();
-    let built =
-        sim_cli::run_case_keeping_dir(SUITE, "alloc_processes", true, &["--cflags", &cflags], &[]);
-    check(
+    check_each_mode(
         "alloc_processes",
-        built,
+        &[],
         &[],
         expected!("alloc_processes"),
         Also::Nothing,
+        |optimized, arguments| {
+            sim_cli::run_case_keeping_dir(SUITE, "alloc_processes", optimized, arguments, &[])
+        },
     );
 }
 
 #[test]
 fn allocation_failure_mailboxes_semaphores_events() {
-    let cflags = fault_cflags();
-    let built =
-        sim_cli::run_case_keeping_dir(SUITE, "alloc_sync", true, &["--cflags", &cflags], &[]);
-    check(
+    check_each_mode(
         "alloc_sync",
-        built,
+        &[],
         &[],
         expected!("alloc_sync"),
         Also::Nothing,
+        |optimized, arguments| {
+            sim_cli::run_case_keeping_dir(SUITE, "alloc_sync", optimized, arguments, &[])
+        },
     );
 }
 
 #[test]
 fn allocation_failure_randomization() {
-    let cflags = fault_cflags();
-    let built =
-        sim_cli::run_case_keeping_dir(SUITE, "alloc_random", true, &["--cflags", &cflags], &[]);
-    check(
+    check_each_mode(
         "alloc_random",
-        built,
+        &[],
         &[],
         expected!("alloc_random"),
         Also::Nothing,
+        |optimized, arguments| {
+            sim_cli::run_case_keeping_dir(SUITE, "alloc_random", optimized, arguments, &[])
+        },
     );
 }
 
 #[test]
 fn allocation_failure_coverage_and_assertions() {
-    let cflags = fault_cflags();
-    let built =
-        sim_cli::run_case_keeping_dir(SUITE, "alloc_coverage", true, &["--cflags", &cflags], &[]);
-    check(
+    check_each_mode(
         "alloc_coverage",
-        built,
+        &[],
         &[],
         expected!("alloc_coverage"),
         Also::Nothing,
+        |optimized, arguments| {
+            sim_cli::run_case_keeping_dir(SUITE, "alloc_coverage", optimized, arguments, &[])
+        },
     );
 }
 
 #[test]
 fn allocation_failure_files_memories_plusargs() {
-    let cflags = fault_cflags();
-    let built =
-        sim_cli::run_case_keeping_dir(SUITE, "alloc_files", true, &["--cflags", &cflags], &[]);
-    check(
+    check_each_mode(
         "alloc_files",
-        built,
+        &[],
         &["+ratio=0.75", "+name=llg", "+wide=123456789abcdef", "+flag"],
         expected!("alloc_files"),
         Also::Nothing,
+        |optimized, arguments| {
+            sim_cli::run_case_keeping_dir(SUITE, "alloc_files", optimized, arguments, &[])
+        },
     );
 }
 
 #[test]
 fn allocation_failure_waveform() {
-    let cflags = fault_cflags();
-    let built =
-        sim_cli::run_case_keeping_dir(SUITE, "alloc_waves", true, &["--cflags", &cflags], &[]);
-    check(
+    check_each_mode(
         "alloc_waves",
-        built,
+        &[],
         &[],
         expected!("alloc_waves"),
         Also::WaveformError,
+        |optimized, arguments| {
+            sim_cli::run_case_keeping_dir(SUITE, "alloc_waves", optimized, arguments, &[])
+        },
     );
 }
 
@@ -390,14 +414,9 @@ fn allocation_failure_waveform() {
 fn allocation_failure_dpi_and_vpi() {
     let directory = sim_harness::TempDir::new("fin002d-foreign").expect("temporary directory");
     let archive = super::sim_041::static_archive(SUITE, &directory, "alloc_foreign", &[]);
-    let cflags = fault_cflags();
-    let built = sim_cli::run_case_keeping_dir(
-        SUITE,
+    check_each_mode(
         "alloc_foreign",
-        true,
         &[
-            "--cflags",
-            &cflags,
             "--dpi-lib",
             &archive,
             "--define-system-task",
@@ -410,13 +429,11 @@ fn allocation_failure_dpi_and_vpi() {
             "task $later(int delay)",
         ],
         &[],
-    );
-    check(
-        "alloc_foreign",
-        built,
-        &[],
         expected!("alloc_foreign"),
         Also::Nothing,
+        |optimized, arguments| {
+            sim_cli::run_case_keeping_dir(SUITE, "alloc_foreign", optimized, arguments, &[])
+        },
     );
 }
 

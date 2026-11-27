@@ -238,16 +238,40 @@ fn recursive_specializations_that_end_run() {
     );
 }
 
+/// The lines of a transcript that starts each line with its time, grouped
+/// by time and sorted within a group: processes that one change wakes run in
+/// an order the text leaves open (4.7, L3465-3466).
+fn time_steps(text: &str) -> Vec<(&str, Vec<&str>)> {
+    let mut steps: Vec<(&str, Vec<&str>)> = Vec::new();
+    for line in text.lines() {
+        let time = line.split(' ').next().unwrap_or_default();
+        match steps.last_mut() {
+            Some((open, lines)) if *open == time => lines.push(line),
+            _ => steps.push((time, vec![line])),
+        }
+    }
+    for (_, lines) in &mut steps {
+        lines.sort_unstable();
+    }
+    steps
+}
+
 #[test]
 fn call_graphs_with_many_paths_build_and_run() {
-    sim_cli::run_case_with_args(
-        SUITE,
-        "call_diamonds",
-        expected!("call_diamonds"),
-        "",
-        &[],
-        &[],
-    );
+    let expected = expected!("call_diamonds").replace("\r\n", "\n");
+    for &optimized in sim_harness::optimizer_modes() {
+        let (_directory, output) =
+            sim_cli::run_case_keeping_dir(SUITE, "call_diamonds", optimized, &[], &[]);
+        let label = format!("call_diamonds, optimized={optimized}");
+        assert!(
+            output.status.success(),
+            "{label}: {}",
+            sim_cli::observed_output(&output)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+        assert_eq!(time_steps(&stdout), time_steps(&expected), "{label}");
+        assert!(super::sim_099::llg_lines(&output).is_empty(), "{label}");
+    }
 }
 
 #[test]

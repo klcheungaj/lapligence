@@ -2,9 +2,9 @@
 
 One small model per runtime subsystem, run by
 [`tests/sim_feature_completion/fin_002d.rs`](../../../../sim_feature_completion/fin_002d.rs):
-each model is built once with the allocation fault injection and run once
-per failed allocation request; the table above the tests names the defined
-result of every row. Method, environment variables and the list of what the
+each model is built once per optimizer mode with the allocation fault
+injection and run once per failed allocation request; the table above the
+tests names the defined result of every row. Method, environment variables and the list of what the
 injection does not cover: [tests readme](../../../../readme.md#allocation-fault-injection).
 The other rows of the failure matrix are in [`fin_002b`](../fin_002b/readme.md).
 

@@ -7,6 +7,7 @@ module tb;
   logic clk = 1'b0;
   logic [7:0] counter = '0;
   process handles[$];
+  int ids[$];
 
   always #5 clk = ~clk;
   always @(posedge clk) counter <= counter + 8'd1;
@@ -25,6 +26,7 @@ module tb;
   task automatic worker(input int id);
     process self = process::self();
     handles.push_back(self);
+    ids.push_back(id);
     repeat (id + 1) @(posedge clk);
     log.push_back(100 + id);
   endtask
@@ -70,10 +72,17 @@ module tb;
       worker(21);
     join_none
     #1;
-    handles[$].kill();
-    handles[$-1].await();
-    $display("kill %0d %0d %0d counter %0d", log.size(), handles[$].status() == process::KILLED,
-             handles[$-1].status() == process::FINISHED, counter);
+    begin
+      // The two workers start in an order the standard leaves open (4.7):
+      // the one of id 21 is killed and the one of id 20 awaited.
+      automatic int last = ids.size() - 1;
+      automatic process victim = ids[last] == 21 ? handles[last] : handles[last-1];
+      automatic process survivor = ids[last] == 21 ? handles[last-1] : handles[last];
+      victim.kill();
+      survivor.await();
+      $display("kill %0d %0d %0d counter %0d", log.size(), victim.status() == process::KILLED,
+               survivor.status() == process::FINISHED, counter);
+    end
     $display("done");
     $finish;
   end

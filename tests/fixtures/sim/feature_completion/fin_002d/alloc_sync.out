@@ -1,5 +1,5 @@
 mailbox 8 23 0 at 16
-semaphore 6 5 1
-events 9 52
+semaphore 6 15 1
+events 9 168 1
 anything 7 seven 2
 done

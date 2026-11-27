@@ -553,20 +553,24 @@ fn check_marked_lines(source: &str, output: &Output) {
 
 #[test]
 fn dpi_signatures_of_wrong_types_are_refused() {
-    let (_directory, output) =
-        sim_cli::run_case_keeping_dir(SUITE, "reject_dpi_types", true, &[], &[]);
-    check_marked_lines(
-        include_str!("../fixtures/sim/feature_completion/fin_002f/reject_dpi_types.sv"),
-        &output,
-    );
+    for &optimized in sim_harness::optimizer_modes() {
+        let (_directory, output) =
+            sim_cli::run_case_keeping_dir(SUITE, "reject_dpi_types", optimized, &[], &[]);
+        check_marked_lines(
+            include_str!("../fixtures/sim/feature_completion/fin_002f/reject_dpi_types.sv"),
+            &output,
+        );
+    }
 }
 
 #[test]
 fn objects_of_wrong_types_are_refused() {
-    let (_directory, output) =
-        sim_cli::run_case_keeping_dir(SUITE, "reject_object_types", true, &[], &[]);
-    check_marked_lines(
-        include_str!("../fixtures/sim/feature_completion/fin_002f/reject_object_types.sv"),
-        &output,
-    );
+    for &optimized in sim_harness::optimizer_modes() {
+        let (_directory, output) =
+            sim_cli::run_case_keeping_dir(SUITE, "reject_object_types", optimized, &[], &[]);
+        check_marked_lines(
+            include_str!("../fixtures/sim/feature_completion/fin_002f/reject_object_types.sv"),
+            &output,
+        );
+    }
 }

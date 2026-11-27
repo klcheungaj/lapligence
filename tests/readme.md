@@ -1673,8 +1673,9 @@ failure, an exit status 0 with missing output.
 
 The matrix is `-E 'binary(sim_feature_completion) & test(fin_002d::)'`: one
 model per subsystem (`fixtures/sim/feature_completion/fin_002d/`), built once
-and run for a bounded spread of failed requests; `LLG_ALLOC_FAULT_ALL=1` runs
-every request, in both modes. Run it with the
+per optimizer mode and run for a bounded spread of failed requests;
+`LLG_ALLOC_FAULT_ALL=1` runs every request, once failing alone and once with
+every later request failing too. Run it with the
 [generated-runtime sanitizers](#generated-runtime-sanitizers-gcc) as well: a
 sanitizer or leak report is an uncatalogued line and fails the run that
 printed it. `allocation_fault_build_renames_every_runtime_allocation` lists

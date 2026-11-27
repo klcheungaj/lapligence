@@ -68,7 +68,9 @@ module tb;
       join_none
     end
     wait fork;
-    $display("semaphore %0d %0d %0d", order.size(), order[5], keys.try_get(1));
+    // The six processes start in an order the standard leaves open (4.7), so
+    // only facts every order gives are printed.
+    $display("semaphore %0d %0d %0d", order.size(), order.sum(), keys.try_get(1));
     fork
       begin
         @ready;
@@ -89,7 +91,15 @@ module tb;
         ->queue_of_events[2];
       end
     join
-    $display("events %0d %0d", order.size(), order[$]);
+    begin
+      // 51 may come at any place after the trigger; 52 follows 50.
+      automatic int at50 = 0, at52 = 0;
+      foreach (order[i]) begin
+        if (order[i] == 50) at50 = i;
+        if (order[i] == 52) at52 = i;
+      end
+      $display("events %0d %0d %0d", order.size(), order.sum(), at52 > at50);
+    end
     begin
       automatic int number = 0;
       automatic string text = "seven";
