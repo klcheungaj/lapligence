@@ -900,6 +900,14 @@ impl Codegen<'_> {
         text.get(begin..end)
     }
 
+    /// The source text of `node` for a message: its span when it is one
+    /// short line, else `fallback`.
+    pub(in super::super) fn message_text<'a>(&'a self, node: NodeId, fallback: &'a str) -> &'a str {
+        self.span_text(node)
+            .filter(|text| !text.is_empty() && text.len() <= 60 && !text.contains('\n'))
+            .unwrap_or(fallback)
+    }
+
     /// A structural key of an expression: its kind with every captured
     /// child replaced by the child's key. Equal keys denote the same
     /// expression over the same declarations; spans and arena positions

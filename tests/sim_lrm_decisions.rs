@@ -744,6 +744,18 @@ fn eo_d4_record_element_whole_and_string_reads() {
     );
 }
 
+/// EO-D4: a queue or dynamic-array member of a record element compared by an
+/// equality, or given by an alternative of a conditional operator assigned to
+/// a queue or dynamic array, after a call names the element selected after
+/// that call.
+#[test]
+fn eo_d4_record_element_whole_operands() {
+    run_decision(
+        "EO-D4_record_element_whole_operands",
+        include_str!("fixtures/sim/lrm_decisions/EO-D4_record_element_whole_operands.out"),
+    );
+}
+
 /// VM-D2 / IEEE 1800-2009 10.4.2: an event-controlled nonblocking write
 /// through a virtual interface locates its target at issue.
 #[test]
@@ -7046,6 +7058,15 @@ fn cs_d4_vpi_release_reestablishes_assignment() {
         "CS-D4_vpi_release_reestablishes_assignment",
         &["task $d4(int enable)"],
         include_str!("fixtures/sim/lrm_decisions/CS-D4_vpi_release_reestablishes_assignment.out"),
+    );
+}
+
+#[test]
+fn cs_d4_vpi_release_constant_parts() {
+    run_vpi_decision(
+        "CS-D4_vpi_release_constant_parts",
+        &["task $d4c(int enable)"],
+        include_str!("fixtures/sim/lrm_decisions/CS-D4_vpi_release_constant_parts.out"),
     );
 }
 

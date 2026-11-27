@@ -969,6 +969,48 @@ impl Codegen<'_> {
         ))))
     }
 
+    /// `row = {q, 0}`, `row = q` and the other sources of a fixed array of
+    /// packed or real cells that no array variable holds, for a native row value:
+    /// assigned to a lexical array of the row's shape as to a fixed-array
+    /// variable (with its run-time size check, SV 7.6), then stored whole.
+    /// `None` for another row type or a source no fixed-array lowering
+    /// takes.
+    pub(in crate::sim::codegen) fn native_row_from_value(
+        &mut self,
+        path: &str,
+        value: usize,
+        source: NodeId,
+    ) -> Result<Option<IrStmt>, String> {
+        let ty = self.model.native_values[value].ty;
+        let IrContainerElement::FixedArray {
+            dimensions,
+            element,
+        } = self.model.native_types[ty].clone()
+        else {
+            return Ok(None);
+        };
+        if !matches!(
+            *element,
+            IrContainerElement::Packed { .. } | IrContainerElement::Real { .. }
+        ) {
+            return Ok(None);
+        }
+        let array = self.row_activation_array(&dimensions, &element)?;
+        let ir = array.ir;
+        let Some(fill) = self.lower_fixed_into_lexical(path, array, source)? else {
+            return Ok(None);
+        };
+        Ok(Some(IrStmt::Block(vec![
+            IrStmt::FixedArrayDeclare(ir),
+            fill,
+            IrStmt::Container(Box::new(IrContainerStmt::FixedToValueItem {
+                array: ir,
+                root: IrValueItemRoot::Value(value),
+                items: Vec::new(),
+            })),
+        ])))
+    }
+
     /// The locator of a whole element as a transfer root; a `write` locator
     /// creates a missing associative entry and publishes the store.
     fn element_row_root(
@@ -2303,8 +2345,9 @@ impl Codegen<'_> {
 
     /// The node a read of the member that `node` names starts at, when an
     /// effect of statement `h` precedes that read: the outermost select,
-    /// method call or query of the member, as the uses of class properties
-    /// through computed handles are placed (decision EO-D4), or the member
+    /// method call, query or equality of the member, as the uses of class
+    /// properties through computed handles are placed (decision EO-D4), or
+    /// the member
     /// itself read whole in place by a lowering that binds it there
     /// ([`Self::binds_whole_member_read`]).
     fn member_use_start(&self, h: NodeId, node: NodeId) -> Option<NodeId> {
@@ -2340,6 +2383,21 @@ impl Codegen<'_> {
                         receiver: Some(receiver),
                         ..
                     } => *receiver,
+                    // An equality of the member read whole starts where
+                    // the equality is lowered as a packed value.
+                    NodeKind::Expr(ExprKind::Operation {
+                        op:
+                            Operation::Equal
+                            | Operation::NotEqual
+                            | Operation::CaseEqual
+                            | Operation::CaseNotEqual,
+                        ..
+                    }) => self
+                        .node(current)
+                        .children
+                        .iter()
+                        .map(|operand| self.p30_unwrap_cast(*operand))
+                        .find(|operand| *operand == node)?,
                     _ => return None,
                 };
             }
@@ -2366,8 +2424,10 @@ impl Codegen<'_> {
     /// `h`, is lowered where its read starts by a lowering that runs the
     /// bindings placed at it: an array item of an unpacked array
     /// concatenation assigned to a queue or dynamic array
-    /// (`lower_container_concat_into`), a `%p` argument of a display task or
-    /// `$sformatf` (`lower_pattern_arg`), or an input actual of a container
+    /// (`lower_container_concat_into`), an alternative of a conditional
+    /// operator assigned to one (`ContainerConditional`), a `%p` argument
+    /// of a display task or `$sformatf` (`lower_pattern_arg`), or an input
+    /// actual of a container
     /// formal (the calls' `container_call_argument`), which a call takes
     /// after the actuals before it (decision EO-D3).
     fn binds_whole_member_read(&self, h: NodeId, node: NodeId) -> bool {
@@ -2379,28 +2439,32 @@ impl Codegen<'_> {
                 op: Operation::Concat,
                 ..
             }) => {
-                let assigned = matches!(self.kind(h), NodeKind::Stmt(StmtKind::Assign { .. }))
-                    && self
-                        .node(h)
-                        .children
-                        .get(1)
-                        .is_some_and(|rhs| self.p30_unwrap_cast(*rhs) == parent)
-                    && self
-                        .node(h)
-                        .children
-                        .first()
-                        .and_then(|lhs| self.container_of(*lhs))
-                        .is_some_and(|target| {
-                            !self.is_fixed_view(target.ir)
-                                && !matches!(
-                                    self.model.containers[target.ir].kind,
-                                    IrContainerKind::Associative { .. }
-                                )
-                        });
-                assigned
+                self.assigned_to_resizable(h, parent)
                     && self.unpacked_concat_items(parent).is_some_and(|items| {
                         items.iter().any(|item| item.node == node && item.array)
                     })
+            }
+            // An alternative of a conditional operator, nested or not,
+            // assigned to a queue or dynamic array (`ContainerConditional`).
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::Conditional,
+                ..
+            }) => {
+                let mut top = parent;
+                let mut arm = node;
+                loop {
+                    if self.node(top).children.first() == Some(&arm) {
+                        return false;
+                    }
+                    match self.node(top).parent {
+                        Some(next) if self.is_conditional(next) => {
+                            arm = top;
+                            top = next;
+                        }
+                        _ => break,
+                    }
+                }
+                self.assigned_to_resizable(h, top)
             }
             NodeKind::SysCall { name } => {
                 matches!(
@@ -2426,6 +2490,29 @@ impl Codegen<'_> {
             }
             _ => false,
         }
+    }
+
+    /// Whether statement `h` assigns `rhs` (through casts) to a queue or
+    /// dynamic array that is no fixed-array view.
+    fn assigned_to_resizable(&self, h: NodeId, rhs: NodeId) -> bool {
+        matches!(self.kind(h), NodeKind::Stmt(StmtKind::Assign { .. }))
+            && self
+                .node(h)
+                .children
+                .get(1)
+                .is_some_and(|source| self.p30_unwrap_cast(*source) == rhs)
+            && self
+                .node(h)
+                .children
+                .first()
+                .and_then(|lhs| self.container_of(*lhs))
+                .is_some_and(|target| {
+                    !self.is_fixed_view(target.ir)
+                        && !matches!(
+                            self.model.containers[target.ir].kind,
+                            IrContainerKind::Associative { .. }
+                        )
+                })
     }
 
     /// Whether `node` is lowered as a packed or real value, the lowering
@@ -2455,6 +2542,7 @@ impl Codegen<'_> {
     /// statement reports (`take_unplaced_member`): that use has no value
     /// form taking a placed binding.
     fn end_placed_members(&mut self) {
+        self.repeated_member_bindings.clear();
         for start in std::mem::take(&mut self.placed_member_starts) {
             if self.placed_interface_bindings.remove(&start).is_some()
                 && self.unplaced_member.is_none()

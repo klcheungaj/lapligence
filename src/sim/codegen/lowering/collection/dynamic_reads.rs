@@ -1366,7 +1366,9 @@ impl Codegen<'_> {
 
     /// Dependencies of one virtual-interface member read inside a callee
     /// body, through a bound virtual-interface formal, a module or static
-    /// handle, or a handle selected through a class property.
+    /// handle, or a handle selected through a class property. An unpacked
+    /// member waits on any change of its storage in the instance the handle
+    /// binds; the wait evaluates its condition again after each.
     fn callee_interface_member(
         &mut self,
         path: &str,
@@ -1384,12 +1386,23 @@ impl Codegen<'_> {
         let Some(target) = self.virtual_interface_member_path(path, node, false)? else {
             return Err(unobservable(self));
         };
-        let Some(slot) = self
+        let kind = match self
             .virtual_interface_members
             .get(&(target.descriptor, target.member.clone()))
             .copied()
-        else {
-            return Err(unobservable(self));
+        {
+            Some(slot) => IrNativeAccessKind::InterfaceMember {
+                interface: target.descriptor,
+                member: slot,
+            },
+            None => match self.virtual_interface_storage_slot(path, node, &target)? {
+                Some(slot) => IrNativeAccessKind::InterfaceStorage {
+                    interface: target.descriptor,
+                    slot,
+                    part: crate::sim::ir::IrInterfacePart::Contents,
+                },
+                None => return Err(unobservable(self)),
+            },
         };
         let handle = if target.position > 0 {
             self.member_prefix_expression(node, target.position + 1)
@@ -1400,13 +1413,7 @@ impl Codegen<'_> {
         let Some(handle) = handle.filter(Self::rearmable_handle) else {
             return Err(unobservable(self));
         };
-        let access = self.native_access_symbol(
-            handle,
-            IrNativeAccessKind::InterfaceMember {
-                interface: target.descriptor,
-                member: slot,
-            },
-        );
+        let access = self.native_access_symbol(handle, kind);
         out.push(IrDependency::NativeAccess(access.clone()));
         self.handle_property_receivers(&access, out);
         self.root_handle_dependency(&access, out);

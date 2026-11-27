@@ -2359,6 +2359,37 @@ impl<'a> Codegen<'a> {
                 "compound assignment to a fixed unpacked array in `{path}` is not supported"
             ));
         }
+        self.lower_p30_into_view(path, lhs, rhs, blocking, target, captures, captured_indices)
+    }
+
+    /// Blocking `array = rhs` for a whole lexical array `array`, which no
+    /// declaration names: `rhs` is any source a fixed-array variable takes,
+    /// with the same run-time size check. `None` when no fixed-array
+    /// lowering takes `rhs`.
+    pub(in crate::sim::codegen) fn lower_fixed_into_lexical(
+        &mut self,
+        path: &str,
+        array: ArrayInfo,
+        rhs: NodeId,
+    ) -> Result<Option<IrStmt>, String> {
+        let target = Self::p30_view_from_prefix(array, &[])?;
+        // The source names the target for locations and capture names.
+        self.lower_p30_into_view(path, rhs, rhs, true, target, Vec::new(), HashMap::new())
+    }
+
+    /// `lhs = rhs` into the fixed-array view `target`, whose selectors
+    /// `captures` already evaluate.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_p30_into_view(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        blocking: bool,
+        target: P30ArrayView,
+        mut captures: Vec<IrStmt>,
+        mut captured_indices: HashMap<NodeId, (String, u32, bool)>,
+    ) -> Result<Option<IrStmt>, String> {
         if let NodeKind::Expr(ExprKind::Cast { operand, .. }) = self.kind(rhs) {
             let target_is_fixed = self
                 .query_descriptor(rhs)

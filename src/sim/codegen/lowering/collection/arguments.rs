@@ -1021,7 +1021,8 @@ impl<'a> Codegen<'a> {
             Ok(())
         } else if self.container_of_ref_actual(actual) {
             Err(format!(
-                "string element of a queue, dynamic or associative array as a ref actual, an output or inout actual of a call inside an expression or an input destination in `{path}` is not supported (SIM-008)"
+                "string element `{}` of a queue, dynamic or associative array as a ref actual, an output or inout actual or an input destination in `{path}` is not supported (SIM-008)",
+                self.message_text(actual, "?")
             ))
         } else {
             Err(format!(

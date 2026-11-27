@@ -787,9 +787,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   output driven by a child `assign` (SIM-004). An input string port also
   takes an element of a string array (`.se(arr[1])`) or any string
   expression, followed when it changes, and an output string port drives
-  such an element, stored as by an assignment each time the port changes
-  ([sim_004](../tests/fixtures/sim/feature_completion/sim_004/readme.md));
-  VPI gives the element as the high connection (A19-D95).
+  an element of a fixed array, stored as by an assignment each time the port
+  changes ([sim_004](../tests/fixtures/sim/feature_completion/sim_004/readme.md));
+  VPI gives the element as the high connection (A19-D95). An output port of
+  any type connected to an element of a queue, dynamic or associative array
+  is illegal (SV §23.3.3.2, §6.21) and rejects at the element.
   Output targets also written procedurally or by another port, invalid output
   expressions, language-illegal chandle ports (SV §6.14), record ports with a
   chandle or built-in semaphore, mailbox or process member

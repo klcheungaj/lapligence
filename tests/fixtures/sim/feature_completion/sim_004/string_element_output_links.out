@@ -1,9 +1,7 @@
-0 arr=x0,,x2 q=q0,q1, size=3 d= size=0 aa5= num=1 m10= m11=
+0 arr=x0,,x2 m10= m11=
 1 arr[1]=a0
-2 arr=x0,a0,x2 q=q0,q1,b0 size=3 d= size=0 aa5=d0 num=1 m10=m0 m11=
+2 arr=x0,a0,x2 m10=m0 m11=
 3 arr[1]=a1
-4 arr=x0,a1,x2 q=q0,q1,b0 size=3 d= size=2 aa5=d0 num=1 m10=m0 m11=
-6 arr=x0,a1,x2 q=q0,q1,b1 size=3 d= size=2 aa5=d0 num=1 m10=m1 m11=
-8 arr=x0,a1,x2 q=q0,q1,b1 size=4 d=c1 size=2 aa5=d1 num=1 m10=m1 m11=
-10 arr=x0,a1,x2 q=q0,q1,b2 size=4 d=c1 size=2 aa5=d2 num=1 m10=m1 m11=
-12 arr=x0,a1,x2 q=q0,q1,b2 size=4 d=c1 size=2 aa5=d2 num=1 m10=m1 m11=
+4 arr=x0,a1,x2 m10=m0 m11=
+6 arr=x0,a1,x2 m10=m1 m11=
+8 arr=x0,a1,x2 m10=m1 m11=

@@ -13,9 +13,9 @@ fn leaf_form_records_reject_an_out_of_range_select_and_a_handle_member_element()
     sim_cli::reject_case_with_id(
         SUITE,
         "neg_leaf_string_select",
-        "CODEGEN-002",
+        "CODEGEN-001",
         Some("8:5"),
-        "cannot resolve array base of select `s`",
+        "select `r.s[20]` in `tb` is not supported: llg cannot resolve its array base",
     );
     sim_cli::reject_case_with_id(
         SUITE,
@@ -125,9 +125,9 @@ fn computed_handle_packed_select_target_is_a_located_limit() {
     sim_cli::reject_case_with_id(
         SUITE,
         "neg_computed_handle_select_write",
-        "CODEGEN-002",
+        "CODEGEN-001",
         Some("13:5"),
-        "cannot resolve array base of select `b`",
+        "select `get().b[2]` in `tb` is not supported: llg cannot resolve its array base",
     );
 }
 
@@ -285,23 +285,23 @@ fn dense_member_record_forms_are_located_limits() {
     sim_cli::reject_case_with_id_exact(
         SUITE,
         "neg_record_call_member_select",
-        "CODEGEN-002",
+        "CODEGEN-001",
         Some("12:9"),
-        "cannot resolve array base of select `a` in `tb`",
+        "select `f().a[1]` in `tb` is not supported: llg cannot resolve its array base",
     );
     sim_cli::reject_case_with_id(
         SUITE,
         "neg_record_queue_row_select",
-        "CODEGEN-002",
+        "CODEGEN-001",
         Some("12:5"),
-        "cannot resolve array base of select `a` in `tb`",
+        "select `q[0].a[k]` in `tb` is not supported: llg cannot resolve its array base",
     );
     sim_cli::reject_case_with_id(
         SUITE,
         "neg_record_member_array_event_write",
-        "CODEGEN-002",
+        "CODEGEN-001",
         Some("12:5"),
-        "cannot resolve hierarchical assignment LHS `a` in `tb`",
+        "hierarchical assignment target `m.e[1].a` in `tb` is not supported",
     );
     sim_cli::reject_case_with_id(
         SUITE,
@@ -446,9 +446,9 @@ fn uvm_example_difference_forms_are_located_limits() {
     sim_cli::reject_case_with_id(
         SUITE,
         "neg_prefix_increment_container_member",
-        "CODEGEN-002",
+        "CODEGEN-001",
         Some("13:11"),
-        "cannot resolve array base of select `count` in `tb`",
+        "select `t[\"a\"].count[\"x\"]` in `tb` is not supported: llg cannot resolve its array base",
     );
     sim_cli::reject_case_with_id(
         SUITE,
@@ -505,35 +505,35 @@ fn closing_audit_container_forms_are_located_limits() {
         "neg_packed_member_queue_read",
         "CODEGEN-001",
         Some("10:20"),
-        "hierarchical reference `hi` is not supported",
+        "hierarchical reference `q[0].hi` is not supported (in `tb`)",
     );
     sim_cli::reject_case_with_id(
         SUITE,
         "neg_packed_member_dynamic_write",
-        "CODEGEN-002",
+        "CODEGEN-001",
         Some("10:5"),
-        "cannot resolve hierarchical assignment LHS `lo`",
+        "hierarchical assignment target `da[1].lo` in `tb` is not supported",
     );
     sim_cli::reject_case_with_id(
         SUITE,
         "neg_packed_member_assoc_increment",
-        "CODEGEN-002",
+        "CODEGEN-001",
         Some("10:5"),
-        "cannot resolve hierarchical assignment LHS `hi`",
+        "hierarchical assignment target `aa[\"x\"].hi` in `tb` is not supported",
     );
     sim_cli::reject_case_with_id(
         SUITE,
         "neg_concat_real_array_item",
-        "CODEGEN-009",
+        "CODEGEN-001",
         Some("7:10"),
-        "resizable container assignment in `tb` requires a compatible array",
+        "resizable container assignment in `tb` from `r` is not supported",
     );
     sim_cli::reject_case_with_id(
         SUITE,
         "neg_concat_event_array_item",
-        "CODEGEN-009",
+        "CODEGEN-001",
         Some("7:10"),
-        "resizable container assignment in `tb` requires a compatible array",
+        "resizable container assignment in `tb` from `e` is not supported",
     );
     sim_cli::reject_case_with_id(
         SUITE,
@@ -558,13 +558,6 @@ fn closing_audit_container_forms_are_located_limits() {
     );
     sim_cli::reject_case_with_id(
         SUITE,
-        "neg_concat_associative_fixed_element",
-        "CODEGEN-006",
-        Some("7:5"),
-        "native record assignment in `tb` has no record source",
-    );
-    sim_cli::reject_case_with_id(
-        SUITE,
         "neg_real_array_to_queue",
         "CODEGEN-003",
         Some("7:10"),
@@ -573,9 +566,9 @@ fn closing_audit_container_forms_are_located_limits() {
     sim_cli::reject_case_with_id(
         SUITE,
         "neg_inside_conditional_nested",
-        "CODEGEN-009",
+        "CODEGEN-001",
         Some("10:35"),
-        "resizable container assignment in `tb` requires a compatible array",
+        "resizable container assignment in `tb` from `qq[0]` is not supported",
     );
     sim_cli::reject_case_with_id(
         SUITE,
@@ -591,23 +584,23 @@ fn closing_audit_event_and_randomize_forms_are_located_limits() {
     sim_cli::reject_case_with_id(
         SUITE,
         "neg_vif_event_queue_trigger",
-        "CODEGEN-002",
+        "CODEGEN-001",
         Some("14:8"),
-        "cannot resolve named event expression",
+        "a trigger of named event expression `v.eq[0]` in `tb` is not supported",
     );
     sim_cli::reject_case_with_id(
         SUITE,
         "neg_vif_event_no_instance",
-        "CODEGEN-002",
+        "CODEGEN-001",
         Some("10:20"),
-        "cannot resolve named event expression",
+        "a trigger of named event expression `v.e` in `tb` is not supported",
     );
     sim_cli::reject_case_with_id(
         SUITE,
         "neg_class_event_array_actual",
-        "CODEGEN-002",
+        "CODEGEN-001",
         Some("13:7"),
-        "an element of an event array of a class object or a virtual interface cannot be an output, inout or ref event actual",
+        "an element of an event array of a class object or a virtual interface as an output, inout or ref event actual is not supported in `tb`",
     );
     sim_cli::reject_case_with_id(
         SUITE,
@@ -625,6 +618,15 @@ fn closing_audit_served_forms_run() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/ki_audit/closing_served_forms.out");
     sim_cli::run_case_backend_parity(SUITE, "closing_served_forms", expected, &[], &[]);
+}
+
+/// Fixed-array elements of containers take the sources of a fixed-array
+/// variable; expected values are derived by hand in the readme.
+#[test]
+fn closing_audit_fixed_elements_take_concatenations() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/ki_audit/concat_into_fixed_elements.out");
+    sim_cli::run_case_backend_parity(SUITE, "concat_into_fixed_elements", expected, &[], &[]);
 }
 
 /// Two located limits of sections added since the X1 audit whose messages

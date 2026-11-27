@@ -817,20 +817,21 @@ With `typedef struct { int q[$]; int v; } r_t; r_t rq[$];` and a function
 - a queue or dynamic-array member of a record element read whole in place
   after a call by an operand other than an array item of a concatenation
   assigned to a queue or dynamic array, a `%p` argument of a display task or
-  `$sformatf`, or an actual of a container formal names the element the
-  statement selected when it started: an array equality
-  `x = bump() + (rq[k].q == t)` reads `rq[0].q`, the reference `rq[1].q`
-  (the forms named follow EO-D4);
+  `$sformatf`, an actual of a container formal, an operand of an equality or
+  an alternative of a conditional operator assigned to a queue or dynamic
+  array names the element the statement selected when it started: a
+  streaming concatenation `x = bump() + int'({>>{rq[k].q}})` reads
+  `rq[0].q`, the reference `rq[1].q` (the forms named follow EO-D4);
 - a nested assignment whose target is a string, a handle, an unpacked value,
   a container element or a class property select is rejected in an operand
   that `?:`, `&&`, `||`, `->`, `inside` or an array method's `with` clause may
   skip or repeat (`s2 = c ? (s = "a") : "b"`), with its location, and so is
   a nested assignment to an unpacked value selected with a call or an
   assignment in any operand (`x = ((ua[f()] = ub) == ub)`);
-- a string element of a queue, dynamic or associative array as an output or
-  inout actual of a call inside an expression (`s = {f(q[0]), "!"}` with
-  `output string x`) is rejected (SIM-008); a call statement serves it, and an
-  expression call serves packed and real elements.
+- a string element of a nested queue (`sq[0][1]`) as an output or inout
+  actual is rejected (SIM-008), in a call statement and inside an expression;
+  a string element of a one-dimensional queue, dynamic or associative array
+  is served in both (`s = {f(q[0]), "!"}`, EO-D3).
 
 ### Cause
 
@@ -840,7 +841,8 @@ statement evaluates once, before the statement runs, or where its use starts
 when an effect precedes that use and its lowering binds it there: a packed,
 real or string read (`lower_expr`, `lower_string`), a concatenation item, a
 `%p` argument or a container actual. Other lowerings of a whole member have
-no such point. Nested assignments with such targets have only the statement
+no such point. A string element of a nested queue has no copy-out form.
+Nested assignments with such targets have only the statement
 form, which runs where the full expression runs its nested assignments
 first.
 
@@ -857,8 +859,8 @@ neighbours are rows of
 `tests/fixtures/sim/expression_mutations/nested_assignment_skipped_operand.sv`;
 the call-selected unpacked target rejects in
 `tests/fixtures/sim/feature_completion/ki_audit/neg_nested_assignment_unpacked_call_target.sv`;
-the string element actual in
-`tests/fixtures/sim/feature_completion/sim_008/neg_expression_element_output.sv`.
+a string element of a nested queue as the output actual of a task call
+(`t(sq[0][0])` with `output string o`).
 
 ## Remaining forms of unpacked-array container elements and multidimensional class properties (SIM-011, SIM-027)
 
@@ -946,7 +948,8 @@ targets, and queue a whole-container commit for nonblocking unpacks.
 
 - A field of a packed member of an unpacked structure that also has a string
   or real member (`us.p.lo`, where `p` is packed and `us` has a `string`
-  member) is rejected with `cannot resolve hierarchical assignment LHS`. Plain
+  member) is rejected with "hierarchical assignment target ... is not
+  supported". Plain
   assignments to this form are rejected in the same way. The whole member
   (`us.p`) and structures without string or real members work.
 - A character of a string (`s[0]`) as a destination is rejected explicitly.
@@ -1756,7 +1759,8 @@ only, as computed class handles are.
 A member of an element of packed structure type of a dynamic array, queue or
 associative array variable (`da[i].hi`, `q[0].lo`, `aa["x"].hi++`) stops
 compilation, located, with "hierarchical reference ... is not supported" (an
-operand) or "cannot resolve hierarchical assignment LHS" (a target). Elements
+operand) or "hierarchical assignment target ... is not supported" (a
+target), both CODEGEN-001. Elements
 of fixed arrays, and of such containers held in class properties
 (`h.q[0].lo`, `h.da[1].lo = 5`, `h.aa["x"].hi++`), work; read or write the
 whole element instead.
@@ -1787,7 +1791,8 @@ cells use the leaf form).
 
 Below 16 cells, two forms that a column accepts stop compilation. A constant
 select beyond a `string` or handle member array (`r.s[20] = "x"` with
-`string s[8]`) reports "cannot resolve array base of select", where SV 7.4.6
+`string s[8]`) reports "select ... is not supported: llg cannot resolve its
+array base", where SV 7.4.6
 reads the default and writes nothing. A whole record with a class handle member
 assigned to a member element (`r.a[5] = x` with `e_t a[8]`) reports "assignment
 between incompatible unpacked aggregate types".
@@ -2137,7 +2142,8 @@ and `neg_inside_handle_call_member.sv`.
 
 **Status:** narrowed (fin-gaps-e). Per-object container properties, mailbox
 `num()`, callee handle locals with one binding and virtual-interface members
-read in called functions now wake waits
+read in called functions, unpacked ones through a virtual-interface formal
+included (`vv.a[1]`), now wake waits
 (`ki_lrm_audit_b/observed_storage`, `callee_dataflow`).
 
 ### Symptom
@@ -2463,19 +2469,16 @@ re-establishes the continuous assignments of the released variable
 
 ### Symptom
 
-- A driver that evaluates an expression (`assign v = a + b;`, a port
-  connection with an expression) delivers its value when it runs later in
-  the same time step. A read in the calling process right after the VPI
-  release, and the `value_p` of that call, still see the forced value; a
-  read after the process suspends, in a later region or by `$strobe`, sees
-  the driven one. Some simulators deliver the value before the call returns
-  (4.7 allows both). A `release` statement, and a VPI release of a variable
-  that a port connection copies, a whole-variable constant assignment or a
-  delayed assignment drives, deliver at once.
-- A constant continuous assignment to a part select or an array element of
-  a variable (`assign v[3:0] = 4'd5;`, `assign a[1] = 8'd9;`) is not
-  re-established by a VPI release: those bits keep the forced value. A
-  `release` statement re-establishes them.
+A driver that evaluates an expression (`assign v = a + b;`, a port
+connection with an expression) delivers its value when it runs later in the
+same time step. A read in the calling process right after the VPI release,
+and the `value_p` of that call, still see the forced value; a read after the
+process suspends, in a later region or by `$strobe`, sees the driven one.
+Some simulators deliver the value before the call returns (4.7 allows
+both). A `release` statement, and a VPI release of a variable that a port
+connection copies, a constant (whole, or a constant part, bit, member or
+element of it) or a run-once assignment of a call or a real value drives,
+or a delayed assignment, deliver at once.
 
 ### Cause
 
@@ -2485,24 +2488,22 @@ statements as generated code, one function per distinct driver body, which
 every such model would compile whether or not it ever releases; instead the
 model carries const tables that name the driver process of each variable,
 and the release wakes it like a change of one of its operands. A constant
-assignment runs once and leaves no process to wake; only a whole-variable
-constant has a data row.
+assignment runs once and leaves no process to wake: it has a data row (the
+constant's limbs, with a bit range for a part of a variable or an element),
+and a run-once assignment that is not a packed constant (a function call
+with constant arguments, a real value) keeps its statements.
 
 ### Intended direction
 
-Constant drivers of parts and elements can become data rows (the constant's
-limbs with a bit range, a row per element). In-place evaluation for VPI
-would need the driver's statements without generated code per driver, for
-example running the suspended driver process inside the release.
+In-place evaluation for VPI would need the driver's statements without
+generated code per driver, for example running the suspended driver
+process inside the release.
 
 ### Reproduce
 
 `vpi_release_reestablishes` in
 [fin_002](../tests/fixtures/sim/feature_completion/fin_002/readme.md) for
-the scheduled value (`at the releases` against `end of the time step`). For
-the constant part: force and release `v` through VPI with
-`logic [7:0] v; assign v[3:0] = 4'd5; assign v[7:4] = in[3:0];`; the low
-four bits keep the forced value.
+the scheduled value (`at the releases` against `end of the time step`).
 
 ## Operator-overload update values on oversized or native targets
 
@@ -2820,11 +2821,12 @@ As an item of an unpacked array concatenation (SV 10.10): a dense fixed array
 of reals, events or rows (an item of a queue of fixed arrays); an array of
 rows into a queue of queues (`qq = {m, q}` with `int m[2][2]`); an item of a
 run-time size into a fixed target of two dimensions (`m = {rows, r2}` with
-`int rows[$][2]`), a real fixed target or a fixed-array element of an
-associative array (the last with an internal-invariant id, CODEGEN-006). A
-whole assignment of such an array to a queue (`rq = r2`) rejects too. A queue
-or dynamic array that is an element of a container is an item that works
-(`{qq[1], 0}`, also into a queue of queues).
+`int rows[$][2]`) or a real fixed target, also when the target is a
+fixed-array element of a container. A whole assignment of such an array to a
+queue (`rq = r2`) rejects too. A queue or dynamic array that is an element of
+a container is an item that works (`{qq[1], 0}`, also into a queue of
+queues), and so is an item of a run-time size into a fixed-array element of
+packed cells (`fa[1] = {q, 0}` with `int fa[int][3]`).
 
 ### Cause
 
@@ -4170,7 +4172,8 @@ in a `--config` file) generation continues.
 
 **Symptom.** `v = ++t["a"].count["x"];`, where `t` is an associative array
 of class handles and `count` an associative array property, stops generation
-with "cannot resolve array base of select `count`". The statement forms
+with "select `t["a"].count["x"]` ... is not supported: llg cannot resolve
+its array base". The statement forms
 `t["a"].count["x"]++;` and plain reads and writes work.
 
 **Intended direction.** Lower the prefix-increment expression through the

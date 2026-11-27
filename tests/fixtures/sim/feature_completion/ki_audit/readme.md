@@ -67,7 +67,6 @@ Clause lines quote `docs/specification/SystemVerilog-1800-2009.txt`.
 | `neg_concat_rows_into_nested_queue` | Remaining items of unpacked array concatenations | 10.10 L13838-13840, as above; the rows of `m` are the elements of the item and the target's elements are queues of `int`, which a fixed row is assignment compatible with (7.6 L8423-8424). |
 | `neg_concat_queue_rows_into_fixed` | Remaining items of unpacked array concatenations | 10.10 L13838-13840, as above; a queue of rows is an item of a fixed target of two dimensions, and the size of the result equals the target's. |
 | `neg_concat_real_fixed_target` | Remaining items of unpacked array concatenations | 10.10 L13838-13840, as above; a queue of reals is an item of a fixed real target. |
-| `neg_concat_associative_fixed_element` | Remaining items of unpacked array concatenations | 10.10 L13817-13819: "The target of such assignment-like context shall be an array whose slowest-varying dimension is an unpacked fixed-size, queue or dynamic dimension."; the target is a fixed-array element of an associative array. The id is the internal-invariant family, not the limit one. |
 | `neg_real_array_to_queue` | Remaining items of unpacked array concatenations | 7.6 L8422-8424: "dynamic array or queue, or a slice of such an array, shall be assignment compatible with any other such array or slice if all the following conditions are satisfied: [...] The element types of source and target shall be equivalent." |
 | `neg_inside_conditional_nested` | Set membership items outside packed storage | 11.4.13 L15366-15367: "If an expression in the list is an unpacked array, its elements are traversed by descending into the array until reaching a singular value."; the expression is a conditional whose arms are queues. |
 | `neg_chandle_key_find_index` | Class-keyed associative arrays have explicit gaps | 7.12.1 L9280, as above; the array is indexed by chandles (7.8.5 L8709-8710: "This includes all of the dynamically sized types as legal index types."). |
@@ -124,6 +123,22 @@ L18996-18997 ("Implementations shall issue an error either at compile time or
 run time when these provisions have not been met."), as for S13-D5, but
 matures at time 1, so the run prints `x=5 y=7` (as the industry-standard
 behaviour does). A fix of the known issue updates the expected output.
+
+`concat_into_fixed_elements` is a positive case: a fixed-array element of a
+queue, dynamic or associative array is a fixed-size target (10.10
+L13817-13819: "The target of such assignment-like context shall be an array
+whose slowest-varying dimension is an unpacked fixed-size, queue or dynamic
+dimension."), so it takes what a fixed-array variable takes. Each item
+represents its elements (10.10 L13838-13840, as above): with `q = '{1, 2}`,
+`{q, 0}` is `'{1, 2, 0}`, `{7, q}` is `'{7, 1, 2}`, `{q, 5}` is `'{1, 2, 5}`,
+`{3, q}` is `'{3, 1, 2}` and `{q, 9}` is `'{1, 2, 9}`. A queue source is
+copied element for element when the sizes agree (7.6 L8425-8426: "If the
+target is a fixed-size array or a slice, the source array shall have the same
+number of elements as the target."): after `q.push_back(4)`, `fa[3] = q` is
+`'{1, 2, 4}`; with `f = {q[0:1], 5}` (`'{1, 2, 5}`), `{f[1:2], 6}` is
+`'{2, 5, 6}`, and the real queue `'{1.5, 2.5}` fills `ra[1]`. The last three
+lines are the industry-standard output; it does not implement unpacked array
+concatenations with a queue item.
 
 `closing_served_forms` is a positive case for forms the known issues listed as
 rejected (FIN-001 closing audit). Unpacked array concatenation items that are

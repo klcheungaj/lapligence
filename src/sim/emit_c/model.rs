@@ -1208,7 +1208,7 @@ fn redrive_driver_targets(
 /// have merged or reordered drivers; whatever process now assigns the
 /// variable is the one to wake, and waking one that assigns more is
 /// harmless. A run-once driver has no process left to wake: its constant
-/// row re-establishes it.
+/// or run-once row re-establishes it.
 fn redrive_process_rows(
     drivers: Vec<(usize, Vec<crate::sim::ir::IrRedriveTarget>)>,
     processes: &[Option<CoroutineArtifact>],

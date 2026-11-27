@@ -806,8 +806,9 @@ impl<'a> Codegen<'a> {
                                 self.locate_error(
                                     lhs,
                                     format!(
-                                        "cannot resolve array base of select `{}` in `{path}`",
-                                        self.node(*base).name
+                                        "select `{}` in `{path}` is not supported: llg cannot \
+                                         resolve its array base",
+                                        self.message_text(lhs, &self.node(*base).name)
                                     ),
                                 )
                             })
@@ -1065,10 +1066,9 @@ impl<'a> Codegen<'a> {
                 // through the corresponding arms above.
                 let info = self.hier_path_signal(lhs).cloned().ok_or_else(|| {
                     format!(
-                        "cannot resolve hierarchical assignment LHS `{}` in \
-                             `{path}` (only plain per-instance signals are \
-                             supported)",
-                        self.node(lhs).name
+                        "hierarchical assignment target `{}` in `{path}` is not \
+                         supported: only plain per-instance signals are",
+                        self.message_text(lhs, &self.node(lhs).name)
                     )
                 })?;
                 Ok(Lhs::Whole(info))

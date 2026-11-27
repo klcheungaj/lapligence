@@ -33,6 +33,23 @@ impl Validator<'_> {
 
     /// The checks so far named no class property container that their code
     /// cannot reach.
+    /// Width of the one packed variable or array element a constant redrive
+    /// writes.
+    fn redrive_cell_width(&self, targets: &[crate::sim::ir::IrRedriveTarget]) -> Option<u32> {
+        match targets {
+            [crate::sim::ir::IrRedriveTarget::Signal(target)] => {
+                match self.model.signals.get(*target)?.ty {
+                    crate::sim::ir::IrType::Packed { width, .. } => Some(width),
+                    crate::sim::ir::IrType::Real { .. } => None,
+                }
+            }
+            [crate::sim::ir::IrRedriveTarget::Element(array, _)] => {
+                Some(self.model.arrays.get(*array)?.elem_width)
+            }
+            _ => None,
+        }
+    }
+
     pub(super) fn validate_container_scope(&self, path: IrPath<'_>) -> ValidationResult {
         match self.model.unreachable_container.take() {
             Some(container) => self.fail(
@@ -398,6 +415,11 @@ impl Validator<'_> {
             let targets_in_bounds = redrive.targets.iter().all(|target| match target {
                 crate::sim::ir::IrRedriveTarget::Signal(signal) => signal_in_bounds(*signal),
                 crate::sim::ir::IrRedriveTarget::Array(array) => *array < self.model.arrays.len(),
+                crate::sim::ir::IrRedriveTarget::Element(array, cell) => self
+                    .model
+                    .arrays
+                    .get(*array)
+                    .is_some_and(|array| *cell < array.total && !array.real && !array.sparse()),
             });
             if redrive.targets.is_empty() || !targets_in_bounds {
                 return self.fail(path, "redrive names no variable");
@@ -427,22 +449,25 @@ impl Validator<'_> {
                     self.validate_stmts(body, &[], format_args!("{path}.body"))?;
                 }
                 crate::sim::ir::IrRedriveAction::Constant(constant) => {
-                    let width = match redrive.targets.as_slice() {
-                        [crate::sim::ir::IrRedriveTarget::Signal(target)] => {
-                            match self.model.signals[*target].ty {
-                                crate::sim::ir::IrType::Packed { width, .. } => Some(width),
-                                crate::sim::ir::IrType::Real { .. } => None,
-                            }
-                        }
-                        _ => None,
-                    };
-                    if width != Some(constant.width)
+                    if self.redrive_cell_width(&redrive.targets) != Some(constant.width)
                         || constant.real.is_some()
                         || constant.fill.is_some()
                     {
                         return self.fail(
                             path,
                             "a constant redrive needs one packed variable of the constant's width",
+                        );
+                    }
+                }
+                crate::sim::ir::IrRedriveAction::ConstantBits { lsb, value } => {
+                    let fits = self
+                        .redrive_cell_width(&redrive.targets)
+                        .zip(lsb.checked_add(value.width))
+                        .is_some_and(|(width, end)| value.width > 0 && end <= width);
+                    if !fits || value.real.is_some() || value.fill.is_some() {
+                        return self.fail(
+                            path,
+                            "a constant bits redrive needs one packed variable holding its bits",
                         );
                     }
                 }

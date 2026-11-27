@@ -63,7 +63,8 @@ same data parses in a fraction of it. Only catalog models register the blob
 released cell and driver, as flat pointer arrays plus one class per row
 shape), its two scratch arrays and one plain cold
 `llg_redrive_N(void* context)` function per driver whose statements a
-`release` statement repeats (`owned/model/redrive.rs`), registered by
+`release` statement, or for a run-once driver of a catalog model any
+release, repeats (`owned/model/redrive.rs`), registered by
 `llg_redrives_register`; a model without rows emits none of them. The
 functions go through sharing with the condition evaluators, so the
 instances of a module share one body and each row passes its instance

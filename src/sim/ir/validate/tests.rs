@@ -2611,6 +2611,7 @@ fn a_redrive_names_variables_and_a_copy_keeps_one_packed_type() {
         port_link: false,
         targets: vec![IrRedriveTarget::Signal(0)],
         action: IrRedriveAction::Copy(1),
+        run_once: false,
     });
     if let Err(error) = model.validate() {
         panic!("{}: {}", error.path(), error.detail());

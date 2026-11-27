@@ -4,6 +4,7 @@
 // 9.4.2 L11837-11840, 9.4.3).
 interface bus_if;
   logic [3:0] s;
+  int a[4];
 endinterface
 
 module tb;
@@ -22,7 +23,7 @@ module tb;
   virtual bus_if v = i0;
   C h = new;
   int t_alias = -1, t_chain = -1, t_vif = -1, t_vglob = -1, t_size = -1;
-  int t_total = -1, t_num = -1, t_rebind = -1;
+  int t_total = -1, t_num = -1, t_rebind = -1, t_row = -1;
   function automatic int alias_x(C c);
     C d;
     d = c;
@@ -36,6 +37,9 @@ module tb;
   endfunction
   function automatic int vread(virtual bus_if vv);
     return int'(vv.s);
+  endfunction
+  function automatic int vrow(virtual bus_if vv);
+    return vv.a[1];
   endfunction
   function automatic int vglob();
     return int'(v.s);
@@ -55,6 +59,7 @@ module tb;
   initial begin wait (h.total() == 9); t_total = int'($time); end
   initial begin wait (mnum(h) == 1); t_num = int'($time); end
   initial begin wait (vglob() == 6); t_rebind = int'($time); end
+  initial begin wait (vrow(v) == 5); t_row = int'($time); end
   initial begin
     i1.s = 4'd6;
     #1 h.x = 1;
@@ -65,9 +70,11 @@ module tb;
     #1 h.q.push_back(5);
     #1 h.mb.put(1);
     #1 v = i1;
+    #1 i1.a[1] = 5;
     #1 begin
       $display("alias=%0d chain=%0d vif=%0d vglob=%0d", t_alias, t_chain, t_vif, t_vglob);
-      $display("size=%0d total=%0d num=%0d rebind=%0d", t_size, t_total, t_num, t_rebind);
+      $display("size=%0d total=%0d num=%0d rebind=%0d row=%0d", t_size, t_total, t_num,
+               t_rebind, t_row);
     end
     $finish(0);
   end

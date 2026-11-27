@@ -1,7 +1,9 @@
 //! Drivers.
 
 use super::*;
-use crate::sim::ir::{IrRedrive, IrRedriveAction, IrRedriveTarget, IrRuntimeQuery};
+use crate::sim::ir::{
+    IrArray, IrPackedSelect, IrRedrive, IrRedriveAction, IrRedriveTarget, IrRuntimeQuery,
+};
 use crate::sim::legacy_unsupported::LegacyFamily;
 
 impl EmitCtx<'_, '_> {
@@ -498,20 +500,50 @@ impl Codegen<'_> {
             if targets.is_empty() {
                 continue;
             }
-            let action = redrive_action(&self.model, process);
+            // A constant names the variable or element it writes itself. A
+            // constant of a part or an element, and a run-once driver below,
+            // are rows only for a continuous assignment: other synthetic
+            // processes (assertion action blocks, initializers) are no
+            // driver a release re-establishes.
+            let continuous = is_continuous_assignment(process);
+            let action = match constant_driver(&self.model, process).filter(|(target, action)| {
+                continuous
+                    || !(matches!(target, IrRedriveTarget::Element(..))
+                        || matches!(action, IrRedriveAction::ConstantBits { .. }))
+            }) {
+                Some((target, action)) => {
+                    targets = vec![target];
+                    Some(action)
+                }
+                None => redrive_action(&self.model, process),
+            };
             // The statements of a driver run for `release` statements only;
             // a VPI release wakes the driver's process instead, which the
-            // emitter finds among the final processes.
-            let in_place = matches!(
-                action,
-                Some(
-                    IrRedriveAction::Copy(_)
-                        | IrRedriveAction::Constant(_)
-                        | IrRedriveAction::Committed
-                )
-            );
+            // emitter finds among the final processes. A run-once driver has
+            // no process left to wake: a VPI release runs its statements
+            // (a call or a real value; a packed constant is a data row).
+            let run_once = vpi_release
+                && continuous
+                && matches!(process.shape, IrShape::RunOnce)
+                && matches!(action, Some(IrRedriveAction::Evaluate(_)));
+            let in_place = run_once
+                || matches!(
+                    action,
+                    Some(
+                        IrRedriveAction::Copy(_)
+                            | IrRedriveAction::Constant(_)
+                            | IrRedriveAction::ConstantBits { .. }
+                            | IrRedriveAction::Committed
+                    )
+                );
             if !(vpi_release && in_place) {
-                targets.retain(|target| self.released_targets.contains(target));
+                targets.retain(|target| {
+                    let named = match target {
+                        IrRedriveTarget::Element(array, _) => IrRedriveTarget::Array(*array),
+                        other => *other,
+                    };
+                    self.released_targets.contains(&named)
+                });
             }
             if targets.is_empty() {
                 continue;
@@ -528,6 +560,7 @@ impl Codegen<'_> {
                 port_link: process.port_link(),
                 targets,
                 action,
+                run_once,
             });
         }
         self.model.redrives = redrives;
@@ -536,8 +569,9 @@ impl Codegen<'_> {
 }
 
 /// How a `release` statement repeats the assignment of continuous driver
-/// `process`, or `None` for a driver whose statements cannot run outside its
-/// process: one with helper functions of its own.
+/// `process` when it is not a constant (`constant_driver`), or `None` for a
+/// driver whose statements cannot run outside its process: one with helper
+/// functions of its own.
 fn redrive_action(model: &IrModel, process: &IrProcess) -> Option<IrRedriveAction> {
     if !process.pre_fns.is_empty() {
         return None;
@@ -551,65 +585,230 @@ fn redrive_action(model: &IrModel, process: &IrProcess) -> Option<IrRedriveActio
         // and the bits it drives.
         return Some(IrRedriveAction::Committed);
     }
-    if let [statement] = process.body.as_slice() {
-        let mut statement = statement;
-        while let IrStmt::Located {
-            statement: inner, ..
-        } = statement
-        {
-            statement = inner;
-        }
-        if let IrStmt::Assign {
-            lhs: IrLhs::Whole(target),
-            rhs,
-            nba: false,
-        } = statement
-        {
-            let to = model.signal(*target);
-            let plain = |signal: &IrSignal| {
-                signal.alias.is_none() && signal.net_driver.is_none() && signal.net_alias.is_empty()
-            };
-            let packed =
-                plain(to) && matches!(to.ty, IrType::Packed { .. }) && rhs.width() == to.ty.width();
-            // A conversion to the width it already has changes no bit.
-            let mut value = rhs;
-            while let IrExprKind::Convert { a } = value.kind() {
-                if a.width() != value.width() {
-                    break;
-                }
-                value = a;
-            }
-            match value.kind() {
-                IrExprKind::SigRead(source) => {
-                    let from = model.signal(*source);
-                    if packed && plain(from) && to.ty == from.ty {
-                        return Some(IrRedriveAction::Copy(*source));
-                    }
-                }
-                IrExprKind::Const(constant) => {
-                    // A two-state variable would turn X and Z bits into 0.
-                    let two_state = matches!(
-                        to.ty,
-                        IrType::Packed {
-                            two_state: true,
-                            ..
-                        }
-                    );
-                    let unknown = constant.x.iter().chain(&constant.z).any(|limb| *limb != 0);
-                    if packed
-                        && constant.real.is_none()
-                        && constant.fill.is_none()
-                        && constant.width == to.ty.width()
-                        && !(two_state && unknown)
-                    {
-                        return Some(IrRedriveAction::Constant(constant.clone()));
-                    }
-                }
-                _ => {}
+    if let Some(IrStmt::Assign {
+        lhs: IrLhs::Whole(target),
+        rhs,
+        nba: false,
+    }) = single_assignment(process)
+    {
+        let to = model.signal(*target);
+        let packed = plain_signal(to)
+            && matches!(to.ty, IrType::Packed { .. })
+            && rhs.width() == to.ty.width();
+        if let IrExprKind::SigRead(source) = plain_value(rhs).kind() {
+            let from = model.signal(*source);
+            if packed && plain_signal(from) && to.ty == from.ty {
+                return Some(IrRedriveAction::Copy(*source));
             }
         }
     }
     Some(IrRedriveAction::Evaluate(process.body.clone()))
+}
+
+/// The one blocking assignment a continuous driver body consists of.
+fn single_assignment(process: &IrProcess) -> Option<&IrStmt> {
+    let [statement] = process.body.as_slice() else {
+        return None;
+    };
+    let mut statement = statement;
+    while let IrStmt::Located {
+        statement: inner, ..
+    } = statement
+    {
+        statement = inner;
+    }
+    matches!(statement, IrStmt::Assign { nba: false, .. }).then_some(statement)
+}
+
+/// `value` without conversions to the width it already has, which change no
+/// bit.
+fn plain_value(mut value: &IrExpr) -> &IrExpr {
+    while let IrExprKind::Convert { a } = value.kind() {
+        if a.width() != value.width() {
+            break;
+        }
+        value = a;
+    }
+    value
+}
+
+/// A signal that is its own storage: no alias and no net behind it.
+fn plain_signal(signal: &IrSignal) -> bool {
+    signal.alias.is_none() && signal.net_driver.is_none() && signal.net_alias.is_empty()
+}
+
+/// Width and state of a plain packed variable.
+fn plain_variable(model: &IrModel, signal: usize) -> Option<(u32, bool)> {
+    let signal = model.signals.get(signal)?;
+    match signal.ty {
+        IrType::Packed {
+            width, two_state, ..
+        } if plain_signal(signal) && signal.is_variable() => Some((width, two_state)),
+        _ => None,
+    }
+}
+
+/// Whether `process` is a continuous assignment (`assign`, a net
+/// declaration assignment, a port connection link), which every lowering
+/// labels `<scope>.assign` or marks as a port link.
+fn is_continuous_assignment(process: &IrProcess) -> bool {
+    process.port_link || process.label.ends_with(".assign")
+}
+
+/// A continuous driver that writes one packed constant to a plain packed
+/// variable, a constant part, bit or member of one, or a constant element
+/// (or a constant select of it) of a dense array variable: its data row
+/// (IEEE 1800-2009 10.6.2). The constant is stored as the target receives
+/// it: a two-state target takes X and Z bits as 0. `None` for any other
+/// driver, and for a constant select outside the target, which drives no
+/// bit.
+fn constant_driver(
+    model: &IrModel,
+    process: &IrProcess,
+) -> Option<(IrRedriveTarget, IrRedriveAction)> {
+    if !process.pre_fns.is_empty() {
+        return None;
+    }
+    let IrStmt::Assign { lhs, rhs, .. } = single_assignment(process)? else {
+        return None;
+    };
+    let (target, lsb, width, cell_width, two_state) = constant_bits(model, lhs)?;
+    let mut value = plain_value(rhs);
+    let mut known = two_state;
+    while let IrExprKind::ToTwoState { a } = value.kind() {
+        known = true;
+        value = plain_value(a);
+    }
+    let IrExprKind::Const(constant) = value.kind() else {
+        return None;
+    };
+    if constant.real.is_some() || constant.width != width || rhs.width() != width {
+        return None;
+    }
+    // A fill literal's limbs hold its value at its width.
+    let mut constant = constant.clone();
+    constant.fill = None;
+    if known {
+        for (limb, bits) in constant.bits.iter_mut().enumerate() {
+            let unknown = constant.x.get(limb).copied().unwrap_or(0)
+                | constant.z.get(limb).copied().unwrap_or(0);
+            *bits &= !unknown;
+        }
+        constant.x.iter_mut().for_each(|limb| *limb = 0);
+        constant.z.iter_mut().for_each(|limb| *limb = 0);
+    }
+    let action = if lsb == 0 && width == cell_width {
+        IrRedriveAction::Constant(constant)
+    } else {
+        IrRedriveAction::ConstantBits {
+            lsb,
+            value: constant,
+        }
+    };
+    Some((target, action))
+}
+
+/// The variable or array element a constant target `lhs` writes, the bits
+/// `[lsb +: width]` of it, the width of the whole variable or element and
+/// whether it is two-state. Every index and select must be a constant
+/// inside its parent.
+fn constant_bits(model: &IrModel, lhs: &IrLhs) -> Option<(IrRedriveTarget, u32, u32, u32, bool)> {
+    let range = |low: i64, width: i64, available: u32| -> Option<(u32, u32)> {
+        (low >= 0 && width > 0 && low.checked_add(width)? <= i64::from(available))
+            .then(|| Some((u32::try_from(low).ok()?, u32::try_from(width).ok()?)))
+            .flatten()
+    };
+    let indexed = |base: &IrExpr, width: u32, negative: bool, available: u32| {
+        let base = super::force_constant_i64(base)?;
+        let low = if negative {
+            base.checked_sub(i64::from(width) - 1)?
+        } else {
+            base
+        };
+        range(low, i64::from(width), available)
+    };
+    let part = |left: i64, right: i64, available: u32| {
+        range(
+            left.min(right),
+            (left - right).checked_abs()? + 1,
+            available,
+        )
+    };
+    let chain = |steps: &[IrPackedSelect], available: u32| {
+        let (mut lsb, mut width) = (0u32, available);
+        for step in steps {
+            let base = super::force_constant_i64(&step.base)?;
+            let (low, selected) = range(base, i64::from(step.width), width)?;
+            lsb = lsb.checked_add(low)?;
+            width = selected;
+        }
+        Some((lsb, width))
+    };
+    let (target, cell_width, two_state, (lsb, width)) = match lhs {
+        IrLhs::Whole(signal) => {
+            let (cell, two_state) = plain_variable(model, *signal)?;
+            (IrRedriveTarget::Signal(*signal), cell, two_state, (0, cell))
+        }
+        IrLhs::Part(signal, left, right, _) => {
+            let (cell, two_state) = plain_variable(model, *signal)?;
+            let bits = part(*left, *right, cell)?;
+            (IrRedriveTarget::Signal(*signal), cell, two_state, bits)
+        }
+        IrLhs::Bit(signal, index, _) => {
+            let (cell, two_state) = plain_variable(model, *signal)?;
+            let bits = range(super::force_constant_i64(index)?, 1, cell)?;
+            (IrRedriveTarget::Signal(*signal), cell, two_state, bits)
+        }
+        IrLhs::IdxPart(signal, base, _, width, negative, _) => {
+            let (cell, two_state) = plain_variable(model, *signal)?;
+            let bits = indexed(base, *width, *negative, cell)?;
+            (IrRedriveTarget::Signal(*signal), cell, two_state, bits)
+        }
+        IrLhs::PackedSelect { target, steps, .. } => {
+            let IrLhs::Whole(signal) = target.as_ref() else {
+                return None;
+            };
+            let (cell, two_state) = plain_variable(model, *signal)?;
+            let bits = chain(steps, cell)?;
+            (IrRedriveTarget::Signal(*signal), cell, two_state, bits)
+        }
+        IrLhs::ArrayElem {
+            arr,
+            indices,
+            elem_sel,
+        } => {
+            let array: &IrArray = model.arrays.get(*arr)?;
+            if !array.is_model_storage()
+                || array.sparse()
+                || array.descriptor
+                || array.real
+                || array.is_net()
+            {
+                return None;
+            }
+            let element = super::constant_array_cell(array, indices)?;
+            let cell = array.elem_width;
+            let bits = match elem_sel {
+                IrElemSel::Whole => (0, cell),
+                IrElemSel::Part(left, right) => part(*left, *right, cell)?,
+                IrElemSel::Bit(index) => range(super::force_constant_i64(index)?, 1, cell)?,
+                IrElemSel::Indexed {
+                    base,
+                    width,
+                    negative,
+                } => indexed(base, *width, *negative, cell)?,
+                IrElemSel::PackedChain(steps) => chain(steps, cell)?,
+            };
+            (
+                IrRedriveTarget::Element(*arr, element),
+                cell,
+                array.two_state,
+                bits,
+            )
+        }
+        _ => return None,
+    };
+    Some((target, lsb, width, cell_width, two_state))
 }
 
 /// The targets of the delayed assignments of a continuous driver body.
@@ -826,6 +1025,139 @@ mod tests {
         assert_eq!(
             redrive_action(&model, &driver(computed.clone())),
             Some(IrRedriveAction::Evaluate(computed))
+        );
+    }
+
+    #[test]
+    fn only_continuous_assignments_are_rerun_by_a_release() {
+        let process = |label: &str| {
+            IrProcess::new(
+                "p".to_owned(),
+                label.to_owned(),
+                IrShape::RunOnce,
+                Vec::new(),
+                Vec::new(),
+            )
+        };
+        assert!(is_continuous_assignment(&process("tb.u.assign")));
+        // An assertion action block and a declaration initializer are
+        // run-once synthetic processes too, but no continuous driver.
+        assert!(!is_continuous_assignment(&process("tb.assertion[72].pass")));
+        assert!(!is_continuous_assignment(&process("tb.declaration_init.0")));
+        let mut link = process("tb.u.port");
+        link.port_link = true;
+        assert!(is_continuous_assignment(&link));
+    }
+
+    #[test]
+    fn component_constant_drivers_name_their_bits() {
+        let mut two_state = packed("bits", 8, None);
+        two_state.ty = IrType::Packed {
+            width: 8,
+            signed: false,
+            two_state: true,
+        };
+        let model = model_with(vec![
+            packed("var", 8, None),
+            packed("net", 8, Some((0, 0))),
+            two_state,
+        ]);
+        let driver = |lhs: IrLhs, rhs: IrExpr| {
+            IrProcess::new(
+                "p".to_owned(),
+                "t.assign".to_owned(),
+                IrShape::RunOnce,
+                Vec::new(),
+                vec![IrStmt::Assign {
+                    lhs,
+                    rhs,
+                    nba: false,
+                }],
+            )
+        };
+        let bits = |lsb: u32, value: i64, width: u32| IrRedriveAction::ConstantBits {
+            lsb,
+            value: match constant(value, width, false).kind() {
+                IrExprKind::Const(value) => value.clone(),
+                _ => unreachable!(),
+            },
+        };
+        let var = IrRedriveTarget::Signal(0);
+        // A part, a bit and an indexed part of a variable are bit ranges.
+        assert_eq!(
+            constant_driver(
+                &model,
+                &driver(IrLhs::Part(0, 3, 0, false), constant(5, 4, false))
+            ),
+            Some((var, bits(0, 5, 4)))
+        );
+        assert_eq!(
+            constant_driver(
+                &model,
+                &driver(
+                    IrLhs::Bit(0, Box::new(constant(6, 32, true)), false),
+                    constant(1, 1, false)
+                )
+            ),
+            Some((var, bits(6, 1, 1)))
+        );
+        let member = IrLhs::PackedSelect {
+            target: Box::new(IrLhs::Whole(0)),
+            steps: vec![
+                IrPackedSelect {
+                    base: constant(4, 32, false),
+                    width: 4,
+                },
+                IrPackedSelect {
+                    base: constant(1, 32, false),
+                    width: 2,
+                },
+            ],
+            signed: false,
+            two_state: false,
+        };
+        assert_eq!(
+            constant_driver(&model, &driver(member, constant(2, 2, false))),
+            Some((var, bits(5, 2, 2)))
+        );
+        // The whole variable keeps the whole-cell row.
+        assert!(matches!(
+            constant_driver(&model, &driver(IrLhs::Whole(0), constant(9, 8, false))),
+            Some((IrRedriveTarget::Signal(0), IrRedriveAction::Constant(_)))
+        ));
+        // A select outside the variable drives no bit; a net has no row.
+        assert_eq!(
+            constant_driver(
+                &model,
+                &driver(IrLhs::Part(0, 9, 6, false), constant(5, 4, false))
+            ),
+            None
+        );
+        assert_eq!(
+            constant_driver(
+                &model,
+                &driver(IrLhs::Part(1, 3, 0, false), constant(5, 4, false))
+            ),
+            None
+        );
+        // A two-state variable takes X and Z bits as 0.
+        let unknown = IrExpr::new(
+            IrExprKind::Const(IrConst {
+                bits: vec![0b1001],
+                x: vec![0b0100],
+                z: vec![0b0001],
+                width: 4,
+                signed: false,
+                real: None,
+                fill: None,
+            }),
+            4,
+            false,
+            None,
+        );
+        assert_eq!(
+            constant_driver(&model, &driver(IrLhs::Part(2, 7, 4, true), unknown)),
+            Some((IrRedriveTarget::Signal(2), bits(4, 0b1000, 4)))
         );
     }
 

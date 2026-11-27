@@ -655,11 +655,27 @@ static LLG_OUTLYING void redrive_run(uint32_t row, void* cell) {
         sv4_destroy(&value);
         break;
     }
+    case LLG_REDRIVE_BITS: {
+        const uint64_t* words = (const uint64_t*)operand;
+        uint32_t lsb = (uint32_t)words[0], width = (uint32_t)words[1];
+        size_t count = ((size_t)width + 63u) / 64u;
+        const uint64_t* limbs = words + 2u;
+        sv4_t bits = sv4_from_limbs(limbs, limbs + count, limbs + 2u * count, width, 0);
+        sv4_t value = sv4_clone((const sv4_t*)cell);
+        sv4_part_select_set(&value, (int64_t)lsb + (int64_t)width - 1, (int64_t)lsb, bits);
+        llg_ba((sv4_t*)cell, value);
+        sv4_destroy(&value);
+        sv4_destroy(&bits);
+        break;
+    }
     case LLG_REDRIVE_COMMITTED:
         inertial_redrive((sv4_t*)cell);
         break;
     case LLG_REDRIVE_EVALUATE:
         if (!redrive_scheduled) group->evaluate((void*)(uintptr_t)operand);
+        break;
+    case LLG_REDRIVE_RUN_ONCE:
+        group->evaluate((void*)(uintptr_t)operand);
         break;
     default:
         if (redrive_scheduled) redrive_wake(group, operand);

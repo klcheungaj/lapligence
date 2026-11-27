@@ -157,8 +157,8 @@ fn neg_inside_slice_of_a_nested_container() {
     sim_cli::reject_case_with_id(
         SUITE,
         "neg_inside_nested_slice",
-        "CODEGEN-009",
+        "CODEGEN-001",
         Some("7:33"),
-        "resizable container assignment in `tb` requires a compatible array",
+        "resizable container assignment in `tb` from `qq[0][0:1]` is not supported",
     );
 }

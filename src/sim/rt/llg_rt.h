@@ -3875,16 +3875,21 @@ void llg_release_parts(const llg_force_part_t* parts, int32_t n_parts,
 // - LLG_REDRIVE_COPY: `operand[row]`, a packed variable, is copied to the cell;
 // - LLG_REDRIVE_LIMBS: `operand[row]` is the `uint64_t` value, X and Z limbs
 //   (in that order, each of the cell's width) of a constant assigned to it;
+// - LLG_REDRIVE_BITS: `operand[row]` is the `uint64_t` bit offset and width
+//   of a constant written to those bits of the cell, then its value, X and Z
+//   limbs (each of that width);
 // - LLG_REDRIVE_COMMITTED: a delayed driver; the value it last committed is
 //   assigned again and a pending update matures as scheduled;
 // - LLG_REDRIVE_EVALUATE: `evaluate(operand[row])` runs the driver's
 //   assignment once (`operand`: the instance record of a body shared between
 //   instances, else NULL);
+// - LLG_REDRIVE_RUN_ONCE: as EVALUATE, for a driver that ran once and has
+//   no process left (a call or a real value), so every release runs it;
 // - LLG_REDRIVE_PROCESS: the driver is the live process with root descriptor
 //   `process` and, for a body shared between instances, the instance record
 //   `operand[row]` at `instance_offset` of its root frame (else 0); it is
 //   woken as by a change of a value it waits on.
-// The first three act in place for every release, so the variable holds the
+// The first four and RUN_ONCE act in place for every release, so the variable holds the
 // driven value when the release returns. A `release` statement
 // (llg_release_parts, llg_release_real) also runs the EVALUATE rows in place
 // and ignores PROCESS rows; a release through VPI (the `_scheduled` entries)
@@ -3900,7 +3905,9 @@ enum {
     LLG_REDRIVE_LIMBS = 1,
     LLG_REDRIVE_COMMITTED = 2,
     LLG_REDRIVE_EVALUATE = 3,
-    LLG_REDRIVE_PROCESS = 4
+    LLG_REDRIVE_PROCESS = 4,
+    LLG_REDRIVE_BITS = 5,
+    LLG_REDRIVE_RUN_ONCE = 6
 };
 typedef struct {
     uint32_t first;

@@ -2803,6 +2803,15 @@ impl Codegen<'_> {
         if let Some(reads) = self.parameter_record_reads(source)? {
             return self.leaf_reads_into(path, target, reads, nba);
         }
+        // A fixed-array row from an unpacked array concatenation, a queue or
+        // a dynamic array, through a lexical array.
+        if let (false, NativeEndpoint::Value { value, prefix }) = (nba, target) {
+            if prefix.is_empty() {
+                if let Some(statement) = self.native_row_from_value(path, *value, source)? {
+                    return Ok(statement);
+                }
+            }
+        }
         // A record member of a record call result (`f().r`) comes from the
         // temporary that holds the result.
         if let Some((call, members)) = self.native_call_member(source) {

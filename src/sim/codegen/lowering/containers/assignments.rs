@@ -31,7 +31,23 @@ impl ExpandedConditional for ContainerConditional {
         dst: Option<&usize>,
         arm: NodeId,
     ) -> Result<IrStmt, String> {
-        cg.lower_container_into(path, self.type_node, *dst.unwrap_or(&self.dst), arm)
+        let statement =
+            cg.lower_container_into(path, self.type_node, *dst.unwrap_or(&self.dst), arm)?;
+        // A member of a record element read after an effect of the
+        // condition is bound here, after the condition (decision EO-D4).
+        // An ambiguous predicate lowers each alternative again beside the
+        // lowering a known one assigns, so the bindings are kept.
+        if let Some(bindings) = cg.take_placed_interface_bindings(arm) {
+            cg.repeated_member_bindings.insert(arm, bindings);
+        }
+        Ok(match cg.repeated_member_bindings.get(&arm) {
+            Some(bindings) => {
+                let mut statements = bindings.clone();
+                statements.push(statement);
+                IrStmt::Block(statements)
+            }
+            None => statement,
+        })
     }
 
     fn evaluate(
@@ -365,8 +381,7 @@ impl<'a> Codegen<'a> {
                         }
                         _ => {
                             return Err(format!(
-                                "resizable container element write in `{path}` requires a directly represented scalar element: {:?}",
-                                self.model.containers[container.ir].element
+                                "resizable container element write in `{path}` requires a directly represented scalar element"
                             ))
                         }
                     }
@@ -683,8 +698,8 @@ impl<'a> Codegen<'a> {
             }
             self.reject_native_row_copy(path, rhs)?;
             return Err(format!(
-                "resizable container assignment in `{path}` requires a compatible array (got {:?})",
-                self.kind(rhs)
+                "resizable container assignment in `{path}` from `{}` is not supported",
+                self.message_text(rhs, "this source")
             ));
         };
         Ok(IrStmt::Container(Box::new(IrContainerStmt::Copy {

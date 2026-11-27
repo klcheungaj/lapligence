@@ -188,6 +188,50 @@ fn illegal_native_targets_stay_rejected() {
     );
 }
 
+/// An output port connection is a continuous assignment (23.3.3.2), which
+/// elements of dynamically sized variables do not take (6.21): every kind
+/// of port and container, a select inside a concatenation and a variable
+/// index reject at the element.
+#[test]
+fn output_ports_to_dynamic_elements_are_illegal() {
+    let illegal = |port: &str| {
+        format!(
+            "output port `{port}` of `tb.c` is connected to an element of a queue, dynamic or \
+             associative array, which is illegal: the connection is a continuous assignment \
+             (IEEE 1800-2009 23.3.3.2), and elements of dynamically sized variables shall not be \
+             written with continuous assignments (6.21)"
+        )
+    };
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_output_string_queue_element",
+        "CODEGEN-002",
+        Some("15:16"),
+        &illegal("so"),
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_output_packed_dynamic_element",
+        "CODEGEN-002",
+        Some("12:20"),
+        &illegal("po"),
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_output_real_associative_element",
+        "CODEGEN-002",
+        Some("10:16"),
+        &illegal("ro"),
+    );
+    sim_cli::reject_case_with_id(
+        SUITE,
+        "neg_output_variable_queue_element",
+        "CODEGEN-002",
+        Some("11:16"),
+        &illegal("po"),
+    );
+}
+
 #[test]
 fn unsupported_native_boundaries_are_explicit() {
     sim_cli::reject_case(

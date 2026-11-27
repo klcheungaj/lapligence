@@ -281,12 +281,14 @@ A release of a variable ends in `redrive`: the model's const
 driver of a releasable variable, as flat per-row arrays and classes of rows
 of one shape (`llg_redrive_class_t`). The rows of the released cell that
 are data act in place with ordinary blocking writes for every release: a
-copy of the source, a constant from its limbs, or for a delayed driver the
+copy of the source, a constant from its limbs (into a bit range of the
+cell for a constant part, bit, member or element select), or for a delayed driver the
 committed value of its inertial records (`inertial_redrive`, CS-D5; a
 record of a selected driver of a variable notes its bit range once, when it
 is created, in fields that fill alignment padding). A `release` statement
 (`llg_release_parts`, `llg_release_real`) also runs the row's function in
-place (CS-D3; with the instance record of a shared body). A release through
+place (CS-D3; with the instance record of a shared body), and so does every
+release for a run-once driver's row (`LLG_REDRIVE_RUN_ONCE`). A release through
 VPI (`llg_release_parts_scheduled`, `llg_release_real_scheduled`) instead
 wakes the driver process a row names by root descriptor and instance record
 (`redrive_wake`, a registry scan), like a change of a value it waits on

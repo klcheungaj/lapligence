@@ -386,6 +386,7 @@ fn redrive_model(count: usize) -> IrModel {
                 ),
                 nba: false,
             }]),
+            run_once: false,
         });
     }
     model

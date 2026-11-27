@@ -250,12 +250,9 @@ impl<'a> Codegen<'a> {
                 signal.two_state,
             ));
         }
-        let lhs = self.lower_lhs(path, node).map_err(|error| {
-            format!(
-                "{error}; associative traversal key `{source_name}` resolved target is {:?}",
-                target.map(|target| self.kind(target))
-            )
-        })?;
+        let lhs = self
+            .lower_lhs(path, node)
+            .map_err(|error| format!("{error}; associative traversal key `{source_name}`"))?;
         match lhs {
             IrLhs::Whole(index) => {
                 let ty = self.model.signals[index].ty;

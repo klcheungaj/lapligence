@@ -486,7 +486,8 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         let omitted = |signal: usize| signals.get(signal).is_none_or(|signal| signal.omit);
         let mut dead = redrive.targets.iter().any(|target| match target {
             crate::sim::ir::IrRedriveTarget::Signal(signal) => omitted(*signal),
-            crate::sim::ir::IrRedriveTarget::Array(_) => false,
+            crate::sim::ir::IrRedriveTarget::Array(_)
+            | crate::sim::ir::IrRedriveTarget::Element(..) => false,
         });
         match &mut redrive.action {
             crate::sim::ir::IrRedriveAction::Copy(source) => dead |= omitted(*source),
@@ -498,6 +499,7 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
                 });
             }
             crate::sim::ir::IrRedriveAction::Constant(_)
+            | crate::sim::ir::IrRedriveAction::ConstantBits { .. }
             | crate::sim::ir::IrRedriveAction::Committed => {}
         }
         !dead

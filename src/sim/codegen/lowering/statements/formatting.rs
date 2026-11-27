@@ -235,12 +235,9 @@ impl EmitCtx<'_, '_> {
         }
         let lhs = self.cg.lower_lhs(&self.path, target).map_err(|error| {
             format!(
-                "string formatting destination has unsupported LHS in `{}`: {error} (target kind: {:?})",
-                self.path,
-                // The frontend's string-like destination may be a packed
-                // expression wrapper; retain its owned node kind in the
-                // lowering diagnostic when that wrapper is unsupported.
-                self.cg.kind(target)
+                "string formatting destination `{}` has unsupported LHS in `{}`: {error}",
+                self.cg.message_text(target, "?"),
+                self.path
             )
         })?;
         let (width, signed, _two_state, const_ref) =

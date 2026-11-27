@@ -3336,9 +3336,56 @@ impl Codegen<'_> {
         }
     }
 
+    /// The flat row-major element of a catalog array that `node` selects
+    /// with one constant index per dimension (`mem[1][2]`), if it does.
+    fn vpi_element_reference(&self, node: NodeId) -> Option<IrVpiArgRef> {
+        let mut indices = Vec::new();
+        let mut current = node;
+        loop {
+            match self.kind(current) {
+                NodeKind::Expr(ExprKind::ArraySelect { base, indices: own }) => {
+                    indices.extend(own.iter().rev().copied());
+                    current = *base;
+                }
+                NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
+                    indices.push(*index);
+                    current = *base;
+                }
+                _ => break,
+            }
+        }
+        indices.reverse();
+        let target = self.vpi_reference_target(current)?;
+        // The array's own dimensions: the catalog of ports is built when
+        // the model's arrays have moved on.
+        let array = self.array_globals.get(&target)?;
+        if indices.len() != array.dims.len() {
+            return None;
+        }
+        let mut flat = 0u64;
+        for (&(left, right), index) in array.dims.iter().zip(indices) {
+            let index = self.vpi_constant_index(index)?;
+            let (left, right) = (i64::from(left), i64::from(right));
+            if index < left.min(right) || index > left.max(right) {
+                return None;
+            }
+            let extent = left.abs_diff(right) + 1;
+            flat = flat
+                .checked_mul(extent)?
+                .checked_add(index.abs_diff(left))?;
+        }
+        Some(IrVpiArgRef::Element {
+            object: self.vpi_full_name(target),
+            index: flat,
+        })
+    }
+
     /// A constant bit/part-select of a whole variable or net, or a
     /// constant-index element of a catalog array.
     fn vpi_select_reference(&self, node: NodeId) -> IrVpiArgRef {
+        if let Some(element) = self.vpi_element_reference(node) {
+            return element;
+        }
         let constant_index = |index: NodeId| self.vpi_constant_index(index);
         let single = match self.kind(node) {
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if indices.len() == 1 => {
@@ -3358,30 +3405,8 @@ impl Codegen<'_> {
                 let Some(index) = constant_index(index) else {
                     return IrVpiArgRef::Expression;
                 };
-                if let Some(array) = self
-                    .array_globals
-                    .get(&target)
-                    .and_then(|info| self.model.arrays.get(info.ir))
-                {
-                    let Some(&(left, right)) = array.dims.first() else {
-                        return IrVpiArgRef::Expression;
-                    };
-                    if array.dims.len() != 1 {
-                        return IrVpiArgRef::Expression;
-                    }
-                    let (low, high) = (i64::from(left.min(right)), i64::from(left.max(right)));
-                    if index < low || index > high {
-                        return IrVpiArgRef::Expression;
-                    }
-                    let offset = if left <= right {
-                        index - i64::from(left)
-                    } else {
-                        i64::from(left) - index
-                    };
-                    return IrVpiArgRef::Element {
-                        object: self.vpi_full_name(target),
-                        index: offset.unsigned_abs(),
-                    };
+                if self.array_globals.contains_key(&target) {
+                    return IrVpiArgRef::Expression;
                 }
                 let Some(info) = self.sig_globals.get(&target) else {
                     return IrVpiArgRef::Expression;
