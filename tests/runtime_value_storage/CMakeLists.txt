@@ -451,7 +451,8 @@ if(LLG_STORAGE_TEST_SCHEDULER)
       target_link_libraries(fork_group_scale_${mode}_probe PRIVATE owner_probe_${mode}_rt owner_probe_container)
       strict_c(fork_group_scale_${mode}_probe)
       add_test(NAME fork_group_scale_${mode} COMMAND fork_group_scale_${mode}_probe)
-      set_tests_properties(fork_group_scale_${mode} PROPERTIES TIMEOUT 120)
+      # SCALE_ATTEMPTS measurements of a case under load.
+      set_tests_properties(fork_group_scale_${mode} PROPERTIES TIMEOUT 300)
     endforeach()
     # The release probe on a CPU clock quantized like Windows GetProcessTimes
     # (15.625 ms), so every host checks that a scaling sample spans enough

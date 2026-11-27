@@ -24,6 +24,14 @@
 #define SCALE_MIN_ROUNDS 3u
 #define SCALE_MAX_ROUNDS 16u
 #define SCALE_BUDGET_SECONDS 20.0
+/* A case whose minima miss the bounds is measured again from fresh minima,
+ * up to this many attempts in all. Load from other processes only adds CPU
+ * time (they contend for caches and memory, more for the larger working
+ * set), so load that outlasts one attempt's rounds passes on a later one,
+ * while superlinear growth stays at or above SCALE_LIMIT in every attempt.
+ * One sustained load on a CI runner with 3-4 CPUs read 4.08 in the debug
+ * build, which passed alone. */
+#define SCALE_ATTEMPTS 3u
 /* Each sample repeats its measurement until it spans this many ticks of the
  * CPU clock, so one tick of quantization moves a sample by at most 1/32 and a
  * ratio by at most about 6%: a quadratic 4 still reads above SCALE_LIMIT and
@@ -269,6 +277,19 @@ static int scales_linearly(double (*measure)(unsigned, fork_mode_t), unsigned n,
     return 0;
 }
 
+/* scales_linearly, measured again up to SCALE_ATTEMPTS times while the
+ * minima miss the bounds; *attempts receives the attempts made. */
+static int scales_linearly_again(double (*measure)(unsigned, fork_mode_t), unsigned n,
+                                 fork_mode_t mode, double* small, double* large,
+                                 unsigned* rounds, unsigned* attempts) {
+    for (*attempts = 1;; ++*attempts) {
+        if (scales_linearly(measure, n, mode, small, large, rounds)) return 1;
+        if (*attempts == SCALE_ATTEMPTS) return 0;
+        printf("attempt %u N=%u cpu=%.6f 2N=%.6f ratio=%.3f rounds=%u: measuring again\n",
+               *attempts, n, *small, *large, *large / *small, *rounds);
+    }
+}
+
 /* A scaling failure is a timing verdict, not an ownership check. */
 static void require_linear(int ok, const char* name) {
     if (ok) return;
@@ -287,16 +308,17 @@ int main(int argc, char** argv) {
     min_sample_seconds = SCALE_RESOLUTION_MULTIPLE * resolution;
     printf("cpu clock resolution=%.6f min sample=%.6f\n", resolution, min_sample_seconds);
     double small, large;
-    unsigned rounds;
-    int ok = scales_linearly(removal_order, REMOVAL_COUNT, (fork_mode_t){0, 0}, &small, &large, &rounds);
-    printf("reverse removal N=%u cpu=%.6f 2N=%.6f ratio=%.3f rounds=%u\n",
-           REMOVAL_COUNT, small, large, large / small, rounds);
+    unsigned rounds, attempts;
+    int ok = scales_linearly_again(removal_order, REMOVAL_COUNT, (fork_mode_t){0, 0}, &small,
+                                   &large, &rounds, &attempts);
+    printf("reverse removal N=%u cpu=%.6f 2N=%.6f ratio=%.3f rounds=%u attempts=%u\n",
+           REMOVAL_COUNT, small, large, large / small, rounds, attempts);
     require_linear(ok, "reverse removal");
     for (int mode = 0; mode < 6 && !removal_only; mode++) {
         fork_mode_t shape = {mode >= 3 ? mode - 1 : mode != 0, mode == 2};
-        ok = scales_linearly(run, GROUP_COUNT, shape, &small, &large, &rounds);
-        printf("fork scale mode=%d N=%u cpu=%.6f 2N=%.6f ratio=%.3f rounds=%u\n",
-               mode, GROUP_COUNT, small, large, large / small, rounds);
+        ok = scales_linearly_again(run, GROUP_COUNT, shape, &small, &large, &rounds, &attempts);
+        printf("fork scale mode=%d N=%u cpu=%.6f 2N=%.6f ratio=%.3f rounds=%u attempts=%u\n",
+               mode, GROUP_COUNT, small, large, large / small, rounds, attempts);
         require_linear(ok, "fork scale");
     }
     return 0;
