@@ -228,14 +228,14 @@ pub struct IrProcess {
     /// runtime calls directly (sequence match-item calls), so its coroutine
     /// descriptor is unreferenced.
     pub(in crate::sim) callback_host: bool,
-    /// The continuous assignment this process is, if it is one: the driver
-    /// a release re-establishes (IEEE 1800-2009 10.6.2). A port connection
+    /// The continuous driver this process is, if it is one: the driver a
+    /// release re-establishes (IEEE 1800-2009 10.6.2). A port connection
     /// link's constants come from the instance's connection (selected
     /// actual bits), not from its module's code.
     pub(in crate::sim) continuous: Option<IrContinuousDriver>,
 }
 
-/// The continuous assignment a synthetic process lowers.
+/// The continuous driver a synthetic process lowers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IrContinuousDriver {
     /// A continuous assignment or a net declaration assignment (10.3),
@@ -243,6 +243,10 @@ pub enum IrContinuousDriver {
     Assignment,
     /// A port connection, which implies a continuous assignment (23.3.3).
     PortLink,
+    /// A gate or UDP output terminal (28.3): it drives a net, or a variable
+    /// where llg admits one there (the grammar names a net), which it then
+    /// drives as a continuous assignment does.
+    Primitive,
 }
 
 impl IrProcess {
@@ -346,6 +350,13 @@ impl IrProcess {
         self
     }
 
+    /// Mark this process as the output of a gate or UDP (see
+    /// [`IrProcess::continuous`]).
+    pub(in crate::sim) fn into_primitive_output(mut self) -> Self {
+        self.continuous = Some(IrContinuousDriver::Primitive);
+        self
+    }
+
     /// Mark this process as a port connection link (see [`IrProcess::continuous`]).
     pub(in crate::sim) fn into_port_link(mut self) -> Self {
         self.continuous = Some(IrContinuousDriver::PortLink);
@@ -356,7 +367,7 @@ impl IrProcess {
         self.continuous == Some(IrContinuousDriver::PortLink)
     }
 
-    /// Whether this process is a continuous assignment of either kind.
+    /// Whether this process is a continuous driver of any kind.
     pub fn continuous(&self) -> bool {
         self.continuous.is_some()
     }
@@ -469,8 +480,9 @@ pub struct IrRedrive {
 impl IrProcess {
     /// The variables (not nets) and arrays this continuous driver assigns
     /// in `statements` (its body, wherever that is kept): the storage whose
-    /// release re-establishes it. Only a continuous assignment or a port
-    /// link ([`IrProcess::continuous`]) has any, as an evaluate-then-wait
+    /// release re-establishes it. Only a continuous assignment, a port link
+    /// or a primitive output ([`IrProcess::continuous`]) has any, as an
+    /// evaluate-then-wait
     /// or run-once process: other synthetic processes (assertion action
     /// blocks, initializers, unconnected-port defaults) write variables the
     /// way procedures do, so a release keeps the forced value of what they

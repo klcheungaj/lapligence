@@ -1041,6 +1041,10 @@ mod tests {
             driven
         );
         assert_eq!(targets(&process("tb.u.link").into_port_link()), driven);
+        assert_eq!(
+            targets(&process("tb.g[output0]").into_primitive_output()),
+            driven
+        );
     }
 
     #[test]

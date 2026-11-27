@@ -665,14 +665,17 @@ impl<'a> Codegen<'a> {
                 self.udp_gate_processes.insert(g, (state, fn_name.clone()));
             }
             let origin = self.origin(g);
-            self.model.processes.push(IrProcess::new_with_origin(
-                fn_name,
-                format!("{path}.{shown}[output{output_ordinal}]"),
-                shape,
-                Vec::new(),
-                body,
-                origin,
-            ));
+            self.model.processes.push(
+                IrProcess::new_with_origin(
+                    fn_name,
+                    format!("{path}.{shown}[output{output_ordinal}]"),
+                    shape,
+                    Vec::new(),
+                    body,
+                    origin,
+                )
+                .into_primitive_output(),
+            );
         }
         Ok(())
     }
