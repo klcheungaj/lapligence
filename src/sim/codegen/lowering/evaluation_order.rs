@@ -799,8 +799,8 @@ impl Codegen<'_> {
                             .contains_key(&self.unwrap_output_actual(arg.expr))
                     }),
                     Some(DbDirection::Input) => bound.get(idx).is_some_and(|arg| {
-                        self.is_subroutine_container(*io)
-                            && self.placed_interface_bindings.contains_key(&arg.expr)
+                        self.placed_interface_bindings.contains_key(&arg.expr)
+                            && self.is_subroutine_container(*io)
                     }),
                     _ => false,
                 })?;
