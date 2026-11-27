@@ -2046,7 +2046,8 @@ selector (cells qualify the bundled GMP), and fails a cell that did not run,
 had a failed test or did not pass
 `sim_value_backends::matrix::matrix_cell_selection_reaches_the_built_model`,
 which finds the cell's link-guard symbol (`llg_value_<identity>`) in the model
-executable the public CLI built. Runtime-cache entries are keyed by that
+executable the public CLI built (exported on every target, so a Windows
+executable names it in its export table). Runtime-cache entries are keyed by that
 identity and a model only links against its own runtime, so cells cannot share
 a runtime archive; compiler caches key on the preprocessed source, which
 includes the selection. The output directory holds `metadata.tsv` (revision),

@@ -73,6 +73,16 @@
 #define LLG_INTERNAL
 #endif
 
+// A runtime function every model exports by name, so tools can read it from
+// the executable: ELF and Mach-O models already export every global symbol,
+// while a Windows executable exports only what is marked dllexport (its other
+// names stay in no symbol table of the image).
+#if defined(_MSC_VER) || defined(__MINGW32__) || defined(__CYGWIN__)
+#define LLG_MODEL_EXPORT __declspec(dllexport)
+#else
+#define LLG_MODEL_EXPORT
+#endif
+
 // A model definition that may be unreferenced, such as the descriptor of a
 // process that only hosts runtime-called callbacks.
 #if defined(__GNUC__) || defined(__clang__)

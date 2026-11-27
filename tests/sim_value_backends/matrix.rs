@@ -1,7 +1,8 @@
 //! Witness of the FIN-002 value/optimizer matrix
 //! (tests/readme.md#valueoptimizer-matrix): the value selection a matrix
 //! cell names reaches the models the public CLI builds, proven by the link
-//! guard symbol in the executable rather than by the environment alone.
+//! guard symbol in the executable rather than by the environment alone (the
+//! runtime exports it, so it is in the export table of a Windows executable).
 //! Every model calls `llg_value_require_abi`, which the selected value header
 //! renames to `llg_value_<identity>` and only the runtime archive of that
 //! identity defines, so a model linked against another cell's runtime fails

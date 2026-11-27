@@ -1,5 +1,6 @@
 #ifndef LLG_VALUE_BRIDGE_H
 #define LLG_VALUE_BRIDGE_H
+#include "../llg_compiler.h"
 #ifdef LLG_VALUE_BUILD_CONFIG
 #include "../llg_value_build.h"
 #endif
@@ -21,7 +22,10 @@ extern "C" {
 #if !LLG_SV4_USE_GMP
 #include "consumer_bridge.h"
 #endif
-void llg_value_require_abi(void);
+/* The link guard: only the runtime of the selected value identity defines it.
+ * It is exported so the identity a model linked can be read from the model
+ * executable on every target. */
+LLG_MODEL_EXPORT void llg_value_require_abi(void);
 int32_t llg_ref_view_valid(const llg_ref_view_t*, const sv4_t*, size_t*);
 sv4_t llg_ref_read(const llg_ref_t*);
 #if !LLG_SV4_USE_GMP
