@@ -7017,6 +7017,22 @@ fn cs_d6_waiters_at_final_procedures() {
 }
 
 #[test]
+fn cs_d7_disable_fork_in_export() {
+    run_dpi_decision(
+        "CS-D7_disable_fork_in_export",
+        include_str!("fixtures/sim/lrm_decisions/CS-D7_disable_fork_in_export.out"),
+    );
+}
+
+#[test]
+fn cs_d8_suspend_keeps_pending_updates() {
+    run_decision(
+        "CS-D8_suspend_keeps_pending_updates",
+        include_str!("fixtures/sim/lrm_decisions/CS-D8_suspend_keeps_pending_updates.out"),
+    );
+}
+
+#[test]
 fn cs_d5_release_of_delayed_driver() {
     run_decision(
         "CS-D5_release_of_delayed_driver",

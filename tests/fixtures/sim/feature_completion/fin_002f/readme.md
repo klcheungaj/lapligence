@@ -56,8 +56,9 @@ the process and nothing else:
 
 > 12548: The disable fork statement terminates all active descendants (subprocesses) of the calling process.
 
-A simulator may leave the children of the process that called the import alone,
-although the same task called without C in between ends them.
+Decision CS-D7 states this; a simulator may leave the children of the process
+that called the import alone, although the same task called without C in
+between ends them.
 
 `cancel_vpi_regions`, `cancel_vpi_statements`: the C code goes on after
 `vpi_control` and the run ends when its routine returns:
