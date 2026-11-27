@@ -343,6 +343,15 @@ impl Codegen<'_> {
         let Some((target, slot)) = self.interface_view_path(path, node, written)? else {
             return Ok(None);
         };
+        // A use through a virtual-interface formal of a called function has
+        // no handle in the waiting process: the callee walk binds the formal
+        // to the actual and waits on the member's storage there
+        // (`callee_interface_member`).
+        if callee.is_some_and(|callee| callee.contains(&node))
+            && matches!(self.kind(target.handle), NodeKind::FuncArg { .. })
+        {
+            return Ok(None);
+        }
         // A handle held in storage is read again by each use instead.
         let lowered = match start {
             Some(_) => Some(self.virtual_interface_handle(path, node, &target)?),
@@ -1191,7 +1200,7 @@ impl Codegen<'_> {
     /// `None` when the member is not array or container storage in every
     /// instance the handle can bind. Instances whose storage differs in
     /// shape (a parameterized interface) are a located error.
-    fn virtual_interface_storage_slot(
+    pub(in crate::sim::codegen) fn virtual_interface_storage_slot(
         &mut self,
         path: &str,
         node: NodeId,

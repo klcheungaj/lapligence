@@ -2140,7 +2140,8 @@ and `neg_inside_handle_call_member.sv`.
 
 **Status:** narrowed (fin-gaps-e). Per-object container properties, mailbox
 `num()`, callee handle locals with one binding and virtual-interface members
-read in called functions now wake waits
+read in called functions, unpacked ones through a virtual-interface formal
+included (`vv.a[1]`), now wake waits
 (`ki_lrm_audit_b/observed_storage`, `callee_dataflow`).
 
 ### Symptom
