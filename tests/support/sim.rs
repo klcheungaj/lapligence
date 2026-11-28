@@ -832,6 +832,8 @@ pub fn write_value_backend_sources(dir: &std::path::Path) {
     for (name, source) in llg::sim::rt::message_headers() {
         std::fs::write(dir.join(name), source).expect("write runtime message header");
     }
+    // value/bridge.h marks the link guard with an llg_compiler.h attribute.
+    write_compiler_header(dir);
 }
 
 /// Whether the native CMake probe projects of the suite (the dynamic-storage

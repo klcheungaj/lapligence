@@ -175,16 +175,18 @@ pub fn runtime_sources() -> (&'static str, &'static str) {
 }
 
 /// (header, implementation) of scheduler-independent value operations and casts.
-/// Write the legacy [`value_backend_sources`] beside these files. This C11
-/// module can be compiled independently, linking only the math library.
+/// Write the legacy [`value_backend_sources`], the [`message_headers`] and the
+/// `llg_compiler.h` of [`platform_headers`] beside these files. This C11 module
+/// can be compiled independently, linking only the math library.
 pub fn value_sources() -> (&'static str, &'static str) {
     value_sources_for(super::value_backend::ValueBackend::Legacy)
 }
 
 /// Selected facade and implementation. Compact units remain separate so only
 /// kernels.c includes GMP, and private implementation names cannot collide.
-/// Write [`value_backend_sources`] beside these files and compile all units with
-/// the same backend and kernel selectors.
+/// Write [`value_backend_sources`], the [`message_headers`] and the
+/// `llg_compiler.h` of [`platform_headers`] beside these files and compile all
+/// units with the same backend and kernel selectors.
 pub fn value_sources_for(
     backend: super::value_backend::ValueBackend,
 ) -> (&'static str, &'static str) {
