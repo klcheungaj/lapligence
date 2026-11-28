@@ -2,9 +2,9 @@
 import argparse
 import hashlib
 import json
+import re
 import sys
 import tarfile
-import tomllib
 import zipfile
 from pathlib import Path
 
@@ -18,9 +18,23 @@ PLATFORMS = (
 LSP_ONLY_PLATFORMS = frozenset({"windows-arm64"})
 
 
+VERSION_LINE = re.compile(r'version\s*=\s*"([^"]+)"\s*(#.*)?')
+
+
 def package_version(manifest):
-    with Path(manifest).open("rb") as handle:
-        return tomllib.load(handle)["package"]["version"]
+    in_package = False
+    for line in Path(manifest).read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("["):
+            in_package = stripped == "[package]"
+            continue
+        if not in_package or not re.match(r"version\b", stripped):
+            continue
+        match = VERSION_LINE.fullmatch(stripped)
+        if match is None:
+            raise ValueError(f"{manifest}: [package] version is not a quoted string: {stripped}")
+        return match.group(1)
+    raise ValueError(f"{manifest}: [package] has no version")
 
 
 def tag_problem(tag, version):
@@ -151,7 +165,10 @@ def main(argv=None):
     if args.command == "assets":
         assets = [json.loads(line) for line in sys.stdin if line.strip()]
         return report(asset_problems(args.directory, assets))
-    version = package_version(args.manifest)
+    try:
+        version = package_version(args.manifest)
+    except (OSError, ValueError) as error:
+        return report([str(error)])
     if args.command == "version":
         problem = tag_problem(args.tag, version) if args.tag is not None else None
         if problem is not None:

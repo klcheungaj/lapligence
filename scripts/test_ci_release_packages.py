@@ -68,6 +68,24 @@ class ReleasePackagesTests(unittest.TestCase):
     def test_version_reads_the_package_table(self):
         self.assertEqual(self.run_main("version"), (0, "1.2.3\n", ""))
 
+    def test_version_allows_a_trailing_comment_and_ignores_other_tables(self):
+        self.manifest.write_text(
+            '[workspace]\nversion = "0.0.1"\n\n[package]\nname = "lapligence"\n'
+            'version = "2.0.0"  # bumped\nedition = "2024"\n',
+            encoding="utf-8",
+        )
+        self.assertEqual(self.run_main("version"), (0, "2.0.0\n", ""))
+
+    def test_version_rejects_a_package_without_a_plain_version(self):
+        self.manifest.write_text('[package]\nname = "lapligence"\n', encoding="utf-8")
+        status, stdout, stderr = self.run_main("version")
+        self.assertEqual((status, stdout), (1, ""))
+        self.assertIn("[package] has no version", stderr)
+        self.manifest.write_text("[package]\nversion.workspace = true\n", encoding="utf-8")
+        status, _, stderr = self.run_main("version")
+        self.assertEqual(status, 1)
+        self.assertIn("not a quoted string", stderr)
+
     def test_version_accepts_only_the_matching_tag(self):
         self.assertEqual(self.run_main("version", "--tag", "v1.2.3"), (0, "1.2.3\n", ""))
         status, stdout, stderr = self.run_main("version", "--tag", "v1.2.4")
