@@ -15,15 +15,17 @@
 # scripts/ci_prune_cargo_cache.py removes llg, target/slang, test executables
 # and archives from every target directory before it is saved. ccache is used
 # only for the C of generated test models, through LLG_C_LAUNCHER (see
-# .github/actions/ccache-setup). Caches are saved by pushes to master only; releases, manual runs elsewhere and other
-# branches restore them.
-name: CI and Release
+# .github/actions/ccache-setup). Caches are saved by pushes to master only;
+# manual runs elsewhere and other branches restore them.
+#
+# Every run packages the executables its platform jobs tested; release.yml
+# turns a tagged master commit's packages into a draft release without
+# building or testing again (tests/ci.md#release-packages).
+name: CI
 
 on:
   push:
     branches: [master]
-  release:
-    types: [published]
   workflow_dispatch:
   schedule:
     # Re-check the lockfile when the RustSec advisory database changes even
@@ -74,6 +76,7 @@ jobs:
           python3 -m unittest discover -s scripts -p test_ci_windows_runner.py
           python3 -m unittest discover -s scripts -p test_ci_resource_sampler.py
           python3 -m unittest discover -s scripts -p test_ci_dependency_report.py
+          python3 -m unittest discover -s scripts -p test_ci_release_packages.py
 
       - name: Check the bundled GMP tables against vendor/gmp
         run: python3 scripts/gmp_tables.py --check
@@ -261,6 +264,37 @@ jobs:
         if: always()
         run: python3 scripts/ci_prune_cargo_cache.py --target-dir target
 
+  # Each master run deletes the release packages of earlier CI runs, whether
+  # or not it passes, so the shared artifact storage holds one run's packages
+  # (kept 7 days for release.yml). Test archives and diagnostics keep their own
+  # retention: an earlier run may still be testing from its archives.
+  delete-earlier-packages:
+    name: delete earlier runs' release packages
+    if: github.event_name != 'schedule' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Delete release package artifacts of earlier CI runs
+        shell: bash
+        run: |
+          for name in $(python3 scripts/ci_release_packages.py artifacts); do
+            gh api --paginate "repos/$GH_REPO/actions/artifacts?name=$name&per_page=100" \
+              | jq -r --argjson run "$GITHUB_RUN_ID" \
+                  '.artifacts[] | select(.expired == false and .workflow_run.id < $run) | .id' \
+              | while read -r id; do
+                  echo "deleting $name artifact $id"
+                  gh api --method DELETE "repos/$GH_REPO/actions/artifacts/$id"
+                done
+          done
+
   dependency-audit:
     name: dependency security audit
     runs-on: ubuntu-22.04
@@ -349,71 +383,3 @@ jobs:
       package_arch: arm64
       target: aarch64-unknown-linux-musl
       nextest_platform: linux-arm-musl
-
-
-  release:
-    name: Attach packages to GitHub release
-    if: github.event_name == 'release'
-    needs:
-      - lint
-      - generated-runtime-sanitizers
-      - dependency-audit
-      - windows-x86_64
-      - windows-arm64
-      - macos-arm64
-      - linux-x86_64
-      - linux-arm64
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions:
-      contents: write
-    concurrency:
-      group: release-${{ github.ref }}
-      cancel-in-progress: false
-    env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-    steps:
-      - name: Download release packages
-        uses: actions/download-artifact@v4
-        with:
-          pattern: lapligence-*
-          merge-multiple: true
-          path: dist
-
-      - name: Verify release package set and checksums
-        shell: bash
-        working-directory: dist
-        run: |
-          version=${GITHUB_REF_NAME#v}
-          for platform in linux-x86_64 linux-arm64 windows-x86_64 windows-arm64 macos-arm64; do
-            extension=tar.gz
-            if [[ "$platform" == windows-* ]]; then
-              extension=zip
-            fi
-            archive="lapligence-$version-$platform.$extension"
-            test -s "$archive"
-            sha256sum --check "$archive.sha256"
-            # Windows on ARM supports llg_ls only; every other package holds both.
-            python3 - "$platform" "$archive" <<'PY'
-          import sys
-          import tarfile
-          import zipfile
-
-          platform, archive = sys.argv[1:]
-          if archive.endswith(".zip"):
-              names = zipfile.ZipFile(archive).namelist()
-          else:
-              names = tarfile.open(archive).getnames()
-          suffix = ".exe" if platform.startswith("windows-") else ""
-          expected = {"llg_ls" + suffix, "LICENSE", "readme.md"}
-          if platform != "windows-arm64":
-              expected.add("llg" + suffix)
-          if sorted(names) != sorted(expected):
-              sys.exit(f"{archive} holds {sorted(names)}, expected {sorted(expected)}")
-          PY
-          done
-
-      - name: Attach packages to existing release
-        shell: bash
-        run: gh release upload "$GITHUB_REF_NAME" dist/* --clobber

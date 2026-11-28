@@ -325,11 +325,10 @@ jobs:
           du -sh target || true
 
       - name: Package macOS executables
-        if: github.event_name == 'release' && inputs.platform == 'macos'
+        if: inputs.platform == 'macos'
         shell: bash
         run: |
-          version=${GITHUB_REF_NAME#v}
-          archive="lapligence-$version-${{ inputs.platform }}-${{ inputs.package_arch }}.tar.gz"
+          archive=$(python scripts/ci_release_packages.py archive "${{ inputs.platform }}-${{ inputs.package_arch }}")
           mkdir -p dist/package
           install -m 755 "target/${{ inputs.target }}/release/llg_ls" dist/package/llg_ls
           install -m 755 "target/${{ inputs.target }}/release/llg" dist/package/llg
@@ -345,11 +344,11 @@ jobs:
           fi
 
       - name: Package Windows executables
-        if: github.event_name == 'release' && inputs.platform == 'windows'
+        if: inputs.platform == 'windows'
         shell: pwsh
         run: |
-          $version = $env:GITHUB_REF_NAME -replace '^v', ''
-          $archive = "lapligence-$version-windows-${{ inputs.package_arch }}.zip"
+          $archive = & python scripts/ci_release_packages.py archive "windows-${{ inputs.package_arch }}"
+          if ($LASTEXITCODE -ne 0) { throw "no package name for windows-${{ inputs.package_arch }}" }
           New-Item -ItemType Directory -Force -Path dist/package | Out-Null
           Copy-Item -LiteralPath "target/${{ inputs.target }}/release/llg_ls.exe" -Destination dist/package/
           if ("${{ inputs.lsp_only }}" -ne "true") {
@@ -366,18 +365,19 @@ jobs:
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath "dist/$archive").Hash.ToLowerInvariant()
           "$hash  $archive" | Set-Content -Encoding ascii "dist/$archive.sha256"
 
+      # release.yml attaches this artifact to a tag's draft release. Packaged
+      # archives are already compressed; the next master run deletes them.
       - name: Upload packaged executables
-        if: github.event_name == 'release'
         uses: actions/upload-artifact@v4
         with:
           name: lapligence-${{ inputs.platform }}-${{ inputs.package_arch }}
           if-no-files-found: error
-          # Packaged archives are already compressed; expire downloads promptly.
           compression-level: 0
-          retention-days: 1
+          retention-days: 7
           path: |
             dist/*.tar.gz
             dist/*.zip
+            dist/*.sha256
             dist/*.sha256
 
       # Last step, after every step that reads target/: drop llg, target/slang,

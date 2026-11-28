@@ -1811,7 +1811,8 @@ cargo nextest run --locked --all-features
 cargo test --locked --doc --all-features
 ```
 
-[CI](../.github/workflows/ci.yml) owns job/suite selection, audits and release checks.
+[CI](../.github/workflows/ci.yml) owns job/suite selection, audits and release packages;
+[release.yml](../.github/workflows/release.yml) drafts a tag's release from them.
 Configuration or another host's results do not establish native Windows/macOS or
 architecture-specific generated-model support. Windows on ARM: `llg_ls` only;
 `llg` unsupported, so no generated-model result exists or is expected there.

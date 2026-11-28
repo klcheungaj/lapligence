@@ -3,23 +3,24 @@
 [ci.yml](../.github/workflows/ci.yml) and the reusable
 [native-platform.yml](../.github/workflows/native-platform.yml) (Windows/macOS)
 and [linux-platform.yml](../.github/workflows/linux-platform.yml) (Linux) own
-job selection; their header and step comments explain each job. This page lists
-the rules a change must keep. Platform pitfalls are in
+job selection; [release.yml](../.github/workflows/release.yml) drafts releases
+from their packages. Their header and step comments explain each job. This page
+lists the rules a change must keep. Platform pitfalls are in
 [cross-platform handling](../docs/cross_platform.md).
 
 ## Triggers and pipelines
 
-- Ubuntu gates and five-platform builds run on master pushes, manual dispatch
-  and published Releases (including prereleases), not draft saves or standalone
-  tag pushes.
+- Ubuntu gates and five-platform builds run on master pushes and manual
+  dispatch only. A pushed `v*` tag runs `release.yml`, which builds and tests
+  nothing ([release packages](#release-packages)).
 - Each platform (`windows-x86_64`, `windows-arm64`, `macos-arm64`,
   `linux-x86_64`, `linux-arm64`) is an independent caller job. Its `build` job
   builds once: `cargo nextest archive --cargo-profile release` compiles the
   test binaries and the executables, then the job audits and packages those
   executables ([release packages](#release-packages)); its `test` job needs
   only that `build`, downloads the archive and runs the full suite
-  (`--no-fail-fast`). `release` needs all five callers plus lint, sanitizers and
-  audit.
+  (`--no-fail-fast`). A run passes only when all five callers, lint,
+  sanitizers and audit pass.
 - The release profile uses thin LTO for Rust and LTO for the native frontend
   ([LTO](../docs/cross_platform.md#link-time-optimization)); build jobs set
   `LLG_SLANG_LTO=1` so a toolchain without it fails instead of shipping
@@ -37,7 +38,8 @@ the rules a change must keep. Platform pitfalls are in
   failed step still fails the job.
 - Reusable workflows do not inherit the caller's top-level `env`; each sets
   `NEXTEST_PROFILE`. Artifact names are unique per platform
-  (`nextest-archive-<target>`, `lapligence-<os>-<arch>`); archives are kept one day.
+  (`nextest-archive-<target>`, `lapligence-<os>-<arch>`); test archives are kept
+  one day, packages 7 days ([release packages](#release-packages)).
 - CI selects the `ci` nextest profile (one test per logical CPU). Tests that
   build C with CMake also use every CPU each, so on a 4-CPU runner one compiler
   process can get a small CPU share: a per-command timeout needs headroom over
@@ -160,14 +162,26 @@ the rules a change must keep. Platform pitfalls are in
   Windows/macOS imports and startup before packaging. Alpine also lists
   `cli_info` from a small release test binary to catch allocator/libc startup
   failures.
-- `release` waits for every test/audit/build, checks all five checksums and each
-  archive's exact file list, and attaches to the existing Release. Only it gets
-  `contents:write`; never create, publish or edit release metadata. Reruns
-  replace matching asset names. Only release events upload packages (kept one
-  day); the account-wide 500 MB artifact allowance is shared.
-- Naming: `lapligence-<version>-<os>-<arch>.<ext>`; strip a leading `v`; os
-  `linux`/`windows`/`macos`, arch `x86_64`/`arm64`; `tar.gz` on Unix, `zip` on
-  Windows. Contents: both executables (Windows arm64: `llg_ls.exe` only),
-  `readme.md`, `LICENSE` and checksums.
+- Every CI run uploads the five packages with their checksums as artifacts
+  `lapligence-<os>-<arch>` (kept 7 days). Each master run first deletes the
+  package artifacts of earlier runs, whether or not it passes, because the
+  account-wide 500 MB artifact allowance is shared; test archives and
+  diagnostics keep their own retention.
+- `release.yml` runs on a pushed `v*` tag and never rebuilds or retests. It
+  passes only when the tag points at a master commit and names the
+  `Cargo.toml` version, that commit's latest CI run (push or dispatch, by
+  creation time) completed successfully, all five package artifacts of that
+  run are available, `scripts/ci_release_packages.py verify` accepts their
+  checksums and exact file lists, and every file is attached to the draft.
+  It creates a draft release without notes (or fills an earlier draft of the
+  tag, replacing matching asset names) and never edits a published release;
+  notes and publishing are manual. Expired or deleted packages: run CI on the
+  tag by dispatch, then rerun the release.
+- `scripts/ci_release_packages.py` owns the platform list, package names,
+  version and expected contents. Naming: `lapligence-<version>-<os>-<arch>.<ext>`
+  with the `Cargo.toml` version; os `linux`/`windows`/`macos`, arch
+  `x86_64`/`arm64`; `tar.gz` on Unix, `zip` on Windows. Contents: both
+  executables (Windows arm64: `llg_ls.exe` only), `readme.md` and `LICENSE`;
+  each archive has a `.sha256` file.
 - Configuration is not validated platform support; keep platform evidence in
   ignored `persistence/platforms.md`.

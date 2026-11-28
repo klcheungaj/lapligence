@@ -1,0 +1,149 @@
+# Release: a pushed version tag on a master commit becomes a draft GitHub
+# release holding the packages that commit's latest CI run built and tested.
+# Nothing is built or tested here; the packages are the CI artifacts, byte for
+# byte (tests/ci.md#release-packages). The draft has no notes: they are added
+# and the release is published by hand.
+#
+# It passes only when the latest CI run of the tagged commit exists and passed,
+# every package artifact of that run is still available, and every package and
+# checksum file is attached to the draft. When CI is still running, or its
+# packages expired or were deleted by a newer master run, rerun this workflow
+# after CI passes, or first run CI on the tag (Actions -> CI -> Run workflow,
+# choosing the tag) to rebuild them.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  draft:
+    name: Draft release from the commit's CI packages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      # Create the draft and attach assets; read the CI run and its artifacts.
+      contents: write
+      actions: read
+    concurrency:
+      group: release-${{ github.ref }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      # The full history includes origin/master for the ancestry check.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check the tag is on master and names the package version
+        id: tag
+        shell: bash
+        run: |
+          commit=$(git rev-parse "$GITHUB_REF^{commit}")
+          if ! git merge-base --is-ancestor "$commit" origin/master; then
+            echo "::error::$TAG points at $commit, which is not on master"
+            exit 1
+          fi
+          version=$(python3 scripts/ci_release_packages.py version --tag "$TAG")
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # The latest run of ci.yml for the commit, by creation time. Scheduled
+      # runs only audit dependencies and build nothing, so they are not
+      # candidates; a rerun updates its run's status and conclusion in place.
+      - name: Find the commit's latest CI run and require that it passed
+        id: ci
+        shell: bash
+        env:
+          COMMIT: ${{ steps.tag.outputs.commit }}
+        run: |
+          run=$(gh api --method GET "repos/$GH_REPO/actions/workflows/ci.yml/runs" \
+            -f head_sha="$COMMIT" -f per_page=100 \
+            --jq '[.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch")]
+                  | sort_by(.created_at) | last // empty
+                  | [.id, .status, (.conclusion // "none"), .html_url] | @tsv')
+          if [ -z "$run" ]; then
+            echo "::error::no CI run exists for $COMMIT; run CI on $TAG, then rerun this workflow"
+            exit 1
+          fi
+          IFS=$'\t' read -r id status conclusion url <<< "$run"
+          echo "latest CI run of $COMMIT: $url ($status, $conclusion)"
+          if [ "$status" != completed ]; then
+            echo "::error::the latest CI run of $COMMIT is $status ($url); rerun this workflow after it passes"
+            exit 1
+          fi
+          if [ "$conclusion" != success ]; then
+            echo "::error::the latest CI run of $COMMIT concluded $conclusion ($url)"
+            exit 1
+          fi
+          echo "run_id=$id" >> "$GITHUB_OUTPUT"
+
+      - name: Require every package artifact of that run
+        shell: bash
+        env:
+          RUN_ID: ${{ steps.ci.outputs.run_id }}
+        run: |
+          available=$(gh api --paginate "repos/$GH_REPO/actions/runs/$RUN_ID/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired == false) | .name')
+          missing=()
+          for name in $(python3 scripts/ci_release_packages.py artifacts); do
+            grep -qxF "$name" <<< "$available" || missing+=("$name")
+          done
+          if [ ${#missing[@]} -ne 0 ]; then
+            echo "::error::CI run $RUN_ID no longer has: ${missing[*]} (expired or deleted by a newer master run); run CI on $TAG, then rerun this workflow"
+            exit 1
+          fi
+
+      - name: Download the packages
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ steps.ci.outputs.run_id }}
+          github-token: ${{ github.token }}
+          pattern: lapligence-*
+          merge-multiple: true
+          path: dist
+
+      - name: Verify the package set, checksums and archive contents
+        run: python3 scripts/ci_release_packages.py verify dist
+
+      # Reuse a draft of an earlier attempt; never touch a published release.
+      - name: Create the draft release
+        id: release
+        shell: bash
+        run: |
+          existing=$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
+            | jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag) | [.id, .draft] | @tsv')
+          if [ -z "$existing" ]; then
+            gh release create "$TAG" --draft --verify-tag --title "$TAG" --notes ""
+            existing=$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
+              | jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag) | [.id, .draft] | @tsv')
+          fi
+          if [ "$(wc -l <<< "$existing")" -ne 1 ]; then
+            echo "::error::expected one release for $TAG, found: $existing"
+            exit 1
+          fi
+          IFS=$'\t' read -r id draft <<< "$existing"
+          if [ "$draft" != true ]; then
+            echo "::error::release $TAG is already published; this workflow only fills drafts"
+            exit 1
+          fi
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+      - name: Attach the packages
+        shell: bash
+        run: gh release upload "$TAG" dist/* --clobber
+
+      - name: Require every package attached to the draft
+        shell: bash
+        env:
+          RELEASE_ID: ${{ steps.release.outputs.id }}
+        run: |
+          gh api --paginate "repos/$GH_REPO/releases/$RELEASE_ID/assets?per_page=100" \
+            --jq '.[] | {name, size, state}' \
+            | python3 scripts/ci_release_packages.py assets dist

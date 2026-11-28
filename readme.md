@@ -51,10 +51,12 @@ These are configured targets, not equivalent validation claims. Recorded native
 Slang-only evidence is Linux x86_64/glibc; local musl execution remains pending.
 
 CI tests and builds all targets above on pushes to `master`, or when you select
-a branch under **Actions → CI and Release → Run workflow**. Publishing a release
-in the GitHub web UI runs the same checks for its tag and attaches binary
-packages to that existing release after all jobs pass. Saving a draft does not
-trigger CI. For a tag such as `v1.2.3`, download packages use
+a branch or tag under **Actions → CI → Run workflow**, and keeps that run's
+packages for 7 days (the next `master` run deletes them). Pushing a tag such as
+`v1.2.3` on a `master` commit creates a draft release holding the packages of
+that commit's latest passed CI run, without building or testing again; the tag
+must match the `Cargo.toml` version. Add the notes and publish the draft by
+hand. For a tag such as `v1.2.3`, download packages use
 `lapligence-1.2.3-<os>-<arch>.<ext>`: `os` is `linux`, `windows`, or `macos`,
 and `arch` is `x86_64` or `arm64` for the targets above. Windows packages are ZIP
 files; Linux and macOS packages are `.tar.gz` files. Each includes `llg`,
